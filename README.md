@@ -1,123 +1,95 @@
 # dsh-pi
 
-把 [pi](https://github.com/lwaaron/pi)（编码代理 CLI）接进 [DSH]，侧栏多一个「pi」整页聊天面板。
-面板不是复刻 pi 的终端 UI，而是用 pi 官方的 **RPC 模式**（`pi --mode rpc`）驱动一个常驻子进程，
-把它的 JSONL 事件流翻译成 DSH 面板里的消息泡泡、工具卡片和 token 统计。
+把 [pi](https://github.com/lwaaron/pi) 作为 DSH 的侧栏面板接进来：左侧栏「pi」入口，主区一整页聊天界面，背后是一个常驻的 `pi --mode rpc` 子进程。
 
-## 架构
+不是重新实现 pi 的 TUI，而是复用 pi 官方的 **RPC 协议**（`packages/coding-agent/docs/rpc.md`）做一层薄适配 —— pi 升级时只要 RPC 帧不破，面板就不用改。
+
+## 结构
 
 ```
-浏览器（client.js）                     宿主进程（index.js）                  pi 子进程
-  React 面板  ── fetch/SSE ──▶  /api/dsh-pi/*  ── JSONL stdin/stdout ──▶  node cli.js --mode rpc
+index.js          host 半区：HTTP 路由 + 会话池 + 子进程生命周期
+client.js         浏览器半区：侧栏入口注册 + 聊天面板（零构建，纯 JS + React.createElement）
+cordis.patch.yml  bundle 补丁，把本插件插入 DSH 宿主组合
+src/pi-rpc.mjs    JSONL 帧解析 / RPC 命令配对 / 事件缓冲
+test/host-smoke.mjs  无头自测：起服务、连 CLI、发 prompt、验证回包
 ```
 
-- **host 半区** `index.js`：只依赖 Node 内建模块，不 import 任何 `@deepseek-ai/*` 包。
-  宿主进程里解析不到这些包，写死依赖会让 fiber 永久 pending，整个 DSH 起不来。
-- **client 半区** `client.js`：零构建纯 JS（`React.createElement`，无 JSX），通过
-  `window.__ModuleLoader__.load` 注册，只 `require("react")`。
-- **为什么不直接用 pi 的 SDK**：SDK 要 import pi 的内部模块，pi 升级一次就可能把 DSH 主进程带崩。
-  子进程隔离后 pi 崩了只影响这个面板；RPC 是 pi 的对外契约（`docs/rpc.md`），跨版本稳定。
+两半区的硬约束（改动前先读）：
+
+- `index.js` / `src/pi-rpc.mjs` **不 import 任何 `@deepseek-ai/*` 包**。宿主里那些包解析不到，写死依赖会让插件 fiber 永久 pending，DSH 启动就卡住。只用 node 内建。
+- 子进程隔离而非 SDK 内嵌：pi 崩掉只影响这个面板，不会带崩 DSH 主进程。
+- `client.js` 里 `sidebar.panellist` 的 `id` 必须与 `main` keyed slot 的 `key` 相同，且两次 `slots.inject` 都要包在 `ctx.inject([...])` 内，否则 entry 永久 pending。
+- 客户端 `require` 白名单只有 `react` / `react-dom` / `jsx-runtime` / `@deepseek-ai/dsh-client-ui-primitives`；样式只用 `--dsw-*` 变量，深浅色主题自动适配。
 
 ## 安装
 
-1. 先把 pi 构建出来（`packages/coding-agent/dist/bundle/cli.js` 必须存在）：
+1. 先构建 pi，确认真实存在 `<pi-repo>/packages/coding-agent/dist/bundle/cli.js`（`npm install && npm run build`，产物约 9.2 MiB，`node cli.js --version` 应打印版本号）。
 
-   ```powershell
-   cd <pi 仓库>
-   npm install
-   npm run build
-   ```
+2. 把插件挂到 DSH profile（Windows 用 junction，改动源码即时生效）：
 
-2. 把本包链到 DSH 的 profile 依赖目录（Windows 用 Junction）：
+```powershell
+New-Item -ItemType Junction `
+  -Path   "$env:USERPROFILE\.dsh\profiles\desktop\node_modules\dsh-pi" `
+  -Target "C:\Users\PC\Documents\pi-local\dsh-pi"
+```
 
-   ```powershell
-   New-Item -ItemType Junction -Path "$env:USERPROFILE\.dsh\profiles\desktop\node_modules\dsh-pi" -Target "<本包绝对路径>"
-   ```
+3. 在 `%USERPROFILE%\.dsh\profiles\desktop\cordis.patch.yml` 里加一条：
 
-3. 在 `%USERPROFILE%\.dsh\profiles\desktop\cordis.patch.yml` 里插入插件条目：
+```yaml
+- insert:
+    - id: dsh-pi
+      name: dsh-pi
+      config: {}
+```
 
-   ```yaml
-   - insert:
-       - id: dsh-pi
-         name: dsh-pi
-         config: {}
-   ```
-
-4. 重启 DSH。侧栏「蓝鲸任务台账」下方会出现「pi」入口，点开即面板。
+4. 重启 DSH。侧栏出现「pi」入口，点开即面板。
 
 ## 配置
 
-插件 `config` 字段（全部可空，空 = 自动探测）：
+全部可选，写在 `config` 里：
 
 | 字段 | 默认 | 说明 |
 | --- | --- | --- |
-| `cliPath` | 自动 | pi 的 `cli.js` 绝对路径 |
-| `nodePath` | 自动 | 跑 pi 的 node 可执行文件 |
-| `workspace` | `~/pi-workspace` | pi 会话的默认 cwd |
-| `args` | `["--no-session"]` | 附加给 pi 的命令行参数 |
+| `cliPath` | 自动探测 | pi 的 `cli.js` 绝对路径 |
+| `nodePath` | 自动探测 | 跑 pi 的 node 可执行文件 |
+| `workspace` | `~/pi-workspace` | 新会话的工作目录 |
+| `args` | `["--no-session"]` | 追加给 pi 的命令行参数 |
 
-等价环境变量（优先级低于 config，高于自动探测）：
-`PI_CLI_PATH`、`PI_NODE_PATH`、`PI_WORKSPACE`、`PI_BASH`（透传给 pi 的 bash 路径）。
+也可用环境变量（优先级低于 config）：`PI_CLI_PATH`、`PI_NODE_PATH`、`PI_WORKSPACE`、`PI_BASH`。
 
-探测顺序：config → 环境变量 → PATH 上的 `node.exe` → 宿主 `process.execPath`（Electron 下置
-`ELECTRON_RUN_AS_NODE=1`）。CLI 探测失败时面板会报「pi CLI 未找到」而不是静默空白。
+探测顺序：config → 环境变量 → PATH 上的 `node.exe` → 宿主自身 `process.execPath`（最后这条会同时置 `ELECTRON_RUN_AS_NODE=1`，否则 Electron 宿主里启动的子进程会解析失败且日志为空）。
 
 ## HTTP 接口
 
-同源，不需要 token（插件路由走 `webServer` 的 prefix 注册，绕过宿主鉴权）：
+同源、免 token（走 `webServer` 的 prefix 注册，不走宿主鉴权层）：
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| GET | `/api/dsh-pi/state` | 解析结果 + 会话列表 |
-| GET | `/api/dsh-pi/health` | `{ ok: true, version }` |
-| POST | `/api/dsh-pi/sessions` | 新建会话（body 可带 `cwd`/`label`/`args`） |
-| DELETE | `/api/dsh-pi/sessions/:id` | 关闭会话 |
-| GET | `/api/dsh-pi/sessions/:id/snapshot?since=N` | 增量快照 |
-| GET | `/api/dsh-pi/sessions/:id/events?since=N` | SSE 事件流（15s 心跳） |
-| POST | `/api/dsh-pi/sessions/:id/command` | 转发一条 pi RPC 命令 |
+| GET | `/api/dsh-pi/state` | 解析结果 + 当前所有会话快照 |
+| GET | `/api/dsh-pi/health` | 健康检查 |
+| POST | `/api/dsh-pi/sessions` | 新建会话，body 可带 `cwd` / `label` / `args` |
+| DELETE | `/api/dsh-pi/sessions/:id` | 关闭会话（先关 stdin 再超时 kill） |
+| GET | `/api/dsh-pi/sessions/:id/events?since=N` | SSE 事件流，15s 心跳注释帧 |
+| GET | `/api/dsh-pi/sessions/:id/snapshot?since=N` | 增量快照（重连补数据用） |
+| POST | `/api/dsh-pi/sessions/:id/command` | 转发一条 pi RPC 命令，body 必须是带 `type` 的 JSON 对象 |
 
-`/command` 要求 `content-type: application/json`，body 是带字符串 `type` 的对象，
-原样转给 pi 的 RPC 通道再把结果回传。常用 `type`：`prompt`、`abort`、`get_state`、
-`get_available_thinking_levels`、`set_thinking_level`。
-
-上限：会话 8 个（`MAX_SESSIONS`），请求体 4 MiB（`MAX_BODY_BYTES`）。
+上限：8 个并发会话，请求体 4 MiB。
 
 ## 面板行为
 
-- 打开时先 `GET /state`，有会话就复用第一个，没有就 `POST /sessions` 新建。
-- 发送：`prompt`；模型还在跑时再发会带 `streamingBehavior: "followUp"` 排队。
-- `Enter` 发送、`Shift+Enter` 换行、`Esc` 打断。
-- 思考等级下拉来自 `get_available_thinking_levels`，切换走 `set_thinking_level`。
-- 「新会话」= 关掉当前会话再建一个，不污染旧上下文。
-
-## 客户端契约（改 client.js 前必读）
-
-- `sidebar.panellist` 条目的 `id` 必须与 `main` keyed slot 的 `key` 相同，否则点不开。
-- 所有 `slots.inject` 必须包在 `ctx.inject([...])` 里；漏包会让 entry 永久 pending，
-  表现为 DSH 启动卡住。
-- 客户端 `require` 白名单只有 `react`、`react-dom`、`jsx-runtime`、
-  `@deepseek-ai/dsh-client-ui-primitives`。
-- 主题只用 `--dsw-*` CSS 变量，不要写死颜色，否则浅色/深色切换会花。
-- 文件头注释记录的是踩过的坑，改代码别删。
+- 打开时若已有会话就复用第一个，否则新建；「新会话」= 关旧开新，不污染上下文。
+- 对话区把 pi 的 `turn_start / text_delta / thinking_delta / toolcall_* / turn_end` 归并成消息气泡，工具调用渲染成可折叠卡片，底部给 in/out/total token 数。
+- composer：`Enter` 发送、`Shift+Enter` 换行、`Esc` 打断；正在跑时再发会以 `streamingBehavior: "followUp"` 排队。
+- 顶部思考档位下拉来自 `get_available_thinking_levels`，切换走 `set_thinking_level`；连接状态用圆点表示（ready / busy / dead）。
+- pi 进程退出时面板转红点并提供「重试」，不会静默空白。
 
 ## 已验证
 
-- host 半区自测 `test/host-smoke.mjs`：health / state / 建会话 / prompt / 收流 / 关会话全绿，
-  真实 LLM 往返（`Deepseek-V4.1-Flash`，contextWindow 1000000）。
-- 真机 DSH：侧栏「pi」入口渲染正常，面板内发指令触发 bash 工具并把输出
-  （`dsh-pi-panel-ok`）回显在气泡里。
+- `node test/host-smoke.mjs`：health / state / 建会话 / prompt / 收流 / 关会话全通，实测模型 `Deepseek-V4.1-Flash`（contextWindow 1000000，maxTokens 391168），单轮 2880ms 收到回包。
+- 真机 DSH（pid 60792，GUI `http://127.0.0.1:5475`）：侧栏「pi」入口渲染正常，面板内发「Run the bash tool with the command: echo dsh-pi-panel-ok」，工具卡片显示 `bash / 结果`，气泡回显 `Ran it. Output: dsh-pi-panel-ok`，token 统计 `in 4657 · out 45 · 4702 tokens`。
 
-## 目录
+## 已知限制
 
-```
-index.js          host 半区：路由 + 会话池 + 子进程管理
-client.js         浏览器半区：侧栏入口 + 整页聊天面板
-src/pi-rpc.mjs    pi 子进程的 JSONL RPC 封装
-cordis.patch.yml  bundle 补丁（把本包插进宿主组合）
-test/             自测脚本
-tools/            开发期用的 PowerShell 辅助（截图/点击/注入按键），非插件运行依赖
-out/              验证截图
-research/         pi 事件与 DSH 插槽的逆向笔记
-```
-
-MIT
+- 只支持单实例面板：多开同一 keyed slot 会互相覆盖状态。
+- 会话不落盘，DSH 重启后历史清空（pi 自身仍会写 `~/.pi/agent/sessions`）。
+- 图片块以 `[image <mime>]` 文本占位，未做渲染。
