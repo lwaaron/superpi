@@ -1,0 +1,15 @@
+param([string]$In,[string]$Out,[int]$X,[int]$Y,[int]$W,[int]$H,[int]$Scale=2)
+Add-Type -AssemblyName System.Drawing
+$src = [System.Drawing.Image]::FromFile($In)
+$crop = New-Object System.Drawing.Bitmap($W, $H)
+$g = [System.Drawing.Graphics]::FromImage($crop)
+$g.DrawImage($src, (New-Object System.Drawing.Rectangle(0,0,$W,$H)), (New-Object System.Drawing.Rectangle($X,$Y,$W,$H)), [System.Drawing.GraphicsUnit]::Pixel)
+$g.Dispose()
+$big = New-Object System.Drawing.Bitmap([int]($W*$Scale), [int]($H*$Scale))
+$g2 = [System.Drawing.Graphics]::FromImage($big)
+$g2.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::NearestNeighbor
+$g2.DrawImage($crop, 0, 0, $big.Width, $big.Height)
+$g2.Dispose()
+$big.Save($Out, [System.Drawing.Imaging.ImageFormat]::Png)
+$big.Dispose(); $crop.Dispose(); $src.Dispose()
+Write-Output ("saved " + $Out + " " + $big.Width + "x" + $big.Height)

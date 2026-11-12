@@ -1,0 +1,11 @@
+# 验证截图与开发期脚本产物
+out/
+!out/.gitkeep
+*.log
+
+# 逆向研究笔记体积较大，按需保留
+research/all-files.txt
+research/probe-events.txt
+research/_ws.txt
+
+node_modules/

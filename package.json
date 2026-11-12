@@ -1,0 +1,39 @@
+{
+  "name": "dsh-pi",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "把 pi 编码代理接进 DSH：侧栏「Pi」整页聊天，底层是常驻的 pi --mode rpc 子进程。",
+  "main": "./index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "src",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=22.5"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": []
+    }
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "pi",
+    "coding-agent"
+  ],
+  "license": "MIT"
+}
