@@ -1,4 +1,4 @@
-# 打包 → 装到临时目录 → 用打包产物跑真实 LLM 往返
+﻿# 打包 → 装到临时目录 → 用打包产物跑真实 LLM 往返
 # 用法：pwsh -File tools/verify-packed.ps1
 param([string]$Keep = "")
 

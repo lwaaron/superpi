@@ -1,4 +1,4 @@
-$out = "C:\Users\PC\Documents\pi-local\dsh-pi\out\final-check.png"
+﻿$out = "C:\Users\PC\Documents\pi-local\dsh-pi\out\final-check.png"
 Get-Process -Name WindowsTerminal -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 Get-CimInstance Win32_Process -Filter "Name='node.exe'" | Where-Object { $_.CommandLine -like '*coding-agent*cli.js*' -and $_.CommandLine -notlike '*--mode rpc*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
 Start-Sleep -Milliseconds 900

@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   在一个全新的 DSH_HOME 里只装 dsh-pi，验证插件能独立跑起来。
 

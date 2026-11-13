@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   把 dsh-pi 作为真正的 pnpm 依赖装进某个 DSH profile，并生成回滚脚本。
 
