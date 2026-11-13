@@ -53,7 +53,7 @@ PATH 上的 `pnpm.ps1` 通常是 corepack shim，直接调用会报 `Cannot find
 
 **装完要重启 DSH 才生效**（插件在 import 时就把代码快照进内存了）。不想保留时运行脚本打印出来的 `rollback-<时间戳>.ps1` 即可原样退回。
 
-重启这一步有现成脚本：它关掉宿主、重新拉起、等 `/api/dsh-pi/health` 就绪，再拿运行中 `/state` 报的版本与**该实例自己加载的那份** `package.json` 对比，不一致就 `exit 2`（典型原因是旧进程没退干净）。
+重启这一步有现成脚本：它关掉宿主、重新拉起、等 `/api/dsh-pi/health` 就绪，再拿运行中 `/state` 报的版本与**该实例自己加载的那份** `package.json` 对比，不一致就 `exit 2`，并把两种成因分开写清楚（磁盘刚装新版本而宿主没重启 / 重启了但旧进程没退干净）。
 
 **最省事的用法：双击 `tools\restart-dsh.bat`**（Windows 上不需要先装 PowerShell 7，见下面「PowerShell 版本」）：
 
@@ -74,7 +74,7 @@ pwsh -NoProfile -File .\tools\restart-dsh.ps1 -SkipRestart      # 只核对，�
 
 #### 本机同时有多个 instance（desktop / 独立验证实例）
 
-脚本按 **profile 归属**挑实例，不再「取第一个能回 /health 的端口」：它先向每个 DeepSeek 进程占用的端口问 `/selfcheck`，拿到该实例自己报的插件 `root`，只有 `root` 落在目标 profile 目录下才算命中。归属不唯一时脚本不会瞎猜 —— 打印实例表然后 `exit 1`，要求用 `-Port` 指定：
+脚本按 **profile 归属**挑实例，不再「取第一个能回 /health 的端口」：它先向每个 DeepSeek 进程占用的端口问 `/selfcheck`，拿到该实例自己报的插件 `root`，只有 `root` 落在目标 profile 目录下才算命中。归属不唯一时脚本不会瞎猜 —— 打印实例表然后 `exit 1`，要求用 `-Port` 指定。实测输出长这样（探针实例只在验证时临时起，平时只有一行 desktop）：
 
 ```text
 dsh exe = C:\Users\PC\AppData\Local\Programs\DeepSeek Runtime\DeepSeek Runtime.exe
