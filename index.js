@@ -39,7 +39,7 @@ export const inject = []
 
 const PLUGIN_ID = 'dsh-pi'
 const DISPLAY_NAME = 'pi'
-const VERSION = '0.2.1'
+const VERSION = '0.2.2'
 const API_PREFIX = '/api/' + PLUGIN_ID
 const MAX_SESSIONS = 8
 const MAX_BODY_BYTES = 4 * 1024 * 1024

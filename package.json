@@ -1,6 +1,6 @@
 {
   "name": "dsh-pi",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "type": "module",
   "description": "把 pi 编码代理接进 DSH：侧栏「pi」整页聊天面板，底层是常驻的 pi --mode rpc 子进程。pi runtime is resolved from the plugin itself (.runtime), so the panel works on any machine without a hand-written path.",
   "icon": "./assets/icon.svg",

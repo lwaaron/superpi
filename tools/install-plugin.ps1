@@ -215,6 +215,38 @@ if ($failures.Count -gt 0) {
 }
 Write-Output 'verified: manifest / lock / node_modules agree'
 
+# 副本必须与刚打出的 tarball 逐字节一致。pnpm 对 file: 依赖按 lock 里的 integrity
+# 复用它自己的缓存——版本号没变但内容变了时，它会把旧内容装回来且 exit=0。
+# 这种「装成功但装的是旧代码」只能靠内容比对拦住。
+Step 'verify installed copy matches the packed artifact'
+$contentMismatch = New-Object System.Collections.Generic.List[string]
+$tarList = @()
+if (Get-Command tar -ErrorAction SilentlyContinue) {
+  $tarList = @((tar -tf $tgzPath) | Where-Object { -not $_.EndsWith('/') })
+}
+foreach ($entry in $tarList) {
+  $rel = $entry -replace '^package/', ''
+  $srcFile = Join-Path $pluginRoot ($rel -replace '/', '\')
+  $dstFile = Join-Path $pluginDir ($rel -replace '/', '\')
+  if (-not (Test-Path -LiteralPath $dstFile)) { $contentMismatch.Add("$rel missing in installed copy"); continue }
+  if (-not (Test-Path -LiteralPath $srcFile)) { continue }
+  $h1 = (Get-FileHash -LiteralPath $srcFile -Algorithm SHA256).Hash
+  $h2 = (Get-FileHash -LiteralPath $dstFile -Algorithm SHA256).Hash
+  if ($h1 -ne $h2) { $contentMismatch.Add($rel) }
+}
+$installedVersion = (Get-Content -LiteralPath (Join-Path $pluginDir 'package.json') -Raw | ConvertFrom-Json).version
+Write-Output "installed version = $installedVersion"
+if ($tarList.Count -eq 0) {
+  Write-Output 'tar not found: skipped byte comparison (relies on the version bump + pnpm integrity check)'
+} else {
+  Write-Output ("compared {0} shipped file(s) against the source tree" -f $tarList.Count)
+}
+if ($contentMismatch.Count -gt 0) {
+  foreach ($f in $contentMismatch) { Write-Output "STALE $f" }
+  Fail ("installed copy does not match the packed tarball (" + $contentMismatch.Count + " file(s)). pnpm reuses its store by integrity when the version number is unchanged, so bump the version before reinstalling. Rollback: pwsh -File '" + $backupDir + '\rollback-' + $stamp + ".ps1'")
+}
+if ($tarList.Count -gt 0) { Write-Output 'verified: installed copy is byte-identical to the tarball' }
+
 if (-not $SkipVerify) {
   Step 'verify installed copy against a real LLM'
   Push-Location $pluginRoot

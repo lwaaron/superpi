@@ -40,8 +40,10 @@ pwsh -NoProfile -File .\tools\install-plugin.ps1 -Profile desktop
 2. 装到 `%TEMP%\dsh-pi-stage-*`，用**装出来的那份**跑一遍真实 LLM 往返（`test/packed-smoke.mjs`），失败则 profile 一动不动；
 3. tarball 收进 `<profile>\.dsh-local-packages\`，备份 `package.json` / `pnpm-lock.yaml` / 现有 `node_modules\dsh-pi`；
 4. 用 **DSH 自带的 pnpm** 执行 `add file:<tarball>` —— manifest、lock、node_modules 由 pnpm 一次写一致，`optionalDependencies` 里的 pi 运行时随之落进 profile；
-5. 校验四件事：manifest 的 `dsh-pi` 是 `file:` 依赖、lock 里有 `dsh-pi` 与 `pi-coding-agent`、`node_modules/dsh-pi/index.js` 存在、`.modules.yaml` 认识 `dsh-pi`；任一项不满足即报失败并给回滚命令；
+5. 校验五件事：manifest 的 `dsh-pi` 是 `file:` 依赖、lock 里有 `dsh-pi` 与 `pi-coding-agent`、`node_modules/dsh-pi/index.js` 存在、`.modules.yaml` 认识 `dsh-pi`、**装出来的副本与 tarball 逐字节一致**；任一项不满足即报失败并给回滚命令；
 6. 用 profile 里那份副本再跑一遍真实 LLM 往返；
+
+> 第 5 项里的字节比对不是洁癖：pnpm 对 `file:` 依赖按 lock 里的 integrity 复用 store，**版本号没变但内容变了时，它会把旧内容装回来并且 exit=0**。这时 tarball、manifest、lock 三者自洽，唯独 node_modules 里是旧代码 —— 只能靠内容比对拦住。所以改完代码必须同时升 `version`。
 7. 生成 `rollback-<时间戳>.ps1`（恢复 `package.json` + `pnpm-lock.yaml`，再让 pnpm `install --frozen-lockfile` 收敛 node_modules）。
 
 PATH 上的 `pnpm.ps1` 通常是 corepack shim，直接调用会报 `Cannot find module ...corepack\dist\pnpm.js`。脚本默认用 `%USERPROFILE%\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\pnpm\bin\pnpm.cjs`，装到别的机器用 `-PnpmPath` 指过去。
@@ -74,10 +76,10 @@ New-Item -ItemType Junction `
 ### 方式三：手工 pnpm add（不想跑脚本时）
 
 ```powershell
-npm pack                                        # 得到 dsh-pi-0.2.1.tgz
+npm pack                                        # 得到 dsh-pi-0.2.2.tgz
 cd "$env:USERPROFILE\.dsh\profiles\desktop"
 node "$env:USERPROFILE\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\pnpm\bin\pnpm.cjs" `
-  add "file:C:\path\to\dsh-pi-0.2.1.tgz" --ignore-scripts
+  add "file:C:\path\to\dsh-pi-0.2.2.tgz" --ignore-scripts
 ```
 
 不要在 profile 里用 `npm install`：npm 会另写一份 `package-lock.json`，而宿主插件管理器用的是 pnpm，两套锁文件互相看不见，下次插件安装就会把 node_modules 重建成 pnpm 理解的样子。
@@ -221,7 +223,7 @@ DSH 的插件管理器（dshmarket / 插件详情页）在安装、卸载、升�
 
 - `pnpm add dsh-free-model@3.1.0`（manifest 与 lock 都是 dsh-pi 正常运行时的状态）→ dsh-pi 与 pi 运行时都存活；
 - 故意造漂移（manifest 有 dsh-pi、lock 没有）再 `pnpm add` → pnpm 顺手把 dsh-pi 补装回来，锁被重写，仍然可用；
-- 锁里的 `file:.dsh-local-packages/dsh-pi-0.2.1.tgz` 是**相对 profile 根**解析的，删掉 `.dsh-local-packages` 会让 `install` 直接报 `ERR_PNPM_TARBALL_READ_LOCAL_TARBALL` —— 想改锁前先确认这个目录还在。
+- 锁里的 `file:.dsh-local-packages/dsh-pi-0.2.2.tgz` 是**相对 profile 根**解析的，删掉 `.dsh-local-packages` 会让 `install` 直接报 `ERR_PNPM_TARBALL_READ_LOCAL_TARBALL` —— 想改锁前先确认这个目录还在。
 
 `.dsh-local-packages/` 里的 tarball 是回滚与重装的锚点，不要手动清。
 
