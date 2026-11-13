@@ -53,13 +53,14 @@ PATH 上的 `pnpm.ps1` 通常是 corepack shim，直接调用会报 `Cannot find
 
 **装完要重启 DSH 才生效**（插件在 import 时就把代码快照进内存了）。不想保留时运行脚本打印出来的 `rollback-<时间戳>.ps1` 即可原样退回。
 
-重启这一步有现成脚本：它关掉宿主、重新拉起、等 `/api/dsh-pi/health` 就绪，再拿运行中 `/state` 报的版本与**该实例自己加载的那份** `package.json` 对比，不一致就 `exit 2`，并把两种成因分开写清楚（磁盘刚装新版本而宿主没重启 / 重启了但旧进程没退干净）。
+重启这一步有现成脚本：它**按原命令行原样重启**（下面「重启分支做对了什么」讲为什么不是 `Start-Process $exe`）、等 `/api/dsh-pi/health` 就绪，再拿运行中 `/state` 报的版本与**该实例自己加载的那份** `package.json` 对比，不一致就 `exit 2`，并把两种成因分开写清楚（磁盘刚装新版本而宿主没重启 / 重启了但旧进程没退干净）。
 
 **最省事的用法：双击 `tools\restart-dsh.bat`**（Windows 上不需要先装 PowerShell 7，见下面「PowerShell 版本」）：
 
 ```text
 tools\restart-dsh.bat                      双击或命令行直接跑：重启 + 核对
 tools\restart-dsh.bat -SkipRestart         只核对，不重启（改完代码想确认生效没有）
+tools\restart-dsh.bat -Plan                只打印重启计划（杀哪个 pid、用什么命令行、带什么环境变量）
 tools\restart-dsh.bat -Port 5783           本机有多个实例时指定端口
 ```
 
@@ -68,9 +69,10 @@ tools\restart-dsh.bat -Port 5783           本机有多个实例时指定端口
 ```powershell
 pwsh -NoProfile -File .\tools\restart-dsh.ps1                  # 重启 + 核对版本
 pwsh -NoProfile -File .\tools\restart-dsh.ps1 -SkipRestart      # 只核对，不重启
+pwsh -NoProfile -File .\tools\restart-dsh.ps1 -Port 5783 -Plan  # 不动任何进程，先看清它要干什么
 ```
 
-> 它会把当前 DSH 窗口一起关掉 —— 别让 DSH 里的 agent 代跑（会杀掉自己所在的宿主），在外部终端执行。
+> 它会把当前 DSH 窗口一起关掉。别让 DSH 里的 agent 代跑 —— 脚本自己会拦：当前进程的祖先链里有目标实例的启动根时，直接 `exit 3` 并提示去外部终端双击 bat。确实要这样干加 `-Force`。
 
 #### 本机同时有多个 instance（desktop / 独立验证实例）
 
@@ -81,7 +83,7 @@ dsh exe = C:\Users\PC\AppData\Local\Programs\DeepSeek Runtime\DeepSeek Runtime.e
 profile = C:\Users\PC\.dsh\profiles\desktop
 api base = http://127.0.0.1:5783/api/dsh-pi  (匹配依据：profile 归属 C:\Users\PC\.dsh\profiles\desktop)
 本机其它 dsh-pi 实例（不参与本次核对）：
-  port 5599  version 0.4.1  pid 22884  root ...\_probe\dsh-home-standalone\profiles\pi-standalone\node_modules\dsh-pi
+  port 5599  version 0.4.2  pid 22884  root ...\_probe\dsh-home-standalone\profiles\pi-standalone\node_modules\dsh-pi
 OK: 运行中的插件版本与磁盘一致
 ```
 
@@ -92,7 +94,37 @@ pwsh -NoProfile -File .\tools\restart-dsh.ps1 -SkipRestart `
   -Profile pi-standalone -ProfileRoot C:\path\to\dsh-home\profiles
 ```
 
-重启分支只 `Stop-Process` **目标实例**的 pid（取自 `/selfcheck` 的 `process.pid`），同一台机器上别的 profile 实例不会被牵连。
+重启分支只 `Stop-Process` **目标实例的启动根**（从实例 pid 沿父链往上走、遇到的第一个用同一个 exe 的祖先），同一台机器上别的 profile 实例各有自己的进程链，不会被牵连。
+
+#### 重启分支做对了什么（0.4.2）
+
+下面三条都是真缺陷，症状统一是「脚本说重启成功，但面板永远起不来」：
+
+1. **命令行原样复用。** 桌面实例的宿主命令行带 6 个参数（`--expose-internals`、desktop-host 的 `index.js`、app.asar 里的 `dsh` 目录、profile 目录、`primary-runtime`、`pnpm.mjs`、`runtime\bin`）。旧实现是 `Start-Process -FilePath $exe` —— 一个参数都不带，等于换个东西启动。现在从实例 pid 沿父链找**启动根**，把启动根的命令行原文直接交给子进程（`ProcessStartInfo.Arguments`，引号一个字节不动）；拿不到命令行就拒绝重启，不猜。
+2. **杀的是启动根，不是宿主 pid。** `/selfcheck` 自报的 `process.pid` 在桌面实例里是 GUI 主进程的子进程 —— 杀了它没人负责重新拉起，窗口还在、面板起不来。现在杀启动根，由它把整棵树重新拉起来。
+3. **环境变量按目标实例重算。** 从 DSH 的集成终端或工具里跑时，环境里带 `ELECTRON_RUN_AS_NODE=1`（GUI 会被当纯 node 起，窗口根本不出现），以及别处残留的 `DSH_HOME` / `DSH_PROFILE` / `DSH_PORT`，会把实例顶到错误的 home。现在按目标实例 `/selfcheck` 报的 `root` 反推 `DSH_HOME`（形如 `<home>\profiles\<name>\node_modules\dsh-pi`），`ELECTRON_RUN_AS_NODE` 只在命令行确实是「跑一个 .js」时才设，`DSH_PORT` 一律清掉；反推不出来 `exit 3`。要覆盖用 `-DshHome` / `-WorkingDirectory`。
+
+`-Plan` 打印的就是这三项的最终决定，先看它再真跑：
+
+```text
+profile = C:\Users\PC\.dsh\profiles\desktop
+api base = http://127.0.0.1:5783/api/dsh-pi  (匹配依据：指定端口 5783)
+重启计划：
+  实例 pid     = 15188（/selfcheck 自报，或端口占用者）
+  启动根 pid   = 28720
+  exe          = C:\Users\PC\AppData\Local\Programs\DeepSeek Runtime\DeepSeek Runtime.exe
+  命令行参数   = <无参数>
+  工作目录     = C:\Users\PC\AppData\Local\Programs\DeepSeek Runtime
+  环境 DSH_HOME = C:\Users\PC\.dsh
+  环境 DSH_PROFILE = desktop
+  环境 DSH_PORT = <从环境里移除>
+  环境 ELECTRON_RUN_AS_NODE = <从环境里移除>
+（-Plan：只打印计划，没有动任何进程）
+```
+
+退出码：`0` 成功；`1` 找不到/挑不出实例；`2` 版本不一致（跑起来了但装的是旧的）；`3` 拒绝重启（推不出发动参数、或脚本正跑在目标实例内部且没加 `-Force`）。
+
+这一段的三个 PowerShell 函数（`Get-LaunchSpec` / `Get-DshHomeFromRoot` / `Get-EnvPatch`）由 `node test/restart-lib.mjs` 在 pwsh 7 与 5.1 双引擎下各跑 31 条断言，`npm test` 里已接入。
 
 #### PowerShell 版本（`pwsh` 找不到 / 5.1 报语法错）
 
@@ -136,10 +168,10 @@ New-Item -ItemType Junction `
 ### 方式三：手工 pnpm add（不想跑脚本时）
 
 ```powershell
-npm pack                                        # 得到 dsh-pi-0.4.1.tgz
+npm pack                                        # 得到 dsh-pi-0.4.2.tgz
 cd "$env:USERPROFILE\.dsh\profiles\desktop"
 node "$env:USERPROFILE\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\pnpm\bin\pnpm.cjs" `
-  add "file:C:\path\to\dsh-pi-0.4.1.tgz" --ignore-scripts
+  add "file:C:\path\to\dsh-pi-0.4.2.tgz" --ignore-scripts
 ```
 
 不要在 profile 里用 `npm install`：npm 会另写一份 `package-lock.json`，而宿主插件管理器用的是 pnpm，两套锁文件互相看不见，下次插件安装就会把 node_modules 重建成 pnpm 理解的样子。
@@ -176,7 +208,7 @@ pwsh -NoProfile -File .\tools\standalone-verify.ps1 -Keep      # 保留临时目
 
 ```
 [standalone] health    = ok (boot 3102 ms)
-[standalone] plugin    = 0.4.1 (installed 0.4.1)
+[standalone] plugin    = 0.4.2 (installed 0.4.2)
 [standalone] pi source = walk-up 1.5.2
 [standalone] pi cli    = ...\Temp\dsh-pi-standalone-802b49\profiles\pi-standalone\node_modules\@earendil-works\pi-coding-agent\dist\bundle\cli.js
 [standalone] model     = Deepseek-V4.1-Flash / odys-deepseek
@@ -304,10 +336,12 @@ npm install --prefix <插件>/.runtime --save-exact --no-audit --no-fund --logle
 ## 测试
 
 ```powershell
-npm test            # selfcheck + client-render + runtime-resolve + config-hot + host-parity + timeout + parity + version
-                    # 八项全离线（不起 pi、不打 LLM），npm test 全程实测 ~5.2 秒
-                    # （其中 test/timeout.mjs 占 ~3.1 s：它用协议替身真等若干个超时周期，
-                    #   把「弹窗让位」压到毫秒级验证；其余七项合计 <1.5 s）
+npm test            # 十项门禁：selfcheck + client-render + css-tokens + runtime-resolve + config-hot
+                    # + host-parity + timeout + parity + restart-lib + version
+                    # 全离线（不起 pi、不打 LLM），全程实测 ~14.3 秒。两个大头：
+                    #   test/restart-lib.mjs ~9.1 s（pwsh 7 与 PowerShell 5.1 各起一遍跑 fixture）
+                    #   test/timeout.mjs     ~3.1 s（协议替身真等若干超时周期，把「弹窗让位」压到毫秒级）
+                    #   其余八项合计 <1.5 s
 npm run test:host   # 真起 pi 子进程跑一轮 LLM 往返（用插件的 .runtime）
 npm run test:fresh  # 模拟全新机器：拷一份不带运行时的插件 → 断言 missing → 一键安装 → 能开会话
 npm run test:config # 配置热更新：宿主就地写入 volatile 引用后 /state 必须立刻反映
@@ -331,6 +365,8 @@ pwsh -NoProfile -File .\tools\standalone-verify.ps1   # 全新 DSH_HOME 里只�
 | `test/fixtures/fake-pi-rpc.mjs` | 假 pi RPC 子进程（`FAKE_PI_MODE=dialog/silent`）：只为复现「命令永不回答」与「命令在等弹窗」两种时序，不模拟其他行为 |
 | `test/fixtures/pi-ext-ui-probe.ts` | 扩展 UI 探针（人工验证用，不参与 `npm test`）：复制到 `%USERPROFILE%\.pi\agent\extensions\` 并重启 pi 会话后，`/dsh-ui-probe` 依次弹 select→confirm→input→editor，`/dsh-ui-notify` 验五个单向方法。**扩展对话框必须真人点，自动化只能测到 host 侧的时序**，所以探针留在仓库里当复现手段 |
 | `test/client-render.mjs` | `react-dom/server` 把面板渲染成字符串（含键集与循环展开共执行 464 次，条数由脚本自报 `PASS (464 assertions)`）：挡组件异常、文案缺键、中英键集不一致、引导页结构、以及扩展 UI 四种弹窗（confirm 的「否/确认」按钮集、select 的选项数、input 的 prefill/placeholder、editor 的多行回填、空 title 回落、`dialogBudgetMs` 的「声明值与 5 分钟上限取小」四类非法值回落）。**倒计时的「还剩 Ns」文案断言不到**——那行由 `useEffect` 驱动，SSR 阶段 `left` 为 `null` 不渲染，只能在真浏览器里验 |
+| `test/css-tokens.mjs` | CSS 门禁 90 条：禁硬色值（只准 `--dsw-*`）、令牌白名单、字体栈、`:focus-visible` 可见性、`prefers-reduced-motion` 兜底，另有 0 号自检确认门禁本身不是空跑 |
+| `test/restart-lib.mjs` | 重启脚本门禁：22 条 node 断言（文件层：UTF-8 BOM、无游离 CR、库模式开关、去注释后无裸 `Start-Process -FilePath $exe`、走 `ProcessStartInfo`、有自保护）+ `test/fixtures/restart-lib-checks.ps1` 的 31 条 PS 断言（`Get-LaunchSpec` 四种输入、`Get-DshHomeFromRoot` 五种、`Get-EnvPatch` 六种、`Get-LaunchRootPid`/`Test-SelfAncestorOf` 对活进程、`Test-DshPiHealth` 对五种假响应与死端口）。**pwsh 7 与 PowerShell 5.1 各跑一遍**，是「5.1 能不能读这个脚本」的唯一机器保障 |
 | `test/version.mjs` | 版本号单一真相：`/health`、`/state`、`/diagnostics` 报的版本必须等于 `package.json` 的 `version`；换版本重新加载要跟着变（防写死常量）；`package.json` 缺失时降级 `0.0.0` 而不是崩；README 里的 tarball 名必须跟版本对齐 |
 | `test/host-parity.mjs` | host 侧离线一致性 162 条：`buildSpawnArgs` 19 条（`persist=false` 不吃 `--continue`、用户自带 `--fork`/`--no-session` 不重复生成、空 `--name` 不传）、`pickCurrentSessionFile` 8 条、以及 `/respond` 的 409/400/415/200、`/reset`、四条替换命令的 reset+refresh、`/files` 排序与 404、`/pi/changelog` 三情形、未知路由 404。**路由与参数拼错了只会静默跑偏，所以单独立门禁** |
 | `test/parity.mjs` | 与 pi 的三向对账 77 条：以 pi 的 `RpcCommand` 联合类型、`RpcSessionState` 接口、`docs/json.md` 事件表为事实来源，双向比对（我们缺的 = 缺口，我们编的 = 幻觉），再断言契约里 33 条命令 / 25 类事件 / 12 种 assistant 事件 / 27 条斜杠 / 9 个扩展 UI method 在面板里都有落地字面量，且 `CONTRACT_VERSION` 与 `package.json` 同步。0.2.5 时「只发 5/33 命令、只处理 12/25 事件、27 条斜杠一条没接而 `npm test` 全绿」正是这个门禁要拦的事 |
@@ -353,7 +389,7 @@ DSH 的插件管理器（dshmarket / 插件详情页）在安装、卸载、升�
 
 - `pnpm add dsh-free-model@3.1.0`（manifest 与 lock 都是 dsh-pi 正常运行时的状态）→ dsh-pi 与 pi 运行时都存活；
 - 故意造漂移（manifest 有 dsh-pi、lock 没有）再 `pnpm add` → pnpm 顺手把 dsh-pi 补装回来，锁被重写，仍然可用；
-- 锁里的 `file:.dsh-local-packages/dsh-pi-0.4.1.tgz` 是**相对 profile 根**解析的，删掉 `.dsh-local-packages` 会让 `install` 直接报 `ERR_PNPM_TARBALL_READ_LOCAL_TARBALL` —— 想改锁前先确认这个目录还在。
+- 锁里的 `file:.dsh-local-packages/dsh-pi-<ver>.tgz` 是**相对 profile 根**解析的，删掉 `.dsh-local-packages` 会让 `install` 直接报 `ERR_PNPM_TARBALL_READ_LOCAL_TARBALL` —— 想改锁前先确认这个目录还在。
 
 `.dsh-local-packages/` 里的 tarball 是回滚与重装的锚点，不要手动清。
 

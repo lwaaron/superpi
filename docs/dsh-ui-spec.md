@@ -4,7 +4,7 @@
 | --- | --- |
 | 文档版本 | 1.0 |
 | 代码基线 | `client.js` 3971 行 / 218023 B / mtime `2026-11-13T16:46:52Z` / sha256 前 12 位 `b725c3103261` |
-| 版本号 | `package.json` version = **0.4.1**（`index.js` 的 `CONTRACT_VERSION` 同为 `0.4.1`） |
+| 版本号 | `package.json` version = **0.4.2**（`index.js` 的 `CONTRACT_VERSION` 同为 `0.4.2`；`client.js` 自 0.4.1 起未变，下表字节数与 sha 仍适用） |
 | 设计系统基线 | DSH 客户端样式包 `index-lh_YM6sT.css`（87124 字符 / 748 条规则 / 17 个 `@keyframes`）与 `tokens.txt`（414 个 `--dsw-*` 令牌，浅深两套值） |
 | 采集口径 | 全部数值由脚本从仓库文件与探针文件读出；两种字符口径（源文本 / 门禁还原文本）分别标注 |
 | 适用范围 | 只描述样式令牌、组件规格与目录选择器交互。不改任何源码，本文件是**规格**而非实现 |
@@ -1371,4 +1371,4 @@ Select-String -Path client.js -Pattern "function dirPickModel"
 
 ---
 
-_本文基于 client.js@3971（mtime 2026-11-13T16:46:52Z，sha256 前缀 `b725c3103261`）与 dsh-pi 0.4.1。所有行号会随后续改动漂移，定位请用类名 grep。_
+_本文基于 client.js@3971（mtime 2026-11-13T16:46:52Z，sha256 前缀 `b725c3103261`）与 dsh-pi 0.4.2。所有行号会随后续改动漂移，定位请用类名 grep。_

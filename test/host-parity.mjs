@@ -16,6 +16,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const root = path.dirname(here)
+// 契约版本从 package.json 读，避免每次升版号都要来这里手改一个字面量。
+const PKG_VERSION = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).version
 // Windows 下 Node 的 ESM loader 只接受 file:// URL，裸盘符路径会抛
 // ERR_UNSUPPORTED_ESM_URL_SCHEME，必须过 pathToFileURL。
 const mod = await import(pathToFileURL(path.join(root, 'index.js')).href)
@@ -204,7 +206,7 @@ try {
     // 3.1 /contract：原样序列化，字段一个不少
     const contract = await request(server.base, '/contract')
     check('contract 200', contract.status === 200, String(contract.status))
-    eq('contract version', contract.body.version, '0.4.1')
+    eq('contract version', contract.body.version, PKG_VERSION)
     eq('contract piVersion', contract.body.piVersion, '1.5.2')
     eq('contract rpcCommands 33', contract.body.rpcCommands.length, 33)
     // 25 种出站事件 + response = 26，见 src/rpc-contract.mjs:76 的注释。

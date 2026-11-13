@@ -42,6 +42,7 @@ DSH（DeepSeek Runtime）插件：把 pi 编码 agent 装进 DSH 的侧栏面板
 
 ## 5. 禁止项
 
+- **禁止在 `tools/restart-dsh.ps1` 里用 `Start-Process -FilePath $exe` 重启**（0.4.2 之前的老实现）。桌面实例的启动命令行带 6 个参数，裸起等于换个东西启动。重启必须走 `Get-LaunchSpec` + `ProcessStartInfo`，参数一个字节都不重排。
 - **禁止以「UI 没做」为由在 host 或协议层留缺口。** 缺的是 UI 就说缺 UI，别把能力做成半截。
 - **禁止把斜杠命令当普通文本发给模型。** `/compact` 走的是 `compact` 命令，绝不能当 prompt 发出去——pi 的 RPC prompt 通道只认扩展命令、`/skill:`、prompt template（`agent-session.ts:2410-2445`），TUI 那 27 条内置命令在 RPC 侧一条都没有。输入一律先过 `classifyInput()`，`handleSlash`（`client.js:2983-2989`）按 disposition 五路分流。未知斜杠照发是 pi 的既有语义，不要"顺手修"。
 - **禁止硬编码本机绝对路径。** pi 可执行与 node 必须走 `src/pi-runtime.mjs` 的解析链（config → 环境变量 → 插件 `.runtime` → 插件 `node_modules` → 逐级 walk-up → pnpm store → 全局 npm）。
@@ -63,11 +64,13 @@ DSH（DeepSeek Runtime）插件：把 pi 编码 agent 装进 DSH 的侧栏面板
 ## 7. 验证命令
 
 ```powershell
-npm test                                        # 8 项离线门禁，全程实测 ~5.2 秒（其中 test/timeout.mjs 占 ~3.1 s，
-                                                # 它用协议替身真等超时周期；其余七项合计 <1.5 s）：
-                                                # selfcheck → client-render → runtime-resolve → config-hot
-                                                # → host-parity(125) → timeout(28) → parity(65) → version
-npm run test:all                                # 上面 8 项 + 真起 pi 子进程跑一轮 LLM
+npm test                                        # 10 项离线门禁，全程实测 ~14.3 秒：
+                                                # selfcheck → client-render(464) → css-tokens(90)
+                                                # → runtime-resolve → config-hot → host-parity(162)
+                                                # → timeout(28) → parity(77) → restart-lib(31×2 引擎) → version
+                                                # 耗时大头：restart-lib ~9.1 s（起 pwsh 7 + 5.1 各跑一遍 fixture）、
+                                                # timeout ~3.1 s（真等超时周期）；其余合计 <1.5 s
+npm run test:all                                # 上面 10 项 + 真起 pi 子进程跑一轮 LLM
 npm run test:fresh                              # 全新机器：无运行时 → missing → 一键安装 → 能开会话（需网络）
 pwsh -NoProfile -File tools\standalone-verify.ps1   # 全新 DSH_HOME 自证（装 tarball、起独立端口、跑一轮、清理）
 pwsh -NoProfile -File install-plugin.ps1 -Profile desktop   # 装进 desktop profile（含 rollback 脚本）
@@ -77,7 +80,7 @@ pwsh -NoProfile -File install-plugin.ps1 -Profile desktop   # 装进 desktop pro
 
 `test/fixtures/` 放两类「不能在门禁里自造」的东西：`fake-pi-rpc.mjs`（pi RPC 协议替身，`FAKE_PI_MODE=dialog|silent` 让超时语义可以在毫秒级被实测，`test/timeout.mjs` 用它）与 `pi-ext-ui-probe.ts`（真扩展，**只能靠真人点击验证**——扩展 UI 的九个 method 没有替身能覆盖「用户到底点了没」。用法写在文件头：复制到 `%USERPROFILE%\.pi\agent\extensions\`、重启 pi 会话、依次跑 `/dsh-ui-probe` 与 `/dsh-ui-notify`、验完删除）。
 
-## 8. 现状快照（2026-11-13 · v0.4.1）
+## 8. 现状快照（2026-11-13 · v0.4.2）
 
 - **RPC 命令**：pi 侧 33 条，面板已实现 32 条 + `steer` 1 条走等价路径（`prompt` + `streamingBehavior:'steer'`，`client.js:2447`），缺口 0。
 - **扩展 UI**：9 种请求全部已实现（`applyExtensionUi()` `client.js:898-943`），3 种应答全通（`POST /sessions/:id/respond` `index.js:839-858`）。倒计时取 `min(pi 声明值, 5 分钟兜底)`（`dialogBudgetMs()` `client.js:883`，`DIALOG_FALLBACK_MS` `src/rpc-contract.mjs:260`），且 host 侧命令 timer 会为挂起的弹窗让位（`restartPendingTimers()` `src/pi-rpc.mjs:472`）——**这两侧必须同时成立**，否则就是 0.2.5 那个「红条与对话框并存」的缺陷。
@@ -88,5 +91,6 @@ pwsh -NoProfile -File install-plugin.ps1 -Profile desktop   # 装进 desktop pro
 - **工作区选择（0.4.0）**：入口统一叫「选择工作区」（`pickDir`/`dirTitle`/`dirHere` 三处 ZH+EN 同改），交互从铺满面板的抽屉改成 680x500 居中模态（`client.js:2115` `.dsh-pi-dialog-wrap` + `.dsh-pi-dir-dialog`，`role="dialog"`/`aria-modal`）——它是打断当前会话的决策。新增「此电脑」盘符层：`GET /directories` 下发 `roots`（Windows 探 A-Z 各盘根，10s 缓存 `ROOTS_TTL_MS`），否则从工作区逐级往上只能走到当前盘根，D:/E:/F: 上的工程永远选不到。
 - **过程行（0.4.0）**：工具调用 / 工具结果 / `!` bash 三类行去掉圆角卡片外壳（`border-radius:0`、`background:transparent`、无 hairline），改平铺行 + 展开区左侧竖线，与 `.dsh-pi-think` 同一套语言。一次任务十几条工具卡若每条都套圆角 + 描边，会形成框套框的噪音墙。
 - **会话历史对账（0.4.1）**：`attach` 之后补一次 `get_messages` 整表重建（`messagesFromHistory()`，`client.js` 内由 `hydrate()` 调用）。根因：`new_session` / `switch_session` / `fork` / `clone` 成功后 host 会 `proc.resetEvents()`（`SESSION_REPLACING_COMMANDS`，`index.js:74`）把事件缓冲清空，历史消息不再以事件重放 —— 只靠 `snapshot` 重放的话切过去必然空白（0.4.0 及之前「点开历史会话没有内容」）。两道防线：会话已切走则丢弃响应（`sessionRef.current !== id`）；`busy` 期间不覆盖列表，改挂 `hydratePendingRef`，由 `drainHydrate()` 在 `agent_settled` 之后补。`bashRef` 语义不变（仍只表示「bash 正在跑」，Esc `abort_bash` 依赖它）。
-- 门禁规模（0.4.1）：`test/client-render.mjs` 464 断言、`test/css-tokens.mjs` 90、`test/host-parity.mjs` 162（含 roots 10 条）、`test/parity.mjs` 77（§7 新增 12 条钉死对账接线）。
+- **重启脚本（0.4.2）**：`tools/restart-dsh.ps1` 重写，杀的是**启动根**并按**原命令行原文**重建（`ProcessStartInfo.Arguments`），环境变量按目标实例 `/selfcheck` 报的 `root` 反推 `DSH_HOME`、清 `DSH_PORT`、`ELECTRON_RUN_AS_NODE` 按需设；推不出来 `exit 3`，脚本自己在目标实例内部时也 `exit 3`（`-Force` 可越过），`-Plan` 只打印计划。旧实现三处缺陷：`Start-Process -FilePath $exe` 丢 6 个启动参数、杀宿主 pid 导致没人重新拉起、继承 `ELECTRON_RUN_AS_NODE=1` 等污染环境。库模式 `$env:DSH_PI_RESTART_LIB=1` 只加载函数，供测试不触动真实例。
+- 门禁规模（0.4.2）：`test/client-render.mjs` 464 断言、`test/css-tokens.mjs` 90、`test/host-parity.mjs` 162（含 roots 10 条）、`test/parity.mjs` 77（§7 新增 12 条钉死对账接线）、`test/restart-lib.mjs` 22 条 node 断言 + 双引擎各 31 条 PS 断言（文件层 BOM/CR/无裸 `Start-Process` + 假服务 5 种响应 + bat 门禁）。
 - 逐条账本见 `docs/parity.md`；机器保障是 `npm test` 里的 `test/parity.mjs` + `test/host-parity.mjs` + `test/timeout.mjs`。
