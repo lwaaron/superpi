@@ -53,7 +53,17 @@ PATH 上的 `pnpm.ps1` 通常是 corepack shim，直接调用会报 `Cannot find
 
 **装完要重启 DSH 才生效**（插件在 import 时就把代码快照进内存了）。不想保留时运行脚本打印出来的 `rollback-<时间戳>.ps1` 即可原样退回。
 
-重启这一步有现成脚本：它关掉宿主、重新拉起、等 `/api/dsh-pi/health` 就绪，再拿运行中 `/state` 报的版本与磁盘上 `node_modules\dsh-pi\package.json` 的版本对比，不一致就 `exit 2`（典型原因是旧进程没退干净）：
+重启这一步有现成脚本：它关掉宿主、重新拉起、等 `/api/dsh-pi/health` 就绪，再拿运行中 `/state` 报的版本与**该实例自己加载的那份** `package.json` 对比，不一致就 `exit 2`（典型原因是旧进程没退干净）。
+
+**最省事的用法：双击 `tools\restart-dsh.bat`**（Windows 上不需要先装 PowerShell 7，见下面「PowerShell 版本」）：
+
+```text
+tools\restart-dsh.bat                      双击或命令行直接跑：重启 + 核对
+tools\restart-dsh.bat -SkipRestart         只核对，不重启（改完代码想确认生效没有）
+tools\restart-dsh.bat -Port 5783           本机有多个实例时指定端口
+```
+
+命令行等价写法：
 
 ```powershell
 pwsh -NoProfile -File .\tools\restart-dsh.ps1                  # 重启 + 核对版本
@@ -61,6 +71,44 @@ pwsh -NoProfile -File .\tools\restart-dsh.ps1 -SkipRestart      # 只核对，�
 ```
 
 > 它会把当前 DSH 窗口一起关掉 —— 别让 DSH 里的 agent 代跑（会杀掉自己所在的宿主），在外部终端执行。
+
+#### 本机同时有多个 instance（desktop / 独立验证实例）
+
+脚本按 **profile 归属**挑实例，不再「取第一个能回 /health 的端口」：它先向每个 DeepSeek 进程占用的端口问 `/selfcheck`，拿到该实例自己报的插件 `root`，只有 `root` 落在目标 profile 目录下才算命中。归属不唯一时脚本不会瞎猜 —— 打印实例表然后 `exit 1`，要求用 `-Port` 指定：
+
+```text
+dsh exe = C:\Users\PC\AppData\Local\Programs\DeepSeek Runtime\DeepSeek Runtime.exe
+profile = C:\Users\PC\.dsh\profiles\desktop
+api base = http://127.0.0.1:5783/api/dsh-pi  (匹配依据：profile 归属 C:\Users\PC\.dsh\profiles\desktop)
+本机其它 dsh-pi 实例（不参与本次核对）：
+  port 5599  version 0.4.1  pid 22884  root ...\_probe\dsh-home-standalone\profiles\pi-standalone\node_modules\dsh-pi
+OK: 运行中的插件版本与磁盘一致
+```
+
+查非默认 profile / 非默认 DSH_HOME 的实例：
+
+```powershell
+pwsh -NoProfile -File .\tools\restart-dsh.ps1 -SkipRestart `
+  -Profile pi-standalone -ProfileRoot C:\path\to\dsh-home\profiles
+```
+
+重启分支只 `Stop-Process` **目标实例**的 pid（取自 `/selfcheck` 的 `process.pid`），同一台机器上别的 profile 实例不会被牵连。
+
+#### PowerShell 版本（`pwsh` 找不到 / 5.1 报语法错）
+
+两种失败都见过，都已处理：
+
+| 现象 | 原因 | 处理 |
+| --- | --- | --- |
+| `pwsh : 无法将"pwsh"项识别为 cmdlet…` | PowerShell 7 装了但目录不在 `PATH`（`C:\Program Files\PowerShell\7`），或者用的是加 PATH 之前开的旧终端 | 双击 `restart-dsh.bat`：它先 `where pwsh.exe`，找不到再试 `%ProgramFiles%\PowerShell\7\pwsh.exe`，都没有就回落到 5.1 的 `powershell.exe` |
+| 5.1 下报 `Unexpected token ')'` / 中文变乱码 | 脚本含中文却没写 UTF-8 BOM，5.1 按 ANSI(GBK) 解码 | `tools\*.ps1` 一律带 BOM；改完文件跑一次 `tools\fix-bom.ps1` 复查并补回 |
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\restart-dsh.ps1 -SkipRestart   # 5.1 兜底
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\fix-bom.ps1                          # 补/查 BOM
+```
+
+`fix-bom.ps1` 本身是纯 ASCII，所以它在无 BOM 的 5.1 下也能跑 —— 别给它加中文注释。
 
 只想验证不落地：`pwsh -NoProfile -File .\tools\verify-packed.ps1 -Keep keep`。
 
@@ -88,10 +136,10 @@ New-Item -ItemType Junction `
 ### 方式三：手工 pnpm add（不想跑脚本时）
 
 ```powershell
-npm pack                                        # 得到 dsh-pi-0.4.0.tgz
+npm pack                                        # 得到 dsh-pi-0.4.1.tgz
 cd "$env:USERPROFILE\.dsh\profiles\desktop"
 node "$env:USERPROFILE\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\pnpm\bin\pnpm.cjs" `
-  add "file:C:\path\to\dsh-pi-0.4.0.tgz" --ignore-scripts
+  add "file:C:\path\to\dsh-pi-0.4.1.tgz" --ignore-scripts
 ```
 
 不要在 profile 里用 `npm install`：npm 会另写一份 `package-lock.json`，而宿主插件管理器用的是 pnpm，两套锁文件互相看不见，下次插件安装就会把 node_modules 重建成 pnpm 理解的样子。
@@ -128,7 +176,7 @@ pwsh -NoProfile -File .\tools\standalone-verify.ps1 -Keep      # 保留临时目
 
 ```
 [standalone] health    = ok (boot 3102 ms)
-[standalone] plugin    = 0.4.0 (installed 0.4.0)
+[standalone] plugin    = 0.4.1 (installed 0.4.1)
 [standalone] pi source = walk-up 1.5.2
 [standalone] pi cli    = ...\Temp\dsh-pi-standalone-802b49\profiles\pi-standalone\node_modules\@earendil-works\pi-coding-agent\dist\bundle\cli.js
 [standalone] model     = Deepseek-V4.1-Flash / odys-deepseek
@@ -237,6 +285,7 @@ npm install --prefix <插件>/.runtime --save-exact --no-audit --no-fund --logle
 - pi 运行时缺失时整页切到引导（见上文），不创建会话、不产生半死不活的状态。
 - pi 进程退出时面板转红点并提供「重试」与「重新检查」，不会静默空白。
 - 历史会话抽屉读 `GET /sessions/history`（扫 `~/.pi/agent/sessions`），就地过滤，选中走 `switch_session`；`/fork` 抽屉读 `get_fork_messages`，选中走 `fork` 并把那条用户消息回填进编辑器。
+- **挂载即对账**：`attach` 之后补一次 `get_messages` 整表重建消息列表（`messagesFromHistory`）。原因是 `new_session` / `switch_session` / `fork` / `clone` 成功后 host 会 `resetEvents()` 把事件缓冲清空，历史消息不会再以事件形式重放 —— 只靠 `snapshot` 重放的话，切过去必然是空白（0.4.0 及之前「点开历史会话没有内容」就是这个根因；命令行 pi 从 jsonl 恢复所以不受影响）。两道防线：会话已切走则丢弃响应；`busy` 期间不覆盖列表，改记待办，等 `agent_settled` 那一拍由 `drainHydrate` 补上。
 
 ## 自检：现在跑的是不是磁盘上那份代码
 
@@ -281,10 +330,10 @@ pwsh -NoProfile -File .\tools\standalone-verify.ps1   # 全新 DSH_HOME 里只�
 | `test/timeout.mjs` | 28 条超时语义门禁：`timeoutLimitMs` 的三态（正数=毫秒上限 / `0``负数``Infinity`=不设上限 / `NaN``乱码``对象`=TypeError 绝不静默降级）、到期即 reject 且不留孤儿 pending、不设上限时进程关闭由 `handleExit` 兜底、**弹窗未答则计时期续期**、**应答后重开一整轮窗口**、续期上限耗尽时报「dialog(s) never answered」。用 `test/fixtures/fake-pi-rpc.mjs` 做协议替身，把 5 分钟的真实等待压到毫秒级 —— 这是 0.3.0 之前「红条与对话框并存」那个缺陷唯一可靠的门禁 |
 | `test/fixtures/fake-pi-rpc.mjs` | 假 pi RPC 子进程（`FAKE_PI_MODE=dialog/silent`）：只为复现「命令永不回答」与「命令在等弹窗」两种时序，不模拟其他行为 |
 | `test/fixtures/pi-ext-ui-probe.ts` | 扩展 UI 探针（人工验证用，不参与 `npm test`）：复制到 `%USERPROFILE%\.pi\agent\extensions\` 并重启 pi 会话后，`/dsh-ui-probe` 依次弹 select→confirm→input→editor，`/dsh-ui-notify` 验五个单向方法。**扩展对话框必须真人点，自动化只能测到 host 侧的时序**，所以探针留在仓库里当复现手段 |
-| `test/client-render.mjs` | `react-dom/server` 把面板渲染成字符串（70 个断言点、含键集与循环展开共执行 335 次，条数由脚本自报 `PASS (335 assertions)`）：挡组件异常、文案缺键、中英键集不一致、引导页结构、以及扩展 UI 四种弹窗（confirm 的「否/确认」按钮集、select 的选项数、input 的 prefill/placeholder、editor 的多行回填、空 title 回落、`dialogBudgetMs` 的「声明值与 5 分钟上限取小」四类非法值回落）。**倒计时的「还剩 Ns」文案断言不到**——那行由 `useEffect` 驱动，SSR 阶段 `left` 为 `null` 不渲染，只能在真浏览器里验 |
+| `test/client-render.mjs` | `react-dom/server` 把面板渲染成字符串（含键集与循环展开共执行 464 次，条数由脚本自报 `PASS (464 assertions)`）：挡组件异常、文案缺键、中英键集不一致、引导页结构、以及扩展 UI 四种弹窗（confirm 的「否/确认」按钮集、select 的选项数、input 的 prefill/placeholder、editor 的多行回填、空 title 回落、`dialogBudgetMs` 的「声明值与 5 分钟上限取小」四类非法值回落）。**倒计时的「还剩 Ns」文案断言不到**——那行由 `useEffect` 驱动，SSR 阶段 `left` 为 `null` 不渲染，只能在真浏览器里验 |
 | `test/version.mjs` | 版本号单一真相：`/health`、`/state`、`/diagnostics` 报的版本必须等于 `package.json` 的 `version`；换版本重新加载要跟着变（防写死常量）；`package.json` 缺失时降级 `0.0.0` 而不是崩；README 里的 tarball 名必须跟版本对齐 |
-| `test/host-parity.mjs` | host 侧离线一致性 125 条：`buildSpawnArgs` 19 条（`persist=false` 不吃 `--continue`、用户自带 `--fork`/`--no-session` 不重复生成、空 `--name` 不传）、`pickCurrentSessionFile` 8 条、以及 `/respond` 的 409/400/415/200、`/reset`、四条替换命令的 reset+refresh、`/files` 排序与 404、`/pi/changelog` 三情形、未知路由 404。**路由与参数拼错了只会静默跑偏，所以单独立门禁** |
-| `test/parity.mjs` | 与 pi 的三向对账 65 条：以 pi 的 `RpcCommand` 联合类型、`RpcSessionState` 接口、`docs/json.md` 事件表为事实来源，双向比对（我们缺的 = 缺口，我们编的 = 幻觉），再断言契约里 33 条命令 / 25 类事件 / 12 种 assistant 事件 / 27 条斜杠 / 9 个扩展 UI method 在面板里都有落地字面量，且 `CONTRACT_VERSION` 与 `package.json` 同步。0.2.5 时「只发 5/33 命令、只处理 12/25 事件、27 条斜杠一条没接而 `npm test` 全绿」正是这个门禁要拦的事 |
+| `test/host-parity.mjs` | host 侧离线一致性 162 条：`buildSpawnArgs` 19 条（`persist=false` 不吃 `--continue`、用户自带 `--fork`/`--no-session` 不重复生成、空 `--name` 不传）、`pickCurrentSessionFile` 8 条、以及 `/respond` 的 409/400/415/200、`/reset`、四条替换命令的 reset+refresh、`/files` 排序与 404、`/pi/changelog` 三情形、未知路由 404。**路由与参数拼错了只会静默跑偏，所以单独立门禁** |
+| `test/parity.mjs` | 与 pi 的三向对账 77 条：以 pi 的 `RpcCommand` 联合类型、`RpcSessionState` 接口、`docs/json.md` 事件表为事实来源，双向比对（我们缺的 = 缺口，我们编的 = 幻觉），再断言契约里 33 条命令 / 25 类事件 / 12 种 assistant 事件 / 27 条斜杠 / 9 个扩展 UI method 在面板里都有落地字面量，且 `CONTRACT_VERSION` 与 `package.json` 同步。0.2.5 时「只发 5/33 命令、只处理 12/25 事件、27 条斜杠一条没接而 `npm test` 全绿」正是这个门禁要拦的事 |
 | `tools/standalone-verify.ps1` | 全新 DSH_HOME 自证：建临时 profile → pnpm 装 tarball → 起独立实例 → 真实 LLM 往返 → 清理（端到端演练，不是单测） |
 
 `client-render.mjs` 需要 `react` / `react-dom` —— 本插件刻意不带 `node_modules`，所以它从同级 `pi-main/node_modules` 借（找不到就 SKIP 并退出 0，不算失败）。
@@ -304,7 +353,7 @@ DSH 的插件管理器（dshmarket / 插件详情页）在安装、卸载、升�
 
 - `pnpm add dsh-free-model@3.1.0`（manifest 与 lock 都是 dsh-pi 正常运行时的状态）→ dsh-pi 与 pi 运行时都存活；
 - 故意造漂移（manifest 有 dsh-pi、lock 没有）再 `pnpm add` → pnpm 顺手把 dsh-pi 补装回来，锁被重写，仍然可用；
-- 锁里的 `file:.dsh-local-packages/dsh-pi-0.4.0.tgz` 是**相对 profile 根**解析的，删掉 `.dsh-local-packages` 会让 `install` 直接报 `ERR_PNPM_TARBALL_READ_LOCAL_TARBALL` —— 想改锁前先确认这个目录还在。
+- 锁里的 `file:.dsh-local-packages/dsh-pi-0.4.1.tgz` 是**相对 profile 根**解析的，删掉 `.dsh-local-packages` 会让 `install` 直接报 `ERR_PNPM_TARBALL_READ_LOCAL_TARBALL` —— 想改锁前先确认这个目录还在。
 
 `.dsh-local-packages/` 里的 tarball 是回滚与重装的锚点，不要手动清。
 
