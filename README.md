@@ -76,10 +76,10 @@ New-Item -ItemType Junction `
 ### 方式三：手工 pnpm add（不想跑脚本时）
 
 ```powershell
-npm pack                                        # 得到 dsh-pi-0.2.2.tgz
+npm pack                                        # 得到 dsh-pi-0.2.4.tgz
 cd "$env:USERPROFILE\.dsh\profiles\desktop"
 node "$env:USERPROFILE\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\pnpm\bin\pnpm.cjs" `
-  add "file:C:\path\to\dsh-pi-0.2.2.tgz" --ignore-scripts
+  add "file:C:\path\to\dsh-pi-0.2.4.tgz" --ignore-scripts
 ```
 
 不要在 profile 里用 `npm install`：npm 会另写一份 `package-lock.json`，而宿主插件管理器用的是 pnpm，两套锁文件互相看不见，下次插件安装就会把 node_modules 重建成 pnpm 理解的样子。
@@ -93,6 +93,44 @@ Select-String -LiteralPath pnpm-lock.yaml -Pattern '^\s+dsh-pi:$'          # loc
 Test-Path node_modules\dsh-pi\index.js                                     # 代码在
 Select-String -LiteralPath node_modules\.modules.yaml -Pattern 'dsh-pi'    # pnpm 认识它
 ```
+
+### 方式四：独立运行验证（全新 DSH_HOME，不动现有 profile）
+
+想知道「这东西真的能独立跑吗」，用这个脚本自证。它在你没碰过的临时 `DSH_HOME` 里从零搭一个 profile，只装 dsh-pi，启动、开会话、跑一轮真实 LLM 往返，然后全部删掉：
+
+```powershell
+pwsh -NoProfile -File .\tools\standalone-verify.ps1            # 默认 5599 端口
+pwsh -NoProfile -File .\tools\standalone-verify.ps1 -Keep      # 保留临时目录便于排查
+```
+
+它做的每一步都可核对：
+
+1. `npm pack` 出 tarball（已有同版本 tarball 则复用）；
+2. 建 `%TEMP%\dsh-pi-standalone-<6hex>\profiles\pi-standalone`，四份配置文件：`package.json`（bundles 只留 `@deepseek-ai/dsh-base` + `@deepseek-ai/dsh-web-app`）、`cordis.yml`（空列表）、`pnpm-workspace.yaml`（`nodeLinker: hoisted`）、`cordis.patch.yml`（唯一的 insert 就是 dsh-pi）；
+3. 用 **DSH 自带的 pnpm** 把 tarball 装进这个 profile —— pi 运行时作为 `optionalDependency` 被提升进来；
+4. 用 **DSH 自己的 Electron 二进制**当 node 启动这个 profile 的 web 服务（`ELECTRON_RUN_AS_NODE=1`，独立端口）；
+5. 打 `/health` → `/state` → `POST /sessions` → `get_state` → prompt「只说两个字：独立」→ 轮询 `snapshot` 等到 `agent_settled` → `DELETE`；
+6. `taskkill` 关服务，删临时目录；助手回复非空才算 PASS（exit 0）。
+
+通过时的关键输出（`/state` 的 `cliSource` 必须是 `walk-up`，`cliPath` 必须落在临时 profile 的 `node_modules` 里 —— 这两条同时成立，才证明插件没有依赖本机任何源码路径）：
+
+```
+[standalone] health    = ok (boot 3102 ms)
+[standalone] plugin    = 0.2.4 (installed 0.2.4)
+[standalone] pi source = walk-up 1.5.2
+[standalone] pi cli    = ...\Temp\dsh-pi-standalone-802b49\profiles\pi-standalone\node_modules\@earendil-works\pi-coding-agent\dist\bundle\cli.js
+[standalone] model     = Deepseek-V4.1-Flash / odys-deepseek
+[standalone] session   = d6406878-cc2f-4726-9a5b-fd5c51fac9fa pid=10036
+[standalone] assistant = '独立' (2595 ms)
+[standalone] PASS - dsh-pi runs standalone in a fresh DSH_HOME
+```
+
+两条容易踩的：
+
+- **profile 名不能叫 `web` / `desktop` / `tui` / `headless`** —— 这几个是 shipped 保留名，只能当模板用，要另起名字（脚本用 `pi-standalone`）。命令行形状是 `dsh <profileName> --port N --no-open`，app 参数写在 profile 名后面；写成 `--profile x web --port N` 会报 `too many arguments`。
+- **`app.asar` 在文件系统视角是单个文件**，`Test-Path app.asar\dsh\...\cli.js` 恒为 false。脚本只校验 asar 本体在不在，asar 内部路径交给 Electron 解析。同理别硬编码安装目录名，用 `Get-Process` 拿真实路径。
+
+> 脚本里的 `npm pack` 兜底走 `127.0.0.1:10808` 代理（仅在环境里没设 `HTTPS_PROXY` 时）。换机器跑请先导出自己的代理变量，或用 `-PnpmPath` 指到有效的 `pnpm.cjs`。
 
 ## pi 运行时：装在哪、怎么找
 
@@ -185,12 +223,13 @@ npm install --prefix <插件>/.runtime --save-exact --no-audit --no-fund --logle
 ## 测试
 
 ```powershell
-npm test            # selfcheck + client-render + runtime-resolve + config-hot，约 3 秒，不联网
+npm test            # selfcheck + client-render + runtime-resolve + config-hot + version，约 3 秒，不联网
 npm run test:host   # 真起 pi 子进程跑一轮 LLM 往返（用插件的 .runtime）
 npm run test:fresh  # 模拟全新机器：拷一份不带运行时的插件 → 断言 missing → 一键安装 → 能开会话
 npm run test:config # 配置热更新：宿主就地写入 volatile 引用后 /state 必须立刻反映
 npm run test:all    # 以上除 fresh 外全部串起来
 npm run verify      # npm pack → 装到临时目录 → 用打包产物跑真实 LLM 往返
+pwsh -NoProfile -File .\tools\standalone-verify.ps1   # 全新 DSH_HOME 里只装本插件，独立起服务跑一轮真实 LLM
 ```
 
 各文件管什么：
@@ -205,6 +244,8 @@ npm run verify      # npm pack → 装到临时目录 → 用打包产物跑真�
 | `test/fresh-boot.mjs` | 全新机器模拟：解析链明确报 missing → `POST /runtime/install` → `source` 变 `plugin-runtime` → 能开会话 |
 | `test/selfcheck.mjs` | 证明 `/selfcheck` 能分辨「内存里跑的代码」与「磁盘上的代码」 |
 | `test/client-render.mjs` | `react-dom/server` 把面板渲染成字符串：挡组件异常、文案缺键、中英键集不一致、引导页结构 |
+| `test/version.mjs` | 版本号单一真相：`/health`、`/state`、`/diagnostics` 报的版本必须等于 `package.json` 的 `version`；换版本重新加载要跟着变（防写死常量）；`package.json` 缺失时降级 `0.0.0` 而不是崩；README 里的 tarball 名必须跟版本对齐 |
+| `tools/standalone-verify.ps1` | 全新 DSH_HOME 自证：建临时 profile → pnpm 装 tarball → 起独立实例 → 真实 LLM 往返 → 清理（端到端演练，不是单测） |
 
 `client-render.mjs` 需要 `react` / `react-dom` —— 本插件刻意不带 `node_modules`，所以它从同级 `pi-main/node_modules` 借（找不到就 SKIP 并退出 0，不算失败）。
 
@@ -223,7 +264,7 @@ DSH 的插件管理器（dshmarket / 插件详情页）在安装、卸载、升�
 
 - `pnpm add dsh-free-model@3.1.0`（manifest 与 lock 都是 dsh-pi 正常运行时的状态）→ dsh-pi 与 pi 运行时都存活；
 - 故意造漂移（manifest 有 dsh-pi、lock 没有）再 `pnpm add` → pnpm 顺手把 dsh-pi 补装回来，锁被重写，仍然可用；
-- 锁里的 `file:.dsh-local-packages/dsh-pi-0.2.2.tgz` 是**相对 profile 根**解析的，删掉 `.dsh-local-packages` 会让 `install` 直接报 `ERR_PNPM_TARBALL_READ_LOCAL_TARBALL` —— 想改锁前先确认这个目录还在。
+- 锁里的 `file:.dsh-local-packages/dsh-pi-0.2.4.tgz` 是**相对 profile 根**解析的，删掉 `.dsh-local-packages` 会让 `install` 直接报 `ERR_PNPM_TARBALL_READ_LOCAL_TARBALL` —— 想改锁前先确认这个目录还在。
 
 `.dsh-local-packages/` 里的 tarball 是回滚与重装的锚点，不要手动清。
 

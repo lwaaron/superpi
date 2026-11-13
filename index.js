@@ -39,7 +39,6 @@ export const inject = []
 
 const PLUGIN_ID = 'dsh-pi'
 const DISPLAY_NAME = 'pi'
-const VERSION = '0.2.2'
 const API_PREFIX = '/api/' + PLUGIN_ID
 const MAX_SESSIONS = 8
 const MAX_BODY_BYTES = 4 * 1024 * 1024
@@ -75,6 +74,21 @@ const SELF_FILES = [
 
 const PLUGIN_ROOT = (() => {
   try { return path.dirname(fileURLToPath(import.meta.url)) } catch { return '' }
+})()
+
+/**
+ * 版本号只有一份真相：本包 package.json 的 version。
+ *
+ * 这里以前是手写常量，升包后忘了同步就会让 /health、/state、/diagnostics 报旧号
+ * （实跑踩过：pnpm 装进去的是 0.2.3，接口一路报 0.2.2，排查时误导性极强）。
+ * 读不到时降级成 '0.0.0' 而不是崩：版本号是诊断信息，不该成为启动前置条件。
+ */
+const VERSION = (() => {
+  if (PLUGIN_ROOT === '') return '0.0.0'
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(PLUGIN_ROOT, 'package.json'), 'utf8'))
+    return typeof pkg.version === 'string' && pkg.version.trim() !== '' ? pkg.version.trim() : '0.0.0'
+  } catch { return '0.0.0' }
 })()
 
 const LOAD_AT = new Date()
