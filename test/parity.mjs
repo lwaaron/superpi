@@ -377,6 +377,30 @@ check('应答弹窗后重开一整轮超时窗口（不继承已烧掉的时间�
 check('respond 里调用 restartPendingTimers（答题就是活着的证据）', hostSource.includes('this.pendingUi.delete(id)\n    this.restartPendingTimers()') === true)
 check('面板倒计时优先用扩展声明的 timeout', clientSource.includes('Math.min(declared, DIALOG_FALLBACK_MS)') === true)
 
+// ── 7. 会话切换后的历史对账（0.4.1 修「点开历史会话没有内容」）──────────────
+//
+// 根因不在面板的渲染，而在数据来源：switch_session / fork / clone / new_session 成功后
+// host 会调 proc.resetEvents()（SESSION_REPLACING_COMMANDS），事件缓冲归零，
+// 之后 snapshot 里一条历史都没有。旧实现只重放事件缓冲，于是面板永远空白。
+// 命令行的 pi 从 jsonl 恢复 messages，所以 TUI 正常 —— 两边差别就在这里。
+//
+// 修法是挂载后调一次 get_messages 整表重建。这里把接线钉死：
+// 五个入口（首次 startSession、reload 的 new/fork/clone/switch）全部经过 attach，
+// 所以只要 attach 里接了 hydrate，就没有漏网的入口。
+section('7. 会话切换后的历史对账（0.4.1）')
+check('attach 末尾接上 hydrate（挂载即对账）', inOrder(clientSource, ['var attach = function (id) {', 'return hydrate(id)'], 1600) === true)
+check('reload 只经 attach 一处挂载（四个替换类命令共用一条对账路径）', inOrder(clientSource, ['var reload = function (id) {', 'return attach(id)'], 200) === true)
+check('startSession 两条分支都走 attach（首次进入也要对账）', (clientSource.split('attach(').length - 1) >= 3)
+check('refreshMessages 复用 messagesFromHistory（一份整形逻辑，不各写一遍）', inOrder(clientSource, ['var refreshMessages = function () {', 'messagesFromHistory(list)'], 2000) === true)
+check('会话已切走时丢弃旧会话的响应（避免串台）', clientSource.includes('if (sessionRef.current !== id) return null') === true)
+check('busy 期间不覆盖列表，改挂待办（否则吞掉流式气泡）', clientSource.includes('hydratePendingRef.current = true') === true)
+check('settled 后由 flush 补上挂起的对账（drainHydrate）', inOrder(clientSource, ['if (settled === true) {', 'loadCommands(sid)', 'drainHydrate()'], 400) === true)
+check('drainHydrate 只在视图真的 idle 时执行', inOrder(clientSource, ['var drainHydrate = function () {', 'if (viewRef.current.busy === true) return'], 300) === true)
+check('messagesFromHistory 跳过 system（每轮几十 KB 的提示词不进列表）', inOrder(clientSource, ['function messagesFromHistory(list) {', "if (raw.role === 'system') continue"], 400) === true)
+check('messagesFromHistory 用数组下标当 seq，不碰 view.lastSeq', inOrder(clientSource, ['function messagesFromHistory(list) {', 'makeMessage(raw, next.length)'], 500) === true)
+check('bashRef 仍只表示「bash 正在跑」（Esc 要能 abort_bash）', inOrder(clientSource, ['if (bashRef.current === true)', "'abort_bash'"], 200) === true)
+check('history 对账函数已导出给测试', clientSource.includes('messagesFromHistory: messagesFromHistory') === true)
+
 // ── 汇总 ──────────────────────────────────────────────────────────────────
 console.log('')
 if (failures.length === 0) {

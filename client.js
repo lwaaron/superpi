@@ -766,6 +766,25 @@ window.__ModuleLoader__.load({
       }
     }
 
+    /**
+     * 把 pi 的 get_messages 结果整形成面板消息列表。
+     *
+     * 只保留 pi 真正产生的对话消息（system 是每轮几十 KB 的提示词，面板不显示也不能塞进列表）。
+     * seq 用数组下标：它只是 React 列表 key 的一部分，与 host 事件序号（view.lastSeq）无语义关联 ——
+     * 混用会让 applyBatch 的去重逻辑误判，所以这里刻意不去碰 lastSeq。
+     */
+    function messagesFromHistory(list) {
+      if (Array.isArray(list) === false) return null
+      var next = []
+      for (var i = 0; i < list.length; i += 1) {
+        var raw = list[i]
+        if (raw === null || typeof raw !== 'object') continue
+        if (raw.role === 'system') continue
+        next.push(makeMessage(raw, next.length))
+      }
+      return next
+    }
+
     function textOfMessage(message) {
       if (message === null || message === undefined) return ''
       var parts = []
@@ -2733,6 +2752,10 @@ window.__ModuleLoader__.load({
       var scrollRef = useRef(null)
       var pinnedRef = useRef(true)
       var bashRef = useRef(false)
+      // 会话内容被替换（switch_session / fork / clone / new_session）时 host 会清空事件缓冲，
+      // 历史消息不会以事件形式重放，只能靠 get_messages 对账。busy 期间覆盖会吞掉流式气泡，
+      // 所以先挂一笔待办，等 settled 那一拍再补。
+      var hydratePendingRef = useRef(false)
       var metaRef = useRef(null)
       metaRef.current = meta
 
@@ -2744,25 +2767,32 @@ window.__ModuleLoader__.load({
         repaint()
       }
 
-      /** 回拉完整消息列表。
+      /** 回拉完整消息列表，并以它为准整表重建（等价于命令行 pi 从 jsonl 恢复会话）。
        *
-       * 为什么必须有这一步：bash 结果与「已落盘但没发事件」的消息只有 get_messages 能给。
-       * 只保留 pi 真正产生的对话消息（system 是每轮 35KB 的提示词，面板不显示也不能塞进列表）。
+       * 为什么必须有这一步：bash 结果、以及「已落盘但没发事件」的历史消息只有 get_messages 能给。
+       * switch_session / fork / clone / new_session 之后 host 会 resetEvents（index.js 的
+       * SESSION_REPLACING_COMMANDS），事件缓冲归零，snapshot 里没有任何历史 —— 只重放事件面板
+       * 必然是空的。这是 0.4.0 及之前「点开历史会话没有内容」的根因。
+       *
+       * 两道防线：
+       *  - 会话已经切走（sessionRef 变了）就丢弃结果，避免旧会话的响应污染新会话；
+       *  - 正在跑动（busy）就不覆盖列表，改记待办，由 flush 在 settled 那一拍补上，
+       *    否则会把正在流式的气泡整条吞掉。
        */
       var refreshMessages = function () {
         var id = sessionRef.current
         if (id === null) return Promise.resolve(null)
         return rpc(id, { type: 'get_messages' }).then(function (data) {
+          if (sessionRef.current !== id) return null
           var list = data !== null && data !== undefined && Array.isArray(data.messages) ? data.messages : null
           if (list === null) return null
           var view = viewRef.current
-          var next = []
-          for (var i = 0; i < list.length; i += 1) {
-            var raw = list[i]
-            if (raw === null || typeof raw !== 'object') continue
-            if (raw.role === 'system') continue
-            next.push(makeMessage(raw, next.length))
+          if (view.busy === true) {
+            hydratePendingRef.current = true
+            return null
           }
+          var next = messagesFromHistory(list)
+          if (next === null) return null
           view.messages = next
           view.openIndex = -1
           view.streamingIndex = -1
@@ -2771,11 +2801,33 @@ window.__ModuleLoader__.load({
         }, function () { return null })
       }
 
+      /** 挂载 / 切换会话后对账一次历史消息；busy 时挂待办，settled 时由 flush 补。 */
+      var hydrate = function (id) {
+        if (id === null || id === undefined) return Promise.resolve(null)
+        if (viewRef.current.busy === true) {
+          hydratePendingRef.current = true
+          return Promise.resolve(null)
+        }
+        hydratePendingRef.current = false
+        return refreshMessages()
+      }
+
+      /** busy 期间挂起的历史对账，等这一轮真的结束（视图里 busy 已归 false）再补一次。 */
+      var drainHydrate = function () {
+        if (hydratePendingRef.current !== true) return
+        if (viewRef.current.busy === true) return
+        hydratePendingRef.current = false
+        refreshMessages()
+      }
+
       var flush = function () {
         timerRef.current = null
         var batch = pendingRef.current
         pendingRef.current = []
-        if (batch.length === 0) return
+        if (batch.length === 0) {
+          drainHydrate()
+          return
+        }
         for (var i = 0; i < batch.length; i += 1) {
           var entry = batch[i]
           var record = entry === null || entry === undefined ? null : entry.record
@@ -2804,6 +2856,7 @@ window.__ModuleLoader__.load({
           var sid = sessionRef.current
           if (sid !== null) loadCommands(sid)
         }
+        drainHydrate()
       }
 
       var ingest = function (entries) {
@@ -2873,7 +2926,9 @@ window.__ModuleLoader__.load({
           setPhase('ready')
           openStream(id, view.lastSeq)
           flush()
-          return null
+          // 挂载即对账：首次进入、以及 switch_session / fork / clone / new_session 之后
+          // host 的事件缓冲都是空的，历史消息只能靠 get_messages 拿回来。
+          return hydrate(id).then(function () { return null })
         })
       }
 
@@ -3897,6 +3952,7 @@ window.__ModuleLoader__.load({
       SettingsSheet: SettingsSheet,
       pathCrumbs: pathCrumbs,
       buildContract: buildContract,
+      messagesFromHistory: messagesFromHistory,
       classifyInput: classifyInput,
       slashItems: slashItems,
       strings: { zh: ZH, en: EN },

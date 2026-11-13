@@ -443,6 +443,39 @@ assert(r4.target === 'C:\\a', '普通层级采纳目标仍是当前层级，实�
 const r5 = dirPickModel({ listing: null, roots: null, rootsView: true, selected: null, deep: null, query: '' })
 assert(r5.main.length === 0 && r5.target === null, '此电脑层没有任何盘符时该安全返回空列表与空目标')
 
+// ── 9.16 get_messages → 面板消息列表（0.4.1：修「点开历史会话没有内容」） ──────
+// 根因：switch_session / fork / clone / new_session 之后 host 会 resetEvents，
+// 事件缓冲归零，snapshot 里没有任何历史；旧实现只重放事件，面板必然空白。
+// 修法：挂载后调 get_messages，并用 messagesFromHistory 整表重建。
+const history = [
+  { role: 'system', content: [{ type: 'text', text: 'system prompt '.repeat(100) }] },
+  { role: 'user', content: [{ type: 'text', text: '第一个问题' }] },
+  {
+    role: 'assistant',
+    content: [{ type: 'text', text: '答案一' }],
+    usage: { input: 10, output: 5, cacheRead: 100, totalTokens: 115 },
+  },
+  { role: 'toolResult', toolCallId: 'call_1', toolName: 'bash', content: [{ type: 'text', text: 'ok' }] },
+  { role: 'bashExecution', command: 'echo hi', output: 'hi', exitCode: 0 },
+]
+const rebuilt = internals.messagesFromHistory(history)
+assert(Array.isArray(rebuilt) === true, 'messagesFromHistory 该返回数组')
+assert(rebuilt.length === 4, 'system 提示词必须被剔除，实际 ' + String(rebuilt === null ? 'null' : rebuilt.length))
+assert(rebuilt[0].role === 'user', '第一条应是 user，实际 ' + String(rebuilt[0].role))
+assert(rebuilt[0].blocks[0].text === '第一个问题', '用户文本该逐字保留')
+assert(rebuilt[1].role === 'assistant' && rebuilt[1].blocks[0].text === '答案一', '助手文本该保留')
+assert(rebuilt[1].usage !== null && rebuilt[1].usage.totalTokens === 115, 'usage 该被 makeMessage 带出来')
+assert(rebuilt[2].role === 'toolResult' && rebuilt[2].toolName === 'bash', 'toolResult 该带 toolName')
+assert(rebuilt[3].role === 'bashExecution' && rebuilt[3].bash.output === 'hi', 'bashExecution 的语气泡数据该保留')
+assert(rebuilt[0].seq === 0 && rebuilt[3].seq === 3, 'seq 用数组下标（与 host 事件序号无关）')
+assert(internals.messagesFromHistory(null) === null, '非数组入参返回 null（调用方据此跳过覆盖）')
+assert(internals.messagesFromHistory('x') === null, '字符串入参也返回 null')
+assert(internals.messagesFromHistory([]).length === 0, '空历史返回空数组（不是 null）')
+const allSystem = internals.messagesFromHistory([{ role: 'system', content: [] }])
+assert(allSystem.length === 0, '只有 system 时该得到空列表，实际 ' + String(allSystem.length))
+const dirty = internals.messagesFromHistory([null, 'x', { role: 'user', content: 'hi' }])
+assert(dirty.length === 1 && dirty[0].blocks[0].text === 'hi', '脏数据该被跳过，string content 兜底成 text 块')
+
 // ── 10. 整棵面板在 loading 阶段能渲染，不抛异常 ────────────────────────────
 const panelHtml = renderToStaticMarkup(React.createElement(internals.PiPanel, { t: zh }))
 assert(panelHtml.includes('dsh-pi-root'), 'PiPanel 应渲染出 dsh-pi-root')
