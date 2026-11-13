@@ -12,9 +12,11 @@
  * 写死依赖会让 fiber 永远 pending。只依赖 node 内建。
  */
 
+import { createHash } from 'node:crypto'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { PiProcess } from './src/pi-rpc.mjs'
 
 export const name = 'dsh-pi'
@@ -42,6 +44,172 @@ const CLI_CANDIDATES = [
   'C:\\Users\\PC\\Documents\\pi-local\\pi-main\\packages\\coding-agent\\dist\\bundle\\cli.js',
   path.join(os.homedir(), 'pi-local', 'pi-main', 'packages', 'coding-agent', 'dist', 'bundle', 'cli.js'),
 ]
+
+/**
+ * 自检：插件在进程里加载的那一刻，把真正参与运行的文件的 sha256 记下来。
+ * 之后 GET /api/dsh-pi/selfcheck 会重算磁盘上的 sha256 并对比，回答一个
+ * 光看 mtime 回答不了的问题——「现在跑的到底是不是磁盘上这份代码」。
+ *
+ * runtime:true 的文件改动必须重启 DSH 才生效；runtime:false 只是随身文件。
+ */
+const SELF_FILES = [
+  { rel: 'index.js', runtime: true },
+  { rel: 'client.js', runtime: true },
+  { rel: 'src/pi-rpc.mjs', runtime: true },
+  { rel: 'package.json', runtime: false },
+  { rel: 'cordis.patch.yml', runtime: false },
+]
+
+const PLUGIN_ROOT = (() => {
+  try { return path.dirname(fileURLToPath(import.meta.url)) } catch { return '' }
+})()
+
+const LOAD_AT = new Date()
+
+function fingerprint(target) {
+  try {
+    const bytes = fs.readFileSync(target)
+    const stat = fs.statSync(target)
+    return { sha256: createHash('sha256').update(bytes).digest('hex'), bytes: bytes.length, mtime: stat.mtime.toISOString() }
+  } catch { return null }
+}
+
+function captureFingerprints() {
+  const out = []
+  for (const entry of SELF_FILES) {
+    const abs = PLUGIN_ROOT === '' ? '' : path.join(PLUGIN_ROOT, entry.rel)
+    out.push({ rel: entry.rel, runtime: entry.runtime, path: abs, loaded: abs === '' ? null : fingerprint(abs) })
+  }
+  return out
+}
+
+const LOADED_FILES = captureFingerprints()
+
+/**
+ * 直接读 .git 目录，不 spawn git：自检要能在任何环境跑，包括 PATH 上没有 git 的机器。
+ */
+function readGitHead(root) {
+  if (root === '') return { available: false }
+  const gitDir = path.join(root, '.git')
+  let head = ''
+  try { head = fs.readFileSync(path.join(gitDir, 'HEAD'), 'utf8').trim() } catch { return { available: false } }
+  const resolveRef = ref => {
+    try { return fs.readFileSync(path.join(gitDir, ref), 'utf8').trim() } catch { /* 可能在 packed-refs 里 */ }
+    try {
+      const packed = fs.readFileSync(path.join(gitDir, 'packed-refs'), 'utf8')
+      for (const line of packed.split('\n')) {
+        const parts = line.trim().split(' ')
+        if (parts.length === 2 && parts[1] === ref) return parts[0]
+      }
+    } catch { /* 没有 packed-refs */ }
+    return ''
+  }
+  if (head.indexOf('ref: ') === 0) {
+    const ref = head.slice(5).trim()
+    const commit = resolveRef(ref)
+    return { available: commit !== '', branch: ref.replace(/^refs\/heads\//, ''), commit: commit === '' ? null : commit, detached: false }
+  }
+  return { available: head !== '', branch: null, commit: head === '' ? null : head, detached: true }
+}
+
+/** pi 的 bundle 是一堆 chunks，判断「构建是不是最新的」要看目录里最新的那个文件。 */
+function newestUnder(dir, depth = 3) {
+  if (dir === '' || depth < 0) return null
+  let best = null
+  let entries = []
+  try { entries = fs.readdirSync(dir, { withFileTypes: true }) } catch { return null }
+  for (const entry of entries) {
+    const abs = path.join(dir, entry.name)
+    if (entry.isDirectory()) {
+      const nested = newestUnder(abs, depth - 1)
+      if (nested !== null && (best === null || nested.mtimeMs > best.mtimeMs)) best = nested
+      continue
+    }
+    if (entry.isFile() === false) continue
+    try {
+      const stat = fs.statSync(abs)
+      if (best === null || stat.mtimeMs > best.mtimeMs) best = { path: abs, mtimeMs: stat.mtimeMs, mtime: stat.mtime.toISOString(), bytes: stat.size }
+    } catch { /* 读不到就跳过 */ }
+  }
+  return best
+}
+
+/**
+ * 自检结果。设计目标：一条命令就能回答「现在跑的是不是磁盘上最新那份、要不要重启」。
+ * 判据只有一条：加载时读到的字节 vs 现在磁盘上的字节（sha256 相等即 fresh）。
+ * mtime 只作为人看的辅助信息，不参与判定——mtime 会被 checkout / 复制 / 回滚骗过。
+ */
+function buildSelfCheck(detected, options = {}) {
+  const scanPi = options.scanPi !== false
+  const files = LOADED_FILES.map(entry => {
+    const disk = entry.path === '' ? null : fingerprint(entry.path)
+    const loadedSha = entry.loaded === null ? null : entry.loaded.sha256
+    const diskSha = disk === null ? null : disk.sha256
+    return {
+      path: entry.path,
+      rel: entry.rel,
+      runtime: entry.runtime,
+      loadedSha256: loadedSha,
+      diskSha256: diskSha,
+      loadedMtime: entry.loaded === null ? null : entry.loaded.mtime,
+      diskMtime: disk === null ? null : disk.mtime,
+      bytes: disk === null ? null : disk.bytes,
+      // 判定语义：runtime 文件改动才需要重启；非 runtime 文件不一致只是提示。
+      fresh: loadedSha !== null && diskSha !== null && loadedSha === diskSha,
+    }
+  })
+
+  const missing = files.filter(file => file.diskSha256 === null)
+  const staleRuntime = files.filter(file => file.runtime && file.fresh === false && file.diskSha256 !== null)
+  const staleAny = files.filter(file => file.fresh === false && file.diskSha256 !== null)
+  // 文件被删/被挪走也算「重启才生效」，但它跟「内容被改」是两回事，分开报。
+  const goneRuntime = files.filter(file => file.runtime && file.diskSha256 === null)
+
+  // pi 侧构建新鲜度：bundle 目录里最新文件 vs src 目录里最新文件。
+  const cliPath = scanPi && detected.cliPath !== '' ? detected.cliPath : ''
+  const bundleDir = cliPath === '' ? '' : path.dirname(cliPath)
+  const packageDir = cliPath === '' ? '' : path.dirname(path.dirname(bundleDir))
+  const srcDir = packageDir === '' ? '' : path.join(packageDir, 'src')
+  const bundleNewest = newestUnder(bundleDir)
+  const srcNewest = newestUnder(srcDir)
+  const pi = {
+    cliPath,
+    cliExists: cliPath !== '' && exists(cliPath),
+    bundleNewestAt: bundleNewest === null ? null : bundleNewest.mtime,
+    srcNewestAt: srcNewest === null ? null : srcNewest.mtime,
+    srcNewestRel: srcNewest === null || srcDir === '' ? null : path.relative(srcDir, srcNewest.path),
+    // null = 判断不了（缺 src 或 bundle），true = 构建不早于源码，false = 源码比构建新。
+    buildFresh: bundleNewest === null || srcNewest === null ? null : bundleNewest.mtimeMs >= srcNewest.mtimeMs,
+  }
+
+  return {
+    ok: staleRuntime.length === 0,
+    plugin: PLUGIN_ID,
+    version: VERSION,
+    root: PLUGIN_ROOT,
+    loadedAt: LOAD_AT.toISOString(),
+    checkedAt: new Date().toISOString(),
+    process: { pid: process.pid, uptimeSec: Math.round(process.uptime()), node: process.version, execPath: process.execPath },
+    git: readGitHead(PLUGIN_ROOT),
+    summary: {
+      // 唯一该看的字段：true 就是「磁盘上已经改了，但内存里跑的还是旧代码，重启 DSH 才生效」。
+      stale: staleRuntime.length > 0 || goneRuntime.length > 0,
+      staleRuntimeCount: staleRuntime.length + goneRuntime.length,
+      changedCount: staleAny.length,
+      missingCount: missing.length,
+      changed: staleAny.map(file => file.rel),
+      missing: missing.map(file => file.rel),
+      hint: staleRuntime.length > 0 || goneRuntime.length > 0
+        ? [
+          staleRuntime.length > 0 ? '磁盘上的 ' + staleRuntime.map(file => file.rel).join(', ') + ' 已修改' : '',
+          goneRuntime.length > 0 ? goneRuntime.map(file => file.rel).join(', ') + ' 已不在磁盘上' : '',
+        ].filter(part => part !== '').join('；') + '，重启 DSH 后生效'
+        : '内存中的插件代码与磁盘一致',
+    },
+    files,
+    pi: scanPi ? pi : { skipped: true },
+  }
+}
 
 export function apply(ctx, config = {}) {
   const log = makeLog(ctx)
@@ -164,6 +332,8 @@ export function apply(ctx, config = {}) {
 
   const sessionsDelete = id => { sessions.delete(id) }
 
+  const selfCheck = () => buildSelfCheck(detected)
+
   const handler = createHandler({
     log,
     spawnSession,
@@ -171,6 +341,7 @@ export function apply(ctx, config = {}) {
     sessionsDelete,
     stateOf,
     detected,
+    selfCheck,
   })
 
   ctx.inject(['webServer'], services => {
@@ -208,6 +379,10 @@ function createHandler(deps) {
     try {
       if (method === 'GET' && (routePath === '/state' || routePath === '/')) return send(200, deps.stateOf())
       if (method === 'GET' && routePath === '/health') return send(200, { ok: true, version: VERSION })
+      if (method === 'GET' && routePath === '/selfcheck') {
+        if (typeof deps.selfCheck !== 'function') return send(501, { error: 'selfcheck unavailable' })
+        return send(200, deps.selfCheck())
+      }
 
       if (method === 'POST' && routePath === '/sessions') {
         const body = await readJsonBody(req)

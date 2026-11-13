@@ -17,6 +17,12 @@
     "src",
     "README.md"
   ],
+  "scripts": {
+    "test": "node test/selfcheck.mjs && node test/client-render.mjs",
+    "test:client": "node test/client-render.mjs",
+    "test:host": "node test/host-smoke.mjs",
+    "test:all": "node test/selfcheck.mjs && node test/client-render.mjs && node test/host-smoke.mjs"
+  },
   "engines": {
     "node": ">=22.5"
   },

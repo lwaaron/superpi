@@ -56,6 +56,10 @@ window.__ModuleLoader__.load({
       thinkingLabel: '思考过程',
       tokens: 'tokens',
       crashed: 'pi 进程已退出',
+      synced: '代码已同步',
+      syncedHint: '内存中的插件代码与磁盘一致',
+      staleCode: '代码已更新 · 待重启',
+      staleBuild: 'pi 需重新构建',
     }
 
     var EN = {
@@ -82,6 +86,10 @@ window.__ModuleLoader__.load({
       thinkingLabel: 'Thinking',
       tokens: 'tokens',
       crashed: 'The pi process exited',
+      synced: 'Up to date',
+      syncedHint: 'Loaded plugin code matches disk',
+      staleCode: 'Code changed · restart',
+      staleBuild: 'pi needs a rebuild',
     }
 
     // ── 样式 ────────────────────────────────────────────────────────────────
@@ -95,6 +103,10 @@ window.__ModuleLoader__.load({
       '.dsh-pi-chip{display:inline-flex;align-items:center;gap:4px;height:22px;padding:0 8px;border-radius:999px;background:var(--dsw-alias-bg-layer-2,rgba(0,0,0,.04));color:var(--dsw-alias-label-secondary,#555);font-size:var(--dsw-font-xxs-12-font-size,12px);white-space:nowrap;max-width:280px;overflow:hidden;text-overflow:ellipsis;}',
       '.dsh-pi-select{appearance:none;height:22px;border:1px solid transparent;border-radius:999px;padding:0 6px;background:var(--dsw-alias-bg-layer-2,rgba(0,0,0,.04));color:var(--dsw-alias-label-secondary,#555);font:inherit;font-size:var(--dsw-font-xxs-12-font-size,12px);cursor:pointer;}',
       '.dsh-pi-select:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(0,0,0,.06));}',
+      '.dsh-pi-verify{display:inline-flex;align-items:center;gap:5px;height:22px;padding:0 8px;border-radius:999px;border:1px solid transparent;background:transparent;color:var(--dsw-alias-label-tertiary,#999);font:inherit;font-size:var(--dsw-font-xxs-12-font-size,12px);cursor:pointer;white-space:nowrap;flex:0 0 auto;}',
+      '.dsh-pi-verify::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor;flex:0 0 auto;}',
+      '.dsh-pi-verify:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(0,0,0,.05));}',
+      '.dsh-pi-verify[data-tone="warn"]{color:var(--dsw-alias-state-warning-primary,#b54708);background:var(--dsw-alias-bg-layer-2,rgba(0,0,0,.04));}',
       '.dsh-pi-dot{width:7px;height:7px;border-radius:50%;flex:0 0 auto;background:var(--dsw-alias-label-tertiary,#bbb);}',
       '.dsh-pi-dot[data-state="ready"]{background:var(--dsw-alias-state-success-primary,#22a06b);}',
       '.dsh-pi-dot[data-state="busy"]{background:var(--dsw-alias-state-business-primary,#3b82f6);animation:dsh-pi-pulse 1.2s ease-in-out infinite;}',
@@ -203,6 +215,7 @@ window.__ModuleLoader__.load({
       snapshot: function (id, since) { return requestJson('/sessions/' + encodeURIComponent(id) + '/snapshot?since=' + String(since)) },
       command: function (id, body) { return requestJson('/sessions/' + encodeURIComponent(id) + '/command', { method: 'POST', body: body, timeoutMs: 90000 }) },
       close: function (id) { return requestJson('/sessions/' + encodeURIComponent(id), { method: 'DELETE' }) },
+      selfcheck: function () { return requestJson('/selfcheck') },
     }
 
     // ── 事件 → 视图 ────────────────────────────────────────────────────────
@@ -609,6 +622,39 @@ window.__ModuleLoader__.load({
         props.meta === null ? null : h('div', { className: 'dsh-pi-empty-meta' }, props.meta))
     }
 
+    // ── 自检徽标 ────────────────────────────────────────────────────────────
+
+    /**
+     * 一眼看出「现在跑的是不是磁盘上那份代码」。
+     * 三种状态：一致 / 磁盘改了待重启 / pi 需要重新构建。
+     * 拿不到自检结果（老版本没有这个路由、或请求失败）就不渲染 —— 宁可少一个胶囊也不要误报绿点。
+     */
+    function SelfCheckChip(props) {
+      var report = props.report
+      if (report === null || typeof report !== 'object') return null
+      var t = props.t
+      var summary = report.summary !== null && typeof report.summary === 'object' ? report.summary : {}
+      var staleCode = summary.stale === true
+      var staleBuild = report.pi !== null && typeof report.pi === 'object' && report.pi.buildFresh === false
+      var tone = staleCode || staleBuild ? 'warn' : 'ok'
+      var label = staleCode ? t('staleCode') : staleBuild ? t('staleBuild') : t('synced')
+      var detail = []
+      if (typeof summary.hint === 'string' && summary.hint !== '') detail.push(summary.hint)
+      if (staleBuild) detail.push('bundle 早于 src，需要重跑 npm run build')
+      if (report.git !== null && typeof report.git === 'object' && report.git.available === true && typeof report.git.commit === 'string') {
+        detail.push('git ' + String(report.git.branch === null ? 'detached' : report.git.branch) + ' @ ' + report.git.commit.slice(0, 9))
+      }
+      if (Array.isArray(summary.missing) && summary.missing.length > 0) detail.push('缺失：' + summary.missing.join(', '))
+      detail.push('点一下重新检查')
+      return h('button', {
+        type: 'button',
+        className: 'dsh-pi-verify',
+        'data-tone': tone,
+        title: detail.join('\n'),
+        onClick: function () { if (typeof props.onRecheck === 'function') props.onRecheck() },
+      }, label)
+    }
+
     // ── 主面板 ──────────────────────────────────────────────────────────────
 
     function PiPanel(props) {
@@ -631,6 +677,9 @@ window.__ModuleLoader__.load({
       var brokenState = useState(false)
       var broken = brokenState[0]
       var setBroken = brokenState[1]
+      var verifyState = useState(null)
+      var verify = verifyState[0]
+      var setVerify = verifyState[1]
       var renderState = useState(0)
       var bump = renderState[1]
 
@@ -770,6 +819,16 @@ window.__ModuleLoader__.load({
         }
       }, [])
 
+      // 自检：只读磁盘，不碰 pi 子进程，所以可以在面板打开时就问一次。
+      // 失败静默——自检不该让主流程多看一个红条。
+      var runSelfCheck = function () {
+        return api.selfcheck().then(function (report) {
+          setVerify(report !== null && typeof report === 'object' ? report : null)
+        }, function () { setVerify(null) })
+      }
+
+      useEffect(function () { runSelfCheck() }, [])
+
       useEffect(function () {
         var node = scrollRef.current
         if (node === null) return
@@ -834,6 +893,8 @@ window.__ModuleLoader__.load({
 
       if (phase === 'loading') return h('div', { className: 'dsh-pi-root' }, h('div', { className: 'dsh-pi-center' }, t('loading')))
 
+      var verifyChip = h(SelfCheckChip, { t: t, report: verify, onRecheck: runSelfCheck })
+
       var header = h('div', { className: 'dsh-pi-head' },
         h('div', { className: 'dsh-pi-head-main' },
           h(PiIcon, null),
@@ -842,6 +903,7 @@ window.__ModuleLoader__.load({
           meta !== null && meta.model !== null && meta.model !== undefined && typeof meta.model.id === 'string'
             ? h('span', { className: 'dsh-pi-chip', title: t('model') }, meta.model.id)
             : null),
+        verifyChip,
         levels.length === 0 ? null : h('select', {
           className: 'dsh-pi-select',
           value: thinking,
@@ -942,6 +1004,8 @@ window.__ModuleLoader__.load({
     exports.name = NS
     exports.inject = ['slots', 'locale']
     exports.apply = apply
+    // 仅供 test/client-render.mjs 使用；宿主只读 name / inject / apply，多挂一个键无副作用。
+    exports.__internals = { SelfCheckChip: SelfCheckChip, PiPanel: PiPanel, strings: { zh: ZH, en: EN } }
 
     return module.exports
   },
