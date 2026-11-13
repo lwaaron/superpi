@@ -191,7 +191,13 @@ Write-Output ("disk version  = {0}" -f $diskVersion)
 if ($state.version -eq $diskVersion) {
   Write-Output 'OK: 运行中的插件版本与磁盘一致'
   exit 0
-} else {
-  Write-Output 'MISMATCH: 运行中的插件版本与磁盘不一致（多半是还有旧进程没退干净）'
-  exit 2
 }
+
+# 不一致有两种成因，输出里要能一眼分开，否则用户只能猜：
+#  a) 磁盘刚换了新版本，宿主还是旧进程 —— 加 -SkipRestart 核对时就是这种，跑一次不带该开关的重启即可；
+#  b) 重启过但旧进程没退干净（端口被别的 profile 实例占着）。
+Write-Output ("MISMATCH: 运行中的插件版本 {0} ≠ 磁盘版本 {1}" -f $state.version, $diskVersion)
+Write-Output '  成因 A：磁盘刚装了新版本、宿主还没重启（-SkipRestart 只核对不重启，就是这个情况）。'
+Write-Output '          去掉 -SkipRestart 再跑一次即可（或双击 tools\restart-dsh.bat）。'
+Write-Output '  成因 B：重启过但旧进程没退干净。看上面「本机其它 dsh-pi 实例」，确认没有旧实例占着端口。'
+exit 2
