@@ -60,6 +60,14 @@ window.__ModuleLoader__.load({
       syncedHint: '内存中的插件代码与磁盘一致',
       staleCode: '代码已更新 · 待重启',
       staleBuild: 'pi 需重新构建',
+      runtimeMissing: '还没装 pi 运行时',
+      runtimeMissingHint: '面板已经装好，只差 pi 本体（Node 包）。点下面的按钮自动下载安装到插件目录的 .runtime，不需要管理员权限，也不需要 git。',
+      installRuntime: '一键安装 pi',
+      installing: '正在安装 pi…',
+      installFailed: '安装失败',
+      recheck: '重新检查',
+      runtimeReady: 'pi 运行时已就绪',
+      searchedAt: '已查找位置',
     }
 
     var EN = {
@@ -90,6 +98,14 @@ window.__ModuleLoader__.load({
       syncedHint: 'Loaded plugin code matches disk',
       staleCode: 'Code changed · restart',
       staleBuild: 'pi needs a rebuild',
+      runtimeMissing: 'pi runtime is not installed',
+      runtimeMissingHint: 'The panel is ready; only the pi binary is missing. The button below installs it into the plugin\'s .runtime folder — no admin rights, no git needed.',
+      installRuntime: 'Install pi',
+      installing: 'Installing pi…',
+      installFailed: 'Install failed',
+      recheck: 'Check again',
+      runtimeReady: 'pi runtime is ready',
+      searchedAt: 'Searched',
     }
 
     // ── 样式 ────────────────────────────────────────────────────────────────
@@ -164,6 +180,14 @@ window.__ModuleLoader__.load({
       '.dsh-pi-alert{margin:0;padding:9px 12px;border-radius:var(--dsw-radius-md,8px);border:1px solid var(--dsw-alias-state-error-primary,#d92d20);color:var(--dsw-alias-state-error-primary,#d92d20);font-size:var(--dsw-font-xs-13-font-size,13px);word-break:break-word;}',
       '.dsh-pi-notice{margin:0;padding:7px 12px;border-radius:var(--dsw-radius-md,8px);background:var(--dsw-alias-bg-layer-2,rgba(0,0,0,.04));color:var(--dsw-alias-label-secondary,#555);font-size:var(--dsw-font-xxs-12-font-size,12px);}',
       '.dsh-pi-center{display:flex;align-items:center;justify-content:center;height:100%;color:var(--dsw-alias-label-tertiary,#888);font-size:var(--dsw-font-xs-13-font-size,13px);}',
+      '.dsh-pi-gate{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;padding:24px;text-align:center;}',
+      '.dsh-pi-gate-card{max-width:520px;display:flex;flex-direction:column;align-items:center;gap:12px;}',
+      '.dsh-pi-gate h2{margin:0;font-size:var(--dsw-font-base-16-font-size,16px);font-weight:600;color:var(--dsw-alias-label-primary,#111);}',
+      '.dsh-pi-gate p{margin:0;font-size:var(--dsw-font-xs-13-font-size,13px);line-height:1.7;color:var(--dsw-alias-label-tertiary,#888);}',
+      '.dsh-pi-gate-actions{display:flex;gap:8px;margin-top:4px;}',
+      '.dsh-pi-gate-path{margin-top:6px;padding:8px 10px;border-radius:var(--dsw-radius-md,8px);background:var(--dsw-alias-bg-layer-2,rgba(0,0,0,.04));font-family:ui-monospace,Menlo,Consolas,monospace;font-size:var(--dsw-font-xxxs-11-font-size,11px);color:var(--dsw-alias-label-secondary,#555);word-break:break-all;text-align:left;max-height:110px;overflow:auto;width:100%;}',
+      '.dsh-pi-gate-searched{margin-top:2px;width:100%;text-align:left;font-size:var(--dsw-font-xxxs-11-font-size,11px);color:var(--dsw-alias-label-dimmed,#aaa);}',
+      '.dsh-pi-gate-searched li{list-style:none;padding:1px 0;font-family:ui-monospace,Menlo,Consolas,monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}',
     ].join('')
 
     // ── HTTP 面 ────────────────────────────────────────────────────────────
@@ -216,6 +240,9 @@ window.__ModuleLoader__.load({
       command: function (id, body) { return requestJson('/sessions/' + encodeURIComponent(id) + '/command', { method: 'POST', body: body, timeoutMs: 90000 }) },
       close: function (id) { return requestJson('/sessions/' + encodeURIComponent(id), { method: 'DELETE' }) },
       selfcheck: function () { return requestJson('/selfcheck') },
+      runtime: function () { return requestJson('/runtime') },
+      // 装一个 24MB 的包 + 123 个依赖，慢网要几分钟：超时给到 15 分钟。
+      install: function () { return requestJson('/runtime/install', { method: 'POST', timeoutMs: 900000 }) },
     }
 
     // ── 事件 → 视图 ────────────────────────────────────────────────────────
@@ -622,6 +649,69 @@ window.__ModuleLoader__.load({
         props.meta === null ? null : h('div', { className: 'dsh-pi-empty-meta' }, props.meta))
     }
 
+    // ── 运行时引导 ──────────────────────────────────────────────────────────
+
+    /**
+     * pi 本体没装时的整页引导。
+     * 这里的价值在于：用户不需要知道 pi 是个 Node 包、不需要开命令行、不需要配路径，
+     * 点一次按钮就从公共 npm 装到插件目录里，装完自动刷新运行时并继续开会话。
+     */
+    function RuntimeGate(props) {
+      var t = props.t
+      var busyState = useState(false)
+      var busy = busyState[0]
+      var setBusy = busyState[1]
+      var failState = useState(null)
+      var failure = failState[0]
+      var setFailure = failState[1]
+      var runtime = props.runtime !== null && typeof props.runtime === 'object' ? props.runtime : null
+      var searched = runtime !== null && Array.isArray(runtime.searched) ? runtime.searched : []
+      var target = runtime !== null && runtime.install !== null && typeof runtime.install === 'object' ? runtime.install.target : null
+
+      var run = function () {
+        setBusy(true)
+        setFailure(null)
+        api.install().then(function () {
+          setBusy(false)
+          props.onInstalled()
+        }, function (error) {
+          setBusy(false)
+          setFailure(String(error && error.message ? error.message : error))
+        })
+      }
+
+      return h('div', { className: 'dsh-pi-root' },
+        h('div', { className: 'dsh-pi-head' },
+          h('div', { className: 'dsh-pi-head-main' },
+            h(PiIcon, null),
+            h('span', { className: 'dsh-pi-brand' }, t('panelTitle')))),
+        h('div', { className: 'dsh-pi-gate' },
+          h('div', { className: 'dsh-pi-gate-card' },
+            h(PiIcon, { size: 30 }),
+            h('h2', null, t('runtimeMissing')),
+            h('p', null, t('runtimeMissingHint')),
+            failure === null ? null : h('div', { className: 'dsh-pi-alert' }, failure),
+            h('div', { className: 'dsh-pi-gate-actions' },
+              h('button', {
+                type: 'button',
+                className: 'dsh-pi-btn dsh-pi-btn-primary',
+                disabled: busy,
+                onClick: run,
+              }, busy ? t('installing') : t('installRuntime')),
+              h('button', {
+                type: 'button',
+                className: 'dsh-pi-btn',
+                disabled: busy,
+                onClick: props.onRecheck,
+              }, t('recheck'))),
+            target === null ? null : h('div', { className: 'dsh-pi-gate-path' }, String(target)),
+            searched.length === 0 ? null : h('div', { className: 'dsh-pi-gate-searched' },
+              h('div', null, t('searchedAt') + '：'),
+              h('ul', null, searched.map(function (item, index) {
+                return h('li', { key: 's' + String(index) }, (item.ok === true ? '✓ ' : '✗ ') + String(item.source) + ' · ' + String(item.path))
+              }))))))
+    }
+
     // ── 自检徽标 ────────────────────────────────────────────────────────────
 
     /**
@@ -682,6 +772,9 @@ window.__ModuleLoader__.load({
       var setVerify = verifyState[1]
       var renderState = useState(0)
       var bump = renderState[1]
+      var runtimeState = useState(null)
+      var runtime = runtimeState[0]
+      var setRuntime = runtimeState[1]
 
       var viewRef = useRef(null)
       if (viewRef.current === null) viewRef.current = createView()
@@ -783,6 +876,13 @@ window.__ModuleLoader__.load({
         setPhase('loading')
         setError(null)
         return api.state().then(function (state) {
+          var report = state.runtime !== null && typeof state.runtime === 'object' ? state.runtime : null
+          setRuntime(report)
+          // pi 本体不在就先给引导页：直接开会话只会拿到一句「pi 运行时未找到」，不如让用户一键装。
+          if (report !== null && report.ok === false) {
+            setPhase('missing')
+            return null
+          }
           var existing = Array.isArray(state.sessions) ? state.sessions : []
           if (existing.length > 0) {
             return attach(existing[0].id).then(function () {
@@ -893,6 +993,15 @@ window.__ModuleLoader__.load({
 
       if (phase === 'loading') return h('div', { className: 'dsh-pi-root' }, h('div', { className: 'dsh-pi-center' }, t('loading')))
 
+      if (phase === 'missing') {
+        return h(RuntimeGate, {
+          t: t,
+          runtime: runtime,
+          onRecheck: function () { setPhase('loading'); startSession() },
+          onInstalled: function () { setPhase('loading'); startSession() },
+        })
+      }
+
       var verifyChip = h(SelfCheckChip, { t: t, report: verify, onRecheck: runSelfCheck })
 
       var header = h('div', { className: 'dsh-pi-head' },
@@ -918,7 +1027,13 @@ window.__ModuleLoader__.load({
           h('div', { className: 'dsh-pi-scroll' },
             h('div', { className: 'dsh-pi-inner' },
               h('div', { className: 'dsh-pi-alert' }, error),
-              h('div', null, h('button', { type: 'button', className: 'dsh-pi-btn dsh-pi-btn-primary', onClick: newSession }, t('retry'))))))
+              h('div', null, h('button', { type: 'button', className: 'dsh-pi-btn dsh-pi-btn-primary', onClick: newSession }, t('retry'))),
+              h('div', { style: { marginTop: '10px' } },
+                h('button', {
+                  type: 'button',
+                  className: 'dsh-pi-btn',
+                  onClick: function () { setPhase('loading'); startSession() },
+                }, t('recheck'))))))
       }
 
       var rows = view.messages.map(function (message, index) {
@@ -1005,7 +1120,7 @@ window.__ModuleLoader__.load({
     exports.inject = ['slots', 'locale']
     exports.apply = apply
     // 仅供 test/client-render.mjs 使用；宿主只读 name / inject / apply，多挂一个键无副作用。
-    exports.__internals = { SelfCheckChip: SelfCheckChip, PiPanel: PiPanel, strings: { zh: ZH, en: EN } }
+    exports.__internals = { SelfCheckChip: SelfCheckChip, RuntimeGate: RuntimeGate, PiPanel: PiPanel, strings: { zh: ZH, en: EN } }
 
     return module.exports
   },

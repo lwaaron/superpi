@@ -145,7 +145,43 @@ const interactive = html({ t: zh, report: clean, onRecheck: () => { clicks += 1 
 assert(interactive.includes('<button'), '胶囊应该是 button，实际 ' + interactive)
 assert(typeof clean !== 'undefined' && clicks === 0, '渲染阶段不应触发回调')
 
-// ── 8. 整棵面板在 loading 阶段能渲染，不抛异常 ─────────────────────────────
+// ── 8. 运行时引导：缺 pi 时给出「一键安装」+ 已搜索位置清单 ───────────────
+const Gate = internals.RuntimeGate
+assert(typeof Gate === 'function', 'client.js 应导出 RuntimeGate 以便测试')
+const gateHtml = renderToStaticMarkup(React.createElement(Gate, {
+  t: zh,
+  runtime: {
+    ok: false,
+    source: 'missing',
+    cliPath: '',
+    searched: [
+      { source: 'plugin-node-modules', path: 'C:\\x\\dsh-pi\\node_modules', ok: false, reason: 'package not installed' },
+      { source: 'config', path: 'C:\\y\\cli.js', ok: false, reason: 'not found' },
+    ],
+    install: { available: true, target: 'C:\\x\\dsh-pi\\.runtime', package: '@earendil-works/pi-coding-agent', version: '1.5.2', running: false },
+  },
+  onRecheck() {},
+  onInstalled() {},
+}))
+console.log('gate =', gateHtml.slice(0, 320))
+assert(gateHtml.includes(zh('runtimeMissing')), '引导页该显示「' + zh('runtimeMissing') + '」')
+assert(gateHtml.includes(zh('installRuntime')), '引导页该有「' + zh('installRuntime') + '」按钮')
+assert(gateHtml.includes(zh('runtimeMissingHint')), '引导页该有说明文案')
+assert(gateHtml.includes('dsh-pi-gate-card'), '引导页该用 dsh-pi-gate-card 外壳')
+assert(gateHtml.includes('.runtime'), '引导页该显示安装落点')
+assert(gateHtml.includes('plugin-node-modules') && gateHtml.includes('config'), '引导页该列出所有查过的位置')
+assert(gateHtml.includes('✗ '), '未命中的候选该标 ✗')
+
+const gateEn = renderToStaticMarkup(React.createElement(Gate, {
+  t: en,
+  runtime: { ok: false, source: 'missing', searched: [], install: { available: true, target: 'X', running: false } },
+  onRecheck() {},
+  onInstalled() {},
+}))
+assert(gateEn.includes(en('runtimeMissing')), '英文引导页该显示「' + en('runtimeMissing') + '」')
+assert(gateEn.includes(en('installRuntime')), '英文引导页该有安装按钮')
+
+// ── 9. 整棵面板在 loading 阶段能渲染，不抛异常 ─────────────────────────────
 const panelHtml = renderToStaticMarkup(React.createElement(internals.PiPanel, { t: zh }))
 assert(panelHtml.includes('dsh-pi-root'), 'PiPanel 应渲染出 dsh-pi-root')
 assert(panelHtml.includes(zh('loading')), 'PiPanel 首帧应是 loading 文案')

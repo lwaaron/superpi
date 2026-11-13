@@ -9,3 +9,9 @@ research/probe-events.txt
 research/_ws.txt
 
 node_modules/
+
+# 一键安装的 pi 运行时（npm install 落的 24MB，不进版本库）
+.runtime/
+
+# npm pack 产物
+*.tgz

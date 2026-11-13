@@ -9,7 +9,11 @@
  *  - RPC 是 pi 官方对外契约（docs/rpc.md），跨进程稳定，不依赖内部实现。
  *
  * 本文件不 import 任何 @deepseek-ai/* 包：宿主内的官方包在 Node 里解析不到，
- * 写死依赖会让 fiber 永远 pending。只依赖 node 内建。
+ * 写死依赖会让 fiber 永远 pending。只依赖 node 内建 + 本包内的纯 ESM 模块。
+ *
+ * 可移植性：pi 运行时不写死任何机器的绝对路径，全部交给 src/pi-runtime.mjs 的解析链。
+ * 解析不到时可以用 POST /runtime/install 把 pi 装进 <plugin>/.runtime（离线/受限网络
+ * 下则手工配 config.cliPath 或环境变量 PI_CLI_PATH）。
  */
 
 import { createHash } from 'node:crypto'
@@ -18,32 +22,38 @@ import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { PiProcess } from './src/pi-rpc.mjs'
+import {
+  PI_PACKAGE,
+  PI_VERSION,
+  PI_RUNTIME_DIR,
+  describeRuntime,
+  installPiRuntime,
+  resolveNodeRuntime,
+  resolvePiRuntime,
+} from './src/pi-runtime.mjs'
 
 export const name = 'dsh-pi'
 export const inject = []
 
 const PLUGIN_ID = 'dsh-pi'
 const DISPLAY_NAME = 'pi'
-const VERSION = '0.1.0'
+const VERSION = '0.2.0'
 const API_PREFIX = '/api/' + PLUGIN_ID
 const MAX_SESSIONS = 8
 const MAX_BODY_BYTES = 4 * 1024 * 1024
 
 const DEFAULTS = {
-  /** 空 = 自动探测。 */
+  /** 空 = 自动探测（插件内 .runtime → node_modules → 全局 npm → 环境变量）。 */
   cliPath: '',
   /** 空 = 自动探测（PATH 上的 node）。 */
   nodePath: '',
   /** 空 = ~/pi-workspace。 */
   workspace: '',
-  /** 传给 pi 的额外参数（--no-session 保证每次开的是干净会话）。 */
+  /** 空格分隔的额外参数，追加到 pi 命令行（默认已带 --no-session）。 */
+  extraArgs: '',
+  /** 传给 pi 的固定参数（--no-session 保证每次开的是干净会话）。 */
   args: ['--no-session'],
 }
-
-const CLI_CANDIDATES = [
-  'C:\\Users\\PC\\Documents\\pi-local\\pi-main\\packages\\coding-agent\\dist\\bundle\\cli.js',
-  path.join(os.homedir(), 'pi-local', 'pi-main', 'packages', 'coding-agent', 'dist', 'bundle', 'cli.js'),
-]
 
 /**
  * 自检：插件在进程里加载的那一刻，把真正参与运行的文件的 sha256 记下来。
@@ -56,6 +66,7 @@ const SELF_FILES = [
   { rel: 'index.js', runtime: true },
   { rel: 'client.js', runtime: true },
   { rel: 'src/pi-rpc.mjs', runtime: true },
+  { rel: 'src/pi-runtime.mjs', runtime: true },
   { rel: 'package.json', runtime: false },
   { rel: 'cordis.patch.yml', runtime: false },
 ]
@@ -215,41 +226,19 @@ export function apply(ctx, config = {}) {
   const log = makeLog(ctx)
   const settings = { ...DEFAULTS, ...(config !== null && typeof config === 'object' ? config : {}) }
   const sessions = new Map()
-  const detected = { nodePath: '', cliPath: '', nodeSource: '', cliSource: '', workspace: '' }
-
-  const resolveNode = () => {
-    if (typeof settings.nodePath === 'string' && settings.nodePath !== '') {
-      if (exists(settings.nodePath)) { detected.nodeSource = 'config'; return settings.nodePath }
-      log('warn', 'configured nodePath does not exist: ' + settings.nodePath)
-    }
-    const fromEnv = process.env.PI_NODE_PATH
-    if (typeof fromEnv === 'string' && exists(fromEnv)) { detected.nodeSource = 'env'; return fromEnv }
-    const names = process.platform === 'win32' ? ['node.exe'] : ['node']
-    const dirs = String(process.env.PATH ?? '').split(path.delimiter).filter(Boolean)
-    for (const dir of dirs) {
-      for (const fileName of names) {
-        const candidate = path.join(dir, fileName)
-        if (exists(candidate)) { detected.nodeSource = 'path'; return candidate }
-      }
-    }
-    // 兜底：用宿主自己的可执行文件以 node 模式跑（Electron 支持 ELECTRON_RUN_AS_NODE）。
-    detected.nodeSource = 'host-execpath'
-    return process.execPath
+  /** detected 是「当前生效值」；运行时可能被 /runtime/install 或配置热更新改写。 */
+  const detected = {
+    nodePath: '',
+    nodeSource: '',
+    cliPath: '',
+    cliSource: '',
+    cliVersion: null,
+    packageDir: '',
+    runtimeSearched: [],
+    workspace: '',
   }
-
-  const resolveCli = () => {
-    if (typeof settings.cliPath === 'string' && settings.cliPath !== '') {
-      if (exists(settings.cliPath)) { detected.cliSource = 'config'; return settings.cliPath }
-      log('warn', 'configured cliPath does not exist: ' + settings.cliPath)
-    }
-    const fromEnv = process.env.PI_CLI_PATH
-    if (typeof fromEnv === 'string' && exists(fromEnv)) { detected.cliSource = 'env'; return fromEnv }
-    for (const candidate of CLI_CANDIDATES) {
-      if (exists(candidate)) { detected.cliSource = 'candidate'; return candidate }
-    }
-    detected.cliSource = 'missing'
-    return ''
-  }
+  /** 安装中的标记，防止并发触发两次 npm install。 */
+  let installing = null
 
   const resolveWorkspace = () => {
     const configured = typeof settings.workspace === 'string' ? settings.workspace.trim() : ''
@@ -259,9 +248,49 @@ export function apply(ctx, config = {}) {
     return path.join(os.homedir(), 'pi-workspace')
   }
 
-  detected.nodePath = resolveNode()
-  detected.cliPath = resolveCli()
-  detected.workspace = resolveWorkspace()
+  /**
+   * 重新解析运行时。加载时跑一次；/runtime/install 成功后再跑一次，
+   * 之后新开的会话就用新装的那份（已开的会话不受影响，避免热切换打断对话）。
+   */
+  const refreshRuntime = () => {
+    const node = resolveNodeRuntime({ config: settings })
+    detected.nodePath = node.path
+    detected.nodeSource = node.source
+    const pi = resolvePiRuntime({ pluginRoot: PLUGIN_ROOT, config: settings })
+    detected.cliPath = pi.cliPath
+    detected.cliSource = pi.source
+    detected.cliVersion = pi.version
+    detected.packageDir = pi.packageDir
+    detected.runtimeSearched = pi.searched
+    detected.workspace = resolveWorkspace()
+    if (pi.cliPath === '') {
+      log('warn', 'pi CLI not found (searched: ' + pi.searched.map(item => item.source + (item.ok ? '=hit' : '=miss')).join(', ') + '); call POST ' + API_PREFIX + '/runtime/install or set cliPath')
+    }
+    return pi
+  }
+
+  refreshRuntime()
+
+  const runtimeReport = () => ({
+    ...describeRuntime({
+      cliPath: detected.cliPath,
+      source: detected.cliSource,
+      version: detected.cliVersion,
+      packageDir: detected.packageDir,
+      expected: PI_PACKAGE + '@' + PI_VERSION,
+      searched: detected.runtimeSearched,
+      pluginRoot: PLUGIN_ROOT,
+    }),
+    node: { path: detected.nodePath, source: detected.nodeSource, version: process.version },
+    platform: process.platform + '-' + process.arch,
+    install: {
+      available: PLUGIN_ROOT !== '',
+      target: PLUGIN_ROOT === '' ? null : path.join(PLUGIN_ROOT, PI_RUNTIME_DIR),
+      package: PI_PACKAGE,
+      version: PI_VERSION,
+      running: installing !== null,
+    },
+  })
 
   const envOverrides = () => {
     const env = {}
@@ -275,8 +304,15 @@ export function apply(ctx, config = {}) {
 
   const spawnSession = (options = {}) => {
     if (detected.cliPath === '') {
-      const error = new Error('pi CLI 未找到：请把 cliPath 配到插件配置里，或设置环境变量 PI_CLI_PATH')
+      // 每次要开新会话都重新找一遍：用户可能刚用 npm install 装好，或刚改完配置。
+      refreshRuntime()
+    }
+    if (detected.cliPath === '') {
+      const error = new Error('pi 运行时未找到（' + PI_PACKAGE + '@' + PI_VERSION + '）。装一次就好：POST ' + API_PREFIX + '/runtime/install，' +
+        '或在插件配置里填 cliPath / 设置环境变量 PI_CLI_PATH。已搜索：' +
+        detected.runtimeSearched.map(item => item.source + (item.ok ? ' ✓' : ' ✗')).join(' / '))
       error.statusCode = 500
+      error.code = 'PI_RUNTIME_MISSING'
       throw error
     }
     if (sessions.size >= MAX_SESSIONS) {
@@ -287,6 +323,9 @@ export function apply(ctx, config = {}) {
     const cwd = typeof options.cwd === 'string' && options.cwd.trim() !== '' ? options.cwd.trim() : detected.workspace
     try { fs.mkdirSync(cwd, { recursive: true }) } catch { /* 由 pi 自己报错 */ }
     const args = Array.isArray(settings.args) ? settings.args.slice() : []
+    if (typeof settings.extraArgs === 'string' && settings.extraArgs.trim() !== '') {
+      for (const extra of settings.extraArgs.trim().split(/\s+/)) if (extra !== '') args.push(extra)
+    }
     if (Array.isArray(options.args)) {
       for (const extra of options.args) if (typeof extra === 'string' && extra !== '') args.push(extra)
     }
@@ -324,8 +363,10 @@ export function apply(ctx, config = {}) {
       nodeSource: detected.nodeSource,
       cliPath: detected.cliPath,
       cliSource: detected.cliSource,
+      cliVersion: detected.cliVersion,
       workspace: detected.workspace,
     },
+    runtime: runtimeReport(),
     limits: { maxSessions: MAX_SESSIONS },
     sessions: [...sessions.values()].map(proc => proc.snapshot({ sinceSeq: 0, includeEvents: false })),
   })
@@ -333,6 +374,31 @@ export function apply(ctx, config = {}) {
   const sessionsDelete = id => { sessions.delete(id) }
 
   const selfCheck = () => buildSelfCheck(detected)
+
+  /**
+   * 一键安装 pi 运行时到 <plugin>/.runtime。
+   * 幂等：正在装就返回同一个 promise，不会并发跑两个 npm。
+   */
+  const installRuntime = () => {
+    if (installing !== null) return installing
+    if (PLUGIN_ROOT === '') {
+      const error = new Error('插件目录未知，无法安装到 .runtime')
+      error.statusCode = 500
+      throw error
+    }
+    installing = installPiRuntime({ pluginRoot: PLUGIN_ROOT, version: PI_VERSION, onLog: line => log('info', 'install: ' + line) })
+      .then(result => {
+        installing = null
+        if (result.ok) {
+          refreshRuntime()
+          log('info', 'pi runtime installed: ' + result.cliPath + ' (' + String(Math.round(result.durationMs / 1000)) + 's)')
+        } else {
+          log('warn', 'pi runtime install failed: ' + String(result.error))
+        }
+        return { ...result, runtime: runtimeReport() }
+      })
+    return installing
+  }
 
   const handler = createHandler({
     log,
@@ -342,6 +408,9 @@ export function apply(ctx, config = {}) {
     stateOf,
     detected,
     selfCheck,
+    runtimeReport,
+    refreshRuntime,
+    installRuntime,
   })
 
   ctx.inject(['webServer'], services => {
@@ -383,6 +452,22 @@ function createHandler(deps) {
         if (typeof deps.selfCheck !== 'function') return send(501, { error: 'selfcheck unavailable' })
         return send(200, deps.selfCheck())
       }
+      if (method === 'GET' && routePath === '/runtime') return send(200, deps.runtimeReport())
+      if (method === 'POST' && routePath === '/runtime/refresh') {
+        deps.refreshRuntime()
+        return send(200, { ok: true, runtime: deps.runtimeReport() })
+      }
+      if (method === 'POST' && routePath === '/runtime/install') {
+        const result = await deps.installRuntime()
+        return send(result.ok ? 200 : 500, { ...result, runtime: deps.runtimeReport() })
+      }
+      if (method === 'GET' && routePath === '/diagnostics') {
+        return send(200, {
+          plugin: { id: PLUGIN_ID, version: VERSION, root: PLUGIN_ROOT, apiPrefix: API_PREFIX, pid: process.pid, node: process.version, execPath: process.execPath },
+          runtime: deps.runtimeReport(),
+          selfcheck: typeof deps.selfCheck === 'function' ? deps.selfCheck() : null,
+        })
+      }
 
       if (method === 'POST' && routePath === '/sessions') {
         const body = await readJsonBody(req)
@@ -402,6 +487,7 @@ function createHandler(deps) {
           await proc.close({ timeoutMs: 6000 })
           return send(200, { ok: true })
         }
+        if (method === 'GET' && tail === '') return send(200, proc.snapshot({ sinceSeq: 0, includeEvents: false }))
         if (method === 'GET' && tail === '/events') return streamEvents(req, res, proc, url)
         if (method === 'GET' && tail === '/snapshot') {
           const since = Number(url.searchParams.get('since') ?? 0)
@@ -516,3 +602,33 @@ function makeLog(ctx) {
     } catch { /* 日志不该影响功能 */ }
   }
 }
+
+// ── 插件配置（宿主插件详情页的表单） ──────────────────────────────────────────
+//
+// 只有 .volatile() 的字段会进表单，并被宿主原位热更新 + 持久化到 cordis.patch.yml。
+// 动态 import + 兜底而不是静态 import：静态 import 一旦解析失败，整个 server entry
+// 都装不上，插件会被标成「异常」，连侧栏都进不去。
+
+async function loadSchemastery() {
+  try { return (await import('@deepseek-ai/schemastery')).default } catch { return undefined }
+}
+
+const schema = await loadSchemastery()
+
+/**
+ * 顶层 await 是必需的：宿主要在建 fiber 前拿到 schema 才渲染表单。
+ * schema 解析失败时导出 undefined，插件其余功能不受影响��
+ */
+export const Config = schema === undefined
+  ? undefined
+  : schema.object({
+    cliPath: schema.string().default('').description('pi CLI 入口文件或包目录。留空自动探测：插件 .runtime → 插件 node_modules → 全局 npm → PATH').volatile(),
+    nodePath: schema.string().default('').description('node 可执行文件。留空自动探测 PATH 上的 node').volatile(),
+    workspace: schema.string().default('').description('新会话默认工作目录。留空用 ~/pi-workspace').volatile(),
+    extraArgs: schema.string().default('').description('追加给 pi 的额外参数（空格分隔），例如 --model openai/gpt-4o').volatile(),
+  })
+
+if (schema === undefined) {
+  console.warn('[dsh-pi] @deepseek-ai/schemastery 解析失败：插件详情页没有配置区（侧栏面板与运行时自举不受影响）')
+}
+
