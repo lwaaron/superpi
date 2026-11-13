@@ -88,10 +88,10 @@ New-Item -ItemType Junction `
 ### 方式三：手工 pnpm add（不想跑脚本时）
 
 ```powershell
-npm pack                                        # 得到 dsh-pi-0.3.2.tgz
+npm pack                                        # 得到 dsh-pi-0.4.0.tgz
 cd "$env:USERPROFILE\.dsh\profiles\desktop"
 node "$env:USERPROFILE\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\pnpm\bin\pnpm.cjs" `
-  add "file:C:\path\to\dsh-pi-0.3.2.tgz" --ignore-scripts
+  add "file:C:\path\to\dsh-pi-0.4.0.tgz" --ignore-scripts
 ```
 
 不要在 profile 里用 `npm install`：npm 会另写一份 `package-lock.json`，而宿主插件管理器用的是 pnpm，两套锁文件互相看不见，下次插件安装就会把 node_modules 重建成 pnpm 理解的样子。
@@ -128,7 +128,7 @@ pwsh -NoProfile -File .\tools\standalone-verify.ps1 -Keep      # 保留临时目
 
 ```
 [standalone] health    = ok (boot 3102 ms)
-[standalone] plugin    = 0.3.2 (installed 0.3.2)
+[standalone] plugin    = 0.4.0 (installed 0.4.0)
 [standalone] pi source = walk-up 1.5.2
 [standalone] pi cli    = ...\Temp\dsh-pi-standalone-802b49\profiles\pi-standalone\node_modules\@earendil-works\pi-coding-agent\dist\bundle\cli.js
 [standalone] model     = Deepseek-V4.1-Flash / odys-deepseek
@@ -178,7 +178,7 @@ npm install --prefix <插件>/.runtime --save-exact --no-audit --no-fund --logle
 | --- | --- | --- |
 | `cliPath` | 自动探测 | pi 的 `cli.js` 绝对路径（或包目录） |
 | `nodePath` | 自动探测 | 跑 pi 的 node 可执行文件 |
-| `workspace` | `~/pi-workspace` | 新会话的默认工作目录 |
+| `workspace` | `~/pi-workspace` | 新会话的默认工作区 |
 | `extraArgs` | `""` | 空格分隔，追加到 pi 命令行（会话级 `args` 之后） |
 | `args` | `[]` | 基础参数。历史版本默认 `["--no-session"]`，现在是否落盘由 `persist` 决定 |
 | `persist` | `"true"` | `true` = 会话落盘到 `~/.pi/agent/sessions`；`false` = 追加 `--no-session`，退出即丢 |
@@ -304,7 +304,7 @@ DSH 的插件管理器（dshmarket / 插件详情页）在安装、卸载、升�
 
 - `pnpm add dsh-free-model@3.1.0`（manifest 与 lock 都是 dsh-pi 正常运行时的状态）→ dsh-pi 与 pi 运行时都存活；
 - 故意造漂移（manifest 有 dsh-pi、lock 没有）再 `pnpm add` → pnpm 顺手把 dsh-pi 补装回来，锁被重写，仍然可用；
-- 锁里的 `file:.dsh-local-packages/dsh-pi-0.3.2.tgz` 是**相对 profile 根**解析的，删掉 `.dsh-local-packages` 会让 `install` 直接报 `ERR_PNPM_TARBALL_READ_LOCAL_TARBALL` —— 想改锁前先确认这个目录还在。
+- 锁里的 `file:.dsh-local-packages/dsh-pi-0.4.0.tgz` 是**相对 profile 根**解析的，删掉 `.dsh-local-packages` 会让 `install` 直接报 `ERR_PNPM_TARBALL_READ_LOCAL_TARBALL` —— 想改锁前先确认这个目录还在。
 
 `.dsh-local-packages/` 里的 tarball 是回滚与重装的锚点，不要手动清。
 

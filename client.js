@@ -166,6 +166,22 @@ window.__ModuleLoader__.load({
       dequeued: '已把排队消息取回输入框',
       nextModel: '下一个模型',
       nextThinking: '下一个思考档位',
+      pickDir: '选择工作区',
+      dirTitle: '选择工作区',
+      dirHint: '单击选中、双击进入；不存在的路径在开新会话时自动创建',
+      dirEmpty: '这个目录下没有子目录。',
+      dirLoading: '正在读取目录…',
+      dirUp: '上一级',
+      dirHome: '主目录',
+      dirThisPc: '此电脑',
+      dirPickDrive: '选一个盘符进入；双击可直接打开',
+      dirHere: '用这个工作区',
+      dirNotWritable: '这个目录不可写',
+      dirMissing: '目录还不存在，开会话时会自动创建',
+      dirSwitched: '已在新工作区开会话',
+      dirInputHint: '输入绝对路径后回车',
+      dirPickMark: '已选中',
+      dirSwitching: '正在切换…',
     }
     var EN = {
       panelTitle: 'pi',
@@ -299,154 +315,274 @@ window.__ModuleLoader__.load({
       dequeued: 'Queued messages restored to the editor',
       nextModel: 'Next model',
       nextThinking: 'Next thinking level',
+      pickDir: 'Choose workspace',
+      dirTitle: 'Choose workspace',
+      dirHint: 'Click to select, double-click to enter; a missing path is created when the session starts',
+      dirEmpty: 'No subdirectories here.',
+      dirLoading: 'Reading directory…',
+      dirUp: 'Parent',
+      dirHome: 'Home',
+      dirThisPc: 'This PC',
+      dirPickDrive: 'Pick a drive; double-click to open it',
+      dirHere: 'Use this workspace',
+      dirNotWritable: 'This directory is not writable',
+      dirMissing: 'This directory does not exist yet — it will be created',
+      dirSwitched: 'Started a session in the new workspace',
+      dirInputHint: 'Type an absolute path and press Enter',
+      dirPickMark: 'selected',
+      dirSwitching: 'Switching…',
     }
 
     // ── 样式（只用 --dsw-* 变量；类名统一 .dsh-pi- 前缀）──────────────────────
     var CSS = [
-      '.dsh-pi-root{display:flex;flex-direction:column;height:100%;min-height:0;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);font-size:var(--dsw-font-s-14-font-size);position:relative}',
+      // ── 基础 ────────────────────────────────────────────────────────────────
+      // 只引用 DSH 设计令牌（--dsw-*）；外部变量（--ds-font-family-code / --dsh-*）
+      // 一律带兜底。焦点环走 DSH 自己的 --dsw-focus-ring-color 钩子：DSH 默认把它设成
+      // transparent（等于不要环），面板在根节点上把它指回 state-business-primary，
+      // 这样键盘可达性不打折，且仍由主题决定具体色值。
+      '.dsh-pi-root{display:flex;flex-direction:column;height:100%;min-height:0;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);font-family:var(--dsw-font-family);font-size:var(--dsw-font-s-14-font-size);line-height:var(--dsw-font-s-14-line-height);position:relative;--dsw-focus-ring-color:var(--dsw-alias-state-business-primary);--dsh-scrollbar-thumb:var(--dsw-alias-scrollbar-bg-l2);--dsh-scrollbar-thumb-hover:var(--dsw-alias-scrollbar-hover-l2)}',
       '.dsh-pi-root *{box-sizing:border-box}',
-      '.dsh-pi-head{display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--dsw-alias-border-l3);flex:0 0 auto;flex-wrap:wrap}',
+      '.dsh-pi-root :is(button,input,select,textarea){font-family:inherit}',
+      '.dsh-pi-root :is(button,input,select,textarea,summary,a,[tabindex]):focus-visible{outline:var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary));outline-offset:2px}',
+
+      // ── 头部 ────────────────────────────────────────────────────────────────
+      '.dsh-pi-head{display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:.5px solid var(--dsw-alias-border-l3);flex:0 0 auto;flex-wrap:wrap}',
       '.dsh-pi-head-main{display:flex;align-items:center;gap:8px;min-width:0;flex:1 1 auto}',
-      '.dsh-pi-brand{display:flex;align-items:center;gap:6px;font-weight:600;letter-spacing:.02em}',
-      '.dsh-pi-dot{width:7px;height:7px;border-radius:50%;background:var(--dsw-alias-label-dimmed);flex:0 0 auto}',
+      '.dsh-pi-brand{display:flex;align-items:center;gap:6px;font-size:var(--dsw-font-s-14-font-size);line-height:var(--dsw-font-s-14-line-height);font-weight:500;color:var(--dsw-alias-label-primary)}',
+      '.dsh-pi-dot{width:7px;height:7px;border-radius:50%;background:var(--dsw-alias-state-idle-primary);flex:0 0 auto}',
       '.dsh-pi-dot[data-state="ready"]{background:var(--dsw-alias-state-success-primary)}',
       '.dsh-pi-dot[data-state="busy"]{background:var(--dsw-alias-state-business-primary);animation:dsh-pi-pulse 1.2s ease-in-out infinite}',
       '.dsh-pi-dot[data-state="dead"]{background:var(--dsw-alias-state-error-primary)}',
       '@keyframes dsh-pi-pulse{0%,100%{opacity:1}50%{opacity:.35}}',
-      '.dsh-pi-chip{display:inline-flex;align-items:center;gap:5px;height:24px;padding:0 8px;border-radius:var(--dsw-radius-sm);border:1px solid var(--dsw-alias-border-l3);background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-secondary);font-size:var(--dsw-font-xxs-12-font-size);white-space:nowrap;max-width:220px;overflow:hidden;text-overflow:ellipsis}',
+
+      // 胶囊标签：对齐 DSH 的 ._tag（radius 999 / padding 1px 8px / 11px / weight 500），
+      // tone 语义与 DSH 的 success(10%) / warning(12%) / danger(10%) color-mix 一致。
+      '.dsh-pi-chip{display:inline-flex;align-items:center;gap:5px;height:20px;padding:1px 8px;border:0;border-radius:999px;corner-shape:round;background:var(--dsw-alias-bg-module-platform);color:var(--dsw-alias-label-secondary);font-size:var(--dsw-font-xxxs-11-font-size);line-height:var(--dsw-font-xxxs-11-line-height);font-weight:500;white-space:nowrap;max-width:220px;overflow:hidden;text-overflow:ellipsis;transition:background-color .16s ease,color .16s ease}',
       '.dsh-pi-chip[data-clickable="1"]{cursor:pointer}',
       '.dsh-pi-chip[data-clickable="1"]:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}',
-      '.dsh-pi-chip[data-tone="ok"]{color:var(--dsw-alias-state-success-primary);border-color:var(--dsw-alias-state-success-primary)}',
-      '.dsh-pi-chip[data-tone="warn"]{color:var(--dsw-alias-state-warn-primary);border-color:var(--dsw-alias-state-warn-primary)}',
-      '.dsh-pi-chip[data-tone="err"]{color:var(--dsw-alias-state-error-primary);border-color:var(--dsw-alias-state-error-primary)}',
+      '.dsh-pi-chip[data-tone="ok"]{background:color-mix(in srgb,var(--dsw-alias-state-success-primary) 10%,transparent);color:var(--dsw-alias-state-success-primary)}',
+      '.dsh-pi-chip[data-tone="warn"]{background:color-mix(in srgb,var(--dsw-alias-state-warn-primary) 12%,transparent);color:var(--dsw-alias-state-warn-primary)}',
+      '.dsh-pi-chip[data-tone="err"]{background:color-mix(in srgb,var(--dsw-alias-state-error-primary) 10%,transparent);color:var(--dsw-alias-state-error-primary)}',
       '.dsh-pi-chip-name{overflow:hidden;text-overflow:ellipsis}',
-      '.dsh-pi-select{height:24px;padding:0 4px;border-radius:var(--dsw-radius-sm);border:1px solid var(--dsw-alias-border-l3);background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-secondary);font-size:var(--dsw-font-xxs-12-font-size);cursor:pointer}',
-      '.dsh-pi-btn{display:inline-flex;align-items:center;justify-content:center;gap:4px;height:26px;padding:0 10px;border-radius:var(--dsw-radius-sm);border:1px solid var(--dsw-alias-border-l3);background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font-size:var(--dsw-font-xxs-12-font-size);cursor:pointer;white-space:nowrap;font-family:inherit}',
+
+      // 头部下拉（思考档位）：沿用 DSH 输入框的配方（.5px border-l4 + bg-layer-3 + radius-sm）。
+      '.dsh-pi-select{height:28px;padding:0 6px;border:.5px solid var(--dsw-alias-border-l4);border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-secondary);font-size:var(--dsw-font-xxs-12-font-size);line-height:var(--dsw-font-xxs-12-line-height);cursor:pointer;transition:border-color .16s ease}',
+      '.dsh-pi-select:hover{border-color:var(--dsw-alias-state-business-primary)}',
+
+      // ── 按钮 ────────────────────────────────────────────────────────────────
+      // 基线 = DSH ._button + ._sm（28px / radius-sm / 12px）+ ._outline 的 hairline；
+      // -ghost 去掉 hairline 与底色，-primary 用 button-primary-fill/hover 令牌。
+      '.dsh-pi-btn{display:inline-flex;align-items:center;justify-content:center;gap:4px;height:28px;padding:0 10px;border:0;border-radius:var(--dsw-radius-sm);box-shadow:inset 0 0 0 .5px var(--dsw-alias-border-l4);background:transparent;color:var(--dsw-alias-label-primary);font-family:inherit;font-size:var(--dsw-font-xxs-12-font-size);line-height:var(--dsw-font-xxs-12-line-height);cursor:pointer;white-space:nowrap;transition:background-color .16s ease,color .16s ease,box-shadow .16s ease}',
       '.dsh-pi-btn:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover)}',
-      '.dsh-pi-btn:disabled{opacity:.5;cursor:not-allowed}',
-      '.dsh-pi-btn-primary{background:var(--dsw-alias-brand-primary);border-color:var(--dsw-alias-brand-primary);color:var(--dsw-alias-label-primary-foreground)}',
-      '.dsh-pi-btn-primary:hover:not(:disabled){filter:brightness(1.08)}',
-      '.dsh-pi-btn-danger{color:var(--dsw-alias-state-error-primary);border-color:var(--dsw-alias-state-error-primary)}',
-      '.dsh-pi-btn-ghost{border-color:transparent;background:transparent;color:var(--dsw-alias-label-secondary)}',
-      '.dsh-pi-btn-icon{width:26px;padding:0}',
+      '.dsh-pi-btn:active:not(:disabled){background:var(--dsw-alias-interactive-bg-active)}',
+      '.dsh-pi-btn:disabled{opacity:.4;cursor:not-allowed}',
+      '.dsh-pi-btn-primary{box-shadow:none;background:var(--dsw-alias-button-primary-fill);color:var(--dsw-alias-label-primary-foreground);padding:0 14px}',
+      '.dsh-pi-btn-primary:hover:not(:disabled){background:var(--dsw-alias-button-primary-hover);color:var(--dsw-alias-label-primary-foreground)}',
+      '.dsh-pi-btn-primary:active:not(:disabled){background:var(--dsw-alias-button-primary-hover)}',
+      '.dsh-pi-btn-danger{box-shadow:none;color:var(--dsw-alias-state-error-primary)}',
+      '.dsh-pi-btn-danger:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover-danger);color:var(--dsw-alias-state-error-primary)}',
+      '.dsh-pi-btn-ghost{box-shadow:none;background:transparent;color:var(--dsw-alias-label-secondary)}',
+      '.dsh-pi-btn-ghost:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}',
+      '.dsh-pi-btn-icon{width:28px;padding:0}',
+      '.dsh-pi-btn svg{width:15px;height:15px}',
+
+      // ── 消息流 ──────────────────────────────────────────────────────────────
       '.dsh-pi-scroll{flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden}',
-      '.dsh-pi-inner{display:flex;flex-direction:column;gap:14px;padding:14px 16px 18px}',
+      '.dsh-pi-inner{display:flex;flex-direction:column;gap:16px;padding:16px 16px 20px}',
       '.dsh-pi-row{display:flex;gap:8px;min-width:0}',
       '.dsh-pi-row-user{justify-content:flex-end}',
-      '.dsh-pi-bubble-user{max-width:82%;padding:8px 12px;border-radius:var(--dsw-radius-lg);background:var(--dsw-alias-bg-layer-2);border:1px solid var(--dsw-alias-border-l2);white-space:pre-wrap;word-break:break-word}',
+      // 用户气泡 = DSH ._bubble（specific-bubble / radius-xl / 10px 16px / 内容字号可调）
+      '.dsh-pi-bubble-user{max-width:82%;padding:10px 16px;border:0;border-radius:var(--dsw-radius-xl);background:var(--dsw-specific-bubble);color:var(--dsw-alias-label-primary);font-size:var(--dsh-content-font-size,var(--dsw-font-s-14-font-size));line-height:calc(22px + var(--dsh-content-font-delta,0px));white-space:pre-wrap;word-break:break-word}',
       '.dsh-pi-body{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:8px}',
-      '.dsh-pi-prose{line-height:1.6;word-break:break-word}',
+      // 正文 = DSH markdown base（14px/24px，可用 --dsh-content-font-* 缩放）
+      '.dsh-pi-prose{font-size:var(--dsh-content-font-size,var(--dsw-font-s-14-font-size));line-height:calc(24px + var(--dsh-content-font-delta,0px));word-break:break-word}',
       '.dsh-pi-prose p{margin:0 0 8px}',
       '.dsh-pi-prose p:last-child{margin-bottom:0}',
       '.dsh-pi-prose ul{margin:0 0 8px;padding-left:20px}',
-      '.dsh-pi-prose h3{margin:0 0 6px;font-size:var(--dsw-font-base-16-font-size)}',
+      '.dsh-pi-prose h3{margin:16px 0 8px;font:var(--dsw-font-markdown-h3)}',
       '.dsh-pi-prose strong{font-weight:600}',
-      '.dsh-pi-code-inline{padding:1px 4px;border-radius:var(--dsw-radius-xs);background:var(--dsw-alias-markdown-code-block);font-size:var(--dsw-font-markdown-code-block-small-font-size);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}',
-      '.dsh-pi-fence{border-radius:var(--dsw-radius-md);background:var(--dsw-alias-markdown-code-block);overflow:hidden;border:1px solid var(--dsw-alias-border-l2)}',
-      '.dsh-pi-fence-lang{padding:3px 10px;font-size:var(--dsw-font-xxxs-11-font-size);color:var(--dsw-alias-label-tertiary);border-bottom:1px solid var(--dsw-alias-border-l2)}',
-      '.dsh-pi-pre{margin:0;padding:10px 12px;overflow-x:auto;font-size:var(--dsw-font-xs-13-font-size);line-height:1.5;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}',
-      '.dsh-pi-think{border-left:2px solid var(--dsw-alias-border-l4);padding-left:10px;color:var(--dsw-alias-label-tertiary);font-size:var(--dsw-font-xs-13-font-size)}',
-      '.dsh-pi-think summary{cursor:pointer;user-select:none;list-style:none;color:var(--dsw-alias-label-tertiary)}',
+      '.dsh-pi-code-inline{padding:1px 4px;border-radius:var(--dsw-radius-xs);background:var(--dsw-alias-markdown-inline-code);font:var(--dsw-font-markdown-code-block-small);color:var(--dsw-alias-label-primary)}',
+      // 代码块 = DSH ._card / ._header / ._body 三段（banner + body，无边框）
+      '.dsh-pi-fence{margin:16px 0;overflow:hidden;border:0;border-radius:var(--dsw-radius-lg);background:var(--dsw-alias-markdown-code-block);font:var(--dsw-font-markdown-code-block)}',
+      '.dsh-pi-fence-lang{padding:10px 18px 8px 22px;border-bottom:0;background:var(--dsw-alias-markdown-code-block-banner);color:var(--dsw-alias-label-secondary);font-size:var(--dsw-font-xxxs-11-font-size);line-height:18px;font-family:var(--dsw-font-family)}',
+      '.dsh-pi-pre{margin:0;padding:6px 22px 20px;overflow-x:auto;font:var(--dsw-font-markdown-code-block);color:var(--dsw-alias-label-primary)}',
+      '.dsh-pi-think{border-left:2px solid var(--dsw-alias-border-l3);padding-left:10px;color:var(--dsw-alias-label-tertiary);font-size:var(--dsw-font-xs-13-font-size);line-height:var(--dsw-font-xs-13-line-height)}',
+      '.dsh-pi-think summary{cursor:pointer;user-select:none;list-style:none;color:var(--dsw-alias-label-tertiary);padding:2px 0}',
+      '.dsh-pi-think summary:hover{color:var(--dsw-alias-label-secondary)}',
       '.dsh-pi-think summary::-webkit-details-marker{display:none}',
-      '.dsh-pi-think-body{margin-top:6px;white-space:pre-wrap;word-break:break-word;line-height:1.5}',
-      '.dsh-pi-tool{border:1px solid var(--dsw-alias-border-l2);border-radius:var(--dsw-radius-md);background:var(--dsw-alias-bg-layer-1);overflow:hidden}',
-      '.dsh-pi-tool-head{display:flex;align-items:center;gap:8px;padding:6px 10px;cursor:pointer;list-style:none;font-size:var(--dsw-font-xxs-12-font-size)}',
+      '.dsh-pi-think-body{margin-top:6px;white-space:pre-wrap;word-break:break-word;line-height:calc(22px + var(--dsh-content-font-delta,0px))}',
+
+      // 工具行：过程流里的一次工具调用 / 一次工具结果（含 ! 的 bash 结果）。
+      //
+      // 这里是「行」不是「卡」：一次任务常常连着十几次工具调用，每行都套圆角框 + hairline
+      // 会形成框套框的噪音墙（用户 18994 明确要求去掉圆角框）。DSH 自己的过程流也是平铺行：
+      // 只有箭头 + 名称 + 状态，靠行距分组，展开后才出现内容区。
+      // 展开区沿用 .dsh-pi-think 的左侧竖线语言，让「附着在一条消息下的补充信息」看起来是一类东西。
+      '.dsh-pi-tool{border:0;border-radius:0;background:transparent;box-shadow:none}',
+      '.dsh-pi-tool-head{display:flex;align-items:center;gap:8px;padding:3px 0;cursor:pointer;list-style:none;font-size:var(--dsw-font-xxs-12-font-size);line-height:var(--dsw-font-xxs-12-line-height);color:var(--dsw-alias-label-secondary)}',
+      // 悬停只提亮文字，不铺底色 —— 铺底色会在没有外框时露出一块矩形色斑。
+      '.dsh-pi-tool-head:hover{color:var(--dsw-alias-label-primary)}',
+      '.dsh-pi-tool-head:hover .dsh-pi-tool-name{color:var(--dsw-alias-label-primary)}',
       '.dsh-pi-tool-head::-webkit-details-marker{display:none}',
-      '.dsh-pi-tool-head::before{content:"\\25B8";color:var(--dsw-alias-label-dimmed);font-size:10px;transition:transform .12s ease}',
+      '.dsh-pi-tool-head::before{content:"\\25B8";color:var(--dsw-alias-label-dimmed);font-size:10px;line-height:1;transition:transform .16s ease}',
       '.dsh-pi-tool[open]>.dsh-pi-tool-head::before{transform:rotate(90deg)}',
-      '.dsh-pi-tool-name{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--dsw-alias-label-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
-      '.dsh-pi-tool-body{margin:0;padding:8px 10px;border-top:1px solid var(--dsw-alias-border-l2);max-height:340px;overflow:auto;font-size:var(--dsw-font-xxxs-11-font-size);line-height:1.5;white-space:pre-wrap;word-break:break-word;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--dsw-alias-label-secondary)}',
-      '.dsh-pi-tag{display:inline-flex;align-items:center;height:18px;padding:0 6px;border-radius:var(--dsw-radius-xs);background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-tertiary);font-size:var(--dsw-font-xxxs-11-font-size);white-space:nowrap}',
-      '.dsh-pi-tag[data-tone="run"]{color:var(--dsw-alias-state-business-primary)}',
-      '.dsh-pi-tag[data-tone="ok"]{color:var(--dsw-alias-state-success-primary)}',
-      '.dsh-pi-tag[data-tone="err"]{color:var(--dsw-alias-state-error-primary)}',
-      '.dsh-pi-tag[data-tone="warn"]{color:var(--dsw-alias-state-warn-primary)}',
-      '.dsh-pi-usage{margin-top:2px;font-size:var(--dsw-font-xxxs-11-font-size);color:var(--dsw-alias-label-dimmed);font-variant-numeric:tabular-nums}',
+      '.dsh-pi-tool-name{font-family:var(--ds-font-family-code,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace);color:var(--dsw-alias-label-secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      '.dsh-pi-tool-body{margin:4px 0 0;padding:0 0 0 14px;border-top:0;border-left:1px solid var(--dsw-alias-border-l3);max-height:340px;overflow:auto;font-size:var(--dsw-font-xxxs-11-font-size);line-height:18px;white-space:pre-wrap;word-break:break-word;font-family:var(--ds-font-family-code,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace);color:var(--dsw-alias-label-secondary)}',
+
+      // 状态标签 = DSH ._tag 的四种 tone（run/success/warning/danger）
+      '.dsh-pi-tag{display:inline-flex;align-items:center;height:17px;padding:1px 8px;border:0;border-radius:999px;corner-shape:round;background:var(--dsw-alias-bg-module-platform);color:var(--dsw-alias-label-secondary);font-size:var(--dsw-font-xxxs-11-font-size);line-height:var(--dsw-font-xxxs-11-line-height);font-weight:500;white-space:nowrap}',
+      '.dsh-pi-tag[data-tone="run"]{background:color-mix(in srgb,var(--dsw-alias-state-business-primary) 10%,transparent);color:var(--dsw-alias-state-business-primary)}',
+      '.dsh-pi-tag[data-tone="ok"]{background:color-mix(in srgb,var(--dsw-alias-state-success-primary) 10%,transparent);color:var(--dsw-alias-state-success-primary)}',
+      '.dsh-pi-tag[data-tone="err"]{background:color-mix(in srgb,var(--dsw-alias-state-error-primary) 10%,transparent);color:var(--dsw-alias-state-error-primary)}',
+      '.dsh-pi-tag[data-tone="warn"]{background:color-mix(in srgb,var(--dsw-alias-state-warn-primary) 12%,transparent);color:var(--dsw-alias-state-warn-primary)}',
+      '.dsh-pi-usage{margin-top:2px;font-size:var(--dsw-font-xxxs-11-font-size);line-height:var(--dsw-font-xxxs-11-line-height);color:var(--dsw-alias-label-caption);font-variant-numeric:tabular-nums}',
       '.dsh-pi-caret{display:inline-block;width:6px;height:14px;margin-left:2px;background:var(--dsw-alias-label-secondary);animation:dsh-pi-pulse 1s steps(2) infinite;vertical-align:text-bottom}',
-      '.dsh-pi-img{max-width:min(100%,360px);max-height:240px;border-radius:var(--dsw-radius-md);border:1px solid var(--dsw-alias-border-l2);cursor:zoom-in;display:block}',
-      '.dsh-pi-img-open{position:fixed;inset:0;z-index:60;background:rgba(0,0,0,.72);display:flex;align-items:center;justify-content:center;padding:40px;cursor:zoom-out}',
+      '.dsh-pi-img{max-width:min(100%,360px);max-height:240px;border:0;border-radius:var(--dsw-radius-md);cursor:zoom-in;display:block}',
+      '.dsh-pi-img-open{position:fixed;inset:0;z-index:60;background:var(--dsw-alias-bg-mask-photo);display:flex;align-items:center;justify-content:center;padding:40px;cursor:zoom-out}',
       '.dsh-pi-img-open img{max-width:100%;max-height:100%;border-radius:var(--dsw-radius-md)}',
-      '.dsh-pi-empty{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;padding:48px 24px;text-align:center;color:var(--dsw-alias-label-secondary);flex:1 1 auto}',
-      '.dsh-pi-empty h2{margin:4px 0 0;font-size:var(--dsw-font-base-16-font-size);font-weight:600;color:var(--dsw-alias-label-primary)}',
-      '.dsh-pi-empty p{margin:0;max-width:420px;line-height:1.6;font-size:var(--dsw-font-xs-13-font-size)}',
-      '.dsh-pi-empty-meta{margin-top:6px;font-size:var(--dsw-font-xxs-12-font-size);color:var(--dsw-alias-label-dimmed);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;word-break:break-all}',
-      '.dsh-pi-composer{flex:0 0 auto;border-top:1px solid var(--dsw-alias-border-l3);background:var(--dsw-alias-bg-base);padding:8px 12px 10px;position:relative}',
-      '.dsh-pi-composer-inner{display:flex;flex-direction:column;gap:6px}',
-      '.dsh-pi-box{position:relative;display:flex;flex-direction:column;border:1px solid var(--dsw-alias-border-l3);border-radius:var(--dsw-radius-md);background:var(--dsw-alias-bg-layer-1)}',
-      '.dsh-pi-widget{display:flex;flex-direction:column;gap:2px}',
-      '.dsh-pi-widget-body{margin:0;padding:6px 10px;border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-bg-layer-2);border:1px solid var(--dsw-alias-border-l2);color:var(--dsw-alias-label-secondary);font-size:var(--dsw-font-xxxs-11-font-size);line-height:1.5;white-space:pre-wrap;word-break:break-word;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;max-height:120px;overflow:auto}',
-      '.dsh-pi-statusbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:4px 2px 0;font-size:var(--dsw-font-xxxs-11-font-size);color:var(--dsw-alias-label-dimmed)}',
-      '.dsh-pi-statusbar span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:240px}',
-      '.dsh-pi-box[data-focus="1"]{border-color:var(--dsw-alias-brand-primary)}',
-      '.dsh-pi-ta{width:100%;min-height:52px;max-height:220px;resize:none;border:0;outline:0;background:transparent;color:var(--dsw-alias-label-primary);padding:9px 10px 4px;font-family:inherit;font-size:var(--dsw-font-s-14-font-size);line-height:1.5}',
-      '.dsh-pi-ta::placeholder{color:var(--dsw-alias-label-dimmed)}',
-      '.dsh-pi-bar{display:flex;align-items:center;gap:6px;padding:4px 8px 6px}',
-      '.dsh-pi-bar-hint{flex:1 1 auto;min-width:0;font-size:var(--dsw-font-xxxs-11-font-size);color:var(--dsw-alias-label-dimmed);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
-      '.dsh-pi-thumbs{display:flex;flex-wrap:wrap;gap:6px;padding:6px 8px 0}',
-      '.dsh-pi-thumb{position:relative;width:52px;height:52px;border-radius:var(--dsw-radius-sm);overflow:hidden;border:1px solid var(--dsw-alias-border-l3)}',
-      '.dsh-pi-thumb img{width:100%;height:100%;object-fit:cover;display:block}',
-      '.dsh-pi-thumb-x{position:absolute;top:0;right:0;width:16px;height:16px;line-height:14px;text-align:center;border:0;background:rgba(0,0,0,.62);color:#fff;font-size:11px;cursor:pointer;padding:0}',
-      '.dsh-pi-menu{position:absolute;left:0;right:0;bottom:calc(100% + 4px);max-height:min(46vh,380px);overflow:hidden;display:flex;flex-direction:column;border:1px solid var(--dsw-alias-border-l3);border-radius:var(--dsw-radius-md);background:var(--dsw-alias-bg-layer-2);box-shadow:0 12px 32px rgba(0,0,0,.28);z-index:20}',
-      '.dsh-pi-menu-head{display:flex;align-items:center;gap:6px;padding:6px 10px;border-bottom:1px solid var(--dsw-alias-border-l2);font-size:var(--dsw-font-xxxs-11-font-size);color:var(--dsw-alias-label-tertiary)}',
-      '.dsh-pi-menu-list{overflow-y:auto;min-height:0;padding:4px}',
-      '.dsh-pi-item{display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:var(--dsw-radius-sm);cursor:pointer;font-size:var(--dsw-font-xs-13-font-size)}',
-      '.dsh-pi-item[data-active="1"]{background:var(--dsw-alias-interactive-bg-hover)}',
-      '.dsh-pi-item[data-disabled="1"]{opacity:.5;cursor:not-allowed}',
-      '.dsh-pi-item-main{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:1px}',
-      '.dsh-pi-item-name{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
-      '.dsh-pi-item-desc{font-size:var(--dsw-font-xxxs-11-font-size);color:var(--dsw-alias-label-tertiary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
-      '.dsh-pi-item-side{flex:0 0 auto;font-size:var(--dsw-font-xxxs-11-font-size);color:var(--dsw-alias-label-dimmed)}',
-      '.dsh-pi-empty-row{padding:12px;text-align:center;color:var(--dsw-alias-label-dimmed);font-size:var(--dsw-font-xxs-12-font-size)}',
-      '.dsh-pi-alert{padding:8px 10px;border-radius:var(--dsw-radius-sm);background:color-mix(in srgb,var(--dsw-alias-state-error-primary) 12%,transparent);border:1px solid var(--dsw-alias-state-error-primary);color:var(--dsw-alias-state-error-primary);font-size:var(--dsw-font-xxs-12-font-size);white-space:pre-wrap;word-break:break-word}',
-      '.dsh-pi-notice{padding:6px 10px;border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-bg-layer-2);border:1px solid var(--dsw-alias-border-l3);color:var(--dsw-alias-label-secondary);font-size:var(--dsw-font-xxs-12-font-size)}',
-      '.dsh-pi-notice[data-tone="err"]{color:var(--dsw-alias-state-error-primary);border-color:var(--dsw-alias-state-error-primary)}',
-      '.dsh-pi-notice[data-tone="warn"]{color:var(--dsw-alias-state-warn-primary);border-color:var(--dsw-alias-state-warn-primary)}',
-      '.dsh-pi-notice[data-tone="ok"]{color:var(--dsw-alias-state-success-primary);border-color:var(--dsw-alias-state-success-primary)}',
+
+      // ── 空态 / 运行时引导 ───────────────────────────────────────────────────
+      '.dsh-pi-empty{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:48px 24px;text-align:center;color:var(--dsw-alias-label-secondary);flex:1 1 auto}',
+      '.dsh-pi-empty h2{margin:4px 0 0;font:var(--dsw-font-base-strong-16);color:var(--dsw-alias-label-primary)}',
+      '.dsh-pi-empty p{margin:0;max-width:420px;font-size:var(--dsw-font-s-14-font-size);line-height:var(--dsw-font-s-14-line-height);color:var(--dsw-alias-label-secondary)}',
+      '.dsh-pi-empty-meta{font-family:var(--ds-font-family-code,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace);font-size:var(--dsw-font-xxs-12-font-size);line-height:var(--dsw-font-xxs-12-line-height);color:var(--dsw-alias-label-caption);word-break:break-all}',
+      '.dsh-pi-empty-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:center;margin-top:4px}',
       '.dsh-pi-center{flex:1 1 auto;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:32px;color:var(--dsw-alias-label-secondary)}',
       '.dsh-pi-gate{flex:1 1 auto;display:flex;align-items:center;justify-content:center;padding:24px}',
-      '.dsh-pi-gate-card{max-width:520px;width:100%;display:flex;flex-direction:column;gap:10px;padding:18px;border:1px solid var(--dsw-alias-border-l3);border-radius:var(--dsw-radius-lg);background:var(--dsw-alias-bg-layer-1)}',
-      '.dsh-pi-gate-card h3{margin:0;font-size:var(--dsw-font-base-16-font-size)}',
+      '.dsh-pi-gate-card{max-width:520px;width:100%;display:flex;flex-direction:column;gap:10px;padding:20px;border:0;border-radius:var(--dsw-radius-lg);background:var(--dsw-alias-bg-layer-1);box-shadow:var(--dsw-elevation-panel)}',
+      '.dsh-pi-gate-card h3{margin:0;font:var(--dsw-font-base-strong-16)}',
       '.dsh-pi-gate-actions{display:flex;gap:8px;flex-wrap:wrap}',
-      '.dsh-pi-gate-path{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:var(--dsw-font-xxxs-11-font-size);color:var(--dsw-alias-label-tertiary);word-break:break-all}',
-      '.dsh-pi-gate-searched{display:flex;flex-direction:column;gap:2px;font-size:var(--dsw-font-xxxs-11-font-size);color:var(--dsw-alias-label-dimmed)}',
+      '.dsh-pi-gate-path{font-family:var(--ds-font-family-code,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace);font-size:var(--dsw-font-xxxs-11-font-size);line-height:18px;color:var(--dsw-alias-label-tertiary);word-break:break-all}',
+      '.dsh-pi-gate-searched{display:flex;flex-direction:column;gap:2px;font-size:var(--dsw-font-xxxs-11-font-size);line-height:18px;color:var(--dsw-alias-label-dimmed)}',
+
+      // ── 输入区 ──────────────────────────────────────────────────────────────
+      '.dsh-pi-composer{flex:0 0 auto;background:var(--dsw-alias-bg-base);padding:8px 12px 12px;position:relative}',
+      '.dsh-pi-composer-inner{display:flex;flex-direction:column;gap:6px}',
+      '.dsh-pi-box{position:relative;display:flex;flex-direction:column;border:.5px solid var(--dsw-alias-border-l3);border-radius:var(--dsw-radius-lg);background:var(--dsw-alias-bg-layer-1);transition:border-color .16s ease}',
+      '.dsh-pi-box:focus-within{border-color:var(--dsw-alias-state-business-primary)}',
+      '.dsh-pi-box[data-focus="1"]{border-color:var(--dsw-alias-state-business-primary)}',
+      '.dsh-pi-widget{display:flex;flex-direction:column;gap:2px}',
+      '.dsh-pi-widget-body{margin:0;padding:6px 10px;border:.5px solid var(--dsw-alias-border-l2);border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-secondary);font-size:var(--dsw-font-xxxs-11-font-size);line-height:18px;white-space:pre-wrap;word-break:break-word;font-family:var(--ds-font-family-code,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace);max-height:120px;overflow:auto}',
+      '.dsh-pi-statusbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:4px 2px 0;font-size:var(--dsw-font-xxxs-11-font-size);line-height:18px;color:var(--dsw-alias-label-caption)}',
+      '.dsh-pi-statusbar span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:240px}',
+      '.dsh-pi-ta{width:100%;min-height:52px;max-height:220px;resize:none;border:0;outline:0;background:transparent;color:var(--dsw-alias-label-primary);padding:10px 14px 4px;font-family:inherit;font-size:var(--dsw-font-s-14-font-size);line-height:calc(22px + var(--dsh-content-font-delta,0px))}',
+      '.dsh-pi-ta::placeholder{color:var(--dsw-alias-label-dimmed)}',
+      '.dsh-pi-bar{display:flex;align-items:center;gap:6px;padding:4px 8px 6px 10px}',
+      '.dsh-pi-bar-hint{flex:1 1 auto;min-width:0;font-size:var(--dsw-font-xxxs-11-font-size);line-height:18px;color:var(--dsw-alias-label-caption);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      '.dsh-pi-thumbs{display:flex;flex-wrap:wrap;gap:6px;padding:8px 10px 0}',
+      '.dsh-pi-thumb{position:relative;width:52px;height:52px;border-radius:var(--dsw-radius-sm);overflow:hidden;box-shadow:inset 0 0 0 .5px var(--dsw-alias-border-l3)}',
+      '.dsh-pi-thumb img{width:100%;height:100%;object-fit:cover;display:block}',
+      '.dsh-pi-thumb-x{position:absolute;top:2px;right:2px;width:16px;height:16px;line-height:16px;text-align:center;border:0;border-radius:var(--dsw-radius-xs);background:var(--dsw-alias-bg-mask-1);color:var(--dsw-static-neutral-bluish-00);font-size:11px;cursor:pointer;padding:0}',
+      '.dsh-pi-thumb-x:hover{background:var(--dsw-alias-bg-mask-2)}',
+
+      // 弹出菜单 = DSH ._list（padding 4 / radius-lg / specific-menu / 毛玻璃 / elevation-panel）
+      '.dsh-pi-menu{position:absolute;left:0;right:0;bottom:calc(100% + 4px);z-index:20;display:flex;flex-direction:column;max-height:min(46vh,360px);overflow:hidden;padding:4px;border:0;border-radius:var(--dsw-radius-lg);background:var(--dsw-specific-menu);backdrop-filter:var(--dsw-menu-backdrop-filter);box-shadow:var(--dsw-elevation-panel);--dsw-elevation-stroke-color:var(--dsw-alias-border-l1)}',
+      '.dsh-pi-menu-head{display:flex;align-items:center;gap:6px;padding:6px 8px;border-bottom:0;font-size:var(--dsw-font-xxxs-11-font-size);line-height:var(--dsw-font-xxxs-11-line-height);color:var(--dsw-alias-label-tertiary)}',
+      '.dsh-pi-menu-list{overflow-y:auto;min-height:0;padding:0}',
+      '.dsh-pi-item{display:flex;align-items:center;gap:6px;width:100%;min-height:34px;padding:6px 8px;border:0;border-radius:var(--dsw-radius-md);background:transparent;cursor:pointer;font-size:var(--dsw-font-xs-13-font-size);line-height:var(--dsw-font-xs-13-line-height);color:var(--dsw-alias-label-primary);text-align:left}',
+      '.dsh-pi-item[data-active="1"]{background:var(--dsw-alias-interactive-bg-hover)}',
+      '.dsh-pi-item[data-disabled="1"]{opacity:.4;cursor:not-allowed}',
+      '.dsh-pi-item-main{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:0}',
+      '.dsh-pi-item-name{font-family:var(--ds-font-family-code,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+      '.dsh-pi-item-desc{font-size:var(--dsw-font-xxxs-11-font-size);line-height:var(--dsw-font-xxxs-11-line-height);color:var(--dsw-alias-label-tertiary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+      '.dsh-pi-item-side{flex:0 0 auto;font-size:var(--dsw-font-xxxs-11-font-size);line-height:var(--dsw-font-xxxs-11-line-height);color:var(--dsw-alias-label-caption)}',
+      '.dsh-pi-empty-row{padding:12px;text-align:center;color:var(--dsw-alias-label-dimmed);font-size:var(--dsw-font-xxs-12-font-size);line-height:var(--dsw-font-xxs-12-line-height)}',
+
+      // ── 提示 ────────────────────────────────────────────────────────────────
+      '.dsh-pi-alert{padding:8px 12px;border:0;border-radius:var(--dsw-radius-sm);background:color-mix(in srgb,var(--dsw-alias-state-error-primary) 10%,transparent);color:var(--dsw-alias-state-error-primary);font-size:var(--dsw-font-xxs-12-font-size);line-height:var(--dsw-font-xxs-12-line-height);white-space:pre-wrap;word-break:break-word}',
+      '.dsh-pi-notice{padding:8px 12px;border:0;border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-secondary);font-size:var(--dsw-font-xxs-12-font-size);line-height:var(--dsw-font-xxs-12-line-height)}',
+      '.dsh-pi-notice[data-tone="err"]{background:color-mix(in srgb,var(--dsw-alias-state-error-primary) 10%,transparent);color:var(--dsw-alias-state-error-primary)}',
+      '.dsh-pi-notice[data-tone="warn"]{background:color-mix(in srgb,var(--dsw-alias-state-warn-primary) 12%,transparent);color:var(--dsw-alias-state-warn-primary)}',
+      '.dsh-pi-notice[data-tone="ok"]{background:color-mix(in srgb,var(--dsw-alias-state-success-primary) 10%,transparent);color:var(--dsw-alias-state-success-primary)}',
+      '.dsh-pi-queue{display:flex;align-items:center;gap:8px;font-size:var(--dsw-font-xxxs-11-font-size);line-height:18px;color:var(--dsw-alias-label-tertiary)}',
+
+      // ── 抽屉 ────────────────────────────────────────────────────────────────
+      // DSH ._float 的配方：bg-layer-2 + radius-panel + elevation-prominent + 局部描边色。
       '.dsh-pi-sheet{position:absolute;inset:0;z-index:30;display:flex;flex-direction:column;background:var(--dsw-alias-bg-base)}',
-      '.dsh-pi-sheet-head{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--dsw-alias-border-l3);flex:0 0 auto}',
-      '.dsh-pi-sheet-title{font-weight:600;flex:1 1 auto;min-width:0}',
-      '.dsh-pi-search{height:26px;padding:0 8px;border-radius:var(--dsw-radius-sm);border:1px solid var(--dsw-alias-border-l3);background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font-size:var(--dsw-font-xxs-12-font-size);font-family:inherit;outline:0;min-width:0}',
-      '.dsh-pi-search:focus{border-color:var(--dsw-alias-brand-primary)}',
-      '.dsh-pi-sheet-body{flex:1 1 auto;min-height:0;overflow-y:auto;padding:10px 12px 16px;display:flex;flex-direction:column;gap:8px}',
-      '.dsh-pi-sess{display:flex;flex-direction:column;gap:4px;padding:9px 10px;border:1px solid var(--dsw-alias-border-l2);border-radius:var(--dsw-radius-md);background:var(--dsw-alias-bg-layer-1);cursor:pointer}',
-      '.dsh-pi-sess:hover{border-color:var(--dsw-alias-border-l4);background:var(--dsw-alias-bg-layer-2)}',
-      '.dsh-pi-sess[data-current="1"]{border-color:var(--dsw-alias-brand-primary)}',
-      '.dsh-pi-sess-top{display:flex;align-items:center;gap:6px;font-size:var(--dsw-font-xxs-12-font-size);color:var(--dsw-alias-label-secondary)}',
-      '.dsh-pi-sess-title{flex:1 1 auto;min-width:0;font-weight:600;color:var(--dsw-alias-label-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
-      '.dsh-pi-sess-line{font-size:var(--dsw-font-xxs-12-font-size);color:var(--dsw-alias-label-secondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
-      '.dsh-pi-mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:var(--dsw-font-xxxs-11-font-size);color:var(--dsw-alias-label-tertiary);word-break:break-all}',
-      '.dsh-pi-kv{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;font-size:var(--dsw-font-xxs-12-font-size)}',
+      '.dsh-pi-sheet-head{display:flex;align-items:center;gap:8px;padding:12px 14px;border-bottom:.5px solid var(--dsw-alias-border-l2);flex:0 0 auto}',
+      '.dsh-pi-sheet-title{flex:1 1 auto;min-width:0;font:var(--dsw-font-base-strong-16);color:var(--dsw-alias-label-primary)}',
+      '.dsh-pi-search{height:28px;padding:0 10px;border:.5px solid var(--dsw-alias-border-l4);border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-primary);font-family:inherit;font-size:var(--dsw-font-xxs-12-font-size);line-height:var(--dsw-font-xxs-12-line-height);outline:0;min-width:0;transition:border-color .16s ease}',
+      '.dsh-pi-search:focus{border-color:var(--dsw-alias-state-business-primary)}',
+      '.dsh-pi-search::placeholder{color:var(--dsw-alias-label-dimmed)}',
+      '.dsh-pi-sheet-body{flex:1 1 auto;min-height:0;overflow-y:auto;padding:12px 14px 16px;display:flex;flex-direction:column;gap:8px}',
+      '.dsh-pi-sess{display:flex;flex-direction:column;gap:4px;padding:10px 12px;border:0;border-radius:var(--dsw-radius-md);background:var(--dsw-alias-bg-layer-1);box-shadow:inset 0 0 0 .5px var(--dsw-alias-border-l2);cursor:pointer;transition:background-color .16s ease,box-shadow .16s ease}',
+      '.dsh-pi-sess:hover{background:var(--dsw-alias-bg-layer-2);box-shadow:inset 0 0 0 .5px var(--dsw-alias-border-l4)}',
+      '.dsh-pi-sess[data-current="1"]{box-shadow:inset 0 0 0 .5px var(--dsw-alias-state-business-primary)}',
+      '.dsh-pi-sess-top{display:flex;align-items:center;gap:6px;font-size:var(--dsw-font-xxs-12-font-size);line-height:var(--dsw-font-xxs-12-line-height);color:var(--dsw-alias-label-secondary)}',
+      '.dsh-pi-sess-title{flex:1 1 auto;min-width:0;font-weight:500;color:var(--dsw-alias-label-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+      '.dsh-pi-sess-line{font-size:var(--dsw-font-xxs-12-font-size);line-height:var(--dsw-font-xxs-12-line-height);color:var(--dsw-alias-label-secondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+      '.dsh-pi-mono{font-family:var(--ds-font-family-code,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace);font-size:var(--dsw-font-xxxs-11-font-size);line-height:18px;color:var(--dsw-alias-label-tertiary);word-break:break-all}',
+      '.dsh-pi-kv{display:grid;grid-template-columns:auto 1fr;gap:6px 14px;font-size:var(--dsw-font-xxs-12-font-size);line-height:var(--dsw-font-xxs-12-line-height)}',
       '.dsh-pi-kv-k{color:var(--dsw-alias-label-tertiary)}',
       '.dsh-pi-kv-v{color:var(--dsw-alias-label-primary);word-break:break-word;font-variant-numeric:tabular-nums}',
-      '.dsh-pi-tree{display:flex;flex-direction:column;gap:1px;font-size:var(--dsw-font-xxs-12-font-size);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}',
-      '.dsh-pi-tree-node{display:flex;align-items:center;gap:6px;padding:3px 6px;border-radius:var(--dsw-radius-xs);cursor:default}',
+      '.dsh-pi-tree{display:flex;flex-direction:column;gap:1px;font-size:var(--dsw-font-xxs-12-font-size);font-family:var(--ds-font-family-code,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace)}',
+      '.dsh-pi-tree-node{display:flex;align-items:center;gap:6px;padding:4px 6px;border-radius:var(--dsw-radius-sm);cursor:default}',
       '.dsh-pi-tree-node[data-clickable="1"]{cursor:pointer}',
       '.dsh-pi-tree-node[data-clickable="1"]:hover{background:var(--dsw-alias-interactive-bg-hover)}',
       '.dsh-pi-tree-node[data-leaf="1"]{background:var(--dsw-alias-interactive-bg-hover)}',
-      '.dsh-pi-tree-kind{flex:0 0 auto;color:var(--dsw-alias-label-dimmed);font-size:var(--dsw-font-xxxs-11-font-size);min-width:56px}',
+      '.dsh-pi-tree-kind{flex:0 0 auto;color:var(--dsw-alias-label-caption);font-size:var(--dsw-font-xxxs-11-font-size);min-width:56px}',
       '.dsh-pi-tree-text{flex:1 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--dsw-alias-label-secondary)}',
-      '.dsh-pi-dialog-wrap{position:absolute;inset:0;z-index:40;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.42);padding:20px}',
-      '.dsh-pi-dialog{width:min(560px,100%);max-height:100%;display:flex;flex-direction:column;gap:10px;padding:16px;border-radius:var(--dsw-radius-lg);border:1px solid var(--dsw-alias-border-l3);background:var(--dsw-alias-bg-layer-2);box-shadow:0 20px 48px rgba(0,0,0,.34)}',
-      '.dsh-pi-dialog h3{margin:0;font-size:var(--dsw-font-base-16-font-size)}',
-      '.dsh-pi-dialog-msg{margin:0;color:var(--dsw-alias-label-secondary);font-size:var(--dsw-font-xs-13-font-size);line-height:1.6;white-space:pre-wrap;word-break:break-word}',
-      '.dsh-pi-dialog-body{overflow-y:auto;min-height:0;display:flex;flex-direction:column;gap:6px}',
-      '.dsh-pi-dialog-actions{display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap}',
-      '.dsh-pi-opt{display:flex;align-items:center;gap:8px;padding:6px 10px;border:1px solid var(--dsw-alias-border-l2);border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font-size:var(--dsw-font-xs-13-font-size);cursor:pointer;text-align:left;font-family:inherit}',
+
+      // 开关 = DSH ._switch（36x20 胶囊 + 20px 滑块 + aria-checked 驱动）
+      '.dsh-pi-switch{position:relative;flex:0 0 auto;width:36px;height:20px;padding:2px;border:0;border-radius:999px;corner-shape:round;background:var(--dsw-alias-border-l3);cursor:pointer;transition:background-color .16s ease}',
+      '.dsh-pi-switch[aria-checked="true"]{background:var(--dsw-alias-brand-primary)}',
+      '.dsh-pi-switch:disabled{cursor:default;opacity:.5}',
+      '.dsh-pi-switch-thumb{display:block;width:16px;height:16px;border-radius:50%;corner-shape:round;background:var(--dsw-alias-label-primary-foreground);transition:transform .12s ease}',
+      '.dsh-pi-switch[aria-checked="false"] .dsh-pi-switch-thumb{background:var(--dsw-alias-switch-thumb)}',
+      '.dsh-pi-switch[aria-checked="true"] .dsh-pi-switch-thumb{transform:translate(16px)}',
+      '.dsh-pi-switch-row{display:grid;grid-template-columns:1fr auto;align-items:center;gap:12px}',
+      '.dsh-pi-switch-label{font-size:var(--dsw-font-s-14-font-size);line-height:var(--dsw-font-s-14-line-height);color:var(--dsw-alias-label-primary)}',
+
+      // ── 工作目录选择（DirSheet）────────────────────────────────────────────
+      // 对齐 DSH directory-picker：头部面包屑 + 可编辑路径，主体左「层级」右「子项」两栏。
+      '.dsh-pi-dir{display:flex;flex-direction:column;gap:8px;flex:1 1 auto;min-height:0}',
+      '.dsh-pi-dir-crumbs{display:flex;align-items:center;gap:2px;flex-wrap:wrap;min-height:20px}',
+      '.dsh-pi-dir-crumb{padding:1px 6px;border:0;border-radius:var(--dsw-radius-xs);background:transparent;color:var(--dsw-alias-label-secondary);font-family:inherit;font-size:var(--dsw-font-xxs-12-font-size);line-height:18px;cursor:pointer}',
+      '.dsh-pi-dir-crumb:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}',
+      '.dsh-pi-dir-crumb[data-last="1"]{color:var(--dsw-alias-label-primary);font-weight:500}',
+      '.dsh-pi-dir-sep{color:var(--dsw-alias-label-dimmed);font-size:var(--dsw-font-xxs-12-font-size);line-height:18px}',
+      '.dsh-pi-dir-cols{display:flex;gap:1px;flex:1 1 auto;min-height:240px;overflow:hidden;border:.5px solid var(--dsw-alias-border-l2);border-radius:var(--dsw-radius-md);background:var(--dsw-alias-bg-layer-1)}',
+      '.dsh-pi-dir-col{display:flex;flex-direction:column;min-width:0;flex:1 1 0;overflow-y:auto;padding:4px}',
+      '.dsh-pi-dir-col+.dsh-pi-dir-col{border-left:.5px solid var(--dsw-alias-border-l2)}',
+      '.dsh-pi-dir-item{display:flex;align-items:center;gap:6px;width:100%;min-height:30px;padding:4px 8px;border:0;border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-label-primary);font-family:inherit;font-size:var(--dsw-font-xs-13-font-size);line-height:var(--dsw-font-xs-13-line-height);text-align:left;cursor:pointer}',
+      '.dsh-pi-dir-item:hover{background:var(--dsw-alias-interactive-bg-hover)}',
+      '.dsh-pi-dir-item[data-selected="1"]{background:var(--dsw-alias-interactive-bg-active)}',
+      '.dsh-pi-dir-item[data-current="1"]{color:var(--dsw-alias-state-business-primary)}',
+      '.dsh-pi-dir-name{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      '.dsh-pi-dir-mark{flex:0 0 auto;color:var(--dsw-alias-state-business-primary);font-size:var(--dsw-font-xxxs-11-font-size)}',
+      '.dsh-pi-dir-foot{display:flex;align-items:center;gap:8px;flex-wrap:wrap}',
+      '.dsh-pi-dir-hint{flex:0 0 auto;min-width:0;font-size:var(--dsw-font-xxxs-11-font-size);line-height:18px;color:var(--dsw-alias-label-caption);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      '.dsh-pi-dir-target{flex:1 1 auto;min-width:0;font-family:var(--ds-font-family-code,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace);font-size:var(--dsw-font-xxxs-11-font-size);line-height:18px;color:var(--dsw-alias-label-caption);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      // 弹窗外壳：对齐 DSH directory-picker 的 680x500，用 .dsh-pi-dialog-wrap 提供的遮罩层居中。
+      // 高度固定（而不是靠内容撑）是刻意的：Miller 两栏切换时列表高度必须稳定，
+      // 否则用户点中一个目录、第二栏冒出来，整个弹窗会跳一下。
+      '.dsh-pi-dir-dialog{display:flex;flex-direction:column;width:min(680px,100%);height:min(500px,100%);overflow:hidden;border:0;border-radius:var(--dsw-radius-panel);background:var(--dsw-alias-bg-layer-2);box-shadow:var(--dsw-elevation-prominent);animation:dsh-pi-modal-in .16s ease-in-out}',
+      '.dsh-pi-dir-head{display:flex;align-items:center;gap:8px;flex:0 0 auto;padding:14px 16px 10px 20px}',
+      '.dsh-pi-dir-title{flex:1 1 auto;min-width:0;font:var(--dsw-font-base-strong-16);color:var(--dsw-alias-label-primary)}',
+      '.dsh-pi-dir-dialog .dsh-pi-dir{flex:1 1 auto;min-height:0;padding:0 20px 16px}',
+
+      // ── 对话框 ──────────────────────────────────────────────────────────────
+      // 对齐 DSH ._dialog：radius-panel + bg-layer-2 + elevation-prominent +
+      // header(padding 22px 14px 12px 24px) / body / footer(24px) 三段留白。
+      '.dsh-pi-dialog-wrap{position:absolute;inset:0;z-index:40;display:flex;align-items:center;justify-content:center;background:var(--dsw-alias-bg-mask-1);padding:20px}',
+      '.dsh-pi-dialog{display:flex;flex-direction:column;width:min(440px,100%);max-height:100%;overflow:hidden;border:0;border-radius:var(--dsw-radius-panel);background:var(--dsw-alias-bg-layer-2);box-shadow:var(--dsw-elevation-prominent);animation:dsh-pi-modal-in .16s ease-in-out}',
+      '@keyframes dsh-pi-modal-in{0%{opacity:0}to{opacity:1}}',
+      '.dsh-pi-dialog h3{margin:0;padding:22px 24px 0;font:var(--dsw-font-base-strong-16);color:var(--dsw-alias-label-primary)}',
+      '.dsh-pi-dialog .dsh-pi-mono{margin:6px 24px 0}',
+      '.dsh-pi-dialog-msg{margin:0;padding:10px 24px 0;color:var(--dsw-alias-label-secondary);font-size:var(--dsh-content-font-size,var(--dsw-font-s-14-font-size));line-height:calc(22px + var(--dsh-content-font-delta,0px));white-space:pre-wrap;word-break:break-word}',
+      '.dsh-pi-dialog-body{display:flex;flex-direction:column;gap:6px;min-height:0;overflow-y:auto;padding:14px 24px 0}',
+      '.dsh-pi-dialog-actions{display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap;padding:22px 24px 24px}',
+      '.dsh-pi-opt{display:flex;align-items:center;gap:8px;width:100%;min-height:34px;padding:6px 10px;border:0;border-radius:var(--dsw-radius-md);background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-primary);font-family:inherit;font-size:var(--dsw-font-xs-13-font-size);line-height:var(--dsw-font-xs-13-line-height);text-align:left;cursor:pointer;transition:background-color .16s ease,box-shadow .16s ease}',
       '.dsh-pi-opt:hover{background:var(--dsw-alias-interactive-bg-hover)}',
-      '.dsh-pi-opt[data-active="1"]{border-color:var(--dsw-alias-brand-primary)}',
-      '.dsh-pi-mini-ta{width:100%;min-height:84px;resize:vertical;border-radius:var(--dsw-radius-sm);border:1px solid var(--dsw-alias-border-l3);background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);padding:8px;font-family:inherit;font-size:var(--dsw-font-xs-13-font-size);line-height:1.5;outline:0}',
-      '.dsh-pi-mini-ta:focus{border-color:var(--dsw-alias-brand-primary)}',
+      '.dsh-pi-opt[data-active="1"]{box-shadow:inset 0 0 0 .5px var(--dsw-alias-state-business-primary)}',
+      '.dsh-pi-mini-ta{width:100%;min-height:84px;max-height:180px;padding:6px 10px;border:.5px solid var(--dsw-alias-border-l4);border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);font:var(--dsw-font-xs-13);font-family:var(--ds-font-family-code,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace);resize:vertical;outline:0;transition:border-color .16s ease}',
+      '.dsh-pi-mini-ta:focus{border-color:var(--dsw-alias-state-business-primary)}',
       '.dsh-pi-row2{display:flex;align-items:center;gap:8px;flex-wrap:wrap}',
       '.dsh-pi-spacer{flex:1 1 auto}',
       '.dsh-pi-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}',
-      '.dsh-pi-queue{display:flex;align-items:center;gap:8px;font-size:var(--dsw-font-xxxs-11-font-size);color:var(--dsw-alias-label-tertiary)}',
+
+      // ── 动效偏好 ────────────────────────────────────────────────────────────
+      '@media (prefers-reduced-motion: reduce){.dsh-pi-root *,.dsh-pi-root *::before,.dsh-pi-root *::after{animation-duration:.01ms !important;animation-iteration-count:1 !important;transition-duration:.01ms !important}}',
     ].join('')
 
 
@@ -535,6 +671,12 @@ window.__ModuleLoader__.load({
         if (typeof dir === 'string' && dir !== '') parts.push('dir=' + encodeURIComponent(dir))
         if (typeof query === 'string' && query !== '') parts.push('query=' + encodeURIComponent(query))
         return requestJson('/files?' + parts.join('&'))
+      },
+      directories: function (dir, query, limit) {
+        var parts = ['limit=' + String(typeof limit === 'number' ? limit : 200)]
+        if (typeof dir === 'string' && dir !== '') parts.push('dir=' + encodeURIComponent(dir))
+        if (typeof query === 'string' && query !== '') parts.push('query=' + encodeURIComponent(query))
+        return requestJson('/directories?' + parts.join('&'))
       },
       changelog: function () { return requestJson('/pi/changelog') },
       selfcheck: function () { return requestJson('/selfcheck') },
@@ -1124,6 +1266,56 @@ window.__ModuleLoader__.load({
         h('circle', { cx: 18, cy: 15.5, r: 3.2 }))
     }
 
+    /** 目录图标（与 PiIcon 同一描边风格，用 currentColor，不引入图片资源）。 */
+    function DirIcon(props) {
+      var size = props !== null && props !== undefined && typeof props.size === 'number' ? props.size : 15
+      return h('svg', {
+        width: size, height: size, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor',
+        strokeWidth: 1.7, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': 'true',
+        style: { flex: '0 0 auto' },
+      },
+        h('path', { d: 'M3 7.5a1.5 1.5 0 0 1 1.5-1.5h4l2 2.5h8A1.5 1.5 0 0 1 20 10v7.5a1.5 1.5 0 0 1-1.5 1.5h-14A1.5 1.5 0 0 1 3 17.5z' }))
+    }
+
+    /** 盘符/卷图标：横向的盒子 + 底部指示灯，与 DirIcon 同一描边风格。 */
+    function DriveIcon(props) {
+      var size = props !== null && props !== undefined && typeof props.size === 'number' ? props.size : 15
+      return h('svg', {
+        width: size, height: size, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor',
+        strokeWidth: 1.7, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': 'true',
+        style: { flex: '0 0 auto' },
+      },
+        h('rect', { x: 3, y: 6, width: 18, height: 12, rx: 2 }),
+        h('path', { d: 'M3 14h18' }),
+        h('circle', { cx: 17, cy: 17, r: 0.9, fill: 'currentColor', stroke: 'none' }))
+    }
+
+    /**
+     * 把绝对路径切成面包屑：[{label, path}]。
+     * - Windows：'C:\\Users\\PC' → C: / Users / PC，累积路径保持反斜杠。
+     * - POSIX：'/home/pc' → '/' / home / pc。
+     * 只做字符串切分，不碰文件系统 —— 面包屑必须能在目录读失败时照常显示。
+     */
+    function pathCrumbs(dir) {
+      if (typeof dir !== 'string' || dir === '') return []
+      var sep = dir.indexOf('\\') >= 0 ? '\\' : '/'
+      var parts = dir.split(sep)
+      var out = []
+      var acc = ''
+      for (var i = 0; i < parts.length; i += 1) {
+        var part = parts[i]
+        if (part === '') {
+          if (i === 0) { acc = sep; out.push({ label: sep, path: sep }) }
+          continue
+        }
+        if (acc === '') acc = part
+        else if (acc === sep) acc = sep + part
+        else acc = acc + sep + part
+        out.push({ label: part, path: acc })
+      }
+      return out
+    }
+
     function ThinkingBlock(props) {
       if (props.text === '') return null
       return h('details', { className: 'dsh-pi-think' },
@@ -1222,12 +1414,23 @@ window.__ModuleLoader__.load({
       return h('div', { className: 'dsh-pi-row' }, h('div', { className: 'dsh-pi-body' }, nodes))
     }
 
+    /**
+     * 空态：pi 还没有任何消息时显示。
+     * cwd 之后给一个「选择工作区」入口 —— 这是用户在 DSH 里第一次用 pi 时
+     * 最想做的事（默认 ~/pi-workspace 不一定是他要的目录），也是 TUI 里
+     * 「新建工作目录」的等价物。
+     */
     function EmptyState(props) {
+      var actions = typeof props.onPickDir !== 'function' ? null : h('div', { className: 'dsh-pi-empty-actions' },
+        h('button', { type: 'button', className: 'dsh-pi-btn', title: props.t('dirTitle'), onClick: props.onPickDir },
+          h(DirIcon, { size: 14 }),
+          h('span', null, props.t('pickDir'))))
       return h('div', { className: 'dsh-pi-empty' },
         h(PiIcon, { size: 30 }),
         h('h2', null, props.t('emptyTitle')),
         h('p', null, props.t('emptyHint')),
-        props.meta === null ? null : h('div', { className: 'dsh-pi-empty-meta' }, props.meta))
+        props.meta === null ? null : h('div', { className: 'dsh-pi-empty-meta' }, props.meta),
+        actions)
     }
 
 
@@ -1485,6 +1688,7 @@ window.__ModuleLoader__.load({
               onPick: insertToken,
             }),
             h('div', { className: 'dsh-pi-bar' },
+              h('button', { type: 'button', className: 'dsh-pi-btn dsh-pi-btn-ghost', title: t('pickDir'), onClick: props.onPickDir }, h(DirIcon, { size: 14 })),
               h('button', { type: 'button', className: 'dsh-pi-btn dsh-pi-btn-ghost', title: t('attachImage'), onClick: pickImage }, h(PiIcon, { size: 14 })),
               busy ? h('button', { type: 'button', className: 'dsh-pi-btn dsh-pi-btn-ghost', title: t('followUpSend'), onClick: function () { if (text.trim() !== '') { var queued = text; setText(''); setMenu(null); props.onFollowUp(queued) } } }, t('followUpSend')) : null,
               busy ? h('button', { type: 'button', className: 'dsh-pi-btn dsh-pi-btn-danger', onClick: props.onStop }, t('stop')) : null,
@@ -1589,6 +1793,353 @@ window.__ModuleLoader__.load({
             h('div', { className: 'dsh-pi-sess-line' }, session.lastMessage === '' ? t('untitled') : session.lastMessage),
             h('div', { className: 'dsh-pi-mono' }, fmtTime(session.modified) + ' · ' + session.path))
         }))
+    }
+
+    /**
+     * 工作目录抽屉 = TUI 会话选择器里「新建工作目录」的等价物（pi-main session-selector.ts 的 ProjectList）。
+     *
+     * 为什么由 host 代读：pi 的 RPC 面没有任何 fs 能力（rpc-mode.ts 33 条命令里没有目录操作），
+     * 所以浏览走 host 的 GET /directories（只读、不递归、只收子目录）。选中目录后用
+     * POST /sessions {cwd} 让 host 起一个新 pi 子进程 —— 与命令行 pi 在别的目录里启动等价。
+     *
+     * 交互对齐 DSH directory-picker（680x500 Miller 分栏）：面包屑 + 可编辑路径 + 左「层级」右「子项」；
+     * 确认路径即采纳，关闭即取消。
+     */
+    /**
+     * 目录浏览的纯数据模型（不碰 React、不碰 fs），DirSheet 与测试共用同一份判定：
+     *  · Miller 分栏 = 第一栏恒为当前层级的子项；选中某一项后出现第二栏装它的子项；
+     *  · 前缀过滤只作用于最后一栏（对齐 DSH picker 的「过滤最后一栏」语义）；
+     *  · 「用这个工作区」的目标优先级 deep（第二栏选中）> selected（第一栏选中）> 当前层级。
+     */
+    function dirPickModel(input) {
+      var source = input === null || input === undefined ? {} : input
+      var listing = source.listing === null || source.listing === undefined ? {} : source.listing
+      var selected = typeof source.selected === 'string' && source.selected !== '' ? source.selected : null
+      var deep = typeof source.deep === 'string' && source.deep !== '' ? source.deep : null
+      var query = typeof source.query === 'string' ? source.query.trim().toLowerCase() : ''
+      // 「此电脑」层：第一栏换成本机文件系统根（Windows 盘符 / POSIX '/'）。
+      // 没有这一层，从工作目录逐级往上只能走到当前盘符的根，别的盘永远选不到。
+      var rootsView = source.rootsView === true
+      var roots = Array.isArray(source.roots) ? source.roots : []
+      var all = rootsView ? roots : (Array.isArray(listing.entries) ? listing.entries : [])
+      var subAll = source.sub !== null && source.sub !== undefined && Array.isArray(source.sub.entries) ? source.sub.entries : []
+      var match = function (entry) {
+        if (query === '') return true
+        return String(entry.name === undefined ? '' : entry.name).toLowerCase().indexOf(query) >= 0
+      }
+      var current = String(listing.dir === undefined ? '' : listing.dir)
+      // 「此电脑」层什么都没选时 target 是 null：此刻列表里没有「当前目录」这个概念，
+      // 回落 current 会把上一个浏览层级当成本层目标，脚注显示与实际不符。
+      var target = deep !== null ? deep : (selected !== null ? selected : (rootsView ? null : current))
+      return {
+        selected: selected,
+        deep: deep,
+        rootsView: rootsView,
+        showSub: selected !== null,
+        main: selected === null ? all.filter(match) : all,
+        sub: selected === null ? [] : subAll.filter(match),
+        target: target,
+      }
+    }
+
+    function DirSheet(props) {
+      var t = props.t
+      var listingState = useState({ loading: true, error: null, dir: props.startDir === undefined ? '' : String(props.startDir), parent: null, writable: true, entries: [], truncated: false, home: '', roots: [] })
+      var listing = listingState[0]
+      var setListing = listingState[1]
+      var queryState = useState('')
+      var query = queryState[0]
+      var setQuery = queryState[1]
+      var selectedState = useState(null)
+      var selected = selectedState[0]
+      var setSelected = selectedState[1]
+      var typedState = useState('')
+      var typed = typedState[0]
+      var setTyped = typedState[1]
+      var busyState = useState(false)
+      var busy = busyState[0]
+      var setBusy = busyState[1]
+      // Miller 双栏：第一栏 = 当前层级的子项，第二栏 = 第一栏选中项的子项。
+      // 第二栏里再选中的目录记在 deep，优先于 selected 成为「用这个工作区」的目标。
+      var deepState = useState(null)
+      var deep = deepState[0]
+      var setDeep = deepState[1]
+      var subState = useState({ loading: false, error: null, dir: '', entries: [] })
+      var sub = subState[0]
+      var setSub = subState[1]
+      // 「此电脑」层：第一栏列本机所有盘符。没有它，从工作目录往上只能走到当前盘的根，
+      // 用户在别的盘上的工程永远进不去（这正是用户红框指出的缺口）。
+      var rootsViewState = useState(false)
+      var rootsView = rootsViewState[0]
+      var setRootsView = rootsViewState[1]
+
+      var go = function (dir) {
+        setSelected(null)
+        setRootsView(false)
+        setListing(function (prev) { return Object.assign({}, prev, { loading: true, error: null }) })
+        return api.directories(dir, '', 400).then(function (body) {
+          setListing({
+            loading: false,
+            error: null,
+            dir: String(body.dir === undefined ? dir : body.dir),
+            parent: body.parent === undefined ? null : body.parent,
+            writable: body.writable !== false,
+            entries: Array.isArray(body.entries) ? body.entries : [],
+            truncated: body.truncated === true,
+            home: typeof body.home === 'string' ? body.home : '',
+            roots: Array.isArray(body.roots) ? body.roots : [],
+          })
+          setTyped(String(body.dir === undefined ? dir : body.dir))
+          return null
+        }, function (failure) {
+          var message = String(failure !== null && failure !== undefined && failure.message !== undefined ? failure.message : failure)
+          setListing(function (prev) { return Object.assign({}, prev, { loading: false, error: message }) })
+          return null
+        })
+      }
+
+      useEffect(function () { go(props.startDir === undefined ? '' : String(props.startDir)) }, [])
+
+      var enter = function (dir) {
+        setQuery('')
+        go(dir)
+      }
+
+      var accept = function () {
+        if (busy === true) return
+        var pick = dirPickModel({ listing: listing, selected: selected, deep: deep, query: '', sub: sub, rootsView: rootsView, roots: listing.roots })
+        var target = pick.target
+        // 「此电脑」层什么都没选时没有可采纳的目标（盘符本身不是工作目录，选中盘符会拉到第二栏）。
+        if (target === null || target === '') return
+        setBusy(true)
+        Promise.resolve(props.onPick(target)).then(function () { setBusy(false) }, function () { setBusy(false) })
+      }
+
+      useEffect(function () {
+        if (selected === null) {
+          setSub({ loading: false, error: null, dir: '', entries: [] })
+          return undefined
+        }
+        var live = true
+        setSub({ loading: true, error: null, dir: String(selected), entries: [] })
+        api.directories(String(selected), '', 400).then(function (body) {
+          if (live !== true) return
+          setSub({
+            loading: false,
+            error: null,
+            dir: String(body.dir === undefined ? selected : body.dir),
+            entries: Array.isArray(body.entries) ? body.entries : [],
+          })
+        }, function (failure) {
+          if (live !== true) return
+          var message = String(failure !== null && failure !== undefined && failure.message !== undefined ? failure.message : failure)
+          setSub({ loading: false, error: message, dir: String(selected), entries: [] })
+        })
+        return function () { live = false }
+      }, [selected])
+
+      var model = dirPickModel({ listing: listing, selected: selected, deep: deep, query: query, sub: sub, rootsView: rootsView, roots: listing.roots })
+      // 「当前」= 会话现在所在的目录（props.startDir），不是正在浏览的层级 —— 用户翻到上级时
+      // 仍能看出自己原本在哪儿，这也是 Miller 分栏里唯一有意义的当前态标记。
+      var currentCwd = props.startDir === undefined ? '' : String(props.startDir)
+      var mainEntries = model.main
+      var subEntries = model.sub
+      // 「此电脑」层没有磁盘路径可切，面包屑只显示一层；点它回到盘符列表（本身已在则不做事）。
+      var crumbs = rootsView ? [{ label: t('dirThisPc'), path: '' }] : pathCrumbs(listing.dir)
+
+      var body = []
+      // 面包屑：每一段都可点，最后一段是当前目录（加粗、不可回退到同一处）。
+      body.push(h('div', { key: 'crumbs', className: 'dsh-pi-dir-crumbs' }, (function () {
+        var nodes = []
+        for (var i = 0; i < crumbs.length; i += 1) {
+          if (i > 0) nodes.push(h('span', { key: 'sep' + String(i), className: 'dsh-pi-dir-sep' }, '›'))
+          var crumb = crumbs[i]
+          var isLast = i === crumbs.length - 1
+          nodes.push(h('button', {
+            key: 'c' + String(i),
+            type: 'button',
+            className: 'dsh-pi-dir-crumb',
+            'data-last': isLast ? '1' : '0',
+            title: crumb.path,
+            onClick: (function (node) {
+              return function () {
+                if (node.path === '' || node.path === listing.dir) return
+                enter(node.path)
+              }
+            })(crumb),
+          }, crumb.label))
+        }
+        return nodes
+      })()))
+      // 可编辑路径（等价 DSH picker 头部的路径输入区）：回车即跳转，支持不存在的路径（开会话时创建）。
+      body.push(h('div', { key: 'typed', className: 'dsh-pi-row2' },
+        h('input', {
+          className: 'dsh-pi-search',
+          style: { flex: '1 1 auto', minWidth: '0' },
+          value: typed,
+          placeholder: t('dirInputHint'),
+          onChange: function (event) { setTyped(event.target.value) },
+          onKeyDown: function (event) {
+            if (event.key !== 'Enter') return
+            event.preventDefault()
+            var next = typed.trim()
+            if (next !== '') enter(next)
+          },
+        }),
+        h('input', {
+          className: 'dsh-pi-search',
+          style: { width: '160px', flex: '0 0 auto' },
+          value: query,
+          placeholder: t('filter'),
+          onChange: function (event) { setQuery(event.target.value) },
+        })))
+      body.push(h('div', { key: 'hint', className: 'dsh-pi-dir-hint' },
+        rootsView === true ? t('dirPickDrive') : (listing.writable === true ? t('dirHint') : t('dirNotWritable'))))
+
+      var makeRow = function (item, currentPath, activePath, markable) {
+        var target = String(item.path === undefined ? '' : item.path)
+        var active = target !== '' && target === String(activePath)
+        return h('button', {
+          type: 'button',
+          className: 'dsh-pi-dir-item',
+          'data-selected': active ? '1' : '0',
+          'data-current': target !== '' && target === String(currentPath) ? '1' : '0',
+          title: target,
+          onClick: function () {
+            setDeep(null)
+            setSelected(target)
+            setTyped(target)
+          },
+          onDoubleClick: function () {
+            setQuery('')
+            setDeep(null)
+            enter(target)
+          },
+        }, h(DirIcon, { size: 14 }),
+          h('span', { className: 'dsh-pi-dir-name' }, String(item.name === undefined ? '' : item.name)),
+          markable === true && active ? h('span', { className: 'dsh-pi-dir-mark' }, t('dirPickMark')) : null)
+      }
+
+      var rows = []
+      if (rootsView === true) {
+        // 「此电脑」层：第一行退回刚才浏览的层级（列表已经拿在手里，不必再请求）。
+        if (listing.dir !== '') {
+          rows.push(h('button', {
+            key: 'back',
+            type: 'button',
+            className: 'dsh-pi-dir-item',
+            title: listing.dir,
+            onClick: function () { setDeep(null); setSelected(null); setRootsView(false) },
+          }, h(DirIcon, { size: 14 }), h('span', { className: 'dsh-pi-dir-name' }, '..  ' + t('dirUp'))))
+        }
+        for (var r = 0; r < mainEntries.length; r += 1) {
+          var drive = mainEntries[r]
+          var drivePath = String(drive.path === undefined ? '' : drive.path)
+          var driveActive = drivePath !== '' && drivePath === String(selected)
+          rows.push(h('button', {
+            key: 'root' + String(r),
+            type: 'button',
+            className: 'dsh-pi-dir-item',
+            'data-selected': driveActive ? '1' : '0',
+            'data-drive': '1',
+            title: drivePath,
+            onClick: (function (path) {
+              return function () { setDeep(null); setSelected(path); setTyped(path) }
+            })(drivePath),
+            onDoubleClick: (function (path) {
+              return function () { setQuery(''); setDeep(null); enter(path) }
+            })(drivePath),
+          }, h(DriveIcon, { size: 14 }),
+            h('span', { className: 'dsh-pi-dir-name' }, String(drive.name === undefined ? '' : drive.name)),
+            driveActive ? h('span', { className: 'dsh-pi-dir-mark' }, t('dirPickMark')) : null))
+        }
+      }
+      if (rootsView !== true && listing.parent !== null && listing.parent !== undefined) {
+        rows.push(h('button', {
+          key: 'up',
+          type: 'button',
+          className: 'dsh-pi-dir-item',
+          title: String(listing.parent),
+          onClick: function () { setDeep(null); enter(String(listing.parent)) },
+        }, h(DirIcon, { size: 14 }), h('span', { className: 'dsh-pi-dir-name' }, '..  ' + t('dirUp'))))
+      }
+      if (rootsView !== true && listing.roots.length > 0) {
+        // 「此电脑」入口：切到盘符列表。放在「上一级 / 主目录」之后、子目录之前，
+        // 与资源管理器里「此电脑」和层级导航同组的直觉一致。
+        rows.push(h('button', {
+          key: 'pc',
+          type: 'button',
+          className: 'dsh-pi-dir-item',
+          'data-pc': '1',
+          title: t('dirThisPc'),
+          onClick: function () { setDeep(null); setSelected(null); setRootsView(true) },
+        }, h(DriveIcon, { size: 14 }), h('span', { className: 'dsh-pi-dir-name' }, t('dirThisPc'))))
+      }
+      if (rootsView !== true && listing.home !== '' && listing.home !== listing.dir) {
+        rows.push(h('button', {
+          key: 'home',
+          type: 'button',
+          className: 'dsh-pi-dir-item',
+          title: listing.home,
+          onClick: function () { setDeep(null); enter(listing.home) },
+        }, h(DirIcon, { size: 14 }), h('span', { className: 'dsh-pi-dir-name' }, '~  ' + t('dirHome'))))
+      }
+      // 盘符层已经由上面的专有分支渲染过（盘符要用 DriveIcon + 双击进盘语义，
+      // 与普通目录行不同）。这里必须跳过，否则 mainEntries 会在同一层被画第二遍。
+      if (rootsView !== true) {
+        for (var i = 0; i < mainEntries.length; i += 1) {
+          var entry = mainEntries[i]
+          rows.push(h('span', { key: 'e' + String(i), style: { display: 'contents' } }, makeRow(entry, currentCwd, selected, true)))
+        }
+      }
+
+      var listBody = rows
+      if (listing.loading === true) listBody = [h('div', { key: 'ld', className: 'dsh-pi-empty-row' }, t('dirLoading'))]
+      else if (listing.error !== null) listBody = [h('div', { key: 'er', className: 'dsh-pi-alert' }, String(listing.error))]
+      else if (rows.length === 0) listBody = [h('div', { key: 'em', className: 'dsh-pi-empty-row' }, t('dirEmpty'))]
+
+      var cols = [h('div', { key: 'col0', className: 'dsh-pi-dir-col' }, listBody)]
+      if (model.showSub === true) {
+        var subRows = []
+        for (var j = 0; j < subEntries.length; j += 1) {
+          subRows.push(h('span', { key: 's' + String(j), style: { display: 'contents' } }, makeRow(subEntries[j], currentCwd, deep, true)))
+        }
+        var subBody = subRows
+        if (sub.loading === true) subBody = [h('div', { key: 'sld', className: 'dsh-pi-empty-row' }, t('dirLoading'))]
+        else if (sub.error !== null) subBody = [h('div', { key: 'ser', className: 'dsh-pi-alert' }, String(sub.error))]
+        else if (subRows.length === 0) subBody = [h('div', { key: 'sem', className: 'dsh-pi-empty-row' }, t('dirEmpty'))]
+        cols.push(h('div', { key: 'col1', className: 'dsh-pi-dir-col' }, subBody))
+      }
+
+      body.push(h('div', { key: 'cols', className: 'dsh-pi-dir-cols' }, cols))
+
+      // 「此电脑」层未选盘时 target 为 null：脚注留空、按钮禁用，避免把上一层的目录当成本层目标。
+      var targetDir = model.target === null || model.target === undefined ? '' : String(model.target)
+      var canAccept = targetDir !== '' && busy !== true && listing.loading !== true
+      body.push(h('div', { key: 'foot', className: 'dsh-pi-dir-foot' },
+        h('span', { key: 'target', className: 'dsh-pi-dir-target', title: targetDir }, targetDir),
+        h('span', { className: 'dsh-pi-spacer' }),
+        h('button', {
+          type: 'button',
+          className: 'dsh-pi-btn dsh-pi-btn-primary',
+          disabled: canAccept !== true,
+          onClick: function () { accept() },
+        }, busy === true ? t('dirSwitching') : t('dirHere'))))
+
+      // 居中弹窗（不是整块抽屉）：选择工作区是一次会打断当前会话的决策，
+      // 用模态把面板其余部分压暗，用户不会误以为还能一边聊天一边挑目录。
+      // 尺寸对齐 DSH directory-picker 的 680x500。
+      return h('div', { className: 'dsh-pi-dialog-wrap' },
+        h('div', {
+          className: 'dsh-pi-dir-dialog',
+          role: 'dialog',
+          'aria-modal': 'true',
+          'aria-label': t('dirTitle'),
+        },
+          h('div', { className: 'dsh-pi-dir-head' },
+            h('div', { className: 'dsh-pi-dir-title' }, t('dirTitle')),
+            h('button', { type: 'button', className: 'dsh-pi-btn dsh-pi-btn-ghost', title: t('close'), onClick: props.onClose }, '×')),
+          h('div', { className: 'dsh-pi-dir' }, body)))
     }
 
     /**
@@ -1697,14 +2248,19 @@ window.__ModuleLoader__.load({
     function SettingsSheet(props) {
       var t = props.t
       var state = props.state
+      /** 开关：对齐 DSH 的 ._switch_1ik0f_5（36x20 胶囊 + 16px 滑块），不再是文字按钮。 */
       function toggle(key, label, value, onChange) {
-        return h('div', { className: 'dsh-pi-row2' },
-          h('span', { className: 'dsh-pi-kv-k', style: { minWidth: '180px' } }, label),
+        var checked = value === true
+        return h('div', { className: 'dsh-pi-switch-row' },
+          h('span', { className: 'dsh-pi-switch-label', id: 'dsh-pi-sw-' + key }, label),
           h('button', {
             type: 'button',
-            className: 'dsh-pi-btn',
-            onClick: function () { onChange(value !== true) },
-          }, value === true ? t('on') : t('off')))
+            className: 'dsh-pi-switch',
+            role: 'switch',
+            'aria-checked': checked ? 'true' : 'false',
+            'aria-labelledby': 'dsh-pi-sw-' + key,
+            onClick: function () { onChange(checked !== true) },
+          }, h('span', { className: 'dsh-pi-switch-thumb' })))
       }
       return h(Sheet, { t: t, title: t('settings'), onClose: props.onClose },
         toggle('autoCompaction', t('autoCompact'), state.autoCompactionEnabled, function (next) { props.onAutoCompaction(next) }),
@@ -2177,6 +2733,8 @@ window.__ModuleLoader__.load({
       var scrollRef = useRef(null)
       var pinnedRef = useRef(true)
       var bashRef = useRef(false)
+      var metaRef = useRef(null)
+      metaRef.current = meta
 
       var repaint = function () { bump(function (value) { return value + 1 }) }
 
@@ -2381,7 +2939,12 @@ window.__ModuleLoader__.load({
         }, function () { return null })
       }
 
-      var startSession = function () {
+      /**
+       * 起会话。cwd 非空时强制新建（供「选择工作区」用）—— 不能在别的目录里复用已有会话，
+       * 那会让用户以为切换成功了但实际还跑在旧 cwd 里。
+       */
+      var startSession = function (cwd) {
+        var target = typeof cwd === 'string' && cwd !== '' ? cwd : null
         setPhase('loading')
         setError(null)
         return api.state().then(function (state) {
@@ -2391,7 +2954,7 @@ window.__ModuleLoader__.load({
             setPhase('missing')
             return null
           }
-          var existing = state !== null && state !== undefined && Array.isArray(state.sessions) ? state.sessions : []
+          var existing = target !== null ? [] : (state !== null && state !== undefined && Array.isArray(state.sessions) ? state.sessions : [])
           if (existing.length > 0) {
             var id = existing[0].id
             return attach(id)
@@ -2399,7 +2962,7 @@ window.__ModuleLoader__.load({
               .then(function () { return loadLevels(id) })
               .then(function () { return loadCommands(id) })
           }
-          return api.create({}).then(function (created) {
+          return api.create(target === null ? {} : { cwd: target }).then(function (created) {
             var session = created !== null && created !== undefined && created.session !== null && typeof created.session === 'object' ? created.session : null
             if (session === null) throw new Error('host did not return a session')
             return attach(session.id)
@@ -2636,6 +3199,33 @@ window.__ModuleLoader__.load({
           viewRef.current = createView()
           repaint()
           return startSession()
+        })
+      }
+
+      /**
+       * 切换工作目录：等价于命令行里「退出 pi、cd 到新目录、再启动 pi」。
+       * 必须关旧会话 —— 一个 pi 子进程的 cwd 在 spawn 时就定了，改不了。
+       */
+      var switchDir = function (dir) {
+        var target = String(dir).trim()
+        if (target === '') return Promise.resolve(null)
+        var id = sessionRef.current
+        closeStream()
+        sessionRef.current = null
+        viewRef.current = createView()
+        repaint()
+        var chain = id === null ? Promise.resolve(null) : api.close(id).catch(function () { return null })
+        return chain.then(function () {
+          setDrawer(null)
+          return startSession(target)
+        }).then(function () {
+          var current = metaRef.current
+          var landed = current !== null && current !== undefined && typeof current.cwd === 'string' ? current.cwd : target
+          notice(t('dirSwitched') + ' · ' + landed, 'ok')
+          return null
+        }, function (failure) {
+          notice(String(failure !== null && failure !== undefined && failure.message !== undefined ? failure.message : failure), 'err')
+          return null
         })
       }
 
@@ -3163,6 +3753,13 @@ window.__ModuleLoader__.load({
         drawerNode = h(TextSheet, { t: t, title: 'CHANGELOG', text: sheetText, onClose: function () { setDrawer(null) } })
       } else if (drawer === 'hotkeys') {
         drawerNode = h(TextSheet, { t: t, title: t('commands'), text: hotkeyText(), onClose: function () { setDrawer(null) } })
+      } else if (drawer === 'dir') {
+        drawerNode = h(DirSheet, {
+          t: t,
+          startDir: meta === null || meta.cwd === undefined || meta.cwd === '' ? (runtime !== null && typeof runtime.workspace === 'string' ? runtime.workspace : '') : String(meta.cwd),
+          onPick: switchDir,
+          onClose: function () { setDrawer(null) },
+        })
       } else if (drawer === 'name') {
         drawerNode = h(NameSheet, {
           t: t,
@@ -3177,7 +3774,7 @@ window.__ModuleLoader__.load({
         h('div', { className: 'dsh-pi-scroll', ref: scrollRef, onScroll: onScroll },
           h('div', { className: 'dsh-pi-inner' },
             notices.length === 0 ? null : notices,
-            view.messages.length === 0 ? h(EmptyState, { t: t, meta: emptyMeta }) : rows)),
+            view.messages.length === 0 ? h(EmptyState, { t: t, meta: emptyMeta, onPickDir: function () { setDrawer('dir') } }) : rows)),
         statusRow.length === 0 ? null : h('div', { className: 'dsh-pi-statusbar', style: { padding: '4px 12px' } }, statusRow),
         h(Composer, {
           t: t,
@@ -3191,6 +3788,7 @@ window.__ModuleLoader__.load({
           onCycleModel: cycleModel,
           onCycleThinking: cycleThinking,
           onImages: addImages,
+          onPickDir: function () { setDrawer('dir') },
           slashEntries: slashEntries,
           editorText: view.editorText,
           widgets: widgets,
@@ -3286,10 +3884,18 @@ window.__ModuleLoader__.load({
       PiPanel: PiPanel,
       Composer: Composer,
       BashBlock: BashBlock,
+      ToolBlock: ToolBlock,
+      ToolResultRow: ToolResultRow,
+      MessageRow: MessageRow,
       SelfCheckChip: SelfCheckChip,
       RuntimeGate: RuntimeGate,
       ExtensionDialog: ExtensionDialog,
       dialogBudgetMs: dialogBudgetMs,
+      DirSheet: DirSheet,
+      dirPickModel: dirPickModel,
+      EmptyState: EmptyState,
+      SettingsSheet: SettingsSheet,
+      pathCrumbs: pathCrumbs,
       buildContract: buildContract,
       classifyInput: classifyInput,
       slashItems: slashItems,

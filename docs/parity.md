@@ -1,6 +1,6 @@
 # dsh-pi 两端能力对齐账本（parity）
 
-> 基线：pi `1.5.2` / dsh-pi `0.3.2` · 唯一权威 = `packages/coding-agent/src/modes/rpc/rpc-types.ts`（303 行）、`src/modes/rpc/rpc-mode.ts`（846 行，`switch` 在 `:404-737`）、`src/core/agent-session.ts`（4714 行，`AgentSessionEvent` 在 `:220-261`）
+> 基线：pi `1.5.2` / dsh-pi `0.4.0` · 唯一权威 = `packages/coding-agent/src/modes/rpc/rpc-types.ts`（303 行）、`src/modes/rpc/rpc-mode.ts`（846 行，`switch` 在 `:404-737`）、`src/core/agent-session.ts`（4714 行，`AgentSessionEvent` 在 `:220-261`）
 > 本文档是 `AGENTS.md` §3「100% 对齐」的账本。任何一行状态变化必须同步改这里，否则视为未完成。**本账本由 `test/parity.mjs` 与 `test/host-parity.mjs` 机器兜底**，人肉维护只是第一道。
 
 ## 0. 怎么读这张表
@@ -243,7 +243,7 @@ payload 取值优先级 `cancelled` → `confirmed` → `value`（`index.js:834-
 
 ## 5. 已知契约缺陷清单
 
-| 编号 | 缺陷 | 位置 | 0.3.2 状态 |
+| 编号 | 缺陷 | 位置 | 0.4.0 状态 |
 | --- | --- | --- | --- |
 | `D-01` | `RPC_EVENTS` 混进 5 条伪事件（`extension_ui_notify/status/widget/title/editor_text`） | 原 `src/rpc-contract.mjs:99-103` | **已闭环**。契约现 25 条真实事件（`src/rpc-contract.mjs:82-108`），`test/parity.mjs:318-319` 用 `contractOnly === []` 防回归 |
 | `D-02` | `disposition` 出现未文档化的第 6 种取值 `unsupported` | 原 `src/rpc-contract.mjs:147` vs 注释 `:128-139` | **已闭环**。`DISPOSITIONS`（`:283`）声明 6 种，注释 `:128-146` 已枚举 6 种，`validateContract()`（`:286-323`）校验取值合法性 |
@@ -265,4 +265,5 @@ payload 取值优先级 `cancelled` → `confirmed` → `value`（`index.js:834-
 | 2026-11-13 | 0.3.0 收尾 | **`D-03` 闭环**：顶栏拆成「新会话」（`runNewSession` → `new_session`，与 `/new` 同路径）与「重连」（`endSession`，换子进程）；同一件事不再有两个入口两种结果。**修掉两处在 0.2.5 真实存在的时序缺陷**：① 装了扩展 / 改了 prompt 模板后斜杠菜单不刷新（现于 `agent_settled` 重拉 `get_commands`，未知斜杠先重拉再判定）；② 扩展弹窗等着人点时命令先超时（`timeoutLimitMs` 三态 + `armTimer` 让位 + `respond` 后重开窗口 + 面板 `CHAT_TIMEOUT_MS = 0`）。门禁加强：新增 `test/timeout.mjs`（28 checks，用 `test/fixtures/fake-pi-rpc.mjs` 协议替身把 5 分钟等待压到毫秒级）、`test/host-parity.mjs` 125 checks（+10）、`test/parity.mjs` 65 checks（+16，新增 §6 会话入口与超时语义）。`npm test` 从 7 项变 8 项，耗时 ~1.3 s → ~5.2 s。 |
 | 2026-11-13 | 0.3.0 实测 | **扩展 UI 四类弹窗全部端到端取证**（独立实例 5599 + CDP）：select 选项点击回 `value`、confirm 回 `confirmed`、input 透传 `placeholder` 并回 `value`、editor 的 `prefill` 正确回填多行并回改后的 `value`、点「取消」走 `cancelled` —— 9 请求 + 3 应答分支无一纸面声明。**修掉两处文案缺陷**：① 倒计时原来渲染成「扩展请求超时，已自动取消 298s」（读起来像已完成态），现为「还剩 {n}s 后自动取消」/「Auto-cancels in {n}s」，与 pi 侧 `extension-selector.ts:56-63` 的 `Title (Ns)` 剩余秒语义对齐；② confirm 的否定按钮原来借用开关态文案 `off`（中「关」/英 off），现独立成 `extNo`（「否」/`No`），与 pi TUI `interactive-mode.ts:2896-2906` 复用 `["Yes","No"]` 对齐。`t('on')`/`t('off')` 仍归设置抽屉的开关使用。门禁：`test/client-render.mjs` 补第 9 组（38 个断言点 / 展开循环后 43 次执行；四种 method 的按钮集 / prefill 回填 / `dialogBudgetMs` 四类非法值回落 / `extNo ≠ off` / SSR 不渲染倒计时这条硬约束），`npm test` 全绿 |
 | 2026-11-13 | 0.3.2 | **升版号原因 = 安装器门禁**：`tools/install-plugin.ps1` 的逐字节比对在版本号不变时必然失败 —— pnpm 对 `file:` 依赖按 lock 里的 integrity 复用 store，把旧内容装回来且 exit=0（README:49 早有记录）。第一次原地改代码仍报 `STALE client.js`，第二次改完 README（断言口径 71→335）后复跑又报 `STALE README.md` —— **只要 `files` 里任一 shipped 文件（含文档）有变化就必须升版号**，0.3.1 因此未发布、直接并为 0.3.2。基线、缺陷表标题、`CONTRACT_VERSION`、README 的 tarball 名同步。**同时修掉安装器自身的退出路径缺陷**：`$stage` 只在最后一行 `Remove-Item`，比对失败走 `Fail`（`exit 1` 不触发 `finally`、也跳过末尾清理）时会把 `%TEMP%\dsh-pi-stage-*` 整棵留下 —— 0.3.0/0.3.1 两次失败各留了约 1.7 万文件。现改为 `$script:stageDir` + `Remove-StageDir` 统一收口：`Fail` 清理后退出、`trap { Remove-StageDir; break }` 兜异常与 Ctrl-C、正常路径末尾再调一次；真机验证 `stage_before=0 → 安装成功 → stage_after=0`，另用真实代码块抽取法验证 `Fail` 路径 `leftover=False`。 |
+| 2026-11-13 | 0.4.0 | **面板交互与命令行 pi 工作区语义对齐**：①会话/空态里的入口统一叫「选择工作区」（`pickDir`/`dirTitle`，ZH/EN 同改；`dirHere` 采纳按钮 = 「用这个工作区」）；②选择工作区从铺满面板的抽屉改成 680x500 居中模态（`client.js:2115` `.dsh-pi-dialog-wrap` + `.dsh-pi-dir-dialog`，`role=dialog`/`aria-modal`），理由 = 它是打断当前会话的决策；③新增「此电脑」盘符层（`GET /directories` 下发 `roots`，`client.js` rootsView），修掉「从工作区往上只能走到当前盘根、别的盘永远进不去」的缺口，并修掉盘符被通用循环重复渲染两遍的缺陷；④过程行（工具调用/工具结果/`!` bash）去掉圆角卡片外壳，改平铺行 + 展开区左侧竖线，与 `.dsh-pi-think` 同一套语言（一次任务十几条工具卡会形成框套框噪音墙）。门禁：`client-render` 450 断言（新增模态 5 条 + 文案 4 条 + 过程行 9.11b 段）、`css-tokens` 90、`host-parity` 162（新增 roots 10 条）、`parity` 65，`npm test` EXIT=0。 |
 | — | — | 修改本文档时必须同时改：受影响行的「面板端状态」、`## 1/3/4` 末尾的统计数字、以及 `## 6` 的一行。统计数字算错会让「零缺口」变成一句空话。 |

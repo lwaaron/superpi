@@ -204,7 +204,7 @@ try {
     // 3.1 /contract：原样序列化，字段一个不少
     const contract = await request(server.base, '/contract')
     check('contract 200', contract.status === 200, String(contract.status))
-    eq('contract version', contract.body.version, '0.3.2')
+    eq('contract version', contract.body.version, '0.4.0')
     eq('contract piVersion', contract.body.piVersion, '1.5.2')
     eq('contract rpcCommands 33', contract.body.rpcCommands.length, 33)
     // 25 种出站事件 + response = 26，见 src/rpc-contract.mjs:76 的注释。
@@ -347,7 +347,100 @@ try {
       await wsServer.close()
     }
 
-    // 3.8 /pi/changelog
+    // 3.8 /directories（工作目录选择抽屉：只列子目录 + parent + writable）
+    const dirsRoot = path.join(tmp, 'dirs')
+    fs.mkdirSync(path.join(dirsRoot, 'zeta'), { recursive: true })
+    fs.mkdirSync(path.join(dirsRoot, 'Alpha'), { recursive: true })
+    fs.writeFileSync(path.join(dirsRoot, 'a.txt'), 'x')
+    // 目录形符号链接（Windows 下 junction 不需要管理员权限）。创建不了就跳过断言。
+    const linkTarget = path.join(tmp, 'link-target')
+    fs.mkdirSync(linkTarget, { recursive: true })
+    let madeLink = false
+    try {
+      fs.symlinkSync(linkTarget, path.join(dirsRoot, 'link-to-elsewhere'), 'junction')
+      madeLink = true
+    } catch { /* 权限不足：跳过后面的符号链接断言 */ }
+    const dirs = await request(server.base, '/directories?dir=' + encodeURIComponent(dirsRoot))
+    check('directories 200', dirs.status === 200, String(dirs.status) + ' ' + JSON.stringify(dirs.body).slice(0, 200))
+    // 顺序门禁：'directories' 若被 /^\/sessions\/([^/]+)/ 吃掉，requireSession 会抛 404。
+    check('directories 没被 /sessions/:id 吃掉', dirs.body.ok === true && dirs.body.error === undefined, JSON.stringify(dirs.body).slice(0, 160))
+    eq('directories 规范化 dir', dirs.body.dir, dirsRoot)
+    eq('directories 只回子目录（文件与链接都被滤掉）', dirs.body.entries.map(entry => entry.name), ['Alpha', 'zeta'])
+    if (madeLink) {
+      check('directories 跳过符号链接', dirs.body.entries.every(entry => entry.name !== 'link-to-elsewhere'))
+    } else {
+      console.log('  · 跳过符号链接断言（本机无法创建 junction）')
+    }
+    eq('directories 条目绝对路径', dirs.body.entries.find(entry => entry.name === 'Alpha').path, path.join(dirsRoot, 'Alpha'))
+    eq('directories 条目只有 name 与 path', Object.keys(dirs.body.entries[0]).sort(), ['name', 'path'])
+    eq('directories parent', dirs.body.parent, tmp)
+    // writable 是给面板的提示，不是准入条件：不可写也必须能浏览（这里只钉住类型与肯定分支；
+    // 在 Windows 上伪造不可写要改 ACL，会把临时目录锁住、清理不干净，故不做负例）。
+    eq('directories writable', dirs.body.writable, true)
+    eq('directories writable 是布尔', typeof dirs.body.writable, 'boolean')
+    // dir 必须归一成反斜杠的绝对路径，否则面板拿它与 entry.path 比较时会判不相等。
+    const slashDir = await request(server.base, '/directories?dir=' + encodeURIComponent(dirsRoot.split(path.sep).join('/') + '/'))
+    eq('directories dir 归一化（正斜杠/尾斜杠）', slashDir.body.dir, dirsRoot)
+    const slashFiles = await request(server.base, '/files?dir=' + encodeURIComponent(dirsRoot.split(path.sep).join('/') + '/'))
+    eq('files dir 归一化（与 directories 一致）', slashFiles.body.dir, dirsRoot)
+    eq('directories home 透传', dirs.body.home, os.homedir())
+    eq('directories 不递归', dirs.body.entries.map(entry => entry.name).includes('inner'), false)
+    const rootListing = await request(server.base, '/directories?dir=' + encodeURIComponent(path.parse(tmp).root))
+    eq('directories 根目录 parent 为 null', rootListing.body.parent, null)
+    const dirsHit = await request(server.base, '/directories?dir=' + encodeURIComponent(dirsRoot) + '&query=alp')
+    eq('directories query 大小写不敏感子串', dirsHit.body.entries.map(entry => entry.name), ['Alpha'])
+    const dirsMiss = await request(server.base, '/directories?dir=' + encodeURIComponent(dirsRoot) + '&query=nomatch-zzz')
+    eq('directories query 不命中为空', dirsMiss.body.entries, [])
+    const dirsLimited = await request(server.base, '/directories?dir=' + encodeURIComponent(dirsRoot) + '&limit=1')
+    eq('directories limit 生效', dirsLimited.body.entries.length, 1)
+    eq('directories truncated', dirsLimited.body.truncated, true)
+    // clamp 要真的截到 200，而不只是「不报错」：造 205 个目录看一眼。
+    const manyRoot = path.join(tmp, 'many')
+    fs.mkdirSync(manyRoot, { recursive: true })
+    for (let i = 0; i < 205; i += 1) fs.mkdirSync(path.join(manyRoot, 'd' + String(i).padStart(3, '0')))
+    const clampedDirs = await request(server.base, '/directories?dir=' + encodeURIComponent(manyRoot) + '&limit=9999')
+    eq('directories limit 上限 200（真截断）', clampedDirs.body.entries.length, 200)
+    eq('directories limit 上限仍标 truncated', clampedDirs.body.truncated, true)
+    const missingDirs = await request(server.base, '/directories?dir=' + encodeURIComponent(path.join(tmp, 'nope-dirs')))
+    eq('directories 不存在 → 404', missingDirs.status, 404)
+    eq('directories 不存在文案', missingDirs.body.error, 'no such directory')
+    const fileAsDir = await request(server.base, '/directories?dir=' + encodeURIComponent(path.join(dirsRoot, 'a.txt')))
+    eq('directories 传文件路径 → 404', fileAsDir.status, 404)
+    const wsDirs = await makeServer({ workspacePath: () => tmp })
+    try {
+      const noDirDirs = await request(wsDirs.base, '/directories')
+      eq('directories 缺省 dir = workspace', noDirDirs.body.dir, tmp)
+      const relDirs = await request(wsDirs.base, '/directories?dir=dirs&query=alp')
+      eq('directories 相对 dir 按 workspace 解析', relDirs.body.dir, dirsRoot)
+      eq('directories 相对 dir 命中', relDirs.body.entries.map(entry => entry.name), ['Alpha'])
+    } finally {
+      await wsDirs.close()
+    }
+    // roots：面板「此电脑」层的数据源。没有它，从工作目录逐级往上只能走到当前盘的根，
+    // 用户在别的盘（本机 C:/D:/E:/F:）上的工程永远选不到。
+    check('directories 带 roots 字段', Array.isArray(dirs.body.roots), JSON.stringify(dirs.body.roots).slice(0, 160))
+    check('directories roots 非空', dirs.body.roots.length > 0, JSON.stringify(dirs.body.roots))
+    eq('directories roots 条目只有 name 与 path', Object.keys(dirs.body.roots[0]).sort(), ['name', 'path'])
+    if (process.platform === 'win32') {
+      check('directories roots 全是盘符', dirs.body.roots.every((root) => /^[A-Za-z]:$/.test(root.name)), JSON.stringify(dirs.body.roots))
+      check('directories roots 路径带分隔符（路径比较才不会差一个字符）', dirs.body.roots.every((root) => root.path === root.name + path.sep), JSON.stringify(dirs.body.roots))
+      check('directories roots 按盘符升序', dirs.body.roots.map((root) => root.name).join(',') === dirs.body.roots.map((root) => root.name).slice().sort().join(','), JSON.stringify(dirs.body.roots))
+      // 当前盘的根一定在列表里 —— 缺了它，从工作目录往上跳会走进一条死路。
+      const here = path.parse(tmp).root.replace(/[\\/]+$/, '')
+      check('directories roots 含当前工作目录所在盘', dirs.body.roots.some((root) => root.name.toLowerCase() === here.toLowerCase()), here + ' / ' + JSON.stringify(dirs.body.roots))
+      // 真实存在的盘符必须能列出来，且 dir 会被服务端归一成带尾分隔符的根。
+      const firstRoot = dirs.body.roots[0]
+      const rootBrowse = await request(server.base, '/directories?dir=' + encodeURIComponent(firstRoot.path) + '&limit=5')
+      eq('roots 盘符可直接浏览（200）', rootBrowse.status, 200)
+      eq('roots 盘符浏览 parent 为 null', rootBrowse.body.parent, null)
+    } else {
+      eq('directories roots 只有 /', dirs.body.roots, [{ name: '/', path: '/' }])
+    }
+    // 缓存：连打两次必须回同一份结果（插拔盘抖动不该让面板列表忽有忽无）。
+    const rootsAgain = await request(server.base, '/directories?dir=' + encodeURIComponent(dirsRoot))
+    eq('directories roots 稳定（10s 缓存）', rootsAgain.body.roots, dirs.body.roots)
+
+    // 3.9 /pi/changelog
     const pkg = path.join(tmp, 'pkg')
     fs.mkdirSync(path.join(pkg, 'dist', 'bundle'), { recursive: true })
     fs.writeFileSync(path.join(pkg, 'CHANGELOG.md'), '# changelog\n- 1.5.2\n')
@@ -382,7 +475,7 @@ try {
       await noneServer.close()
     }
 
-    // 3.9 POST /sessions 返回 session 快照（含 sessionFile 回填）
+    // 3.10 POST /sessions 返回 session 快照（含 sessionFile 回填）
     proc.lastState = { sessionFile: 'C:/s.jsonl', sessionId: 'sid', sessionName: 'n' }
     proc.stateReady = Promise.resolve(proc.lastState)
     const created = await request(server.base, '/sessions', { method: 'POST', body: { cwd: 'C:/work' } })
@@ -390,7 +483,7 @@ try {
     eq('POST /sessions body 透传给 spawnSession', calls.spawn.at(-1), { cwd: 'C:/work' })
     check('POST /sessions 返回 session 对象', typeof created.body.session === 'object' && created.body.session !== null)
 
-    // 3.10 未知路由仍 404
+    // 3.11 未知路由仍 404
     const unknown = await request(server.base, '/nope')
     eq('未知路由 404', unknown.status, 404)
   } finally {

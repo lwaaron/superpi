@@ -77,7 +77,7 @@ pwsh -NoProfile -File install-plugin.ps1 -Profile desktop   # 装进 desktop pro
 
 `test/fixtures/` 放两类「不能在门禁里自造」的东西：`fake-pi-rpc.mjs`（pi RPC 协议替身，`FAKE_PI_MODE=dialog|silent` 让超时语义可以在毫秒级被实测，`test/timeout.mjs` 用它）与 `pi-ext-ui-probe.ts`（真扩展，**只能靠真人点击验证**——扩展 UI 的九个 method 没有替身能覆盖「用户到底点了没」。用法写在文件头：复制到 `%USERPROFILE%\.pi\agent\extensions\`、重启 pi 会话、依次跑 `/dsh-ui-probe` 与 `/dsh-ui-notify`、验完删除）。
 
-## 8. 现状快照（2026-11-13 · v0.3.2）
+## 8. 现状快照（2026-11-13 · v0.4.0）
 
 - **RPC 命令**：pi 侧 33 条，面板已实现 32 条 + `steer` 1 条走等价路径（`prompt` + `streamingBehavior:'steer'`，`client.js:2447`），缺口 0。
 - **扩展 UI**：9 种请求全部已实现（`applyExtensionUi()` `client.js:898-943`），3 种应答全通（`POST /sessions/:id/respond` `index.js:839-858`）。倒计时取 `min(pi 声明值, 5 分钟兜底)`（`dialogBudgetMs()` `client.js:883`，`DIALOG_FALLBACK_MS` `src/rpc-contract.mjs:260`），且 host 侧命令 timer 会为挂起的弹窗让位（`restartPendingTimers()` `src/pi-rpc.mjs:472`）——**这两侧必须同时成立**，否则就是 0.2.5 那个「红条与对话框并存」的缺陷。
@@ -85,4 +85,7 @@ pwsh -NoProfile -File install-plugin.ps1 -Profile desktop   # 装进 desktop pro
 - **TUI 斜杠**：27 条 = 已实现 17 + 仅命令行 9 + `unsupported` 1（`/import`）+ 缺口 0。
 - **`D-03` 已闭环**：顶栏是两个按钮 —— 「新会话」`runNewSession` → RPC `new_session`（与 `/new` 同一条路径，同进程换树，`client.js:3037`）、「重连」`endSession`（换子进程，旧事件缓冲丢掉，`client.js:3036`）。0.2.5 把换进程当新会话，同一件事两个入口两种结果。
 - **剩两个上游协议面限制未闭环**：`D-07`（`get_state` 无 `autoRetryEnabled`）与 `D-08`（`cycle_model` 无方向参数），面板侧无解，见第 6 节；`test/parity.mjs:290` 用断言锁住 `D-07`，pi 哪天补了字段该断言会红，届时才是闭环时机。
+- **工作区选择（0.4.0）**：入口统一叫「选择工作区」（`pickDir`/`dirTitle`/`dirHere` 三处 ZH+EN 同改），交互从铺满面板的抽屉改成 680x500 居中模态（`client.js:2115` `.dsh-pi-dialog-wrap` + `.dsh-pi-dir-dialog`，`role="dialog"`/`aria-modal`）——它是打断当前会话的决策。新增「此电脑」盘符层：`GET /directories` 下发 `roots`（Windows 探 A-Z 各盘根，10s 缓存 `ROOTS_TTL_MS`），否则从工作区逐级往上只能走到当前盘根，D:/E:/F: 上的工程永远选不到。
+- **过程行（0.4.0）**：工具调用 / 工具结果 / `!` bash 三类行去掉圆角卡片外壳（`border-radius:0`、`background:transparent`、无 hairline），改平铺行 + 展开区左侧竖线，与 `.dsh-pi-think` 同一套语言。一次任务十几条工具卡若每条都套圆角 + 描边，会形成框套框的噪音墙。
+- 门禁规模（0.4.0）：`test/client-render.mjs` 450 断言、`test/css-tokens.mjs` 90、`test/host-parity.mjs` 162（含 roots 10 条）、`test/parity.mjs` 65。
 - 逐条账本见 `docs/parity.md`；机器保障是 `npm test` 里的 `test/parity.mjs` + `test/host-parity.mjs` + `test/timeout.mjs`。

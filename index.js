@@ -58,7 +58,7 @@ const API_PREFIX = '/api/' + PLUGIN_ID
 const MAX_SESSIONS = 8
 const MAX_BODY_BYTES = 4 * 1024 * 1024
 /** GET /contract 里 version 字段的取值：本插件对外的契约版本，与 package.json 解耦。 */
-const CONTRACT_VERSION = '0.3.2'
+const CONTRACT_VERSION = '0.4.0'
 /** 历史会话列表的条数窗口（与 src/session-store.mjs 的 DEFAULT_LIMIT/MAX_LIMIT 一致）。 */
 const HISTORY_DEFAULT_LIMIT = 20
 const HISTORY_MAX_LIMIT = 200
@@ -758,11 +758,38 @@ export function createHandler(deps) {
       if (method === 'GET' && routePath === '/files') {
         const workspace = typeof deps.workspacePath === 'function' ? deps.workspacePath() : ''
         const rawDir = (url.searchParams.get('dir') ?? '').trim()
-        const dir = rawDir === '' ? workspace : expandUserPath(rawDir, { env: process.env, home: os.homedir(), base: workspace })
+        const dir = normalizeDir(rawDir === '' ? workspace : expandUserPath(rawDir, { env: process.env, home: os.homedir(), base: workspace }))
         const query = url.searchParams.get('query') ?? ''
         const limit = clampCount(url.searchParams.get('limit'), FILES_DEFAULT_LIMIT, FILES_MAX_LIMIT)
         const listing = await listDirectory({ dir, query, limit })
         return send(200, { ok: true, dir: listing.dir, entries: listing.entries, truncated: listing.truncated })
+      }
+      /**
+       * 工作目录选择抽屉：只列子目录（+ parent + writable），供面板逐级浏览。
+       * 与 /files 同一套参数与错误语义；额外回一个 home，面板据此提供「回到主目录」。
+       */
+      if (method === 'GET' && routePath === '/directories') {
+        const workspace = typeof deps.workspacePath === 'function' ? deps.workspacePath() : ''
+        const rawDir = (url.searchParams.get('dir') ?? '').trim()
+        const dir = normalizeDir(rawDir === '' ? workspace : expandUserPath(rawDir, { env: process.env, home: os.homedir(), base: workspace }))
+        const query = url.searchParams.get('query') ?? ''
+        const limit = clampCount(url.searchParams.get('limit'), FILES_DEFAULT_LIMIT, FILES_MAX_LIMIT)
+        const listing = await listDirectories({ dir, query, limit })
+        return send(200, {
+          ok: true,
+          dir: listing.dir,
+          parent: listing.parent,
+          writable: listing.writable,
+          entries: listing.entries,
+          truncated: listing.truncated,
+          home: os.homedir(),
+          /**
+           * 本机可达的文件系统根（Windows = 盘符，POSIX = '/'）。
+           * 面板据此提供「此电脑」入口：从 C: 逐级往上只能走到 C:，
+           * 到不了 D:/E:/F:，没有 roots 就永远选不到别的盘。
+           */
+          roots: await listRoots(),
+        })
       }
       /** /changelog（契约 disposition:'local'）：读 pi 包内的 CHANGELOG.md。找不到也回 200，客户端据此显示「无 changelog」。 */
       if (method === 'GET' && routePath === '/pi/changelog') {
@@ -951,6 +978,19 @@ function delay(ms) {
   })
 }
 
+/**
+ * 把目录参数归一成绝对路径（分隔符统一、去尾斜杠、相对路径落到底）。
+ *
+ * 为什么必须归一：workspace 来自配置，可能写成 'C:/Users/x/pi-workspace'，而 entries
+ * 里的 path 是用 path.join 拼的（反斜杠）。面板要拿 dir 与 entry.path 做比较/拼面包屑，
+ * 两种分隔符混在一起就会「明明在同一个目录却判不相等」。
+ */
+function normalizeDir(dir) {
+  const text = typeof dir === 'string' ? dir.trim() : ''
+  if (text === '') return ''
+  return path.resolve(text)
+}
+
 /** 查询参数的条数：非数字/非正数用默认值，超过上限就截到上限。 */
 function clampCount(raw, fallback, max) {
   const value = Number(raw)
@@ -1014,6 +1054,94 @@ async function listDirectory({ dir, query = '', limit = FILES_DEFAULT_LIMIT }) {
     truncated = true
   }
   return { dir, entries, truncated }
+}
+
+/**
+ * 列一个目录里的**子目录**（工作目录选择抽屉用，只读、不递归）。
+ *
+ * 与 listDirectory 的区别：面板要的是「往下走进哪个目录」，文件在这里是噪声，
+ * 所以只留 type==='dir'。符号链接一律跳过（不 stat、不跟随）——目标可能是网络盘
+ * 或另一个盘符，跟进去会让抽屉在别人的文件树里游荡。
+ *
+ * writable 只是给面板一个「能不能在这里开会话」的提示，不可写并不影响浏览：
+ * pi 自己会在 POST /sessions 时报错，所以这里不能用 403/404 把用户挡在门外。
+ *
+ * @returns {Promise<{ dir: string, parent: string|null, writable: boolean, entries: Array<{name:string,path:string}>, truncated: boolean }>}
+ */
+async function listDirectories({ dir, query = '', limit = FILES_DEFAULT_LIMIT }) {
+  let handle
+  try {
+    handle = await fs.promises.opendir(dir)
+  } catch (error) {
+    // 与 listDirectory 同一套语义：路径不存在 / 不是目录都是 404，其余是 500。
+    const failure = new Error('no such directory')
+    failure.statusCode = error?.code === 'ENOTDIR' || error?.code === 'ENOENT' ? 404 : 500
+    throw failure
+  }
+  const needle = query.trim().toLowerCase()
+  const entries = []
+  let truncated = false
+  try {
+    for await (const dirent of handle) {
+      // dirent 的类型来自 lstat 语义：符号链接这里 isDirectory() 为 false，天然被跳过。
+      if (!dirent.isDirectory()) continue
+      const name = dirent.name
+      if (needle !== '' && name.toLowerCase().indexOf(needle) === -1) continue
+      entries.push({ name, path: path.join(dir, name) })
+    }
+  } catch { /* 迭代中途出错：保留已收集的部分，不让一个坏入口毁掉整次浏览 */ }
+  entries.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }))
+  if (entries.length > limit) {
+    entries.length = limit
+    truncated = true
+  }
+  // 到盘符根 / 文件系统根时 dirname 会回指自己，此时没有「上一级」。
+  const parentDir = path.dirname(dir)
+  const parent = parentDir === dir ? null : parentDir
+  let writable = false
+  try {
+    await fs.promises.access(dir, fs.constants.W_OK)
+    writable = true
+  } catch { /* 只读目录 / 权限不足：照样能把目录列出来，只是不能在这里开会话 */ }
+  return { dir, parent, writable, entries, truncated }
+}
+
+/** 盘符探测的缓存窗口：插拔 U 盘/网络盘后最多晚 10s 出现，避免每次浏览都扫 26 个根。 */
+const ROOTS_TTL_MS = 10000
+let rootsCache = { at: 0, items: [] }
+
+/**
+ * 列出本机可达的文件系统根。
+ *
+ * 为什么需要：目录浏览从工作目录逐级往上只能走到当前盘符的根（C:\），
+ * 用户在 D:/E:/F: 上的工程永远选不到。Windows 上探 A-Z 各盘的根是否可 stat
+ * （实测四盘全扫约 3ms），POSIX 上只有 '/'。
+ *
+ * 失败一律跳过而不是抛错——一个不可读的盘符不该毁掉整个目录浏览。
+ *
+ * @returns {Promise<Array<{ name: string, path: string }>>}
+ */
+async function listRoots() {
+  const now = Date.now()
+  if (rootsCache.items.length > 0 && now - rootsCache.at < ROOTS_TTL_MS) return rootsCache.items
+  let items = []
+  if (process.platform === 'win32') {
+    const probe = []
+    for (let code = 65; code <= 90; code += 1) {
+      const letter = String.fromCharCode(code) + ':'
+      probe.push(
+        fs.promises.stat(letter + path.sep).then(
+          (info) => (info.isDirectory() ? { name: letter, path: letter + path.sep } : null),
+          () => null,
+        ),
+      )
+    }
+    items = (await Promise.all(probe)).filter((item) => item !== null)
+  } else {
+    items = [{ name: '/', path: '/' }]
+  }
+  rootsCache = { at: now, items }
+  return items
 }
 
 /**
@@ -1095,7 +1223,7 @@ export const Config = schema === undefined
   : schema.object({
     cliPath: schema.string().default('').description('pi CLI 入口文件或包目录。留空自动探测：插件 .runtime → 插件 node_modules → 全局 npm → PATH').volatile(),
     nodePath: schema.string().default('').description('node 可执行文件。留空自动探测 PATH 上的 node').volatile(),
-    workspace: schema.string().default('').description('新会话默认工作目录。留空用 ~/pi-workspace').volatile(),
+    workspace: schema.string().default('').description('新会话默认工作区。留空用 ~/pi-workspace').volatile(),
     extraArgs: schema.string().default('').description('追加给 pi 的额外参数（空格分隔），例如 --model openai/gpt-4o').volatile(),
     // 下面三项按字符串暴露：宿主的表单只认 string，布尔/枚举在 volatile 热更新下
     // 类型不稳定。读取端一律经 asBool / trim 归一，见 spawnSession。

@@ -274,6 +274,175 @@ for (const bad of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
 // 这条不是缺陷而是硬约束 —— 想断言「还剩 Ns」必须走真实浏览器（test/ui-dialog 那套）。
 assert(confirmHtml.includes(zh('extTimeout')) === false, 'SSR 阶段不该渲染倒计时行（left 初值 null）')
 
+// ── 9.10 空态：cwd 之后必须有「选择工作区」入口（0.4.0） ───────────────────
+const EmptyState = internals.EmptyState
+assert(typeof EmptyState === 'function', 'client.js 应导出 EmptyState 以便测试')
+const emptyHtml = renderToStaticMarkup(React.createElement(EmptyState, { t: zh, meta: 'C:\\Users\\PC\\pi-workspace', onPickDir() {} }))
+console.log('empty =', emptyHtml)
+assert(emptyHtml.includes('dsh-pi-empty-actions'), '空态该有动作行 dsh-pi-empty-actions')
+assert(emptyHtml.includes(zh('pickDir')), '空态该显示「' + zh('pickDir') + '」按钮，实际 ' + emptyHtml)
+assert(emptyHtml.includes(zh('dirTitle')), '空态按钮的 title 该用 dirTitle')
+assert(emptyHtml.indexOf(zh('pickDir')) > emptyHtml.indexOf('C:\\Users\\PC\\pi-workspace'), '入口必须排在 cwd 之后（用户红框位置）')
+// 用户在 0.4.0 要求统一叫「工作区」：任何地方都不该再出现「工作目录」这个旧说法。
+assert(zh('pickDir') === '选择工作区', '空态入口文案该是「选择工作区」，实际 ' + zh('pickDir'))
+assert(zh('dirTitle') === '选择工作区', '弹窗标题文案该是「选择工作区」，实际 ' + zh('dirTitle'))
+const zhAll = JSON.stringify(strings.zh)
+const clientSource = fs.readFileSync(path.join(root, 'client.js'), 'utf8')
+function cssRule(selector) {
+  const needle = "'" + selector + '{'
+  const at = clientSource.indexOf(needle)
+  if (at < 0) return null
+  const end = clientSource.indexOf("}',", at)
+  return clientSource.slice(at + 1, end + 1)
+}
+const toolRule = cssRule('.dsh-pi-tool')
+const toolBodyRule = cssRule('.dsh-pi-tool-body')
+assert(toolRule !== null, 'client.js 里该有 .dsh-pi-tool 规则')
+assert(toolBodyRule !== null, 'client.js 里该有 .dsh-pi-tool-body 规则')
+assert(toolRule.includes('border-radius:0'), '.dsh-pi-tool 不该有圆角（用户要求过程行不加圆角框），实际 ' + toolRule)
+assert(toolRule.includes('background:transparent'), '.dsh-pi-tool 不该有底色，实际 ' + toolRule)
+assert(toolRule.includes('box-shadow:none'), '.dsh-pi-tool 不该有 hairline 外框，实际 ' + toolRule)
+assert(toolBodyRule.includes('border-left:1px solid var(--dsw-alias-border-l3)'), '.dsh-pi-tool-body 展开区该用左侧竖线区隔（与思考过程同一套语言），实际 ' + toolBodyRule)
+const enAll = JSON.stringify(strings.en)
+assert(zhAll.indexOf('工作目录') < 0, 'ZH 文案表里不该再有「工作目录」字样：' + zhAll.slice(zhAll.indexOf('工作目录') - 40, zhAll.indexOf('工作目录') + 20))
+assert(enAll.indexOf('working directory') < 0, 'EN 文案表里不该再有 working directory 字样')
+const emptyNoAction = renderToStaticMarkup(React.createElement(EmptyState, { t: zh, meta: null }))
+assert(emptyNoAction.includes('dsh-pi-empty-actions') === false, '没传 onPickDir 时不该渲染动作行')
+const emptyEn = renderToStaticMarkup(React.createElement(EmptyState, { t: en, meta: 'C:\\x', onPickDir() {} }))
+assert(emptyEn.includes(en('pickDir')), '英文空态该显示 ' + en('pickDir'))
+
+// ── 9.11 设置抽屉：开关必须是 DSH 的 aria switch，不是文字按钮 ──────────────
+const SettingsSheet = internals.SettingsSheet
+assert(typeof SettingsSheet === 'function', 'client.js 应导出 SettingsSheet 以便测试')
+const settingsHtml = renderToStaticMarkup(React.createElement(SettingsSheet, {
+  t: zh,
+  state: { autoCompactionEnabled: true, autoRetryEnabled: false, steeringMode: 'one-at-a-time', followUpMode: 'one-at-a-time' },
+  onClose() {},
+  onAutoCompaction() {},
+  onAutoRetry() {},
+  onSteering() {},
+  onFollowUp() {},
+}))
+console.log('settings =', settingsHtml)
+assert(settingsHtml.includes('class="dsh-pi-switch"'), '开关该用 .dsh-pi-switch（DSH 胶囊样式）')
+assert(settingsHtml.includes('role="switch"'), '开关该声明 role=switch')
+assert(settingsHtml.includes('aria-checked="true"'), '开启态该 aria-checked=true')
+assert(settingsHtml.includes('aria-checked="false"'), '关闭态该 aria-checked=false')
+assert(settingsHtml.includes('dsh-pi-switch-thumb'), '开关该有滑块元素')
+// 文字开关会渲染出 >开< / >关< 的按钮文本；改成胶囊后这段文本必须消失（a11y 由 aria 承载）。
+assert(settingsHtml.includes('>' + zh('on') + '<') === false, '开关不该再把「' + zh('on') + '」当按钮文本')
+assert(settingsHtml.includes('>' + zh('off') + '<') === false, '开关不该再把「' + zh('off') + '」当按钮文本')
+assert(settingsHtml.includes(zh('autoCompact')) && settingsHtml.includes(zh('autoRetry')), '设置项标签该照旧显示')
+
+// ── 9.11b 工具行：展开区不是圆角卡片（用户 18994 明确要求拆掉圆角框） ────────
+// 过程流里一次任务会连着十几次工具调用。每行都套 border-radius + hairline + 底色，
+// 视觉上就是「框套框」的噪音墙。这里守住三点：无圆角、无背景、无外框，
+// 展开区改用左侧竖线（与 .dsh-pi-think 同一套语言）区分层级。
+const ToolBlock = internals.ToolBlock
+const BashBlockCmp = internals.BashBlock
+const ToolResultRow = internals.ToolResultRow
+assert(typeof ToolBlock === 'function', 'client.js 应导出 ToolBlock 以便测试')
+assert(typeof BashBlockCmp === 'function', 'client.js 应导出 BashBlock 以便测试')
+assert(typeof ToolResultRow === 'function', 'client.js 应导出 ToolResultRow 以便测试')
+const toolHtml = renderToStaticMarkup(React.createElement(ToolBlock, { t: zh, name: 'bash', argsText: '{"command":"echo hi"}', status: 'done', partial: '' }))
+const bashHtml = renderToStaticMarkup(React.createElement(BashBlockCmp, { t: zh, message: { role: 'bashExecution', bash: { command: 'echo hi', output: 'hi', exitCode: 0, cancelled: false, truncated: false } } }))
+const resultHtml = renderToStaticMarkup(React.createElement(ToolResultRow, { t: zh, message: { role: 'toolResult', toolName: 'bash', isError: false, blocks: [{ type: 'text', text: 'hi' }] } }))
+for (const [label, markup] of [['工具调用', toolHtml], ['bash 结果', bashHtml], ['工具结果', resultHtml]]) {
+  assert(markup.includes('class="dsh-pi-tool"'), label + '该用 .dsh-pi-tool 行容器，实际 ' + markup.slice(0, 200))
+  assert(markup.includes('dsh-pi-sheet') === false, label + '不该套抽屉外壳')
+}
+// 三处渲染必须共用同一个容器类名，样式改动才不会漏掉某一类过程行。
+assert(toolHtml.includes('echo hi') && bashHtml.includes('echo hi') && resultHtml.includes('hi'), '三类过程行都该渲染出内容')
+
+// ── 9.12 pathCrumbs：面包屑切分（只做字符串，不碰 fs） ─────────────────────
+const pathCrumbs = internals.pathCrumbs
+assert(typeof pathCrumbs === 'function', 'client.js 应导出 pathCrumbs 以便测试')
+const winCrumbs = pathCrumbs('C:\\Users\\PC\\pi-workspace')
+assert(JSON.stringify(winCrumbs.map(c => c.label)) === JSON.stringify(['C:', 'Users', 'PC', 'pi-workspace']), 'Windows 路径该切成 4 段，实际 ' + JSON.stringify(winCrumbs.map(c => c.label)))
+assert(winCrumbs[winCrumbs.length - 1].path === 'C:\\Users\\PC\\pi-workspace', '最后一段的累积路径该是完整路径，实际 ' + winCrumbs[winCrumbs.length - 1].path)
+assert(winCrumbs[1].path === 'C:\\Users', '中间段的累积路径该逐级拼接，实际 ' + winCrumbs[1].path)
+const posixCrumbs = pathCrumbs('/home/pc')
+assert(JSON.stringify(posixCrumbs.map(c => c.label)) === JSON.stringify(['/', 'home', 'pc']), 'POSIX 路径该切成 / home pc，实际 ' + JSON.stringify(posixCrumbs.map(c => c.label)))
+assert(posixCrumbs[2].path === '/home/pc', 'POSIX 累积路径该是 /home/pc，实际 ' + posixCrumbs[2].path)
+assert(JSON.stringify(pathCrumbs('')) === '[]', '空路径该返回空数组')
+
+// ── 9.13 DirSheet：SSR 首帧（useEffect 不跑，停在 loading）能渲染不抛异常 ────
+const DirSheet = internals.DirSheet
+assert(typeof DirSheet === 'function', 'client.js 应导出 DirSheet 以便测试')
+const dirHtml = renderToStaticMarkup(React.createElement(DirSheet, { t: zh, startDir: 'C:\\Users\\PC\\pi-workspace', onPick() {}, onClose() {} }))
+console.log('dirsheet =', dirHtml)
+assert(dirHtml.includes('dsh-pi-dir'), 'DirSheet 该渲染 .dsh-pi-dir 容器')
+assert(dirHtml.includes(zh('dirTitle')), 'DirSheet 标题该是「' + zh('dirTitle') + '」')
+assert(dirHtml.includes('dsh-pi-dir-crumbs'), 'DirSheet 该渲染面包屑')
+assert(dirHtml.includes('pi-workspace'), '面包屑该带最后一级目录名')
+assert(dirHtml.includes(zh('dirLoading')), '首帧该显示读取中文案（effect 尚未跑）')
+assert(dirHtml.includes(zh('dirHere')), '底部该有「' + zh('dirHere') + '」按钮')
+assert(dirHtml.includes(zh('dirInputHint')), '该有可编辑路径输入框（placeholder ' + zh('dirInputHint') + '）')
+assert(dirHtml.split('class="dsh-pi-dir-col"').length - 1 === 1, '未选中时只该有一栏（Miller 分栏的第二栏靠选中触发）')
+// 选择工作区必须是居中模态（不是铺满面板的抽屉）：它是会打断当前会话的决策。
+assert(dirHtml.includes('dsh-pi-dialog-wrap'), '选择工作区该是模态弹窗（.dsh-pi-dialog-wrap）')
+assert(dirHtml.includes('dsh-pi-dir-dialog'), '选择工作区该有 680x500 的弹窗外壳')
+assert(dirHtml.includes('role="dialog"'), '弹窗该声明 role=dialog')
+assert(dirHtml.includes('aria-modal="true"'), '弹窗该声明 aria-modal=true（模态语义）')
+assert(dirHtml.includes('dsh-pi-sheet') === false, '选择工作区不该再用铺满面板的 .dsh-pi-sheet 外壳')
+// 首帧 roots 尚未从 host 取回（空数组）→ 不能凭空画出「此电脑」入口，
+// 否则用户点进去会看到空列表。入口只在真拿到盘符后才出现。
+assert(dirHtml.includes(zh('dirThisPc')) === false, '首帧没有盘符列表时不该渲染「' + zh('dirThisPc') + '」入口')
+
+// ── 9.14 dirPickModel：Miller 分栏与采纳目标的纯逻辑（0.4.0） ───────────────
+const dirPickModel = internals.dirPickModel
+assert(typeof dirPickModel === 'function', 'client.js 应导出 dirPickModel 以便测试')
+const listings = {
+  dir: 'C:\\a',
+  entries: [{ name: 'b', path: 'C:\\a\\b' }, { name: 'Bee', path: 'C:\\a\\Bee' }, { name: 'c', path: 'C:\\a\\c' }],
+}
+const m0 = dirPickModel({ listing: listings, selected: null, deep: null, query: '' })
+assert(m0.showSub === false, '未选中时不该出现第二栏')
+assert(m0.main.length === 3, '未选中时第一栏列出全部子项，实际 ' + String(m0.main.length))
+assert(m0.sub.length === 0, '未选中时第二栏为空')
+assert(m0.target === 'C:\\a', '未选中时采纳目标回落到当前层级，实际 ' + m0.target)
+const m1 = dirPickModel({ listing: listings, selected: 'C:\\a\\b', deep: null, query: '' })
+assert(m1.showSub === true, '选中后该出现第二栏')
+assert(m1.main.length === 3, '选中后第一栏仍列出全部子项（不过滤）')
+assert(m1.target === 'C:\\a\\b', '选中且未深入时采纳目标 = 选中项，实际 ' + m1.target)
+const m2 = dirPickModel({ listing: listings, selected: 'C:\\a\\b', deep: 'C:\\a\\b\\d', query: '' })
+assert(m2.target === 'C:\\a\\b\\d', '深入第二栏后采纳目标优先 deep，实际 ' + m2.target)
+const m3 = dirPickModel({ listing: listings, selected: null, deep: null, query: 'b' })
+assert(m3.main.length === 2, '未选中时前缀过滤作用于第一栏（b + Bee），实际 ' + String(m3.main.length))
+const m4 = dirPickModel({
+  listing: listings,
+  selected: 'C:\\a\\b',
+  deep: null,
+  query: 'x',
+  sub: { entries: [{ name: 'x1', path: 'C:\\a\\b\\x1' }, { name: 'y', path: 'C:\\a\\b\\y' }] },
+})
+assert(m4.main.length === 3, '选中后过滤不该作用于第一栏，实际 ' + String(m4.main.length))
+assert(m4.sub.length === 1, '选中后过滤作用于第二栏（x1），实际 ' + String(m4.sub.length))
+const m5 = dirPickModel({ listing: null, selected: '', deep: '', query: '   ' })
+assert(m5.main.length === 0 && m5.target === '', '空输入该安全返回空模型')
+assert(dirPickModel(undefined).showSub === false, '不传参数也不该抛异常')
+
+// ── 9.15 「此电脑」层：盘符根列表（0.4.0，用户可见的跨盘选择） ──────────────
+const roots = [{ name: 'C:', path: 'C:\\' }, { name: 'D:', path: 'D:\\' }, { name: 'E:', path: 'E:\\' }]
+const r0 = dirPickModel({ listing: listings, roots, rootsView: true, selected: null, deep: null, query: '' })
+assert(r0.rootsView === true, 'rootsView 该透传')
+assert(r0.main.length === 3, '此电脑层第一栏列出全部盘符，实际 ' + String(r0.main.length))
+assert(r0.main[0].name === 'C:', '盘符顺序照 host 给的顺序（A-Z 探测），实际 ' + String(r0.main[0].name))
+assert(r0.target === null, '此电脑层未选盘时没有可采纳目标（不能拿下层目录冒充），实际 ' + String(r0.target))
+const r1 = dirPickModel({ listing: listings, roots, rootsView: true, selected: 'D:\\', deep: null, query: '' })
+assert(r1.showSub === true, '选中盘符后该出现第二栏（盘内子目录）')
+assert(r1.target === 'D:\\', '选中盘符后采纳目标 = 盘根，实际 ' + String(r1.target))
+const r2 = dirPickModel({ listing: listings, roots, rootsView: true, selected: 'D:\\', deep: 'D:\\proj', query: '' })
+assert(r2.target === 'D:\\proj', '盘内深入第二栏后采纳目标优先 deep，实际 ' + String(r2.target))
+const r3 = dirPickModel({ listing: listings, roots, rootsView: true, selected: null, deep: null, query: 'd' })
+assert(r3.main.length === 1 && r3.main[0].name === 'D:', '此电脑层过滤只命中 D:，实际 ' + String(r3.main.length))
+// 非此电脑层必须忽略 roots：盘符不该混进普通目录列表。
+const r4 = dirPickModel({ listing: listings, roots, rootsView: false, selected: null, deep: null, query: '' })
+assert(r4.main.length === 3 && r4.main[0].name === 'b', '普通层级不该把盘符混进列表，实际 ' + String(r4.main[0].name))
+assert(r4.target === 'C:\\a', '普通层级采纳目标仍是当前层级，实际 ' + String(r4.target))
+const r5 = dirPickModel({ listing: null, roots: null, rootsView: true, selected: null, deep: null, query: '' })
+assert(r5.main.length === 0 && r5.target === null, '此电脑层没有任何盘符时该安全返回空列表与空目标')
+
 // ── 10. 整棵面板在 loading 阶段能渲染，不抛异常 ────────────────────────────
 const panelHtml = renderToStaticMarkup(React.createElement(internals.PiPanel, { t: zh }))
 assert(panelHtml.includes('dsh-pi-root'), 'PiPanel 应渲染出 dsh-pi-root')

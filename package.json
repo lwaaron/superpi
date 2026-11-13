@@ -1,6 +1,6 @@
 {
   "name": "dsh-pi",
-  "version": "0.3.2",
+  "version": "0.4.0",
   "type": "module",
   "description": "把 pi 编码代理接进 DSH：侧栏「pi」整页聊天面板，底层是常驻的 pi --mode rpc 子进程。pi runtime is resolved from the plugin itself (.runtime), so the panel works on any machine without a hand-written path.",
   "icon": "./assets/icon.svg",
@@ -21,7 +21,7 @@
     "LICENSE"
   ],
   "scripts": {
-    "test": "node test/selfcheck.mjs && node test/client-render.mjs && node test/runtime-resolve.mjs && node test/config-hot.mjs && node test/host-parity.mjs && node test/timeout.mjs && node test/parity.mjs && node test/version.mjs",
+    "test": "node test/selfcheck.mjs && node test/client-render.mjs && node test/css-tokens.mjs && node test/runtime-resolve.mjs && node test/config-hot.mjs && node test/host-parity.mjs && node test/timeout.mjs && node test/parity.mjs && node test/version.mjs",
     "test:client": "node test/client-render.mjs",
     "test:host": "node test/host-smoke.mjs",
     "test:runtime": "node test/runtime-resolve.mjs",
@@ -31,7 +31,7 @@
     "test:parity": "node test/parity.mjs",
     "test:host-parity": "node test/host-parity.mjs",
     "test:timeout": "node test/timeout.mjs",
-    "test:all": "node test/selfcheck.mjs && node test/client-render.mjs && node test/runtime-resolve.mjs && node test/config-hot.mjs && node test/host-parity.mjs && node test/timeout.mjs && node test/parity.mjs && node test/version.mjs && node test/host-smoke.mjs",
+    "test:all": "node test/selfcheck.mjs && node test/client-render.mjs && node test/css-tokens.mjs && node test/runtime-resolve.mjs && node test/config-hot.mjs && node test/host-parity.mjs && node test/timeout.mjs && node test/parity.mjs && node test/version.mjs && node test/host-smoke.mjs",
     "verify": "pwsh -NoProfile -File ./tools/verify-packed.ps1",
     "pack": "npm pack"
   },
