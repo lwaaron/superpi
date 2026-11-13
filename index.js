@@ -28,6 +28,8 @@ import {
   PI_RUNTIME_DIR,
   describeRuntime,
   installPiRuntime,
+  readSetting,
+  readSettingString,
   resolveNodeRuntime,
   resolvePiRuntime,
 } from './src/pi-runtime.mjs'
@@ -37,7 +39,7 @@ export const inject = []
 
 const PLUGIN_ID = 'dsh-pi'
 const DISPLAY_NAME = 'pi'
-const VERSION = '0.2.0'
+const VERSION = '0.2.1'
 const API_PREFIX = '/api/' + PLUGIN_ID
 const MAX_SESSIONS = 8
 const MAX_BODY_BYTES = 4 * 1024 * 1024
@@ -224,8 +226,27 @@ function buildSelfCheck(detected, options = {}) {
 
 export function apply(ctx, config = {}) {
   const log = makeLog(ctx)
-  const settings = { ...DEFAULTS, ...(config !== null && typeof config === 'object' ? config : {}) }
+  /**
+   * 配置是**活引用**，不是快照。
+   *
+   * 宿主的插件配置表单只认 .volatile() 字段，并且下发的是 cosmokit 的冻结引用：
+   * 用户在详情页改值时宿主就地写入该引用，插件下次 get() 即拿到新值——这是「原位
+   * 热更新、插件不落盘」的实现方式。所以这里绝不能把 config 展开成快照对象，
+   * 否则改配置永远不生效；每个读取点都走 readSetting / readSettingString。
+   */
+  const rawConfig = config !== null && typeof config === 'object' ? config : {}
+  /** 非 volatile 的固定默认值（浅拷贝，避免多个 apply 实例互相影响）。 */
+  const settings = { ...DEFAULTS }
+  const configString = (key) => readSettingString(rawConfig, key, typeof settings[key] === 'string' ? settings[key] : '')
+  /** 配置指纹：变了就重解析运行时。只在真被调用时算，不做定时轮询。 */
+  const CONFIG_KEYS = ['cliPath', 'nodePath', 'workspace', 'extraArgs']
+  const configSignature = () => CONFIG_KEYS.map(key => configString(key)).join('\u0000')
+  let lastSignature = configSignature()
   const sessions = new Map()
+  /** 传给解析器的活配置视图：每次读都穿透到 rawConfig（含 volatile 引用），不缓存快照。 */
+  const liveConfig = Object.defineProperties({}, Object.fromEntries(
+    CONFIG_KEYS.map(key => [key, { enumerable: true, get: () => configString(key) }]),
+  ))
   /** detected 是「当前生效值」；运行时可能被 /runtime/install 或配置热更新改写。 */
   const detected = {
     nodePath: '',
@@ -241,7 +262,7 @@ export function apply(ctx, config = {}) {
   let installing = null
 
   const resolveWorkspace = () => {
-    const configured = typeof settings.workspace === 'string' ? settings.workspace.trim() : ''
+    const configured = configString('workspace')
     if (configured !== '') return configured
     const fromEnv = String(process.env.PI_WORKSPACE ?? '').trim()
     if (fromEnv !== '') return fromEnv
@@ -251,12 +272,20 @@ export function apply(ctx, config = {}) {
   /**
    * 重新解析运行时。加载时跑一次；/runtime/install 成功后再跑一次，
    * 之后新开的会话就用新装的那份（已开的会话不受影响，避免热切换打断对话）。
+   *
+   * 默认带指纹比对：配置没变就直接返回上次结果（所以 spawnSession 可以每次都调，
+   * 既能让详情页改的 cliPath 立刻生效，又不会每次开会话都白扫一遍磁盘）。
+   * 传 { force: true } 才无条件重扫（/runtime/refresh、装完之后）。
    */
-  const refreshRuntime = () => {
-    const node = resolveNodeRuntime({ config: settings })
+  let lastPi = null
+  const refreshRuntime = (options = {}) => {
+    const signature = configSignature()
+    if (options.force !== true && lastPi !== null && signature === lastSignature) return lastPi
+    lastSignature = signature
+    const node = resolveNodeRuntime({ config: liveConfig })
     detected.nodePath = node.path
     detected.nodeSource = node.source
-    const pi = resolvePiRuntime({ pluginRoot: PLUGIN_ROOT, config: settings })
+    const pi = resolvePiRuntime({ pluginRoot: PLUGIN_ROOT, config: liveConfig })
     detected.cliPath = pi.cliPath
     detected.cliSource = pi.source
     detected.cliVersion = pi.version
@@ -266,10 +295,11 @@ export function apply(ctx, config = {}) {
     if (pi.cliPath === '') {
       log('warn', 'pi CLI not found (searched: ' + pi.searched.map(item => item.source + (item.ok ? '=hit' : '=miss')).join(', ') + '); call POST ' + API_PREFIX + '/runtime/install or set cliPath')
     }
+    lastPi = pi
     return pi
   }
 
-  refreshRuntime()
+  refreshRuntime({ force: true })
 
   const runtimeReport = () => ({
     ...describeRuntime({
@@ -303,10 +333,8 @@ export function apply(ctx, config = {}) {
   }
 
   const spawnSession = (options = {}) => {
-    if (detected.cliPath === '') {
-      // 每次要开新会话都重新找一遍：用户可能刚用 npm install 装好，或刚改完配置。
-      refreshRuntime()
-    }
+    // 每次开新会话都过一遍解析：配置可能刚被改过（带指纹比对，没变就是零成本返回）。
+    if (detected.cliPath === '' || configSignature() !== lastSignature) refreshRuntime()
     if (detected.cliPath === '') {
       const error = new Error('pi 运行时未找到（' + PI_PACKAGE + '@' + PI_VERSION + '）。装一次就好：POST ' + API_PREFIX + '/runtime/install，' +
         '或在插件配置里填 cliPath / 设置环境变量 PI_CLI_PATH。已搜索：' +
@@ -322,9 +350,12 @@ export function apply(ctx, config = {}) {
     }
     const cwd = typeof options.cwd === 'string' && options.cwd.trim() !== '' ? options.cwd.trim() : detected.workspace
     try { fs.mkdirSync(cwd, { recursive: true }) } catch { /* 由 pi 自己报错 */ }
-    const args = Array.isArray(settings.args) ? settings.args.slice() : []
-    if (typeof settings.extraArgs === 'string' && settings.extraArgs.trim() !== '') {
-      for (const extra of settings.extraArgs.trim().split(/\s+/)) if (extra !== '') args.push(extra)
+    // args 不是 volatile 字段（数组不适合做表单输入），但仍可能由测试/宿主以裸数组传入。
+    const configuredArgs = readSetting(rawConfig, 'args', null)
+    const args = Array.isArray(configuredArgs) ? configuredArgs.slice() : settings.args.slice()
+    const extraArgs = configString('extraArgs')
+    if (extraArgs !== '') {
+      for (const extra of extraArgs.split(/\s+/)) if (extra !== '') args.push(extra)
     }
     if (Array.isArray(options.args)) {
       for (const extra of options.args) if (typeof extra === 'string' && extra !== '') args.push(extra)
@@ -355,21 +386,26 @@ export function apply(ctx, config = {}) {
     return proc
   }
 
-  const stateOf = () => ({
-    version: VERSION,
-    apiPrefix: API_PREFIX,
-    resolved: {
-      nodePath: detected.nodePath,
-      nodeSource: detected.nodeSource,
-      cliPath: detected.cliPath,
-      cliSource: detected.cliSource,
-      cliVersion: detected.cliVersion,
-      workspace: detected.workspace,
-    },
-    runtime: runtimeReport(),
-    limits: { maxSessions: MAX_SESSIONS },
-    sessions: [...sessions.values()].map(proc => proc.snapshot({ sinceSeq: 0, includeEvents: false })),
-  })
+  const stateOf = () => {
+    // 配置可能在详情页被改过（volatile 引用就地写入）。带指纹比对地过一遍解析，
+    // 没变就是常数时间返回，所以 /state 永远反映当前配置，不需要用户重启。
+    refreshRuntime()
+    return {
+      version: VERSION,
+      apiPrefix: API_PREFIX,
+      resolved: {
+        nodePath: detected.nodePath,
+        nodeSource: detected.nodeSource,
+        cliPath: detected.cliPath,
+        cliSource: detected.cliSource,
+        cliVersion: detected.cliVersion,
+        workspace: detected.workspace,
+      },
+      runtime: runtimeReport(),
+      limits: { maxSessions: MAX_SESSIONS },
+      sessions: [...sessions.values()].map(proc => proc.snapshot({ sinceSeq: 0, includeEvents: false })),
+    }
+  }
 
   const sessionsDelete = id => { sessions.delete(id) }
 
@@ -390,7 +426,7 @@ export function apply(ctx, config = {}) {
       .then(result => {
         installing = null
         if (result.ok) {
-          refreshRuntime()
+          refreshRuntime({ force: true })
           log('info', 'pi runtime installed: ' + result.cliPath + ' (' + String(Math.round(result.durationMs / 1000)) + 's)')
         } else {
           log('warn', 'pi runtime install failed: ' + String(result.error))
@@ -454,7 +490,7 @@ function createHandler(deps) {
       }
       if (method === 'GET' && routePath === '/runtime') return send(200, deps.runtimeReport())
       if (method === 'POST' && routePath === '/runtime/refresh') {
-        deps.refreshRuntime()
+        deps.refreshRuntime({ force: true })
         return send(200, { ok: true, runtime: deps.runtimeReport() })
       }
       if (method === 'POST' && routePath === '/runtime/install') {
@@ -617,7 +653,7 @@ const schema = await loadSchemastery()
 
 /**
  * 顶层 await 是必需的：宿主要在建 fiber 前拿到 schema 才渲染表单。
- * schema 解析失败时导出 undefined，插件其余功能不受影响��
+ * schema 解析失败时导出 undefined，插件其余功能不受影响。
  */
 export const Config = schema === undefined
   ? undefined

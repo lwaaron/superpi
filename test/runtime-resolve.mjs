@@ -14,6 +14,7 @@ import {
   resolvePiRuntime,
   resolveNodeRuntime,
   describeRuntime,
+  readSettingString,
 } from '../src/pi-runtime.mjs'
 
 const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-pi-runtime-'))
@@ -45,7 +46,7 @@ const makePiPackage = (moduleDir) => {
 
 const makePluginRoot = name => {
   const root = path.join(tempRoot, name)
-  writeFile(path.join(root, 'package.json'), JSON.stringify({ name: 'dsh-pi', version: '0.2.0', type: 'module' }, null, 2))
+  writeFile(path.join(root, 'package.json'), JSON.stringify({ name: 'dsh-pi', version: '0.2.1', type: 'module' }, null, 2))
   writeFile(path.join(root, 'index.js'), 'export const name = "dsh-pi"\n')
   return root
 }
@@ -112,6 +113,41 @@ const makePluginRoot = name => {
   const found = resolvePiRuntime({ pluginRoot, config: { cliPath: path.join(tempRoot, 'nope', 'cli.js') }, env: {} })
   assert(found.cliPath === cli, '配置错但 .runtime 存在时应回退命中，实际 ' + found.cliPath)
   assert(found.searched.some(item => item.source === 'config' && item.ok === false), 'searched 应记录 config 失败项')
+}
+
+// 6.5) 宿主的 volatile 字段形状：字段是 { get(), [write]() } 冻结引用，不是裸字符串
+{
+  const pluginRoot = makePluginRoot('with-volatile-config')
+  const cli = makePiPackage(path.join(tempRoot, 'volatile-external'))
+  // 仿 cosmokit createVolatile：快照 + get() + 就地写入符号
+  const volatile = (value) => {
+    const write = Symbol('cosmokit.volatile.write')
+    let current = value
+    return Object.freeze({ get: () => current, [write]: next => { current = next } })
+  }
+  const ref = volatile(cli)
+  const found = resolvePiRuntime({ pluginRoot, config: { cliPath: ref }, env: {} })
+  assert(found.cliPath === cli, 'volatile cliPath 应被解包并命中，实际 ' + found.cliPath)
+  assert(found.source === 'config', 'volatile cliPath 的 source 应为 config，实际 ' + found.source)
+
+  // 宿主改值 = 往同一个引用里写，插件下次读必须拿到新值（热更新）
+  const second = makePiPackage(path.join(tempRoot, 'volatile-external-2'))
+  ref[Object.getOwnPropertySymbols(ref)[0]](second)
+  const after = resolvePiRuntime({ pluginRoot, config: { cliPath: ref }, env: {} })
+  assert(after.cliPath === second, 'volatile 改写后应解析到新入口，实际 ' + after.cliPath)
+
+  // readSettingString 对裸值 / volatile / 缺失 / 非字符串四种输入都要稳
+  assert(readSettingString({ cliPath: ref }, 'cliPath') === second, 'readSettingString 应解包 volatile')
+  assert(readSettingString({ cliPath: '  ' + cli + '  ' }, 'cliPath') === cli, 'readSettingString 应 trim 裸字符串')
+  assert(readSettingString({}, 'cliPath', 'fallback') === 'fallback', 'readSettingString 缺失时应回退')
+  assert(readSettingString({ cliPath: 42 }, 'cliPath', 'fb') === 'fb', 'readSettingString 非字符串时应回退')
+  assert(readSettingString({ cliPath: volatile(undefined) }, 'cliPath', 'fb') === 'fb', 'volatile 内部 undefined 时应回退')
+
+  // nodePath 也走同一条路
+  const fakeNode = path.join(tempRoot, 'bin2', process.platform === 'win32' ? 'node.exe' : 'node')
+  writeFile(fakeNode, '')
+  const node = resolveNodeRuntime({ config: { nodePath: volatile(fakeNode) }, env: {} })
+  assert(node.path === fakeNode && node.source === 'config', 'volatile nodePath 应命中，实际 ' + node.path + ' via ' + node.source)
 }
 
 // 7) node 解析：配置 > PATH > host-execpath

@@ -62,6 +62,34 @@ export function expandPath(input) {
   return path.resolve(out)
 }
 
+/**
+ * 读一个配置项，兼容宿主下发的「可热更新引用」。
+ *
+ * dsh 的插件配置表单只认 `.volatile()` 字段，而 volatile 字段不会以裸值交给 apply()：
+ * 宿主下发的是 cosmokit 的冻结引用 `{ get(), [Symbol(cosmokit.volatile.write)](v) }`，
+ * 用户在插件详情页改值时宿主**就地写入**该引用，插件每次 get() 都是最新值——这正是
+ * 「原位热更新、插件不自己落盘」的实现方式。照字符串读会拿到 object，配置整条失效。
+ *
+ * 普通值（未 .volatile() 的字段、单测直接传的对象、环境变量表）原样返回。
+ */
+export function readSetting(source, key, fallback = undefined) {
+  if (source === null || typeof source !== 'object' || !(key in source)) return fallback
+  const raw = source[key]
+  if (raw !== null && typeof raw === 'object' && typeof raw.get === 'function') {
+    try {
+      const value = raw.get()
+      return value === undefined ? fallback : value
+    } catch { return fallback }
+  }
+  return raw === undefined ? fallback : raw
+}
+
+/** readSetting 的字符串版：非字符串或空串都归一到 fallback。 */
+export function readSettingString(source, key, fallback = '') {
+  const value = readSetting(source, key, fallback)
+  return typeof value === 'string' ? value.trim() : fallback
+}
+
 /** 从一个文件向上找 name 匹配的 package.json 所在目录。 */
 function findPackageDir(startFile, name) {
   let dir = path.dirname(startFile)
@@ -211,8 +239,9 @@ export function resolvePiRuntime(options = {}) {
   }
 
   // 1. 配置里手填的入口（文件或包目录）
-  if (typeof config.cliPath === 'string' && config.cliPath.trim() !== '') {
-    const found = fromEntry('config', config.cliPath)
+  const configuredCli = readSettingString(config, 'cliPath')
+  if (configuredCli !== '') {
+    const found = fromEntry('config', configuredCli)
     if (found !== null) return found
   }
 
@@ -276,8 +305,9 @@ export function resolveNodeRuntime(options = {}) {
   }
   const miss = (source, target) => { searched.push({ source, path: target, ok: false }) }
 
-  if (typeof config.nodePath === 'string' && config.nodePath.trim() !== '') {
-    const abs = expandPath(config.nodePath)
+  const configuredNode = readSettingString(config, 'nodePath')
+  if (configuredNode !== '') {
+    const abs = expandPath(configuredNode)
     if (isFile(abs)) return hit('config', abs)
     miss('config', abs)
   }

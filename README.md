@@ -30,20 +30,25 @@ assets/icon.svg       插件图标
 ### 方式一：一键装进 DSH profile（推荐）
 
 ```powershell
-# 打包 → 装到临时目录验证（真跑一轮 LLM）→ 装进 profile → 生成回滚脚本
+# 打包 → 装到临时目录验证（真跑一轮 LLM）→ pnpm add 进 profile → 再验证一次 → 生成回滚脚本
 pwsh -NoProfile -File .\tools\install-plugin.ps1 -Profile desktop
 ```
 
-脚本做四件事，每步失败就停下并保持原状：
+**必须由包管理器落地，不能手工往 node_modules 里塞副本。** DSH 的插件管理器运行时会跑 pnpm；只要 `package.json` 与 `pnpm-lock.yaml` 对不上，或者 `node_modules/.modules.yaml` 不认识这个包，pnpm 就会把手放的目录当孤儿清掉。脚本因此把三份状态交给 pnpm 一次写一致：
 
 1. `npm pack` 出 `dsh-pi-<ver>.tgz`；
-2. 装到 `%TEMP%\dsh-pi-stage-*`，用**装出来的那份**跑一遍真实 LLM 往返（`test/packed-smoke.mjs`）；
-3. 备份 `~/.dsh/profiles/<profile>/package.json` 与 `node_modules/dsh-pi` 的现状；
-4. 把装好的副本放进 `node_modules/dsh-pi`，并把 dependency 改写为 `file:<tarball 绝对路径>`。
+2. 装到 `%TEMP%\dsh-pi-stage-*`，用**装出来的那份**跑一遍真实 LLM 往返（`test/packed-smoke.mjs`），失败则 profile 一动不动；
+3. tarball 收进 `<profile>\.dsh-local-packages\`，备份 `package.json` / `pnpm-lock.yaml` / 现有 `node_modules\dsh-pi`；
+4. 用 **DSH 自带的 pnpm** 执行 `add file:<tarball>` —— manifest、lock、node_modules 由 pnpm 一次写一致，`optionalDependencies` 里的 pi 运行时随之落进 profile；
+5. 校验四件事：manifest 的 `dsh-pi` 是 `file:` 依赖、lock 里有 `dsh-pi` 与 `pi-coding-agent`、`node_modules/dsh-pi/index.js` 存在、`.modules.yaml` 认识 `dsh-pi`；任一项不满足即报失败并给回滚命令；
+6. 用 profile 里那份副本再跑一遍真实 LLM 往返；
+7. 生成 `rollback-<时间戳>.ps1`（恢复 `package.json` + `pnpm-lock.yaml`，再让 pnpm `install --frozen-lockfile` 收敛 node_modules）。
+
+PATH 上的 `pnpm.ps1` 通常是 corepack shim，直接调用会报 `Cannot find module ...corepack\dist\pnpm.js`。脚本默认用 `%USERPROFILE%\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\pnpm\bin\pnpm.cjs`，装到别的机器用 `-PnpmPath` 指过去。
 
 **装完要重启 DSH 才生效**（插件在 import 时就把代码快照进内存了）。不想保留时运行脚本打印出来的 `rollback-<时间戳>.ps1` 即可原样退回。
 
-只想验证不落地：`pwsh -File .\tools\verify-packed.ps1 -Keep keep`。
+只想验证不落地：`pwsh -NoProfile -File .\tools\verify-packed.ps1 -Keep keep`。
 
 ### 方式二：手工挂载（开发插件本身时用）
 
@@ -66,15 +71,26 @@ New-Item -ItemType Junction `
 
 `id` 同时是配置命名空间，不要随意改。
 
-### 方式三：tarball 直接装
+### 方式三：手工 pnpm add（不想跑脚本时）
 
 ```powershell
-npm pack                                        # 得到 dsh-pi-0.2.0.tgz
+npm pack                                        # 得到 dsh-pi-0.2.1.tgz
 cd "$env:USERPROFILE\.dsh\profiles\desktop"
-npm install "C:\path\to\dsh-pi-0.2.0.tgz"      # 或 pnpm add file:...
+node "$env:USERPROFILE\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\pnpm\bin\pnpm.cjs" `
+  add "file:C:\path\to\dsh-pi-0.2.1.tgz" --ignore-scripts
 ```
 
-装上 `optionalDependencies` 里的 `@earendil-works/pi-coding-agent` 时，pi 会被提升到 profile 的 `node_modules`，解析链第 6 步（逐级向上）命中；装不上也不影响插件加载，面板会引导一键安装到 `.runtime`。
+不要在 profile 里用 `npm install`：npm 会另写一份 `package-lock.json`，而宿主插件管理器用的是 pnpm，两套锁文件互相看不见，下次插件安装就会把 node_modules 重建成 pnpm 理解的样子。
+
+装 `optionalDependencies` 里的 `@earendil-works/pi-coding-agent` 时，pi 会被提升到 profile 的 `node_modules`，解析链第 6 步（逐级向上）命中；装不上也不影响插件加载，面板会引导一键安装到 `.runtime`。
+
+装完核对（三条都要有输出）：
+
+```powershell
+Select-String -LiteralPath pnpm-lock.yaml -Pattern '^\s+dsh-pi:$'          # lock 认识它
+Test-Path node_modules\dsh-pi\index.js                                     # 代码在
+Select-String -LiteralPath node_modules\.modules.yaml -Pattern 'dsh-pi'    # pnpm 认识它
+```
 
 ## pi 运行时：装在哪、怎么找
 
@@ -104,6 +120,7 @@ npm install --prefix <插件>/.runtime --save-exact --no-audit --no-fund --logle
 ## 配置
 
 写在 `cordis.patch.yml` 那条 insert 的 `config` 里；插件详情页的配置表单来自 `Config` schema，**只有标了 `.volatile()` 的字段**会进表单并被宿主原位热更新+持久化。
+改完立刻生效，不用重启 DSH：`/state` 与新建会话每次都会带指纹比对地重解析一遍运行时（配置没变就是常数时间返回）。**前提是实现上不能把 `config` 展开成快照** —— 宿主下发的 volatile 字段是 cosmokit 的冻结引用 `{ get(), [write]() }`，值由宿主就地写入，照字符串读会拿到 object，让所有 `typeof === 'string'` 判断失假（这正是 0.2.0 里配置静默失效的原因）。本插件所有读取点统一走 `readSetting / readSettingString`，并由 `test/config-hot.mjs` 回归守卫。
 
 | 字段 | 默认 | 说明 |
 | --- | --- | --- |
@@ -166,10 +183,11 @@ npm install --prefix <插件>/.runtime --save-exact --no-audit --no-fund --logle
 ## 测试
 
 ```powershell
-npm test            # selfcheck + client-render + runtime-resolve，约 2 秒，不联网
+npm test            # selfcheck + client-render + runtime-resolve + config-hot，约 3 秒，不联网
 npm run test:host   # 真起 pi 子进程跑一轮 LLM 往返（用插件的 .runtime）
 npm run test:fresh  # 模拟全新机器：拷一份不带运行时的插件 → 断言 missing → 一键安装 → 能开会话
-npm run test:all    # 前三个串起来
+npm run test:config # 配置热更新：宿主就地写入 volatile 引用后 /state 必须立刻反映
+npm run test:all    # 以上除 fresh 外全部串起来
 npm run verify      # npm pack → 装到临时目录 → 用打包产物跑真实 LLM 往返
 ```
 
@@ -180,12 +198,32 @@ npm run verify      # npm pack → 装到临时目录 → 用打包产物跑真�
 | `test/_harness.mjs` | 共用冒烟骨架：桩 ctx + HTTP 面 + 14 条断言（含 `GET /sessions/:id`、404、415/400 边界、真实 LLM 往返） |
 | `test/host-smoke.mjs` | 用上面的骨架跑**源码目录** |
 | `test/packed-smoke.mjs` | 用上面的骨架跑**装出来的产物**（参数传入已安装的 `index.js`） |
-| `test/runtime-resolve.mjs` | 8 组不联网单测：解析优先级、`describeRuntime` 落点、`expandPath`、config 写错时回退 |
+| `test/runtime-resolve.mjs` | 9 组不联网单测：解析优先级、`describeRuntime` 落点、`expandPath`、config 写错时回退、volatile 引用解包与改写后重解析 |
+| `test/config-hot.mjs` | 配置热更新：注入真实 volatile 形状的 config，断言填入/清空 `cliPath` 与 `workspace` 后 `/state` 立刻反映（防「展开成快照」回归） |
 | `test/fresh-boot.mjs` | 全新机器模拟：解析链明确报 missing → `POST /runtime/install` → `source` 变 `plugin-runtime` → 能开会话 |
 | `test/selfcheck.mjs` | 证明 `/selfcheck` 能分辨「内存里跑的代码」与「磁盘上的代码」 |
 | `test/client-render.mjs` | `react-dom/server` 把面板渲染成字符串：挡组件异常、文案缺键、中英键集不一致、引导页结构 |
 
 `client-render.mjs` 需要 `react` / `react-dom` —— 本插件刻意不带 `node_modules`，所以它从同级 `pi-main/node_modules` 借（找不到就 SKIP 并退出 0，不算失败）。
+
+## 与 DSH 插件管理器的关系
+
+DSH 的插件管理器（dshmarket / 插件详情页）在安装、卸载、升级插件时跑的是 **pnpm**，参数大致是 `add` / `remove` / `install`（含 `--frozen-lockfile` 与 hoist-pattern 漂移后的 `install --no-frozen-lockfile` 重试）。它不做 `prune`，但会按 `pnpm-lock.yaml` 与 `node_modules/.modules.yaml` 判断哪些包该在。
+
+因此装 dsh-pi 的正确姿势只有一种：**让 pnpm 写状态**。手工放目录 + 手改 `package.json` 会造成两种漂移，任一都会让副本在下次插件操作时消失：
+
+| 漂移 | 表现 | 后果 |
+| --- | --- | --- |
+| manifest 有、lock 没有 | `frozen-lockfile` 校验报「specifiers in the lockfile don't match specifiers in package.json」 | 插件管理器报错，或退回 `--no-frozen-lockfile` 重写锁 |
+| 有文件、`.modules.yaml` 不认识 | `node_modules` 里有目录但 pnpm 视角不存在 | 下次 `install` 按孤立包清理 |
+
+已实测的边界：
+
+- `pnpm add dsh-free-model@3.1.0`（manifest 与 lock 都是 dsh-pi 正常运行时的状态）→ dsh-pi 与 pi 运行时都存活；
+- 故意造漂移（manifest 有 dsh-pi、lock 没有）再 `pnpm add` → pnpm 顺手把 dsh-pi 补装回来，锁被重写，仍然可用；
+- 锁里的 `file:.dsh-local-packages/dsh-pi-0.2.1.tgz` 是**相对 profile 根**解析的，删掉 `.dsh-local-packages` 会让 `install` 直接报 `ERR_PNPM_TARBALL_READ_LOCAL_TARBALL` —— 想改锁前先确认这个目录还在。
+
+`.dsh-local-packages/` 里的 tarball 是回滚与重装的锚点，不要手动清。
 
 ## 已知限制
 

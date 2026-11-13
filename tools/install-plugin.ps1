@@ -1,16 +1,20 @@
 <#
 .SYNOPSIS
-  把 dsh-pi 作为真正的依赖装进某个 DSH profile，并生成回滚脚本。
+  把 dsh-pi 作为真正的 pnpm 依赖装进某个 DSH profile，并生成回滚脚本。
 
 .DESCRIPTION
-  每步失败即停，不留半成品：
+  每步失败即停，不留半成品。关键是「用包管理器安装」，而不是手工往
+  node_modules 里塞副本再手改 manifest —— 那样会让 package.json 与
+  pnpm-lock.yaml 漂移，插件管理器下一次跑 pnpm 就会把副本清掉。
+
     1. npm pack 出 tarball
     2. 装到临时目录，用装出来的那份跑一轮真实 LLM 往返（证明产物可用）
     3. tarball 收进 <profile>\.dsh-local-packages\（profile 自带，不依赖源码仓库还在）
-    4. 备份 profile\package.json 与现有 node_modules\dsh-pi（junction 只记指向，不复制内容）
-    5. 用暂存目录里已解析好的副本替换 node_modules\dsh-pi，并补齐 @earendil-works\*
-    6. 把 package.json 的依赖改写成 file:<tarball>，让以后的 install 可复现
-    7. 生成 rollback-<时间戳>.ps1
+    4. 备份 profile\package.json 与 profile\pnpm-lock.yaml，记录现有 node_modules\dsh-pi 形态
+    5. 用 DSH 自带的 pnpm 执行 add file:<tarball> —— manifest / lock / node_modules 三者
+       由 pnpm 一次性写一致，pi 运行时（optionalDependencies @earendil-works/*）随之落入
+    6. 校验：manifest 依赖串、lock 条目、node_modules\dsh-pi\index.js、pi CLI、再跑一遍真机冒烟
+    7. 生成 rollback-<时间戳>.ps1（恢复 package.json + pnpm-lock.yaml，再让 pnpm 收敛 node_modules）
 
 .EXAMPLE
   pwsh -NoProfile -File .\tools\install-plugin.ps1
@@ -19,6 +23,7 @@
 param(
   [string]$Profile = 'desktop',
   [string]$ProfileRoot = (Join-Path $env:USERPROFILE '.dsh\profiles'),
+  [string]$PnpmPath = '',
   [switch]$SkipVerify
 )
 
@@ -28,12 +33,30 @@ $pluginRoot = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Pat
 $profileDir = Join-Path $ProfileRoot $Profile
 $profilePkg = Join-Path $profileDir 'package.json'
 $profileModules = Join-Path $profileDir 'node_modules'
+$profileLock = Join-Path $profileDir 'pnpm-lock.yaml'
 
 function Step([string]$text) { Write-Output ''; Write-Output "=== $text ===" }
 function Fail([string]$text) { Write-Error $text; exit 1 }
 
 if (-not (Test-Path $profilePkg)) { Fail "找不到 profile：$profilePkg（先确认 DSH 装过并至少启动过一次）" }
 if (-not (Test-Path $profileModules)) { Fail "找不到 node_modules：$profileModules" }
+
+# ── 0. 找 pnpm ─────────────────────────────────────────────
+# 宿主用的是自己那份 pnpm；PATH 上的 pnpm.ps1 往往是 corepack shim，直接调用会 MODULE_NOT_FOUND。
+$pnpmCandidates = @()
+if ($PnpmPath -ne '') { $pnpmCandidates += $PnpmPath }
+$pnpmCandidates += (Join-Path $env:USERPROFILE '.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\pnpm\bin\pnpm.cjs')
+$pnpmCli = $null
+foreach ($candidate in $pnpmCandidates) {
+  if (Test-Path -LiteralPath $candidate) { $pnpmCli = $candidate; break }
+}
+if ($null -eq $pnpmCli) {
+  Fail 'Cannot find pnpm.cjs. Pass it with -PnpmPath, e.g. -PnpmPath "$env:USERPROFILE\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\pnpm\bin\pnpm.cjs". Do not use pnpm.ps1 from PATH (corepack shim).'
+}
+$nodeExe = (Get-Command node -ErrorAction SilentlyContinue).Source
+if (-not $nodeExe) { Fail 'Cannot find node in PATH.' }
+Write-Output "pnpm = $pnpmCli"
+Write-Output "node = $nodeExe"
 
 $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 
@@ -42,57 +65,65 @@ Step 'npm pack'
 Push-Location $pluginRoot
 Get-ChildItem -Path $pluginRoot -Filter '*.tgz' | Remove-Item -Force
 $packRaw = npm pack --json 2>&1 | Out-String
-if ($LASTEXITCODE -ne 0) { Pop-Location; Fail "npm pack 失败：$packRaw" }
+if ($LASTEXITCODE -ne 0) { Pop-Location; Fail "npm pack failed: $packRaw" }
 $packInfo = $packRaw | ConvertFrom-Json
 $tgzName = $packInfo[0].filename
 $tgzPath = Join-Path $pluginRoot $tgzName
 Write-Output ("tarball = {0}  size = {1}  files = {2}" -f $tgzName, $packInfo[0].size, $packInfo[0].entryCount)
 Pop-Location
 
-# ── 2. 暂存安装 + 真机验证 ──────────────────────────────────
-Step '暂存安装到 TEMP'
+# ── 2. 暂存安装 + 真机验证 ─────────────────────────────────
+Step 'staging install into TEMP'
 $stage = Join-Path $env:TEMP ('dsh-pi-stage-' + [guid]::NewGuid().ToString('N').Substring(0, 6))
 New-Item -ItemType Directory -Path $stage | Out-Null
 Push-Location $stage
 '{ "name": "dsh-pi-stage", "private": true, "type": "module" }' | Set-Content -Path package.json -Encoding utf8
-npm install $tgzPath --no-audit --no-fund --loglevel=error 2>&1 | Select-Object -Last 3
+$stageRaw = npm install $tgzPath --no-audit --no-fund --loglevel=error 2>&1 | Out-String
 $installExit = $LASTEXITCODE
 Pop-Location
-if ($installExit -ne 0) { Fail "npm install 失败（exit=$installExit）" }
+if ($installExit -ne 0) { Fail ("npm install failed (exit=$installExit): " + $stageRaw) }
+foreach ($line in ($stageRaw.Trim() -split '\r?\n' | Select-Object -Last 3)) { Write-Output $line }
 
 $stagedPlugin = Join-Path $stage 'node_modules\dsh-pi'
 $stagedPiScope = Join-Path $stage 'node_modules\@earendil-works'
-if (-not (Test-Path (Join-Path $stagedPlugin 'index.js'))) { Fail '暂存目录里没有 dsh-pi\index.js' }
+if (-not (Test-Path (Join-Path $stagedPlugin 'index.js'))) { Fail 'staging dir has no dsh-pi\index.js' }
 $hasPi = Test-Path (Join-Path $stagedPiScope 'pi-coding-agent\package.json')
 Write-Output "staged dsh-pi = $stagedPlugin"
 Write-Output "staged pi     = $hasPi"
+if ($hasPi) {
+  $stagedCli = Join-Path $stagedPiScope 'pi-coding-agent\dist\bundle\cli.js'
+  $stagedVer = (& $nodeExe $stagedCli --version 2>&1 | Out-String).Trim()
+  Write-Output "staged pi cli = $stagedVer"
+}
 
 if (-not $SkipVerify) {
-  Step '打包产物真机验证（真跑一轮 LLM）'
+  Step 'verify packed artifact against a real LLM'
   Push-Location $pluginRoot
   node (Join-Path $pluginRoot 'test\packed-smoke.mjs') (Join-Path $stagedPlugin 'index.js') 2>&1 | Select-Object -Last 24
   $smokeExit = $LASTEXITCODE
   Pop-Location
-  if ($smokeExit -ne 0) { Fail "打包产物冒烟失败（exit=$smokeExit），profile 未改动" }
+  if ($smokeExit -ne 0) { Fail "packed smoke failed (exit=$smokeExit); profile untouched" }
   Write-Output 'smokeExit=0'
 } else {
-  Write-Output '已跳过真机验证（-SkipVerify）'
+  Write-Output 'skipped real-LLM verification (-SkipVerify)'
 }
 
 # ── 3. tarball 收进 profile ────────────────────────────────
-Step 'tarball 收进 profile'
+Step 'copy tarball into profile'
 $localPkgDir = Join-Path $profileDir '.dsh-local-packages'
 New-Item -ItemType Directory -Path $localPkgDir -Force | Out-Null
 $profileTgz = Join-Path $localPkgDir $tgzName
 Copy-Item -LiteralPath $tgzPath -Destination $profileTgz -Force
-$depSpec = 'file:' + ($profileTgz -replace '\\', '/')
+$depSpec = 'file:' + $profileTgz
 Write-Output "dep spec = $depSpec"
 
 # ── 4. 备份现状 ────────────────────────────────────────────
-Step '备份现状'
+Step 'backup current state'
 $backupDir = Join-Path (Join-Path $profileDir '.backup') ('dsh-pi-' + $stamp)
 New-Item -ItemType Directory -Path $backupDir -Force | Out-Null
 Copy-Item -LiteralPath $profilePkg -Destination (Join-Path $backupDir 'package.json') -Force
+$hadLock = Test-Path $profileLock
+if ($hadLock) { Copy-Item -LiteralPath $profileLock -Destination (Join-Path $backupDir 'pnpm-lock.yaml') -Force }
 
 $pluginDir = Join-Path $profileModules 'dsh-pi'
 $prior = [ordered]@{
@@ -102,7 +133,7 @@ $prior = [ordered]@{
   existed = $false
   kind = 'none'
   junctionTarget = $null
-  hadPiScope = $hasPi
+  hadLock = $hadLock
   addedPiPackages = @()
   backupDir = $backupDir
   tgzInProfile = $profileTgz
@@ -113,88 +144,138 @@ if (Test-Path $pluginDir) {
   if ($null -ne $item.LinkType) {
     $prior.kind = 'junction'
     $prior.junctionTarget = @($item.Target)[0]
-    Write-Output "现有 dsh-pi 是链接，指向 $($prior.junctionTarget)（只记指向，不复制）"
-    Remove-Item -LiteralPath $pluginDir -Force
+    Write-Output "existing dsh-pi is a link -> $($prior.junctionTarget) (recorded only)"
   } else {
     $prior.kind = 'dir'
     $copyTo = Join-Path $backupDir 'node_modules-dsh-pi'
-    Write-Output "现有 dsh-pi 是实体目录，整份备份到 $copyTo"
+    Write-Output "existing dsh-pi is a real dir; copied to $copyTo"
     Copy-Item -LiteralPath $pluginDir -Destination $copyTo -Recurse -Force
-    Remove-Item -LiteralPath $pluginDir -Recurse -Force
   }
 }
 $prior | ConvertTo-Json -Depth 6 | Set-Content -Path (Join-Path $backupDir 'prior-state.json') -Encoding utf8
 Write-Output "backup = $backupDir"
 
-# ── 5. 落地副本 ────────────────────────────────────────────
-Step '安装插件副本'
-Copy-Item -LiteralPath $stagedPlugin -Destination $pluginDir -Recurse -Force
-Write-Output "已放入 $pluginDir"
+# ── 5. 交给 pnpm 安装 ──────────────────────────────────────
+Step 'pnpm add (manifest + lock + node_modules in one step)'
+Push-Location $profileDir
+$addRaw = & $nodeExe $pnpmCli add $depSpec --ignore-scripts --config.auto-install-peers=false --config.minimum-release-age=0 2>&1 | Out-String
+$addExit = $LASTEXITCODE
+Pop-Location
+foreach ($line in ($addRaw.Trim() -split '\r?\n' | Select-Object -Last 16)) { Write-Output $line }
+if ($addExit -ne 0) { Fail ("pnpm add failed (exit=$addExit). Rollback: pwsh -File '" + $backupDir + '\rollback-' + $stamp + ".ps1'. Output: " + $addRaw) }
+
+# ── 6. 校验 ────────────────────────────────────────────────
+Step 'verify installation'
+$failures = New-Object System.Collections.Generic.List[string]
+
+if (-not (Test-Path (Join-Path $pluginDir 'index.js'))) { $failures.Add('node_modules\dsh-pi\index.js missing') }
+
+$pkgAfter = Get-Content -LiteralPath $profilePkg -Raw | ConvertFrom-Json
+$depAfter = $pkgAfter.dependencies.'dsh-pi'
+if ($null -eq $depAfter) {
+  $failures.Add('profile package.json has no dsh-pi dependency')
+} elseif (-not $depAfter.StartsWith('file:')) {
+  $failures.Add("profile package.json dsh-pi is not a file: spec, got $depAfter")
+} else {
+  Write-Output "manifest dep = $depAfter"
+}
+
+if (-not (Test-Path $profileLock)) {
+  $failures.Add('profile pnpm-lock.yaml missing')
+} else {
+  $lockText = Get-Content -LiteralPath $profileLock -Raw
+  # 缩进随 pnpm 版本变化（v11 是 6 空格），只认「整行是 dsh-pi: 键」
+  if ($lockText -notmatch '(?m)^\s+dsh-pi:\s*$') { $failures.Add('pnpm-lock.yaml has no dsh-pi entry (lock drift)') }
+  if ($lockText -notmatch 'pi-coding-agent') { $failures.Add('pnpm-lock.yaml has no pi-coding-agent (runtime not locked)') }
+  Write-Output ('lock = {0} B' -f (Get-Item -LiteralPath $profileLock).Length)
+}
 
 $profilePiScope = Join-Path $profileModules '@earendil-works'
-$addedPi = @()
-if ($hasPi) {
-  if (-not (Test-Path $profilePiScope)) { New-Item -ItemType Directory -Path $profilePiScope | Out-Null }
-  foreach ($pkg in Get-ChildItem -LiteralPath $stagedPiScope -Directory) {
-    $dest = Join-Path $profilePiScope $pkg.Name
-    if (Test-Path $dest) { Write-Output "已有 $($pkg.Name)，跳过"; continue }
-    Copy-Item -LiteralPath $pkg.FullName -Destination $dest -Recurse -Force
-    $addedPi += $pkg.Name
-    Write-Output "补入 @earendil-works\$($pkg.Name)"
-  }
-}
-$prior.addedPiPackages = $addedPi
-$prior | ConvertTo-Json -Depth 6 | Set-Content -Path (Join-Path $backupDir 'prior-state.json') -Encoding utf8
-
-# ── 6. 改写 package.json 依赖 ──────────────────────────────
-Step '改写 profile 依赖'
-$pkg = Get-Content -LiteralPath $profilePkg -Raw | ConvertFrom-Json
-if ($pkg.dependencies.PSObject.Properties.Name -contains 'dsh-pi') {
-  $pkg.dependencies.'dsh-pi' = $depSpec
+$profilePiCli = Join-Path $profilePiScope 'pi-coding-agent\dist\bundle\cli.js'
+if (Test-Path $profilePiCli) {
+  $profilePiVer = (& $nodeExe $profilePiCli --version 2>&1 | Out-String).Trim()
+  Write-Output "profile pi cli = $profilePiVer"
+  $prior.addedPiPackages = @(Get-ChildItem -LiteralPath $profilePiScope -Directory | ForEach-Object { $_.Name })
+  $prior | ConvertTo-Json -Depth 6 | Set-Content -Path (Join-Path $backupDir 'prior-state.json') -Encoding utf8
 } else {
-  $pkg.dependencies | Add-Member -NotePropertyName 'dsh-pi' -NotePropertyValue $depSpec
+  $failures.Add("$profilePiCli missing (pi runtime not installed in profile)")
 }
-$pkg | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $profilePkg -Encoding utf8
-Write-Output ('"dsh-pi": "{0}"' -f $depSpec)
+
+$modulesYaml = Join-Path $profileModules '.modules.yaml'
+if (Test-Path $modulesYaml) {
+  $my = Get-Content -LiteralPath $modulesYaml -Raw
+  if ($my -notmatch 'dsh-pi') { $failures.Add('node_modules .modules.yaml does not know dsh-pi (next pnpm run would prune it)') }
+} else {
+  $failures.Add('node_modules .modules.yaml missing')
+}
+
+if ($failures.Count -gt 0) {
+  foreach ($f in $failures) { Write-Output "FAIL $f" }
+  Fail ("install verification failed with " + $failures.Count + " problem(s). Rollback: pwsh -File '" + $backupDir + '\rollback-' + $stamp + ".ps1'")
+}
+Write-Output 'verified: manifest / lock / node_modules agree'
+
+if (-not $SkipVerify) {
+  Step 'verify installed copy against a real LLM'
+  Push-Location $pluginRoot
+  node (Join-Path $pluginRoot 'test\packed-smoke.mjs') (Join-Path $pluginDir 'index.js') 2>&1 | Select-Object -Last 24
+  $smoke2 = $LASTEXITCODE
+  Pop-Location
+  if ($smoke2 -ne 0) { Fail "profile copy smoke failed (exit=$smoke2)" }
+  Write-Output 'smokeExit=0'
+}
 
 # ── 7. 回滚脚本 ────────────────────────────────────────────
-Step '生成回滚脚本'
+Step 'generate rollback script'
 $rollback = Join-Path $backupDir ('rollback-' + $stamp + '.ps1')
 $lines = New-Object System.Collections.Generic.List[string]
-$lines.Add('# 回滚 dsh-pi 安装（' + $stamp + '）——由 tools\install-plugin.ps1 生成')
+$lines.Add('# Rollback dsh-pi install (' + $stamp + ') - generated by tools\install-plugin.ps1')
 $lines.Add('$ErrorActionPreference = ''Stop''')
 $lines.Add('$profileDir = ' + "'" + $profileDir + "'")
 $lines.Add('$profileModules = Join-Path $profileDir ''node_modules''')
 $lines.Add('$pluginDir = Join-Path $profileModules ''dsh-pi''')
+$lines.Add('$pnpmCli = ' + "'" + $pnpmCli + "'")
 $lines.Add('')
 $lines.Add('Copy-Item -LiteralPath (Join-Path $PSScriptRoot ''package.json'') -Destination (Join-Path $profileDir ''package.json'') -Force')
-$lines.Add('Write-Output ''1/3 已恢复 profile\package.json''')
+$lines.Add('if (Test-Path (Join-Path $PSScriptRoot ''pnpm-lock.yaml'')) { Copy-Item -LiteralPath (Join-Path $PSScriptRoot ''pnpm-lock.yaml'') -Destination (Join-Path $profileDir ''pnpm-lock.yaml'') -Force }')
+$lines.Add('Write-Output ''1/3 restored profile package.json and pnpm-lock.yaml''')
 $lines.Add('')
 $lines.Add('if (Test-Path $pluginDir) { Remove-Item -LiteralPath $pluginDir -Recurse -Force }')
 if ($prior.kind -eq 'junction') {
   $lines.Add('New-Item -ItemType Junction -Path $pluginDir -Target ' + "'" + $prior.junctionTarget + "'" + ' | Out-Null')
-  $lines.Add('Write-Output ''2/3 已恢复 junction -> ' + $prior.junctionTarget + '''')
+  $lines.Add('Write-Output ''2/3 restored junction -> ' + $prior.junctionTarget + '''')
 } elseif ($prior.kind -eq 'dir') {
   $lines.Add('Copy-Item -LiteralPath (Join-Path $PSScriptRoot ''node_modules-dsh-pi'') -Destination $pluginDir -Recurse -Force')
-  $lines.Add('Write-Output ''2/3 已恢复原 node_modules\dsh-pi 目录''')
+  $lines.Add('Write-Output ''2/3 restored previous node_modules\dsh-pi directory''')
 } else {
-  $lines.Add('Write-Output ''2/3 原先没有 dsh-pi，保持移除''')
+  $lines.Add('Write-Output ''2/3 previous state had no dsh-pi, leaving it removed''')
 }
 $lines.Add('')
-foreach ($name in $addedPi) {
-  $lines.Add('Remove-Item -LiteralPath (Join-Path $profileModules ''@earendil-works\' + $name + ''') -Recurse -Force -ErrorAction SilentlyContinue')
+foreach ($name in $prior.addedPiPackages) {
+  $lines.Add('if (Test-Path (Join-Path $profileModules ''@earendil-works\' + $name + ''')) { Remove-Item -LiteralPath (Join-Path $profileModules ''@earendil-works\' + $name + ''') -Recurse -Force }')
 }
-$lines.Add('Write-Output ''3/3 已移除本次补入的 pi 包''')
-$lines.Add('Write-Output ''回滚完成。重启 DSH 后生效。''')
+$lines.Add('Write-Output ''3/3 removed pi packages brought in by this install: ' + ($prior.addedPiPackages -join ', ') + '''')
+$lines.Add('')
+$lines.Add('# Let pnpm converge node_modules (and .modules.yaml) to the restored manifest + lock')
+$lines.Add('if (Test-Path $pnpmCli) {')
+$lines.Add('  Push-Location $profileDir')
+$lines.Add('  & node $pnpmCli install --frozen-lockfile --ignore-scripts')
+$lines.Add('  $code = $LASTEXITCODE')
+$lines.Add('  Pop-Location')
+$lines.Add('  Write-Output "pnpm install exit=$code"')
+$lines.Add('} else {')
+$lines.Add('  Write-Output "pnpm not found at $pnpmCli; run pnpm install --frozen-lockfile in $profileDir manually"')
+$lines.Add('}')
+$lines.Add('Write-Output ''Rollback done. Restart DSH to take effect.''')
 $lines | Set-Content -LiteralPath $rollback -Encoding utf8
 Write-Output "rollback = $rollback"
 
 # ── 收尾 ──────────────────────────────────────────────────
 if (Test-Path $stage) { Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue }
 
-Step '完成'
-Write-Output "插件已装进 profile『$Profile』。下一步："
-Write-Output '  1) 重启 DSH（插件代码在 import 时快照进内存，不重启不生效）'
-Write-Output '  2) 侧栏点 pi；若提示缺运行时，点「一键安装 pi」'
-Write-Output '  3) 排障：GET http://127.0.0.1:<port>/api/dsh-pi/diagnostics'
-Write-Output "  4) 想退回：pwsh -File '$rollback'"
+Step 'done'
+Write-Output "dsh-pi is now a pnpm dependency of profile '$Profile'. Next:"
+Write-Output '  1) restart DSH (plugin code is snapshotted at import, a restart is required)'
+Write-Output '  2) open the pi panel; if the runtime is missing, click "install pi"'
+Write-Output '  3) diagnostics: GET http://127.0.0.1:<port>/api/dsh-pi/diagnostics'
+Write-Output "  4) rollback: pwsh -File '$rollback'"
