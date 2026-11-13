@@ -45,9 +45,10 @@ const req = createRequire(path.join(reactHome, 'noop.js'))
 const React = req('react')
 const { renderToStaticMarkup } = req('react-dom/server')
 
+let passed = 0
 let failed = 0
 function assert(condition, message) {
-  if (condition) return
+  if (condition) { passed += 1; return }
   failed += 1
   console.error('FAIL: ' + message)
 }
@@ -181,13 +182,107 @@ const gateEn = renderToStaticMarkup(React.createElement(Gate, {
 assert(gateEn.includes(en('runtimeMissing')), '英文引导页该显示「' + en('runtimeMissing') + '」')
 assert(gateEn.includes(en('installRuntime')), '英文引导页该有安装按钮')
 
-// ── 9. 整棵面板在 loading 阶段能渲染，不抛异常 ─────────────────────────────
+// ── 9. 扩展 UI 四种弹窗：结构 + 文案 + 预算 ────────────────────────────────
+// 这一组挡两类回归：①四种 method 的按钮集被改串（confirm 的否定键曾借用开关态的 off）
+// ②倒计时文案退化成「已取消」语义（pi 侧是剩余秒数，见 extension-selector.ts:56-63）。
+const Dialog = internals.ExtensionDialog
+assert(typeof Dialog === 'function', 'client.js 应导出 ExtensionDialog 以便测试')
+assert(typeof internals.dialogBudgetMs === 'function', 'client.js 应导出 dialogBudgetMs 以便测试')
+
+const requestOf = overrides => Object.assign({
+  id: 'req-1',
+  method: 'select',
+  title: '',
+  message: null,
+  options: [],
+  prefill: null,
+  placeholder: null,
+  timeout: null,
+  receivedAt: 0,
+}, overrides)
+const dialogHtml = (overrides, translator) => renderToStaticMarkup(React.createElement(Dialog, {
+  t: translator === undefined ? zh : translator,
+  request: requestOf(overrides),
+  onRespond() {},
+}))
+
+// 9.1 文案键本身
+assert(zh('extNo') === '否', 'zh.extNo 应为「否」（confirm 的否定分支，pi TUI 写的是 No），实际 ' + JSON.stringify(zh('extNo')))
+assert(en('extNo') === 'No', 'en.extNo 应为 No，实际 ' + JSON.stringify(en('extNo')))
+assert(zh('extNo') !== zh('off') && en('extNo') !== en('off'), 'extNo 不该复用开关态的 off（中「关」/英 off 语义串线）')
+assert(zh('extTimeout').includes('{n}'), 'zh.extTimeout 必须带 {n} 占位，实际 ' + JSON.stringify(zh('extTimeout')))
+assert(en('extTimeout').includes('{n}'), 'en.extTimeout 必须带 {n} 占位，实际 ' + JSON.stringify(en('extTimeout')))
+assert(zh('extTimeout').includes('还剩') && zh('extTimeout').includes('后自动取消'), 'zh.extTimeout 该是「还剩 Ns 后自动取消」语义，实际 ' + JSON.stringify(zh('extTimeout')))
+assert(zh('extTimeout').includes('已') === false, 'zh.extTimeout 不该出现「已…」（那是取消之后的完成态，不是倒计时），实际 ' + JSON.stringify(zh('extTimeout')))
+
+// 9.2 confirm：否 / 确认，不要输入控件
+const confirmHtml = dialogHtml({ method: 'confirm', title: 'Clear session?', message: 'All messages will be lost.' })
+console.log('confirm =', confirmHtml)
+assert(confirmHtml.includes('role="dialog"'), 'confirm 该渲染 role=dialog')
+assert(confirmHtml.includes(zh('extConfirm') + ' · Clear session?'), 'confirm 的 h3 该是「请确认 · Clear session?」，实际 ' + confirmHtml)
+assert(confirmHtml.includes('All messages will be lost.'), 'confirm 该显示 message 正文')
+assert(confirmHtml.includes('>' + zh('extNo') + '<') && confirmHtml.includes('>' + zh('extYes') + '<'), 'confirm 该有「' + zh('extNo') + '」「' + zh('extYes') + '」两个按钮')
+assert(confirmHtml.includes('>' + zh('off') + '<') === false, 'confirm 不该再出现开关态的「' + zh('off') + '」')
+assert(confirmHtml.includes('<input') === false && confirmHtml.includes('<textarea') === false, 'confirm 不该有输入控件')
+assert(confirmHtml.includes('dsh-pi-btn-primary') === true, 'confirm 的肯定按钮该是 primary')
+
+// 9.3 select：每个选项一个按钮 + 取消
+const selectHtml = dialogHtml({ method: 'select', title: 'Pick an option', options: ['Option A', 'Option B', 'Option C'] })
+console.log('select =', selectHtml)
+assert(selectHtml.includes('dsh-pi-opt'), 'select 该用 dsh-pi-opt 渲染选项')
+for (const option of ['Option A', 'Option B', 'Option C']) assert(selectHtml.includes('>' + option + '<'), 'select 该渲染选项 ' + option)
+assert((selectHtml.match(/dsh-pi-opt/g) ?? []).length === 3, 'select 的选项按钮数应等于 options 长度')
+assert(selectHtml.includes('>' + zh('cancel') + '<'), 'select 该有「' + zh('cancel') + '」按钮')
+assert(selectHtml.includes('dsh-pi-btn-primary') === false, 'select 的选项不该是 primary（用户还没选）')
+
+// 9.4 input：回填 prefill 进 value、placeholder 透传、取消 / 提交
+const inputHtml = dialogHtml({ method: 'input', title: 'Enter a value', placeholder: 'type something...', prefill: 'pre-filled' })
+console.log('input =', inputHtml)
+assert(inputHtml.includes('<input'), 'input 该渲染 <input>')
+assert(inputHtml.includes('placeholder="type something..."'), 'input 该透传 placeholder')
+assert(inputHtml.includes('value="pre-filled"'), 'input 该回填 prefill 到 value')
+assert(inputHtml.includes('>' + zh('cancel') + '<') && inputHtml.includes('>' + zh('extSubmit') + '<'), 'input 该有取消 / 提交两个按钮')
+assert(inputHtml.includes(zh('extInput') + ' · Enter a value'), 'input 的 h3 该用 extInput 前缀')
+
+// 9.5 editor：多行 prefill 原样进 textarea
+const editorHtml = dialogHtml({ method: 'editor', title: 'Edit some text', prefill: 'Line 1\nLine 2\nLine 3' })
+console.log('editor =', editorHtml)
+assert(editorHtml.includes('<textarea'), 'editor 该渲染 <textarea>')
+assert(editorHtml.includes('Line 1') && editorHtml.includes('Line 3'), 'editor 该回填多行 prefill')
+assert(editorHtml.includes('>' + zh('extSubmit') + '<'), 'editor 该有提交按钮')
+assert(editorHtml.includes('<input') === false, 'editor 不该混入 <input>')
+
+// 9.6 空 title 回落到方法名，避免出现「请选择 · 」
+const untitled = dialogHtml({ method: 'select', title: '', options: ['x'] })
+assert(untitled.includes(zh('extSelect') + ' · ' + zh('extSelect')), '空 title 该回落成「请选择 · 请选择」，实际 ' + untitled)
+
+// 9.7 英文侧同一套结构
+const confirmEn = dialogHtml({ method: 'confirm', title: 'Clear session?', message: 'gone' }, en)
+assert(confirmEn.includes(en('extNo')) && confirmEn.includes(en('extYes')), '英文 confirm 该有 No / Confirm')
+assert(confirmEn.includes('>' + en('off') + '<') === false, '英文 confirm 不该出现开关态的 off')
+
+// 9.8 倒计时预算是「扩展声明值与 5 分钟上限取小」，四类非法值一律回落上限
+const budget = internals.dialogBudgetMs
+assert(budget(requestOf({ timeout: 120000 })) === 120000, '声明 120s 时预算该是 120s')
+assert(budget(requestOf({ timeout: 600000 })) === 300000, '声明 600s 超过 5 分钟上限时该被压到 300s')
+assert(budget(requestOf({ timeout: null })) === 300000, '未声明 timeout 时该回落 5 分钟')
+for (const bad of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+  assert(budget(requestOf({ timeout: bad })) === 300000, '非法 timeout ' + String(bad) + ' 该回落 5 分钟')
+}
+
+// 9.9 静态渲染不出现倒计时：left 由 useEffect 驱动，SSR 阶段为 null。
+// 这条不是缺陷而是硬约束 —— 想断言「还剩 Ns」必须走真实浏览器（test/ui-dialog 那套）。
+assert(confirmHtml.includes(zh('extTimeout')) === false, 'SSR 阶段不该渲染倒计时行（left 初值 null）')
+
+// ── 10. 整棵面板在 loading 阶段能渲染，不抛异常 ────────────────────────────
 const panelHtml = renderToStaticMarkup(React.createElement(internals.PiPanel, { t: zh }))
 assert(panelHtml.includes('dsh-pi-root'), 'PiPanel 应渲染出 dsh-pi-root')
 assert(panelHtml.includes(zh('loading')), 'PiPanel 首帧应是 loading 文案')
 
 if (failed > 0) {
-  console.error(String(failed) + ' 条断言失败')
+  console.error(String(failed) + ' 条断言失败（通过 ' + String(passed) + ' 条）')
   process.exit(1)
 }
-console.log('PASS')
+// 打印实际执行到的断言条数：README / docs 里引用的数字必须能在这里核对，
+// 静态数 assert( 的调用点会把 for 循环里的重复执行漏掉。
+console.log('PASS (' + String(passed) + ' assertions)')

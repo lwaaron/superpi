@@ -36,7 +36,21 @@ $profileModules = Join-Path $profileDir 'node_modules'
 $profileLock = Join-Path $profileDir 'pnpm-lock.yaml'
 
 function Step([string]$text) { Write-Output ''; Write-Output "=== $text ===" }
-function Fail([string]$text) { Write-Error $text; exit 1 }
+
+# 暂存目录一旦建出来就必须在每条退出路径上清掉 —— 0.3.0 / 0.3.1 两次逐字节比对失败各在
+# %TEMP% 下留了一棵约 1.7 万文件的 dsh-pi-stage-*。
+#   · 正常结束：末尾显式调用 Remove-StageDir
+#   · Fail 路径：Fail 先清理再 exit（exit 不触发 trap，所以必须显式调）
+#   · 意外抛错 / Ctrl-C：trap 兜底，清理后 break 终止脚本
+$script:stageDir = $null
+function Remove-StageDir {
+  if ($script:stageDir -and (Test-Path -LiteralPath $script:stageDir)) {
+    Remove-Item -LiteralPath $script:stageDir -Recurse -Force -ErrorAction SilentlyContinue
+  }
+  $script:stageDir = $null
+}
+function Fail([string]$text) { Remove-StageDir; Write-Error $text; exit 1 }
+trap { Remove-StageDir; break }
 
 if (-not (Test-Path $profilePkg)) { Fail "找不到 profile：$profilePkg（先确认 DSH 装过并至少启动过一次）" }
 if (-not (Test-Path $profileModules)) { Fail "找不到 node_modules：$profileModules" }
@@ -76,6 +90,7 @@ Pop-Location
 Step 'staging install into TEMP'
 $stage = Join-Path $env:TEMP ('dsh-pi-stage-' + [guid]::NewGuid().ToString('N').Substring(0, 6))
 New-Item -ItemType Directory -Path $stage | Out-Null
+$script:stageDir = $stage
 Push-Location $stage
 '{ "name": "dsh-pi-stage", "private": true, "type": "module" }' | Set-Content -Path package.json -Encoding utf8
 $stageRaw = npm install $tgzPath --no-audit --no-fund --loglevel=error 2>&1 | Out-String
@@ -303,7 +318,7 @@ $lines | Set-Content -LiteralPath $rollback -Encoding utf8
 Write-Output "rollback = $rollback"
 
 # ── 收尾 ──────────────────────────────────────────────────
-if (Test-Path $stage) { Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue }
+Remove-StageDir
 
 Step 'done'
 Write-Output "dsh-pi is now a pnpm dependency of profile '$Profile'. Next:"

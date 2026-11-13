@@ -123,8 +123,9 @@ window.__ModuleLoader__.load({
       extInput: '请输入',
       extEditor: '请编辑',
       extYes: '确认',
+      extNo: '否',
       extSubmit: '提交',
-      extTimeout: '扩展请求超时，已自动取消',
+      extTimeout: '还剩 {n}s 后自动取消',
       notify: '提示',
       steerQueued: '排队中（steer）',
       autoCompact: '自动压缩',
@@ -255,8 +256,9 @@ window.__ModuleLoader__.load({
       extInput: 'Input',
       extEditor: 'Edit',
       extYes: 'Confirm',
+      extNo: 'No',
       extSubmit: 'Submit',
-      extTimeout: 'Extension request timed out and was cancelled',
+      extTimeout: 'Auto-cancels in {n}s',
       notify: 'Notice',
       steerQueued: 'Queued (steer)',
       autoCompact: 'Auto-compact',
@@ -1760,7 +1762,7 @@ window.__ModuleLoader__.load({
       if (request.method === 'confirm') {
         body.push(h('p', { key: 'msg', className: 'dsh-pi-dialog-msg' }, request.message === null ? '' : request.message))
         body.push(h('div', { key: 'act', className: 'dsh-pi-dialog-actions' },
-          h('button', { type: 'button', className: 'dsh-pi-btn', onClick: function () { props.onRespond({ id: request.id, confirmed: false }) } }, t('off')),
+          h('button', { type: 'button', className: 'dsh-pi-btn', onClick: function () { props.onRespond({ id: request.id, confirmed: false }) } }, t('extNo')),
           h('button', { type: 'button', className: 'dsh-pi-btn dsh-pi-btn-primary', onClick: function () { props.onRespond({ id: request.id, confirmed: true }) } }, t('extYes'))))
       } else if (request.method === 'select') {
         body.push(h('div', { key: 'opts', className: 'dsh-pi-dialog-body' }, request.options.map(function (option, index) {
@@ -1800,7 +1802,7 @@ window.__ModuleLoader__.load({
       return h('div', { className: 'dsh-pi-dialog-wrap' },
         h('div', { className: 'dsh-pi-dialog', role: 'dialog', 'aria-label': label },
           h('h3', null, label + ' · ' + title),
-          left === null ? null : h('div', { className: 'dsh-pi-mono' }, t('extTimeout') + ' ' + String(left) + 's'),
+          left === null ? null : h('div', { className: 'dsh-pi-mono' }, t('extTimeout').replace('{n}', String(left))),
           body))
     }
 
@@ -3286,6 +3288,8 @@ window.__ModuleLoader__.load({
       BashBlock: BashBlock,
       SelfCheckChip: SelfCheckChip,
       RuntimeGate: RuntimeGate,
+      ExtensionDialog: ExtensionDialog,
+      dialogBudgetMs: dialogBudgetMs,
       buildContract: buildContract,
       classifyInput: classifyInput,
       slashItems: slashItems,

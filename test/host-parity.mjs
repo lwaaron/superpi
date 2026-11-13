@@ -204,7 +204,7 @@ try {
     // 3.1 /contract：原样序列化，字段一个不少
     const contract = await request(server.base, '/contract')
     check('contract 200', contract.status === 200, String(contract.status))
-    eq('contract version', contract.body.version, '0.3.0')
+    eq('contract version', contract.body.version, '0.3.2')
     eq('contract piVersion', contract.body.piVersion, '1.5.2')
     eq('contract rpcCommands 33', contract.body.rpcCommands.length, 33)
     // 25 种出站事件 + response = 26，见 src/rpc-contract.mjs:76 的注释。
