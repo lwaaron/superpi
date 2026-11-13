@@ -1,0 +1,88 @@
+# AGENTS.md — dsh-pi
+
+给接手这个仓库的 AI。动代码前先读完这一页，尤其是第 3 节。
+
+## 1. 这是什么
+
+DSH（DeepSeek Runtime）插件：把 pi 编码 agent 装进 DSH 的侧栏面板。
+
+它不重写 pi，只做一层薄适配——host 拉起真正的 `pi --mode rpc` 子进程，面板通过 pi 官方 JSONL RPC 协议跟它对话。pi 升级只要 RPC 帧不破，面板不用改。
+
+必须记住的架构事实：**同一个 pi 1.5.2、同一个 agent loop，两个平级前端**——命令行 TUI（`packages/coding-agent/src/modes/interactive/`）与 dsh-pi 面板。不是父子，不是主从。第 2、3 节全部由此推出。
+
+## 2. 两半架构
+
+| 文件 | 职责（一句话） |
+| --- | --- |
+| `index.js` | host 半区：注册 `/api/dsh-pi/*` 路由（`createHandler` `index.js:692-873`，路由分派在 `:706-863`）、会话池（≤8）、子进程生命周期、自检、运行时解析报告。 |
+| `src/pi-rpc.mjs` | JSONL 帧解析、命令 id 配对、事件环形缓冲、扩展 UI 挂起表（`pendingUi` `:142` / `trackUi()` `:273` / `respond()` `:446`，`extension_ui_response` 在 `send()` 里被强制改道 `:374-378` 以免被重新分配 id）、**超时让位机制**（`timeoutLimitMs()` `:43` 归一化三态；`armTimer()` `:414` 到点时若有弹窗挂起就续期而非 reject，上限 `MAX_TIMEOUT_DEFERRALS` 12 轮；`restartPendingTimers()` `:472` 在每次应答后重开一整轮窗口）。 |
+| `src/pi-runtime.mjs` | pi 与 node 的 8 步解析链 + 一键安装（不依赖任何宿主路径）。 |
+| `src/rpc-contract.mjs` | 三方事实的结构化快照：33 条 RPC 命令、25 类事件、12 种 assistant 事件、27 条 TUI 内置命令、9 个扩展 UI method、`classifyInput()`、`validateContract()`。**命令表/事件表/斜杠表只在这里定义一份**，`client.js` 不许硬编码。 |
+| `src/session-store.mjs` | 只读枚举 `~/.pi/agent/sessions` 下的 pi 会话文件（语义对齐 `session-manager.ts:802-897`）。已接线：`index.js:33-39` import，`GET /sessions/history`（`index.js:750`）暴露给面板的 `SessionsSheet`（`client.js:1534`）。 |
+| `client.js` | 浏览器半区：React 面板，零构建、零 JSX，只 `require('react')`。 |
+| `docs/parity.md` | 能力矩阵。两端对齐的唯一账本。 |
+
+## 3. 100% 对齐 = 不可协商约束
+
+用户 2026-11-12 原话：「全部补齐，并且告诉未来这个项目的你两个端要保持100%对齐」。
+
+- 一条能力要么两端都有，要么两端都明确没有。**不存在「先做一端，另一端以后再说」**。
+- 任何当前缺口必须在 `docs/parity.md` 里是一条显式记录（能力名 + 缺什么 + 补齐版本），不允许静默存在。
+- 目标态是 `docs/parity.md` 里 **零缺口**。你新增任何能力，同步把另一端补齐，不许把缺口转嫁给下一任。
+- 检查动作：`npm test`。它含三套机器门禁 —— `test/parity.mjs`（388 行 / 65 checks，契约 ↔ pi 类型与官方文档 ↔ `client.js`/`index.js` 的面板覆盖，三向对账）、`test/host-parity.mjs`（409 行 / 125 checks，`buildSpawnArgs` 与 HTTP 面）与 `test/timeout.mjs`（166 行 / 28 checks，用 `test/fixtures/fake-pi-rpc.mjs` 协议替身把 5 分钟的超时/弹窗时序压到毫秒级实测）。**这三套门禁是本仓库对齐的机器保障，不是可选装饰**：删掉或绕过它，等于把"100% 对齐"退回人肉承诺。
+
+## 4. 新增一个能力的固定流程（顺序不可换）
+
+1. **登记契约**：改 `src/rpc-contract.mjs` 的 `RPC_COMMANDS` / `RPC_EVENTS` / `TUI_COMMANDS` / `EXTENSION_UI_METHODS`。上游权威永远是 `packages/coding-agent/src/modes/rpc/rpc-types.ts`，不是这份文件的注释。
+2. **host 可达**：`POST /sessions/:id/command`（`index.js:800-838`，`proc.send` 在 `:822`）通常零改动。注意它做两件额外的事：超时三态归一化（`:812-817`，非法值直接 400 而不是静默降级）与剥离 `timeoutMs`（`:820-821`，那是本插件的传输层参数，pi 的 `RpcCommand` 没有这个字段，透传即契约污染）。需要新 HTTP 面时才动 `createHandler`（`index.js:692-873`），并判断该文件是否在 `SELF_FILES`（`index.js:109-118`）的 `runtime:true` 里（是则改完必须重启 DSH）。
+3. **客户端接 UI**：`client.js` 三处——`api` 对象（`:506-541`）加方法、`applyRecord`（`:945-1094`）加事件分支、面板加控件与 i18n 词条（`ZH` `:36-168` / `EN` `:169-300`，两套键集必须一致）。
+4. **更新账本**：`docs/parity.md` 对应行的「面板端状态」改成已实现，补「门禁用例」，并按需改 `## 1/3/4` 末尾的统计数字。
+5. **跑门禁**：`npm test`。红了不许提交。
+6. **提交**：`git add` 你实际改的文件。**改代码必须同时升 `package.json` 的 version**（pnpm 对 `file:` 依赖按 lock 里的 integrity 复用 store，版本号不变会把旧内容装回来且 exit=0；`test/version.mjs` 与 `test/parity.mjs:213-218` 都断言版本单一真相）。
+
+## 5. 禁止项
+
+- **禁止以「UI 没做」为由在 host 或协议层留缺口。** 缺的是 UI 就说缺 UI，别把能力做成半截。
+- **禁止把斜杠命令当普通文本发给模型。** `/compact` 走的是 `compact` 命令，绝不能当 prompt 发出去——pi 的 RPC prompt 通道只认扩展命令、`/skill:`、prompt template（`agent-session.ts:2410-2445`），TUI 那 27 条内置命令在 RPC 侧一条都没有。输入一律先过 `classifyInput()`，`handleSlash`（`client.js:2983-2989`）按 disposition 五路分流。未知斜杠照发是 pi 的既有语义，不要"顺手修"。
+- **禁止硬编码本机绝对路径。** pi 可执行与 node 必须走 `src/pi-runtime.mjs` 的解析链（config → 环境变量 → 插件 `.runtime` → 插件 `node_modules` → 逐级 walk-up → pnpm store → 全局 npm）。
+- **禁止删除或降级既有测试。** 测试红了修实现，不许改断言、不许 skip。
+- **禁止 `client.js` 使用白名单外模块。** 只允许 `react` / `react-dom` / `jsx-runtime` / `@deepseek-ai/dsh-client-ui-primitives`。
+- **禁止非 `--dsw-*` 的颜色。** 明暗判据是 `body[data-ds-dark-theme]`。
+- **禁止在 `index.js` 或 `src/*.mjs` 里静态 import `@deepseek-ai/*`。** 会让插件 fiber 永久 pending、DSH 启动卡死。`@deepseek-ai/schemastery` 是唯一例外，且必须动态 `import()` + 兜底。
+- **禁止手工往 `node_modules` 塞副本，禁止在 profile 里用 `npm install`。** 安装只走 `install-plugin.ps1` 或 `pnpm add file:`。
+- **禁止在本会话里跑 `tools/restart-dsh.ps1`。** 它会关掉你正在用的 DSH 窗口，把你自己一起杀掉。交给用户手动执行。
+
+## 6. 上游已知缺陷（只记录，不修）
+
+| 编号 | 缺陷 | 影响 |
+| --- | --- | --- |
+| — | **`set_session_name` 在会话未命名时可能抛 `Cannot read properties of undefined (reading 'slice')`（pi 1.5.2）** | 面板侧原样透出错误文本，不做吞掉。注意：全量 grep pi 源码未找到对应的 `slice` 调用，根因**未证实**，不要在注释里编造行号。真正修要上游改。 |
+| `D-07` | `RpcSessionState` 无 `autoRetryEnabled`（`rpc-types.d.ts:148` 的 12 字段里没有；`agent-session.ts:4122` 有 getter 但 RPC 面未暴露） | 设置抽屉的自动重试开关无法回读，`client.js:1709` 恒读到 `undefined` → 永远显示 off，但点一下确实生效。`test/parity.mjs:290` 用断言锁住该缺口。注意 `autoCompactionEnabled` **不是**同类问题：它在 `RpcSessionState` 里，面板 `loadState` 整份存进 `info`，`client.js:1677`/`:1708` 读到的是真值。 |
+| `D-08` | `cycle_model` 在 RPC 面无方向参数（`rpc-types.ts:34` 是 `{ type: "cycle_model" }`） | `Ctrl+P` 只能正循环；TUI 的 `cycleModel(direction)`（`interactive-mode.ts:4723-4725`）两个方向，RPC 面只有一个。 |
+
+## 7. 验证命令
+
+```powershell
+npm test                                        # 8 项离线门禁，全程实测 ~5.2 秒（其中 test/timeout.mjs 占 ~3.1 s，
+                                                # 它用协议替身真等超时周期；其余七项合计 <1.5 s）：
+                                                # selfcheck → client-render → runtime-resolve → config-hot
+                                                # → host-parity(125) → timeout(28) → parity(65) → version
+npm run test:all                                # 上面 8 项 + 真起 pi 子进程跑一轮 LLM
+npm run test:fresh                              # 全新机器：无运行时 → missing → 一键安装 → 能开会话（需网络）
+pwsh -NoProfile -File tools\standalone-verify.ps1   # 全新 DSH_HOME 自证（装 tarball、起独立端口、跑一轮、清理）
+pwsh -NoProfile -File install-plugin.ps1 -Profile desktop   # 装进 desktop profile（含 rollback 脚本）
+```
+
+`npm test` 是提交前的最低门槛；碰了协议、UI、运行时解析的改动必须再跑 `test:all` 或 `standalone-verify.ps1`。`test/client-render.mjs` 需要 `react`/`react-dom`，本仓库刻意不带 `node_modules`，它从同级 `pi-main/node_modules` 借，借不到就 SKIP 并退出 0。
+
+`test/fixtures/` 放两类「不能在门禁里自造」的东西：`fake-pi-rpc.mjs`（pi RPC 协议替身，`FAKE_PI_MODE=dialog|silent` 让超时语义可以在毫秒级被实测，`test/timeout.mjs` 用它）与 `pi-ext-ui-probe.ts`（真扩展，**只能靠真人点击验证**——扩展 UI 的九个 method 没有替身能覆盖「用户到底点了没」。用法写在文件头：复制到 `%USERPROFILE%\.pi\agent\extensions\`、重启 pi 会话、依次跑 `/dsh-ui-probe` 与 `/dsh-ui-notify`、验完删除）。
+
+## 8. 现状快照（2026-11-13 · v0.3.0）
+
+- **RPC 命令**：pi 侧 33 条，面板已实现 32 条 + `steer` 1 条走等价路径（`prompt` + `streamingBehavior:'steer'`，`client.js:2447`），缺口 0。
+- **扩展 UI**：9 种请求全部已实现（`applyExtensionUi()` `client.js:898-943`），3 种应答全通（`POST /sessions/:id/respond` `index.js:839-858`）。倒计时取 `min(pi 声明值, 5 分钟兜底)`（`dialogBudgetMs()` `client.js:883`，`DIALOG_FALLBACK_MS` `src/rpc-contract.mjs:260`），且 host 侧命令 timer 会为挂起的弹窗让位（`restartPendingTimers()` `src/pi-rpc.mjs:472`）——**这两侧必须同时成立**，否则就是 0.2.5 那个「红条与对话框并存」的缺陷。
+- **事件**：25 类 = 已实现 22 + 显式忽略 3（`turn_end` / `agent_end` / `summarization_retry_attempt_start`，理由见 `docs/parity.md` §3），缺口 0。
+- **TUI 斜杠**：27 条 = 已实现 17 + 仅命令行 9 + `unsupported` 1（`/import`）+ 缺口 0。
+- **`D-03` 已闭环**：顶栏是两个按钮 —— 「新会话」`runNewSession` → RPC `new_session`（与 `/new` 同一条路径，同进程换树，`client.js:3037`）、「重连」`endSession`（换子进程，旧事件缓冲丢掉，`client.js:3036`）。0.2.5 把换进程当新会话，同一件事两个入口两种结果。
+- **剩两个上游协议面限制未闭环**：`D-07`（`get_state` 无 `autoRetryEnabled`）与 `D-08`（`cycle_model` 无方向参数），面板侧无解，见第 6 节；`test/parity.mjs:290` 用断言锁住 `D-07`，pi 哪天补了字段该断言会红，届时才是闭环时机。
+- 逐条账本见 `docs/parity.md`；机器保障是 `npm test` 里的 `test/parity.mjs` + `test/host-parity.mjs` + `test/timeout.mjs`。

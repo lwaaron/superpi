@@ -26,7 +26,7 @@ function assert(condition, message) {
   throw new Error(message)
 }
 
-const COPY = ['index.js', 'client.js', 'package.json', 'cordis.patch.yml', 'src/pi-rpc.mjs', 'src/pi-runtime.mjs']
+const COPY = ['index.js', 'client.js', 'package.json', 'cordis.patch.yml', 'src/pi-rpc.mjs', 'src/pi-runtime.mjs', 'src/session-store.mjs', 'src/rpc-contract.mjs']
 
 function copyPlugin(target) {
   for (const rel of COPY) {

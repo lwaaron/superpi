@@ -21,7 +21,22 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { PiProcess } from './src/pi-rpc.mjs'
+import { PiProcess, timeoutLimitMs } from './src/pi-rpc.mjs'
+import {
+  BASH_SHORTCUTS,
+  ASSISTANT_EVENT_TYPES,
+  PI_VERSION as PI_CONTRACT_VERSION,
+  RPC_COMMANDS,
+  RPC_EVENTS,
+  TUI_COMMANDS,
+} from './src/rpc-contract.mjs'
+import {
+  expandUserPath,
+  listSessions,
+  resolveAgentDir,
+  samePath,
+  sessionRootDir,
+} from './src/session-store.mjs'
 import {
   PI_PACKAGE,
   PI_VERSION,
@@ -42,6 +57,25 @@ const DISPLAY_NAME = 'pi'
 const API_PREFIX = '/api/' + PLUGIN_ID
 const MAX_SESSIONS = 8
 const MAX_BODY_BYTES = 4 * 1024 * 1024
+/** GET /contract 里 version 字段的取值：本插件对外的契约版本，与 package.json 解耦。 */
+const CONTRACT_VERSION = '0.3.0'
+/** 历史会话列表的条数窗口（与 src/session-store.mjs 的 DEFAULT_LIMIT/MAX_LIMIT 一致）。 */
+const HISTORY_DEFAULT_LIMIT = 20
+const HISTORY_MAX_LIMIT = 200
+/** @ 补全的条数窗口：面板一屏最多也就几十条，给多了纯浪费带宽。 */
+const FILES_DEFAULT_LIMIT = 50
+const FILES_MAX_LIMIT = 200
+/** /changelog 的读取上限：CHANGELOG.md 通常几十 KB，200KiB 足够整篇。 */
+const CHANGELOG_MAX_BYTES = 200 * 1024
+/**
+ * 会替换「当前会话」的四条命令。成功后必须清事件缓冲——否则面板重连时会把
+ * 旧会话的事件和新会话的事件混在一起渲染（见 POST /sessions/:id/command）。
+ */
+const SESSION_REPLACING_COMMANDS = new Set(['new_session', 'switch_session', 'fork', 'clone'])
+/** 新建会话后等 get_state 回来（拿 sessionFile / sessionId / sessionName）的最长时间。 */
+const SPAWN_STATE_TIMEOUT_MS = 5000
+/** POST /sessions 里为了回填 sessionFile 愿意等的时间上限（超过就先把会话回给客户端）。 */
+const POST_SPAWN_STATE_WAIT_MS = 2500
 
 const DEFAULTS = {
   /** 空 = 自动探测（插件内 .runtime → node_modules → 全局 npm → 环境变量）。 */
@@ -50,10 +84,19 @@ const DEFAULTS = {
   nodePath: '',
   /** 空 = ~/pi-workspace。 */
   workspace: '',
-  /** 空格分隔的额外参数，追加到 pi 命令行（默认已带 --no-session）。 */
+  /** 空格分隔的额外参数，追加到 pi 命令行。 */
   extraArgs: '',
-  /** 传给 pi 的固定参数（--no-session 保证每次开的是干净会话）。 */
-  args: ['--no-session'],
+  /**
+   * 原始参数数组。历史上这里是 ['--no-session']，现在由 persist 决定是否落盘：
+   * 保留这个字段只为兼容测试/宿主直接下发的裸数组（见 test/selfcheck.mjs）。
+   */
+  args: [],
+  /** true = 会话落盘（pi 默认行为）；false = 加 --no-session，退出即丢。 */
+  persist: true,
+  /** 新会话的开局方式：'continue' = 接上该 cwd 最近的会话（pi --continue），'new' = 全新会话。 */
+  startup: 'continue',
+  /** 新建会话时写给 session_info 的名字（pi --name）。空 = 不设名。 */
+  sessionName: '',
 }
 
 /**
@@ -68,6 +111,8 @@ const SELF_FILES = [
   { rel: 'client.js', runtime: true },
   { rel: 'src/pi-rpc.mjs', runtime: true },
   { rel: 'src/pi-runtime.mjs', runtime: true },
+  { rel: 'src/session-store.mjs', runtime: true },
+  { rel: 'src/rpc-contract.mjs', runtime: true },
   { rel: 'package.json', runtime: false },
   { rel: 'cordis.patch.yml', runtime: false },
 ]
@@ -238,6 +283,108 @@ function buildSelfCheck(detected, options = {}) {
   }
 }
 
+// ── 命令行拼装 ────────────────────────────────────────────────────────────────
+//
+// 这一段是纯函数，没有 IO：test/host-parity.mjs 直接拿它做表驱动断言。
+// 之所以要单独抽出来，是因为「拼错一个 flag」的后果是 pi 子进程 exit(1)，
+// 而 host 只能看到一个起不来的会话——现场极难判断是参数问题还是运行时缺失。
+
+/** 布尔配置容错：宿主表单给的是字符串，测试/宿主代码可能给 boolean。 */
+export function asBool(value, fallback) {
+  if (typeof value === 'boolean') return value
+  if (typeof value === 'number') return value !== 0
+  if (typeof value === 'string') {
+    const text = value.trim().toLowerCase()
+    if (text === 'true' || text === '1' || text === 'yes' || text === 'on') return true
+    if (text === 'false' || text === '0' || text === 'no' || text === 'off') return false
+  }
+  return fallback
+}
+
+/** pi 的会话选择类参数：互斥语义（main.ts:346-377 的 validateForkFlags / validateSessionIdFlags）。 */
+const SESSION_SELECTION_FLAGS = ['--session', '--resume', '-r', '-c', '--continue', '--fork', '--session-id']
+const NO_SESSION_FLAGS = ['--no-session']
+
+function hasFlag(argv, flags) {
+  for (const token of argv) {
+    if (typeof token !== 'string') continue
+    const eq = token.indexOf('=')
+    const head = eq === -1 ? token : token.slice(0, eq)
+    if (flags.indexOf(head) !== -1) return true
+  }
+  return false
+}
+
+/**
+ * 拼出传给 pi 的参数（不含 '--mode rpc'，那是 PiProcess 的事）。
+ *
+ * 顺序即优先级：本函数生成的会话选择参数在前，用户自带参数在后；
+ * 一旦用户在 args/extraArgs 里自己写了会话选择参数，本函数就完全不生成，
+ * 免得拼出 pi 会拒绝的组合（--fork 与 --session/--continue 并存 → exit(1)）。
+ *
+ * @param {{
+ *   settings?: { args?: string[], extraArgs?: string, persist?: unknown, startup?: unknown, sessionName?: unknown },
+ *   options?: { args?: string[], extraArgs?: string, persist?: unknown, continue?: unknown, resumePath?: string, name?: string },
+ *   env?: object, home?: string, base?: string,
+ * }} input
+ * @returns {string[]}
+ */
+export function buildSpawnArgs({ settings = {}, options = {}, env = process.env, home, base } = {}) {
+  const pick = list => (Array.isArray(list) ? list.filter(item => typeof item === 'string' && item !== '') : [])
+  const configured = pick(settings.args)
+  const extraText = typeof options.extraArgs === 'string' && options.extraArgs.trim() !== ''
+    ? options.extraArgs
+    : (typeof settings.extraArgs === 'string' ? settings.extraArgs : '')
+  const extra = extraText === '' ? [] : extraText.split(/\s+/).filter(item => item !== '')
+  const tail = [...configured, ...extra, ...pick(options.args)]
+
+  // 用户在 args/extraArgs 里自己带了 --no-session 就等于已经声明不落盘，别再补一遍。
+  const callerNoSession = hasFlag(tail, NO_SESSION_FLAGS)
+  const persist = !callerNoSession && asBool(options.persist, asBool(settings.persist, true))
+  const startup = typeof settings.startup === 'string' ? settings.startup.trim().toLowerCase() : ''
+  const continueRequested = options.continue === undefined
+    ? startup === 'continue'
+    : asBool(options.continue, false)
+  const resumePath = typeof options.resumePath === 'string' ? options.resumePath.trim() : ''
+  const callerSelects = hasFlag(tail, SESSION_SELECTION_FLAGS)
+
+  const args = []
+  if (!persist) {
+    if (!callerNoSession) args.push('--no-session')
+  } else if (!callerSelects) {
+    // resumePath 优先于 continue：显式点了某个历史会话，就不该再被「最近会话」覆盖。
+    if (resumePath !== '') args.push('--session', expandUserPath(resumePath, { env, home, base }))
+    else if (continueRequested) args.push('--continue')
+  }
+
+  const rawName = options.name === undefined ? settings.sessionName : options.name
+  const name = typeof rawName === 'string' ? rawName.trim() : ''
+  // pi 对空 --name 是 exit(1)（main.ts:771-778），所以空值宁可不传。
+  if (name !== '') args.push('--name', name)
+
+  args.push(...tail)
+  return args
+}
+
+/**
+ * 从「正在跑的会话」里挑出属于 target cwd 的 sessionFile（给 /sessions/history 的 current）。
+ *
+ * 规则：同 cwd 里优先取还活着的（state !== 'dead'），全死掉才退回第一个；
+ * 跨 cwd 的一律不算——面板用 current 给列表行打「正在使用」标记，标错比不标更糟。
+ *
+ * @param {{ running?: Array<{ cwd?: string, sessionFile?: string|null, state?: string }>, target?: string }} input
+ * @returns {string|null}
+ */
+export function pickCurrentSessionFile({ running = [], target = '' } = {}) {
+  const list = running.filter(item => item !== null && typeof item === 'object' &&
+    typeof item.sessionFile === 'string' && item.sessionFile !== '')
+  const sameCwd = list.filter(item => samePath(item.cwd ?? '', target))
+  const alive = sameCwd.filter(item => item.state !== 'dead')
+  if (alive.length > 0) return alive[0].sessionFile
+  if (sameCwd.length > 0) return sameCwd[0].sessionFile
+  return null
+}
+
 export function apply(ctx, config = {}) {
   const log = makeLog(ctx)
   /**
@@ -362,18 +509,41 @@ export function apply(ctx, config = {}) {
       error.statusCode = 429
       throw error
     }
-    const cwd = typeof options.cwd === 'string' && options.cwd.trim() !== '' ? options.cwd.trim() : detected.workspace
+    const cwd = typeof options.cwd === 'string' && options.cwd.trim() !== ''
+      ? expandUserPath(options.cwd, { env: process.env, home: os.homedir(), base: detected.workspace })
+      : detected.workspace
+    // resumePath 先落地检查一遍：pi 的 --session 打不开就直接 exit(1)，host 只能看到一个
+    // 立刻死掉的会话。提前 404 出去，客户端能立刻提示「文件不存在」而不是等超时。
+    const resumePath = typeof options.resumePath === 'string' ? options.resumePath.trim() : ''
+    const resolvedResume = resumePath === '' ? '' : expandUserPath(resumePath, { env: process.env, home: os.homedir(), base: cwd })
+    if (resolvedResume !== '' && !exists(resolvedResume)) {
+      const error = new Error('session file not found: ' + resolvedResume)
+      error.statusCode = 404
+      throw error
+    }
     try { fs.mkdirSync(cwd, { recursive: true }) } catch { /* 由 pi 自己报错 */ }
     // args 不是 volatile 字段（数组不适合做表单输入），但仍可能由测试/宿主以裸数组传入。
     const configuredArgs = readSetting(rawConfig, 'args', null)
-    const args = Array.isArray(configuredArgs) ? configuredArgs.slice() : settings.args.slice()
-    const extraArgs = configString('extraArgs')
-    if (extraArgs !== '') {
-      for (const extra of extraArgs.split(/\s+/)) if (extra !== '') args.push(extra)
-    }
-    if (Array.isArray(options.args)) {
-      for (const extra of options.args) if (typeof extra === 'string' && extra !== '') args.push(extra)
-    }
+    const args = buildSpawnArgs({
+      settings: {
+        args: Array.isArray(configuredArgs) ? configuredArgs : settings.args,
+        extraArgs: configString('extraArgs'),
+        persist: readSetting(rawConfig, 'persist', settings.persist),
+        startup: readSettingString(rawConfig, 'startup', settings.startup),
+        sessionName: readSettingString(rawConfig, 'sessionName', settings.sessionName),
+      },
+      options: {
+        args: options.args,
+        extraArgs: options.extraArgs,
+        persist: options.persist,
+        continue: options.continue,
+        resumePath: resolvedResume,
+        name: options.name,
+      },
+      env: process.env,
+      home: os.homedir(),
+      base: cwd,
+    })
     const proc = new PiProcess({
       cliPath: detected.cliPath,
       nodePath: detected.nodePath,
@@ -387,6 +557,11 @@ export function apply(ctx, config = {}) {
     proc.on('log', entry => log(entry.level === 'stderr' ? 'info' : entry.level, '[' + proc.id.slice(0, 8) + '] ' + entry.message))
     ctx.effect(() => () => { sessions.delete(proc.id); void proc.close({ timeoutMs: 4000 }) }, PLUGIN_ID + ': session ' + proc.id)
     proc.start()
+    // 立刻把 sessionId / sessionFile / model 拉回来：pi 在 rpc 模式下不会主动发会话头
+    // （docs/json.md:29），不主动问就永远是 null，客户端连「当前在哪个文件」都不知道。
+    // 失败不影响会话可用性（问不到就当 null），所以只吞错不抛。
+    proc.stateReady = proc.send({ type: 'get_state' }, { timeoutMs: SPAWN_STATE_TIMEOUT_MS })
+      .then(() => proc.lastState, () => proc.lastState ?? null)
     return proc
   }
 
@@ -422,6 +597,35 @@ export function apply(ctx, config = {}) {
   }
 
   const sessionsDelete = id => { sessions.delete(id) }
+
+  /**
+   * 当前跑着的会话（给 /sessions/history 标 current 用）。
+   * 返回 { sessionFile, cwd, sessionId, name } 列表；sessionFile 可能还是 null
+   * （子进程刚起来、get_state 还没回来），调用方按路径相等比较时会自然跳过。
+   */
+  const listRunningSessions = () => [...sessions.values()].map(proc => ({
+    id: proc.id,
+    cwd: proc.cwd,
+    sessionId: proc.lastState?.sessionId ?? null,
+    sessionFile: proc.lastState?.sessionFile ?? null,
+    sessionName: proc.lastState?.sessionName ?? null,
+    state: proc.state,
+  }))
+
+  /**
+   * 列历史会话。agentDir / sessionDir 走 pi 同一套解析链（PI_CODING_AGENT_DIR、
+   * PI_CODING_AGENT_SESSION_DIR），所以设了环境变量也能列对。
+   */
+  const listHistory = async ({ cwd, limit } = {}) => {
+    const target = typeof cwd === 'string' && cwd.trim() !== ''
+      ? expandUserPath(cwd, { env: process.env, home: os.homedir(), base: detected.workspace })
+      : detected.workspace
+    const agentDir = resolveAgentDir({ env: process.env, home: os.homedir() })
+    const root = sessionRootDir({ agentDir, env: process.env, home: os.homedir() })
+    const items = await listSessions({ agentDir, cwd: target, limit, env: process.env, home: os.homedir() })
+    const current = pickCurrentSessionFile({ running: listRunningSessions(), target })
+    return { cwd: target, agentDir, sessionDir: root.dir, override: root.override, sessions: items, current }
+  }
 
   const selfCheck = () => buildSelfCheck(detected)
 
@@ -461,6 +665,10 @@ export function apply(ctx, config = {}) {
     runtimeReport,
     refreshRuntime,
     installRuntime,
+    listHistory,
+    listRunningSessions,
+    // /files 的 dir 缺省值：走一次指纹比对（没改配置就是常数时间），保证刚改的 workspace 立刻生效。
+    workspacePath: () => { refreshRuntime(); return detected.workspace },
   })
 
   ctx.inject(['webServer'], services => {
@@ -481,7 +689,7 @@ export function apply(ctx, config = {}) {
 
 // ── HTTP 面 ───────────────────────────────────────────────────────────────────
 
-function createHandler(deps) {
+export function createHandler(deps) {
   return async function handler(req, res) {
     const url = new URL(typeof req.url === 'string' ? req.url : '/', 'http://localhost')
     let routePath = url.pathname.indexOf(API_PREFIX) === 0 ? url.pathname.slice(API_PREFIX.length) : url.pathname
@@ -518,10 +726,56 @@ function createHandler(deps) {
           selfcheck: typeof deps.selfCheck === 'function' ? deps.selfCheck() : null,
         })
       }
+      /**
+       * 契约原文，逐字段原样序列化（不裁剪、不改名）。
+       * 面板靠它决定「这条输入该走 RPC 还是本地实现」，也需要它把 33 条 RPC 命令
+       * 与 27 条 TUI 斜杠命令对齐——客户端里那份 CONTRACT 常量就是这么来的。
+       */
+      if (method === 'GET' && routePath === '/contract') {
+        return send(200, {
+          ok: true,
+          version: CONTRACT_VERSION,
+          piVersion: PI_CONTRACT_VERSION,
+          rpcCommands: RPC_COMMANDS,
+          events: RPC_EVENTS,
+          assistantEvents: ASSISTANT_EVENT_TYPES,
+          tuiCommands: TUI_COMMANDS,
+          bashShortcuts: BASH_SHORTCUTS,
+        })
+      }
+      /**
+       * 历史会话列表。必须排在 /^\/sessions\/([^/]+)/ 之前，
+       * 否则 'history' 会被当成会话 id 走进 requireSession 拿 404。
+       */
+      if (method === 'GET' && routePath === '/sessions/history') {
+        if (typeof deps.listHistory !== 'function') return send(501, { error: 'history unavailable' })
+        const cwd = url.searchParams.get('cwd') ?? ''
+        const limit = clampCount(url.searchParams.get('limit'), HISTORY_DEFAULT_LIMIT, HISTORY_MAX_LIMIT)
+        const result = await deps.listHistory({ cwd, limit })
+        return send(200, { ok: true, ...result })
+      }
+      /** @ 补全与「插入路径」：RPC 协议没有 fs 能力，只能由 host 代读（只读，不递归）。 */
+      if (method === 'GET' && routePath === '/files') {
+        const workspace = typeof deps.workspacePath === 'function' ? deps.workspacePath() : ''
+        const rawDir = (url.searchParams.get('dir') ?? '').trim()
+        const dir = rawDir === '' ? workspace : expandUserPath(rawDir, { env: process.env, home: os.homedir(), base: workspace })
+        const query = url.searchParams.get('query') ?? ''
+        const limit = clampCount(url.searchParams.get('limit'), FILES_DEFAULT_LIMIT, FILES_MAX_LIMIT)
+        const listing = await listDirectory({ dir, query, limit })
+        return send(200, { ok: true, dir: listing.dir, entries: listing.entries, truncated: listing.truncated })
+      }
+      /** /changelog（契约 disposition:'local'）：读 pi 包内的 CHANGELOG.md。找不到也回 200，客户端据此显示「无 changelog」。 */
+      if (method === 'GET' && routePath === '/pi/changelog') {
+        return send(200, readChangelog(deps.detected === undefined || deps.detected === null ? '' : deps.detected.packageDir))
+      }
 
       if (method === 'POST' && routePath === '/sessions') {
         const body = await readJsonBody(req)
         const proc = deps.spawnSession(body ?? {})
+        // 等一小会儿 get_state：拿到就能直接回 sessionFile / sessionId / sessionName，
+        // 客户端不必再轮询一次。等不到（慢启动/已退出）也照常返回，字段是 null，
+        // 后续 SSE 与 /snapshot 会把它们补上——不能为了这几个字段把开新会话拖慢。
+        if (proc.stateReady !== undefined) await Promise.race([proc.stateReady, delay(POST_SPAWN_STATE_WAIT_MS)])
         const snapshot = proc.snapshot({ sinceSeq: 0, includeEvents: false })
         return send(200, { ok: true, session: snapshot })
       }
@@ -550,9 +804,61 @@ function createHandler(deps) {
           if (body === null || typeof body !== 'object' || Array.isArray(body) || typeof body.type !== 'string') {
             return send(400, { error: 'body must be a JSON object with a string "type"' })
           }
-          const data = await proc.send(body, { timeoutMs: Number(body.timeoutMs) > 0 ? Number(body.timeoutMs) : undefined })
-          if (body.type === 'get_state' && data !== null && typeof data === 'object') proc.lastState = data
+          // 超时三态透传（语义见 src/pi-rpc.mjs 的 timeoutLimitMs）：
+          //   缺省 / null      → undefined → 默认上限；
+          //   正有限数          → 毫秒上限；
+          //   0 / 负数 / Infinity → 不设上限（对话类命令要等 pi 自己回答，包括等用户点扩展弹窗）；
+          //   NaN / 非数字       → 400（绝不静默降级成默认值或无限等待）。
+          let limit
+          try {
+            limit = timeoutLimitMs(body.timeoutMs)
+          } catch (error) {
+            return send(400, { error: String(error?.message ?? error) })
+          }
+          // timeoutMs 是本插件的传输层参数，pi 的 RpcCommand 没有这个字段，必须剥掉：
+          // 原样透传会让 pi 收到未声明的键（契约污染，且 host-parity 会亮红）。
+          const command = { ...body }
+          delete command.timeoutMs
+          const data = await proc.send(command, { timeoutMs: limit ?? 0 })
+          // 状态回填统一交给 PiProcess.noteCommand：set_model / set_session_name / 会话替换
+          // 这些命令的响应里带着新值，不回填的话 /snapshot 会一直报旧值。
+          proc.noteCommand?.(body, data)
+          // 这四条命令会把 pi 内部的会话指针挪到别处（甚至换掉 sessionFile）。旧事件留在
+          // 缓冲里，面板下一次重连回放就会把两个会话混着渲染，所以成功即清空。
+          // 判定放在 send 之后：失败的命令（比如 clone 无叶子节点）不该丢事件。
+          if (SESSION_REPLACING_COMMANDS.has(body.type) && body.cancelled !== true && data?.cancelled !== true) {
+            proc.resetEvents?.()
+            // 新会话的 sessionFile/sessionId 只有 get_state 才给得出。等一小会儿再返回：
+            // 客户端紧接着那次 /snapshot 就能看到正确的会话身份，而不是 null 要再补一次。
+            if (typeof proc.refreshState === 'function') {
+              await Promise.race([proc.refreshState({ timeoutMs: SPAWN_STATE_TIMEOUT_MS }), delay(POST_SPAWN_STATE_WAIT_MS)])
+            }
+          }
           return send(200, { ok: true, data })
+        }
+        if (method === 'POST' && tail === '/respond') {
+          const contentType = String(req.headers['content-type'] ?? '')
+          if (contentType.toLowerCase().indexOf('application/json') === -1) return send(415, { error: 'content-type must be application/json' })
+          const body = await readJsonBody(req)
+          if (body === null || typeof body !== 'object' || Array.isArray(body)) return send(400, { error: 'body must be a JSON object' })
+          const requestId = typeof body.id === 'string' ? body.id : ''
+          if (requestId === '') return send(400, { error: 'body requires a non-empty string id' })
+          if (!proc.pendingUi.has(requestId)) return send(409, { error: 'no such request id' })
+          // id 一个字符都不能改：pi 侧只按 response.id 去 pendingExtensionRequests 里取
+          // resolver（rpc-mode.ts:784-798），改了就永远对不上。
+          const payload = { id: requestId }
+          if (body.cancelled === true) payload.cancelled = true
+          else if (typeof body.confirmed === 'boolean') payload.confirmed = body.confirmed
+          else if (typeof body.value === 'string') payload.value = body.value
+          // 三个字段一个都没有 = 客户端写错了（要取消得显式 cancelled:true）。
+          // 这里不能猜：猜成 cancelled 会让一个本想确认的对话框静默取消。
+          else return send(400, { error: 'respond requires value, confirmed or cancelled' })
+          proc.respond(payload)
+          return send(200, { ok: true })
+        }
+        if (method === 'POST' && tail === '/reset') {
+          const result = proc.resetEvents()
+          return send(200, { ok: true, eventSeq: result.eventSeq })
         }
         return send(404, { error: 'no such route: ' + routePath })
       }
@@ -637,6 +943,121 @@ function exists(target) {
   try { return fs.statSync(target).isFile() } catch { return false }
 }
 
+/** 等 ms 毫秒（用于给「可选等待」设上限）。unref 掉计时器，不拖住进程退出。 */
+function delay(ms) {
+  return new Promise(resolve => {
+    const timer = setTimeout(resolve, ms)
+    if (typeof timer.unref === 'function') timer.unref()
+  })
+}
+
+/** 查询参数的条数：非数字/非正数用默认值，超过上限就截到上限。 */
+function clampCount(raw, fallback, max) {
+  const value = Number(raw)
+  if (!Number.isFinite(value) || value <= 0) return fallback
+  return Math.min(Math.floor(value), max)
+}
+
+/**
+ * 列一个目录的直接子项（不递归，只读）。
+ *
+ * 为什么不用 readdir：opendir + withFileTypes 能一次拿到类型，且在 Windows 上对
+ * 无权限的子项是逐条报错而不是整体失败——这里对单条失败直接跳过，不让一个坏
+ * 入口毁掉整次补全。
+ *
+ * @returns {Promise<{ dir: string, entries: Array<{name:string,path:string,type:'file'|'dir',size:number|null,mtime:string|null}>, truncated: boolean }>}
+ */
+async function listDirectory({ dir, query = '', limit = FILES_DEFAULT_LIMIT }) {
+  let handle
+  try {
+    handle = await fs.promises.opendir(dir)
+  } catch (error) {
+    const failure = new Error('no such directory')
+    failure.statusCode = error?.code === 'ENOTDIR' || error?.code === 'ENOENT' ? 404 : 500
+    throw failure
+  }
+  const needle = query.trim().toLowerCase()
+  const entries = []
+  let truncated = false
+  try {
+    for await (const dirent of handle) {
+      const name = dirent.name
+      if (needle !== '' && name.toLowerCase().indexOf(needle) === -1) continue
+      let isDir = dirent.isDirectory()
+      let isFile = dirent.isFile()
+      // 符号链接只按目标判类型用于展示，绝不跟进去递归/展开。
+      if (dirent.isSymbolicLink()) {
+        isDir = false
+        isFile = true
+      }
+      if (!isDir && !isFile) continue
+      const entryPath = path.join(dir, name)
+      let size = null
+      let mtime = null
+      if (isFile) {
+        try {
+          const info = await fs.promises.stat(entryPath)
+          size = info.size
+          mtime = new Date(info.mtimeMs).toISOString()
+        } catch { /* 读不到就留空，单条跳过信息而不是整请求失败 */ }
+      }
+      entries.push({ name, path: entryPath, type: isDir ? 'dir' : 'file', size, mtime })
+    }
+  } catch { /* 迭代中途出错：保留已收集的部分 */ }
+  // 目录优先，同类按 name 升序（面板里「进目录」永远排在文件前面）。
+  entries.sort((a, b) => {
+    if (a.type !== b.type) return a.type === 'dir' ? -1 : 1
+    return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })
+  })
+  if (entries.length > limit) {
+    entries.length = limit
+    truncated = true
+  }
+  return { dir, entries, truncated }
+}
+
+/**
+ * 读 pi 包内的 CHANGELOG.md（/changelog，契约 disposition:'local'）。
+ *
+ * 只在已知的包根附近找两层：pi 的包根推导见 buildSelfCheck（bundle → 包根），
+ * 有些发行形态把包放在上一级，所以向上两层兜一下。找不到也返回 200，客户端
+ * 据此显示「无 changelog」，不需要区分 404。
+ */
+function readChangelog(packageDir) {
+  const candidates = []
+  const start = typeof packageDir === 'string' ? packageDir.trim() : ''
+  if (start !== '') {
+    let cursor = start
+    for (let depth = 0; depth < 3; depth += 1) {
+      candidates.push(path.join(cursor, 'CHANGELOG.md'))
+      const parent = path.dirname(cursor)
+      if (parent === cursor) break
+      cursor = parent
+    }
+  }
+  for (const candidate of candidates) {
+    let fd
+    try {
+      const info = fs.statSync(candidate)
+      if (!info.isFile()) continue
+      const size = info.size
+      fd = fs.openSync(candidate, 'r')
+      const length = Math.min(size, CHANGELOG_MAX_BYTES)
+      const buffer = Buffer.alloc(length)
+      const read = length === 0 ? 0 : fs.readSync(fd, buffer, 0, length, 0)
+      return {
+        ok: true,
+        path: candidate,
+        text: buffer.subarray(0, read).toString('utf8'),
+        truncated: size > length,
+      }
+    } catch { /* 换下一个候选 */ } finally {
+      if (fd !== undefined) { try { fs.closeSync(fd) } catch { /* ignore */ } }
+    }
+  }
+  return { ok: false, path: null, text: '', truncated: false }
+}
+
 function makeLog(ctx) {
   const target = (() => {
     try {
@@ -676,6 +1097,11 @@ export const Config = schema === undefined
     nodePath: schema.string().default('').description('node 可执行文件。留空自动探测 PATH 上的 node').volatile(),
     workspace: schema.string().default('').description('新会话默认工作目录。留空用 ~/pi-workspace').volatile(),
     extraArgs: schema.string().default('').description('追加给 pi 的额外参数（空格分隔），例如 --model openai/gpt-4o').volatile(),
+    // 下面三项按字符串暴露：宿主的表单只认 string，布尔/枚举在 volatile 热更新下
+    // 类型不稳定。读取端一律经 asBool / trim 归一，见 spawnSession。
+    persist: schema.string().default('true').description('会话是否落盘：true = 落盘（pi 默认），false = 加 --no-session，退出即丢').volatile(),
+    startup: schema.string().default('continue').description("新会话开局方式：continue = 接上该目录最近的会话，new = 全新会话").volatile(),
+    sessionName: schema.string().default('').description('新会话写入 session_info 的名字（pi --name）。留空不设名').volatile(),
   })
 
 if (schema === undefined) {
