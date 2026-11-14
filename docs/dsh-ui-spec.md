@@ -3,13 +3,13 @@
 | 项 | 值 |
 | --- | --- |
 | 文档版本 | 1.2 |
-| 代码基线 | `client.js` 5170 行 / 283968 B / mtime `2026-11-14T17:29:34Z` / sha256 前 12 位 `b0cc688879a9` |
-| 版本号 | `package.json` version = **0.6.3**（`index.js` 的 `CONTRACT_VERSION` 同为 `0.6.3`；0.6.0 新增助手文本里的文件路径标签与 Composer 任意文件插入，0.6.1 新增类型图标文件标签、右键资源管理器定位与统一的 `CloseButton`，0.6.2 把 composer 换成宿主主对话区的卡面 + 圆形按钮 + `+` 菜单 + 底部统计行，0.6.3 修 composer 首次进入统计行无数字与统计行混入会话路径，正文里的行号仍取自 0.5.x 那一版 4130 行） |
+| 代码基线 | `client.js` 5619 行 / 307602 B / sha256 前 12 位 `ACDCFE28FDFB` |
+| 版本号 | `package.json` version = **0.6.4**（`index.js` 的 `CONTRACT_VERSION` 同为 `0.6.4`；0.6.0 新增助手文本里的文件路径标签与 Composer 任意文件插入，0.6.1 新增类型图标文件标签、右键资源管理器定位与统一的 `CloseButton`，0.6.2 把 composer 换成宿主主对话区的卡面 + 圆形按钮 + `+` 菜单 + 底部统计行，0.6.3 修 composer 首次进入统计行无数字与统计行混入会话路径，0.6.4 把「思考块 + 工具行」重做成 DSH 会话流的过程行：思考 = 父行、工具调用 = 缩进子行组、工具结果并入调用行、末尾工作状态行（该行按 DSH `RunningStatus` 收尾：`--dsw-alias-label-deep-diving` 蓝字 + 16 网格鲸鱼尾 + `···`）。附录 A 的行号已整体刷新到 0.6.4 实测值） |
 | 设计系统基线 | DSH 客户端样式包 `index-lh_YM6sT.css`（87124 字符 / 748 条规则 / 17 个 `@keyframes`）与 `tokens.txt`（414 个 `--dsw-*` 令牌，浅深两套值） |
 | 采集口径 | 全部数值由脚本从仓库文件与探针文件读出；两种字符口径（源文本 / 门禁还原文本）分别标注 |
 | 适用范围 | 只描述样式令牌、组件规格与目录选择器交互。不改任何源码，本文件是**规格**而非实现 |
 
-> **行号会漂移。** `client.js` 在取证期间被并发改写多次：0.5.0 因历史会话抽屉拆成容器 + 视图涨到 4130 行，0.6.0 又因文件标签与任意文件插入涨到 4556 行，0.6.1 因类型图标、`CloseButton` 与资源管理器定位涨到 4789 行，0.6.2 因 composer 重做涨到 4873 行，0.6.3 又因 composer 首帧统计与 dock 归位涨到 5170 行。**文中的行号是取证当时（0.5.x / 4130 行）的快照**，读者若在当前版本上找不到对应行，请用类名 grep 定位（例如搜 `dsh-pi-dir-cols`），类名是稳定锚点，行号不是。样式令牌与尺寸规格不受行号漂移影响。
+> **行号会漂移。** `client.js` 在取证期间被并发改写多次：0.5.0 因历史会话抽屉拆成容器 + 视图涨到 4130 行，0.6.0 又因文件标签与任意文件插入涨到 4556 行，0.6.1 因类型图标、`CloseButton` 与资源管理器定位涨到 4789 行，0.6.2 因 composer 重做涨到 4873 行，0.6.3 又因 composer 首帧统计与 dock 归位涨到 5170 行，0.6.4 因过程流按 DSH 会话过程流重做涨到 5572 行，同日又把末尾工作状态行按 DSH `RunningStatus` 收尾涨到 5614 行、把中文用时单位之间的半角空格去掉后涨到 5619 行，同日又给工作状态行的首帧加了 `Math.max(1000, …)` 钳位（不钳位首帧会闪「0秒」，与 DSH `RunningStatus` 的 `formatRunDuration(Math.max(1e3, now - startTime), t)` 同一处理）涨到 5619 行。**附录 A 的行号已整体刷新到 0.6.4 实测值**；正文其余段落里的行号仍是取证当时（0.5.x / 4130 行）的快照，读者若在当前版本上找不到对应行，请用类名 grep 定位（例如搜 `dsh-pi-dir-cols`），类名是稳定锚点，行号不是。样式令牌与尺寸规格不受行号漂移影响。
 
 ---
 
@@ -27,8 +27,8 @@ dsh-pi 是 DSH 侧栏里的 pi 面板，它的视觉必须与宿主 DSH 属于�
 
 ### 1.2 在范围内
 
-- `client.js` 内联 CSS 数组（`:337` – `:586`）的每一条规则。
-- 114 个 `.dsh-pi-*` 类名与 66 个唯一 CSS 变量的对应关系。
+- `client.js` 内联 CSS 数组（`:443` – `:769`）的每一条规则。
+- 148 个 `.dsh-pi-*` 类名与 74 个唯一 CSS 变量的对应关系。
 - 12 个组件族的规格：几何、令牌、状态、与 DSH 的差异。
 - `DirSheet` / `dirPickModel` 的完整交互规格与宿主契约。
 - 两道门禁（`test/css-tokens.mjs`、`test/client-render.mjs`）覆盖了什么、没覆盖什么。
@@ -44,14 +44,14 @@ dsh-pi 是 DSH 侧栏里的 pi 面板，它的视觉必须与宿主 DSH 属于�
 
 | 文件 | 行数 | 字节 | mtime (UTC) |
 | --- | --- | --- | --- |
-| `client.js` | 3971 | 218023 | 2026-11-13T16:46:52Z |
-| `index.js` | 1238 | 58039 | 2026-11-13T14:21:19Z |
-| `package.json` | 74 | 2402 | 2026-11-13T14:21:19Z |
-| `test/css-tokens.mjs` | 593 | 28217 | 2026-11-13T13:27:51Z |
-| `test/client-render.mjs` | 457 | 31619 | 2026-11-13T14:14:03Z |
-| `src/rpc-contract.mjs` | 323 | 19650 | 2026-11-13T04:50:45Z |
+| `client.js` | 5619 | 307602 | 2026-11-14T22:47:12Z |
+| `index.js` | 1548 | 72204 | 2026-11-14T21:32:21Z |
+| `package.json` | 77 | 2632 | 2026-11-14T21:32:21Z |
+| `test/css-tokens.mjs` | 597 | 28485 | 2026-11-14T21:28:10Z |
+| `test/client-render.mjs` | 821 | 64596 | 2026-11-14T22:46:50Z |
+| `src/rpc-contract.mjs` | 324 | 19650 | 2026-11-13T04:50:45Z |
 
-`docs/` 目录在本文件创建前只有 `parity.md`（268 行 / 39010 B）。
+`docs/` 目录在本文件创建前只有 `parity.md`（现 281 行 / 61584 B）。
 
 ---
 
@@ -64,7 +64,7 @@ dsh-pi 是 DSH 侧栏里的 pi 面板，它的视觉必须与宿主 DSH 属于�
 | S1 | DSH 组件规则 | `_probe/dsh-css/index-lh_YM6sT.css` | 87124 字符 / 748 条规则 / 17 个 `@keyframes` | 组件级对齐依据（几何、状态、动效） | A：原始产物，逐条原文可 grep |
 | S2 | DSH 令牌表 | `_probe/dsh-theme/tokens.txt` | 414 个 `--dsw-*`，格式 `name = 浅 | 深` | 令牌值、浅深两套、别名链 | A：原始产物 |
 | S3 | DSH 目录选择器源码 | `_probe/dsh-picker/client.js` | 1138 行，CSS 在 `:26` 单行内联，hash 前缀 `_3zXc5G_` | Miller 分栏、`visibleEntries`、目标路径优先级 | A：原始产物 |
-| S4 | dsh-pi 现状 | `client.js` 的 CSS 数组 `:337` – `:586` | 192 段字符串 / 114 个 `.dsh-pi-*` 类 | 现状记录与逐类映射 | A：仓库文件 |
+| S4 | dsh-pi 现状 | `client.js` 的 CSS 数组 `:443` – `:769` | 240 段字符串 / 148 个 `.dsh-pi-*` 类 | 现状记录与逐类映射 | A：仓库文件 |
 
 探针目录 `_probe/` 在 `C:/Users/PC/Documents/pi-local/` 下，不在 `dsh-pi` 仓库内。它是采集时的快照，不是构建产物；S1–S3 的内容可能随 DSH 升级变化，届时需要重新采集。
 
@@ -74,26 +74,26 @@ dsh-pi 是 DSH 侧栏里的 pi 面板，它的视觉必须与宿主 DSH 属于�
 
 | 口径 | 值 | 含义 | 谁在报 |
 | --- | --- | --- | --- |
-| 源文本 | 28480 字符 | 192 段 JS 单引号字面量的 `trim()` 后长度之和，含两端的引号与逗号前的空白 | 人工统计 |
-| 还原文本 | 27903 字符 | 去掉引号、还原 `\'` 与 `\uXXXX` 转义后的浏览器实际 CSS 文本 | 门禁 `test/css-tokens.mjs` 第 501 行附近打印 |
+| 源文本 | 35680 字符 | 240 段 JS 单引号字面量还原后的长度之和（0.6.4 起 CSS 里没有转义序列，故与还原文本相等） | 人工统计 |
+| 还原文本 | 35680 字符 | 去掉引号、还原 `\'` 与 `\uXXXX` 转义后的浏览器实际 CSS 文本 | 门禁 `test/css-tokens.mjs` 主流程 `:447` 的 `extractCss(source)`，输出第 3 行「CSS 数组 240 段 / 35680 字符」 |
 
-两个数的差不是错误，是引号、逗号与转义序列。**报告与评审一律引用还原文本 27903**，因为它才是浏览器解析的东西。
+0.6.4 起两个数相等（35680）：CSS 里已无 `\'` 与 `\uXXXX` 转义，源文本与浏览器实际解析到的文本逐字符相同。**报告与评审一律引用还原文本 35680**，因为它才是浏览器解析的东西。
 
 ### 2.3 可信度分级
 
 - **A 级**：直接从文件读出的原文或统计值。本文绝大多数结论属此类。
-- **B 级**：从 A 级数值推算出的判断（例如「dsh-pi 的 66 个变量里 63 个是 `--dsw-*`，说明令牌纪律覆盖了 95%」）。
+- **B 级**：从 A 级数值推算出的判断（例如「dsh-pi 的 74 个变量里 70 个是 `--dsw-*`，说明令牌纪律覆盖了 94.6%」）。
 - **C 级**：无法从文件证实、只能标注「待确认」的项。全文共 4 条，集中在附录 C。
 
 ### 2.4 复现命令
 
 ```
 cd C:/Users/PC/Documents/pi-local/dsh-pi
-node test/css-tokens.mjs     # 令牌门禁，期望 PASS (90 checks)
-node test/client-render.mjs  # 渲染门禁，期望 PASS (450 assertions)
+node test/css-tokens.mjs     # 令牌门禁，期望 PASS (98 checks)
+node test/client-render.mjs  # 渲染门禁，期望 PASS (738 assertions)
 ```
 
-两条命令都离线可跑，不打真实 LLM，不进 `npm test` 的耗时大头。`npm test` 共九项，顺序是 `selfcheck → client-render → css-tokens → runtime-resolve → config-hot → host-parity → timeout → parity → version`。
+两条命令都离线可跑，不打真实 LLM，不进 `npm test` 的耗时大头。`npm test` 共十一项，顺序是 `selfcheck → client-render → css-tokens → runtime-resolve → config-hot → host-parity → session-projects → timeout → parity → restart-lib → version`。
 
 ### 2.5 引用约定
 
@@ -107,17 +107,19 @@ node test/client-render.mjs  # 渲染门禁，期望 PASS (450 assertions)
 
 ### 3.1 三层划分
 
-`client.js` 的 CSS 数组用到 66 个唯一 CSS 变量。按「换主题时应不应该跟着变」切成三层：
+`client.js` 的 CSS 数组用到 74 个唯一 CSS 变量。`var(` 在 CSS 文本里出现 **356 次**，其中 5 次是兜底位置里嵌套的 `var()`（`var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary))` 与 `var(--dsh-content-font-size,var(--dsw-font-s-14-font-size))` 两类），所以门禁按「顶层引用」计 **351 处 / 74 个唯一变量**。本文正文的用量表用 356（含嵌套，逐次可数），门禁汇总行印 351。按「换主题时应不应该跟着变」切成三层，另有两类不便归入主题语义的令牌单列：
 
 | 层 | 数量 | 判据 | 换浅/深色时 |
 | --- | --- | --- | --- |
 | Tier A 几何与字体 | 20 | 只表达尺寸、字号、字重、圆角 | 不变（除 `font-family` 由主题给） |
-| Tier B 颜色别名 | 35 | 全部是 `--dsw-alias-*`，表达语义色 | **必须变**，这是主题切换的全部意义 |
-| Tier C 阴影与特殊 | 8 | 阴影、焦点环、毛玻璃、特殊底色 | 部分变（`elevation-*` 只有描边色随主题） |
-| 合计 | 63 | 全部 `--dsw-*` | — |
-| 外部兜底 | 3 | `--dsh-*` 2 个 + `--ds-*` 1 个 | 宿主注入，不归 dsh-pi 管 |
+| Tier B 颜色别名 | 39 | 全部是 `--dsw-alias-*`，表达语义色 | **必须变**，这是主题切换的全部意义 |
+| Tier C 阴影与特殊 | 6 | 阴影、焦点环、毛玻璃 | 部分变（`elevation-*` 只有描边色随主题） |
+| Tier D `--dsw-specific-*` | 4 | 组件私有底色（气泡 / 输入卡 / 菜单 / 下拉），语义上不属于上面三层 | 随主题变，但只有对应组件能用 |
+| Tier E `--dsw-static-*` | 1 | `static-neutral-bluish-00`，不随主题变 | 恒为 `#fff` |
+| 合计 | 70 | 全部 `--dsw-*` | — |
+| 外部兜底 | 4 | `--dsh-*` 3 个 + `--ds-*` 1 个 | 宿主注入，不归 dsh-pi 管 |
 
-20 + 35 + 8 = 63，与「66 个唯一变量减去 3 个外部变量」完全吻合，没有游离令牌。
+20 + 39 + 6 + 4 + 1 = 70，与「74 个唯一变量减去 4 个外部变量」完全吻合，没有游离令牌。
 
 ### 3.2 Tier A：几何与字体（20 个）
 
@@ -142,7 +144,7 @@ node test/client-render.mjs  # 渲染门禁，期望 PASS (450 assertions)
 
 几何层没有一条硬编码像素值是可省的：`36px` 的开关宽、`20px` 的高这些属于组件内部几何，写在规则体里而不是新建令牌，因为 DSH 自己也是这么写的（`._switch_1ik0f_5` 直接写 `width:36px;height:20px`）。
 
-### 3.3 Tier B：颜色别名（35 个）
+### 3.3 Tier B：颜色别名（39 个）
 
 全部是 `--dsw-alias-*`。按语义分组：
 
@@ -151,9 +153,9 @@ node test/client-render.mjs  # 渲染门禁，期望 PASS (450 assertions)
 | 底色 | `bg-base`、`bg-layer-1`、`bg-layer-2`、`bg-layer-3`、`bg-module-platform` | 根、输入框外壳、会话卡、菜单项、chip 底 |
 | 遮罩 | `bg-mask-1`、`bg-mask-2`、`bg-mask-photo` | 对话框底罩、缩略图关闭键、图片放大层 |
 | 描边 | `border-l1`、`border-l2`、`border-l3`、`border-l4` | 菜单局部描边、抽屉分隔、输入框主边框、按钮描边 |
-| 文本 | `label-primary`、`label-secondary`、`label-tertiary`、`label-caption`、`label-dimmed`、`label-primary-foreground` | 六级文本层次 |
-| 交互 | `interactive-bg-hover`、`interactive-bg-active`、`interactive-bg-hover-danger` | hover / 选中 / 危险 hover |
-| 主色 | `brand-primary`、`button-primary-fill`、`button-primary-hover` | 开关开启态、主按钮三态 |
+| 文本 | `label-primary`、`label-secondary`、`label-tertiary`、`label-caption`、`label-dimmed`、`label-primary-foreground`、`label-deep-diving` | 六级文本层次 + 工作状态行的「深度求索」蓝（`color-mix(in srgb, deepseek-500 70%, blue-950)` ⇒ `#345EBA`） |
+| 交互 | `interactive-bg-hover`、`interactive-bg-active`、`interactive-bg-hover-danger`、`interactive-bg-hover-solid` | hover / 选中 / 危险 hover / composer 各圆形键的实底 hover |
+| 主色 | `brand-primary`、`button-primary-fill`、`button-primary-hover`、`button-info-fill`、`button-info-hover` | 开关开启态、主按钮三态、发送键两态（`button-info-*` 指向 `static-deepseek-500/400`） |
 | 状态 | `state-business-primary`、`state-error-primary`、`state-success-primary`、`state-warn-primary`、`state-idle-primary` | 焦点环、标签 four tone、状态点 |
 | 代码 | `markdown-code-block`、`markdown-code-block-banner`、`markdown-inline-code` | 代码块三段 |
 | 滚动条 | `scrollbar-bg-l2`、`scrollbar-hover-l2` | 根上重绑给 `--dsh-scrollbar-thumb` |
@@ -168,32 +170,33 @@ node test/client-render.mjs  # 渲染门禁，期望 PASS (450 assertions)
 - `dimmed`：占位符、禁用、分隔符、弱化符号；
 - `primary-foreground`：主色底上的文字（主按钮、开关滑块）。
 
-### 3.4 Tier C：阴影与特殊（8 个）
+### 3.4 Tier C：阴影与特殊（6 个）
 
 | 令牌 | 值 | 用在哪 |
 | --- | --- | --- |
 | `--dsw-elevation-panel` | 描边 + `0 3px 8px 0 #00000008, 0 0 16px 0 #00000005` | 弹出菜单、gate 卡 |
 | `--dsw-elevation-prominent` | 描边 + `0 3px 8px 0 #0000000a, 0 0 20px 0 #0000000d` | 目录弹窗、通用对话框 |
+| `--dsw-elevation-soft` | 描边 + `0 4px 16px 0 #00000008, 0 0 24px 0 #00000008` | composer 卡面（`.dsh-pi-box`）：最轻的一档，卡片浮起但不抢焦点 |
 | `--dsw-focus-ring-color` | `transparent`（单值） | 根上被重绑为 `var(--dsw-alias-state-business-primary)` |
 | `--dsw-focus-ring-width` | `2px` | 全局 `:focus-visible` 描边宽度 |
 | `--dsw-menu-backdrop-filter` | `blur(40px) saturate(150%)` | 弹出菜单毛玻璃 |
-| `--dsw-specific-bubble` | `deepseek-50` / `bluish-850` | 用户气泡底 |
-| `--dsw-specific-menu` | `#f8f9faf0` / `#303136f0` | 弹出菜单底 |
-| `--dsw-static-neutral-bluish-00` | `#fff`（不随主题变） | 缩略图关闭键的叉号、图片放大层按钮 |
 
-**`focus-ring-color` 是这套系统里唯一的坑。** DSH 把 `--dsw-focus-ring-color` 定义成 `transparent`（等于「默认不要焦点环」），所有 DSH 组件都在规则里写 `outline:var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary))` —— 靠 `var()` 的第二个参数兜底。dsh-pi 在 `.dsh-pi-root` 上直接把这个变量重绑成 `state-business-primary`（`client.js:343`），于是整个子树拿到的是真色值，`var()` 的第二参数永远不生效但保留着，作为「万一宿主改了」的保险。这是刻意设计，注释 `client.js:340-342` 写明了理由。
+`--dsw-specific-*`（4 个：bubble / input-major / menu / selector）与 `--dsw-static-neutral-bluish-00`（1 个）不属「阴影与特殊」，已单列为 §3.1 的 Tier D / Tier E。
 
-### 3.5 外部兜底令牌（3 个）
+**`focus-ring-color` 是这套系统里唯一的坑。** DSH 把 `--dsw-focus-ring-color` 定义成 `transparent`（等于「默认不要焦点环」），所有 DSH 组件都在规则里写 `outline:var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary))` —— 靠 `var()` 的第二个参数兜底。dsh-pi 在 `.dsh-pi-root` 上直接把这个变量重绑成 `state-business-primary`（`client.js:449`），于是整个子树拿到的是真色值，`var()` 的第二参数永远不生效但保留着，作为「万一宿主改了」的保险。这是刻意设计，注释 `client.js:446-448` 写明了理由。
 
-三个不是 DSH 设计令牌，是宿主或内容层注入的变量，必须带兜底：
+### 3.5 外部兜底令牌（4 个）
+
+四个都不是 DSH 设计令牌，是宿主或内容层注入的变量，必须带兜底：
 
 | 令牌 | 来源 | 兜底 | 出现次数 |
 | --- | --- | --- | --- |
-| `--dsh-content-font-size` | DSH 内容字号（用户可在设置里调） | `var(--dsw-font-s-14-font-size)` | 3 |
-| `--dsh-content-font-delta` | 同上，字号增量 | `0px` | 5 |
-| `--ds-font-family-code` | DSH 等宽字体栈 | `ui-monospace,SFMono-Regular,Menlo,Consolas,monospace` | 10 |
+| `--dsh-content-font-size` | DSH 内容字号（用户可在设置里调） | `var(--dsw-font-s-14-font-size)` | 4 |
+| `--dsh-content-font-size-secondary` | 同上，次级正文档（DSH 会话流的过程行文字） | `13px` | 1 |
+| `--dsh-content-font-delta` | 同上，字号增量 | `0px` | 7 |
+| `--ds-font-family-code` | DSH 等宽字体栈 | `ui-monospace,SFMono-Regular,Menlo,Consolas,monospace` | 11 |
 
-三者的用法固定成模板，任何新代码都必须照抄：
+四者的用法固定成模板，任何新代码都必须照抄：
 
 ```css
 font-size:var(--dsh-content-font-size,var(--dsw-font-s-14-font-size));
@@ -201,36 +204,38 @@ line-height:calc(22px + var(--dsh-content-font-delta,0px));
 font-family:var(--ds-font-family-code,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace);
 ```
 
-`test/css-tokens.mjs` 第 3 节（`:564`）会硬断言：任何非 `--dsw-*` 变量出现在 `var()` 里而没带第二个参数，直接判失败。这条规则防的是「宿主没注入就整块样式失效」。
+`test/css-tokens.mjs` 第 3 节（`:567`）会硬断言：任何非 `--dsw-*` 变量出现在 `var()` 里而没带第二个参数，直接判失败。这条规则防的是「宿主没注入就整块样式失效」。
 
 ### 3.6 用量总表
 
-306 次 `var()` 调用，按次数降序（前 20）：
+`var(` 共出现 356 次（含 5 次兜底嵌套，门禁顶层引用计 351 处），按次数降序（前 22）：
 
 | # | 令牌 | 次数 |
 | --- | --- | --- |
-| 1 | `--dsw-alias-label-primary` | 25 |
-| 2 | `--dsw-alias-label-secondary` | 20 |
-| 3 | `--dsw-font-xxxs-11-font-size` | 19 |
-| 4 | `--dsw-alias-state-business-primary` | 14 |
-| 5 | `--dsw-font-xxs-12-font-size` | 14 |
-| 6 | `--dsw-alias-state-error-primary` | 11 |
-| 7 | `--dsw-font-xxs-12-line-height` | 11 |
-| 8 | `--dsw-radius-sm` | 10 |
-| 9 | `--ds-font-family-code` | 10 |
-| 10 | `--dsw-alias-interactive-bg-hover` | 9 |
-| 11 | `--dsw-font-s-14-font-size` | 8 |
-| 12 | `--dsw-alias-label-tertiary` | 8 |
-| 13 | `--dsw-alias-label-caption` | 8 |
-| 14 | `--dsw-alias-state-success-primary` | 7 |
-| 15 | `--dsw-alias-border-l3` | 6 |
-| 16 | `--dsw-font-xxxs-11-line-height` | 6 |
-| 17 | `--dsw-alias-state-warn-primary` | 6 |
-| 18 | `--dsw-alias-label-dimmed` | 6 |
-| 19 | `--dsw-radius-md` | 6 |
-| 20 | `--dsw-alias-border-l4` | 5 |
+| 1 | `--dsw-alias-label-primary` | 28 |
+| 2 | `--dsw-font-xxxs-11-font-size` | 23 |
+| 3 | `--dsw-alias-label-secondary` | 20 |
+| 4 | `--dsw-alias-state-business-primary` | 17 |
+| 5 | `--dsw-alias-label-caption` | 13 |
+| 6 | `--dsw-alias-label-tertiary` | 13 |
+| 7 | `--dsw-alias-state-error-primary` | 13 |
+| 8 | `--dsw-font-xxs-12-font-size` | 12 |
+| 9 | `--dsw-radius-sm` | 12 |
+| 10 | `--ds-font-family-code` | 11 |
+| 11 | `--dsw-alias-interactive-bg-hover` | 11 |
+| 12 | `--dsw-font-xxs-12-line-height` | 9 |
+| 13 | `--dsw-font-xxxs-11-line-height` | 9 |
+| 14 | `--dsw-alias-border-l3` | 8 |
+| 15 | `--dsw-alias-state-warn-primary` | 8 |
+| 16 | `--dsw-font-s-14-font-size` | 8 |
+| 17 | `--dsh-content-font-delta` | 7 |
+| 18 | `--dsw-alias-state-success-primary` | 7 |
+| 19 | `--dsw-radius-md` | 7 |
+| 20 | `--dsw-alias-bg-layer-2` | 6 |
+| 21 | `--dsw-font-xs-13-font-size` | 6 |
+| 22 | `--dsw-font-xs-13-line-height` | 6 |
 
-长尾 33 个各 1–5 次。用量分布说明一件事：**文本与语义色是主体，几何令牌是配角。** 前 7 名里 5 个与颜色有关，两个字号令牌（11px / 12px）合计 33 次，是这套 UI 里出现最频繁的字号。这也解释了为什么 DSH 的界面看起来「信息密度高但不乱」——它把最小的两档字号当主力，用颜色层次而不是字号层次来分组。
+长尾 52 个各 1–5 次。用量分布说明一件事：**文本与语义色是主体，几何令牌是配角。** 前 7 名里 5 个与颜色有关，两个字号令牌（11px / 12px）合计 35 次（23 + 12），是这套 UI 里出现最频繁的字号。这也解释了为什么 DSH 的界面看起来「信息密度高但不乱」——它把最小的两档字号当主力，用颜色层次而不是字号层次来分组。
 
 ### 3.7 组件 → 令牌矩阵
 
@@ -247,7 +252,9 @@ font-family:var(--ds-font-family-code,ui-monospace,SFMono-Regular,Menlo,Consolas
 | 工具行 | `border-l3`（左侧竖线）、`--ds-font-family-code` |
 | 状态标签 | `bg-module-platform` + 四 tone 状态色 |
 | 空态 / gate | `elevation-panel`、`bg-layer-1` |
-| 输入区 | `border-l3`（外壳）、`bg-layer-1`、`bg-layer-2`（widget） |
+| 输入区卡面 | `specific-input-major`（底）、`elevation-soft`（投影）、`radius-panel`（28px）、`specific-selector`（picker）、`button-info-fill` / `button-info-hover`（发送键两态）、`interactive-bg-hover-solid`（圆形 + 键 hover）、`bg-layer-2`（widget） |
+| 过程行 | `label-tertiary`（标签 / 摘要 / 图标 / 展开体）、`label-caption`（中点）、`border-l3`（左侧竖线）、`state-business-primary`（运行中点）、`state-error-primary` / `state-warn-primary`（失败 / 警告）、`--dsh-content-font-size-secondary`（13px 行文字） |
+| 工作状态行 | `label-deep-diving`（文字与鲸鱼尾同色，`#345EBA`）、`border-l3`（上 hairline） |
 | 弹出菜单 | `specific-menu`、`menu-backdrop-filter`、`elevation-panel`、`border-l1` |
 | 抽屉 | `bg-base`、`bg-layer-1/2`、`border-l2/l4` |
 | 开关 | `brand-primary`、`border-l3`、`switch-thumb`、`label-primary-foreground` |
@@ -260,17 +267,17 @@ font-family:var(--ds-font-family-code,ui-monospace,SFMono-Regular,Menlo,Consolas
 
 | # | 断言 | 行号 | 防的是什么 |
 | --- | --- | --- | --- |
-| 1 | 硬色值 | `:554` | `#hex`、`rgb()`、`rgba()`、`hsl()`、`hsla()`、命名色一律禁止。硬色值意味着那一块永远不随主题变。 |
-| 2 | 令牌白名单 | `:558` | 只许 `--dsw-*` 与 `ALLOWED_EXTRA_TOKENS` 里的 6 个（`--ds-font-family-code`、`--dsh-content-font-size`、`--dsh-content-font-delta`、`--dsh-code-font-size`、`--dsh-code-font-delta`、`--dsw-elevation-stroke-color`）。防止有人写 `var(--my-color)`。 |
-| 3 | 兜底 | `:564` | 非 `--dsw-*` 必须带第二个参数。 |
-| 4 | 禁用令牌 | `:570` | `--dsw-alias-button-tool-bar-fill`、`--dsw-alias-button-tool-bar-hover` 在 `tokens.txt` 里是硬值 `#54555780` / `#54555799`，不是别名，引用它们等于引用硬色值。 |
-| 5 | 等宽字体栈 | `:574` | `ui-monospace` / `SFMono-Regular` / `Menlo` / `Consolas` / `monospace` 只许出现在 `var(--ds-font-family-code, …)` 的兜底位。 |
-| 6 | 焦点可见 | `:578` | 必须有 `:focus-visible` 规则且用 `--dsw-focus-ring-*`。防止 `outline:none` 一刀切。 |
-| 7 | 减少动效 | `:582` | 必须有 `@media (prefers-reduced-motion: reduce)` 兜底。 |
+| 1 | 硬色值 | `:557` | `#hex`、`rgb()`、`rgba()`、`hsl()`、`hsla()`、命名色一律禁止。硬色值意味着那一块永远不随主题变。 |
+| 2 | 令牌白名单 | `:561` | 只许 `--dsw-*` 与 `ALLOWED_EXTRA_TOKENS` 里的 7 个（`--ds-font-family-code`、`--dsh-content-font-size`、`--dsh-content-font-size-secondary`、`--dsh-content-font-delta`、`--dsh-code-font-size`、`--dsh-code-font-delta`、`--dsw-elevation-stroke-color`）。防止有人写 `var(--my-color)`。 |
+| 3 | 兜底 | `:567` | 非 `--dsw-*` 必须带第二个参数。 |
+| 4 | 禁用令牌 | `:573` | `--dsw-alias-button-tool-bar-fill`、`--dsw-alias-button-tool-bar-hover` 在 `tokens.txt` 里是硬值 `#54555780` / `#54555799`，不是别名，引用它们等于引用硬色值。 |
+| 5 | 等宽字体栈 | `:577` | `ui-monospace` / `SFMono-Regular` / `Menlo` / `Consolas` / `monospace` 只许出现在 `var(--ds-font-family-code, …)` 的兜底位。 |
+| 6 | 焦点可见 | `:581` | 必须有 `:focus-visible` 规则且用 `--dsw-focus-ring-*`。防止 `outline:none` 一刀切。 |
+| 7 | 减少动效 | `:585` | 必须有 `@media (prefers-reduced-motion: reduce)` 兜底。 |
 
-门禁还有 18 条自检（`:420-435` 的 `selfTest`），用合成样例验证正则本身没写错。没有自检的门禁最危险：正则写挂了，全绿，没人知道。
+门禁还有 18 条自检（`:423-438` 的 `selfTest`），用合成样例验证正则本身没写错。没有自检的门禁最危险：正则写挂了，全绿，没人知道。
 
-除七条硬断言外，门禁还输出观察项（`:455-482`）：规则条数、字符数、`var()` 调用数、唯一变量数、按类别分布。这些不判失败，只作为「变了多少」的对比基准。
+除七条硬断言外，门禁还输出观察项（`:465-485`）：规则条数、字符数、`var()` 调用数、唯一变量数、按类别分布。这些不判失败，只作为「变了多少」的对比基准。
 
 ---
 
@@ -284,7 +291,7 @@ font-family:var(--ds-font-family-code,ui-monospace,SFMono-Regular,Menlo,Consolas
 
 **来源：index-lh_YM6sT.css 的 ._pane_3oazc_211 与 ._switch_1ik0f_5:focus-visible**
 
-`.dsh-pi-root`（`client.js:343`）是整个面板的根，它做四件事：铺底色、立字体基线、重绑两个宿主变量、立全局三条基础规则。
+`.dsh-pi-root`（`client.js:449`）是整个面板的根，它做四件事：铺底色、立字体基线、重绑两个宿主变量、立全局三条基础规则。
 
 **令牌**：`bg-base`、`label-primary`、`font-family`、`font-s-14-font-size`、`font-s-14-line-height`、`scrollbar-bg-l2`、`scrollbar-hover-l2`、`state-business-primary`（重绑焦点环）。
 
@@ -294,16 +301,16 @@ font-family:var(--ds-font-family-code,ui-monospace,SFMono-Regular,Menlo,Consolas
 
 | 行号 | 规则 | 作用 |
 | --- | --- | --- |
-| `:344` | `.dsh-pi-root *{box-sizing:border-box}` | 面板是独立子树，不能假设宿主已经设过 |
-| `:345` | `:is(button,input,select,textarea){font-family:inherit}` | 浏览器对表单控件默认给系统字体，不继承会突然出现另一种字形 |
-| `:346` | `:is(button,input,select,textarea,summary,a,[tabindex]):focus-visible{outline:var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color,…);outline-offset:2px}` | 用属性选择器兜住所有可聚焦元素，而不是逐个类名写 |
+| `:450` | `.dsh-pi-root *{box-sizing:border-box}` | 面板是独立子树，不能假设宿主已经设过 |
+| `:451` | `:is(button,input,select,textarea){font-family:inherit}` | 浏览器对表单控件默认给系统字体，不继承会突然出现另一种字形 |
+| `:452` | `:is(button,input,select,textarea,summary,a,[tabindex]):focus-visible{outline:var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color,…);outline-offset:2px}` | 用属性选择器兜住所有可聚焦元素，而不是逐个类名写 |
 
 **状态**：根节点没有状态。状态全在子元素上，通过 `data-*` 属性表达（`data-state`、`data-tone`、`data-selected`、`data-current`、`data-active`、`data-clickable`、`data-leaf`、`data-disabled`、`data-focus`、`data-drive`、`data-pc`、`data-last`）。这套约定让状态切换只改属性不改类名，CSS 选择器保持稳定。
 
 **差异**：
 
 1. DSH 的 `._pane_3oazc_211` 不含底色调，底色由更上层的 surface 决定；dsh-pi 的根自己铺 `bg-base`。因为面板要能独立存在于侧栏，不能假设父级已经铺过底。
-2. `:346` 用 `[tabindex]` 兜底，DSH 用逐组件写 `:focus-visible`。ds-pi 的做法覆盖面更广但也更容易和宿主的环叠加——目前不会，因为面板在独立 iframe/容器里。
+2. `:452` 用 `[tabindex]` 兜底，DSH 用逐组件写 `:focus-visible`。ds-pi 的做法覆盖面更广但也更容易和宿主的环叠加——目前不会，因为面板在独立 iframe/容器里。
 3. 根上重绑 `--dsh-scrollbar-thumb` / `--dsh-scrollbar-thumb-hover` 是 dsh-pi 独有，DSH 的 `._list_1p5el_7` 也做同样的事（局部重绑滚动条色），属于同一手法。
 
 ### 4.2 头栏与状态点
@@ -323,7 +330,7 @@ font-family:var(--ds-font-family-code,ui-monospace,SFMono-Regular,Menlo,Consolas
 | `busy` | `state-business-primary` | `animation:dsh-pi-pulse 1.2s` |
 | `dead` | `state-error-primary` | 无 |
 
-`@keyframes dsh-pi-pulse`（`:356`）只动 `opacity`：`0%,100%{opacity:1} 50%{opacity:.35}`。没有 scale、没有位移。这与 DSH 全部 17 个 keyframes 的风格一致——除 `_spin_u7vgf_45`、`_dsh-state-dot-spin_1i3xo_1`、`_dsh-state-dot-dash_1i3xo_1` 三个旋转类之外，**其余 14 个都只动 opacity**。
+`@keyframes dsh-pi-pulse`（`:462`）只动 `opacity`：`0%,100%{opacity:1} 50%{opacity:.35}`。没有 scale、没有位移。这与 DSH 全部 17 个 keyframes 的风格一致——除 `_spin_u7vgf_45`、`_dsh-state-dot-spin_1i3xo_1`、`_dsh-state-dot-dash_1i3xo_1` 三个旋转类之外，**其余 14 个都只动 opacity**。
 
 **差异**：
 
@@ -418,31 +425,48 @@ tone 色的实现统一用 `color-mix(in srgb, <state-color> N%, transparent)`�
 3. **气泡 `max-width:82%`** 是 dsh-pi 独有。DSH 的气泡 `max-width:100%` 靠父容器给宽度。82% 让用户消息不会铺满整行，是常见的 IM 惯例。
 4. **没有 `_actions` / `_status` / `_heading`**。DSH 的 `._card_1mqf1_1` 内有 `._heading_1mqf1_23`（语言名 + 标题）、`._actions_1mqf1_*`（复制按钮）、`._status_1mqf1_*`。dsh-pi 只有 `-fence-lang` 一个语言标签，没有复制按钮。
 
-### 4.6 思考块与工具行
+### 4.6 过程行（思考 / 工具调用 / 工具结果 / `!` bash）
 
-**来源：index-lh_YM6sT.css 的 ._toggle_jrv99_5 / ._body_jrv99_22**
+**来源：DSH 会话过程流的实测截图 + `research/layout/dsh-client-ui-conversation__lib__client.js` 的 `tool.title.*` 标题表**
 
-**令牌**：思考块 `border-l3`（左侧 2px 竖线）+ `label-tertiary` + `font-xs-13-*`；工具行 `font-xxs-12-*` + `label-secondary`，名称与正文用 `--ds-font-family-code`。
+0.6.4 之前这一节叫「思考块与工具行」：思考是一个 `details` 折叠块（左侧 2px 竖线 + 13px 小字），工具调用是一条平铺行（`工具` 标签 + 工具名 + `结果` 标签）。0.6.4 按 DSH 宿主的过程流重做，因为原来那套把「模型的意图」和「模型的动作」摆成了同一层的两件东西。
 
-**几何**：
+**层级**：一次模型回合是父行（`details.dsh-pi-proc`，摘要只有首行），它之下的每次工具调用是缩进子行组（`div.dsh-pi-sub`，左 1px 竖线 + `margin-left:22px`，竖线正好落在父行图标框左缘）。纯文本 / 图片是正文块，**打断**分组 —— 文本之后再出现的调用重新起一组，不会挂到很久以前的思考下面。
+
+**一次调用 = 一行**：工具结果不单独占一行。pi 把结果作为独立的 `toolResult` 消息送达，面板按 `toolCallId` 建派生表折叠进调用行的展开区（`── output ──`）；对不上号的孤儿结果仍按行渲染，不吞内容。展开区里的 `── live ──` 段**只在 `status === 'running'` 时出现**：跑完后 `partialResult` 与最终结果说的是同一件事，两段都印等于把输出写两遍（第一次实拍就撞上了这个）。
+
+**令牌**：行文字（标签与摘要）`label-tertiary`、展开体 `label-tertiary`、图标 `label-tertiary`、中点 `label-caption`、竖线 `border-l3`、运行中圆点 `state-business-primary`、失败 `state-error-primary`、警告 `state-warn-primary`；字号 `--dsh-content-font-size-secondary`（13px，DSH 会话流的次级正文档，带兜底）。**颜色只取 `label-tertiary`，不是 `label-secondary`** —— 实拍后按目标图逐像素复查过：目标摘要实心色 = `rgb(129,133,140)`（`label-tertiary`），`label-secondary` 的 `rgb(97,102,107)` 肉眼可辨地偏深。
+
+**几何**（`client.js:513-550`）：
 
 | 元素 | 几何 |
 | --- | --- |
-| `.dsh-pi-think` | `border-left:2px solid border-l3`、`padding-left:10px` |
-| `.dsh-pi-think summary` | 隐藏 `::-webkit-details-marker`，靠自定义三角 |
-| `.dsh-pi-tool` | **无边框、无背景、无阴影** |
-| `.dsh-pi-tool-head` | `padding:3px 0`、`::before` 三角 `content:"\25B8"`、`[open]` 时 `rotate(90deg)` |
-| `.dsh-pi-tool-body` | `padding-left:14px`、`border-left:1px solid border-l3`、`max-height:340px` |
+| `.dsh-pi-proc` / `.dsh-pi-tool` | **无边框、无背景、无阴影**（`border-radius:0`），`display:block` |
+| `.dsh-pi-proc-head` | `display:flex`、`align-items:center`、`line-height:calc(24px + delta)`、无 `padding`（行距由 `line-height` 给，24px 行高对实测的 24px） |
+| `.dsh-pi-proc-icon` | 16×16 框、`margin-right:7px`（对齐实测：图标 12→20.5，标签 29） |
+| `.dsh-pi-sep` | 2×2 圆点、`margin:0 8px`、`border-radius:1px`（不是圆，DSH 的「·」是 2px 方块） |
+| `.dsh-pi-proc-text` | `flex:1 1 auto` + `text-overflow:ellipsis` 单行省略 |
+| `.dsh-pi-proc-note` | 行尾状态（失败 / `exit N` / truncated），`tabular-nums` 防宽度跳动 |
+| `.dsh-pi-proc-path` | 整路径可点：`text-decoration:underline 1px dotted`、`text-underline-offset:3px`、`color:inherit` |
+| `.dsh-pi-sub` | `margin-left:22px`、`padding-left:8px`、`border-left:1px solid border-l3`、`gap:2px` |
+| `.dsh-pi-proc-body` | `margin-left:22px`、`padding-left:14px`、`border-left:1px solid border-l3`、`white-space:pre-wrap` |
+| `.dsh-pi-tool-body` | `padding-left:14px`、`border-left:1px solid border-l3`、`max-height:340px`、等宽 + `xxxs-11` |
+| `.dsh-pi-working` | 过程流末尾：`.5px` 顶部 hairline + `padding-top:10px` + 14×14 鲸鱼尾 + 一行状态；文字 `--dsw-alias-label-deep-diving`（#345EBA）、`font-size:calc(var(--dsh-content-font-size,14px) - 2px)`（12px）、`line-height:calc(22px + delta)`、`tabular-nums` |
 
-**这是全套组件里最刻意的一处设计决定**，`client.js:415-420` 的注释写明了理由：一次任务常连着十几次工具调用，每行都套圆角框 + hairline 会形成「框套框的噪音墙」，所以改用**平铺行 + 左侧竖线**；展开区沿用思考块的左侧竖线语言，让「附着在一条消息下的补充信息」看起来是一类东西。
+**图标**：`ThinkIcon`(⊗) / `TerminalIcon`(>_) / `FrameIcon`(▤) / `SearchIcon` / `PencilIcon` / `DocIcon` / `ListIcon` / `SparkIcon`，全部 24 网格、1.7 描边、round cap/join、`currentColor`，尺寸 15px。另有一个例外：工作状态行的 `WhaleTailIcon` 是 **16 网格 / 1 描边**的鲸鱼尾（照抄 DSH `RunningWhaleTail` 的 `REST_PATH`，`stroke:currentColor`、`fill:none`、`stroke-width:1`），装在 14×14 的 `.dsh-pi-working-icon` 盒里 —— 换网格的原因是 DSH 的路径本身按 16 网格设计，塞进 24 网格会整体缩到 2/3，笔画细到发灰。映射是**按工具名静态查表**（`TOOL_VIEWS`），不按参数猜：`read` 命中图片扩展名时才切成 `FrameIcon` + 「读取图片」。
 
-**状态**：折叠 / 展开（`[open]`）、hover（只提亮文字，**不铺底色**——注释 `:423` 说明铺底色会在没有外框时露出矩形色斑）。
+**行标签的措辞直接取自 DSH 官方中文标题表**（`tool.title.*`：思考 / 运行命令 / 读取 / 读取图片 / 写入 / 编辑 / 搜索文件内容 / 查找文件 / 浏览目录 / 工具调用），未知工具兜底「工具调用 · <工具名>」——这一条照抄 DSH 的 `toolRowModel` 摘要拼接规则：只有 generic 行才把工具名当 label。
+
+**这是全套组件里最刻意的一处设计决定**：一次任务常连着十几次工具调用，每行都套圆角框 + hairline 会形成「框套框的噪音墙」，所以是**平铺行 + 左侧竖线**；展开区沿用同一条竖线语言，让「附着在一条行下的补充信息」看起来是一类东西。
+
+**状态**：折叠 / 展开（`[open]`）、hover（只提亮文字，**不铺底色**——没有外框时铺底色会露出一块矩形色斑）、`:focus-visible`（`outline:var(--dsw-focus-ring-width)` + `outline-offset:2px`）、运行中（圆点换品牌色 + `dsh-pi-pulse 1.2s`）、失败（`data-state="error"` + note）、`prefers-reduced-motion` 下动画全关。
 
 **差异**：
 
-1. **DSH 没有直接对标物**。DSH 的过程流（`._toggle_jrv99_5` + `._body_jrv99_22`）是「一行小字按钮 + 展开后一块代码底色的 body」；dsh-pi 是「平铺行 + 左侧竖线」。两者的共同点是都在空间上极度克制。
-2. **`._body_jrv99_22` 有底色与描边**（`background:markdown-code-block` + `border:.5px solid border-l1` + `radius-lg`），dsh-pi 的 `-tool-body` 没有底色。dsh-pi 更轻，DSH 更「块」。
-3. **`--ds-font-family-code` 在 DSH 里不带兜底**（`._toggle_jrv99_5` 的兄弟规则 `._body_jrv99_22` 直接写 `font-family:var(--ds-font-family-code)`），dsh-pi 全部带兜底。dsh-pi 更保守，门禁第 3 条强制。
+1. **DSH 的 `._body_jrv99_22` 有底色与描边**（`background:markdown-code-block` + `border:.5px solid border-l1` + `radius-lg`），dsh-pi 的展开区没有底色。dsh-pi 更轻，DSH 更「块」。
+2. **DSH 的 `._toggle_jrv99_5` 是「一行小字按钮 + 展开后一块 body」**，嵌套层级由外层容器给；dsh-pi 的父子关系由 `22px 缩进 + 左竖线` 自己表达 —— 面板拿不到宿主的会话结构，只能从 pi 的块序列里推。
+3. **`--ds-font-family-code` 在 DSH 里不带兜底**（`._body_jrv99_22` 直接写 `font-family:var(--ds-font-family-code)`），dsh-pi 全部带兜底。dsh-pi 更保守，门禁第 3 条强制。
+4. **工作状态行照抄 DSH `RunningStatus`**。第一次实现（0.6.4 中期）曾因 `research/` 全目录 grep「深度求索」= 0 命中而自造 `working` 键 + 灰字 + 品牌色星形；拿到目标截图底部那行的实测色值后改为照抄：文案 `deepDiving`=「深度求索中」/ `working`=「深度求索中，用时 {duration} ···」（结尾三个 `U+00B7`，不是 `…`）、时长按 DSH `formatRunDuration` 三段拆（`durHour` 仅 hours>0、`durMin` 仅 total≥60、`durSec` 恒有）、颜色 `--dsw-alias-label-deep-diving`、图标 16 网格鲸鱼尾。**单位间距由词条自带**（与 DSH 完全一致）：中文 `durMin`=「{n}分」/ `durSec`=「{n}秒」不带空格（目标图就是「43分54秒」），EN `durMin`=「{n}m 」/ `durHour`=「{n}h 」带尾空格，`fmtDuration` 用 `parts.join('')` 拼 —— 与 DSH `formatRunDuration(...).map((part) => part.text).join('')` 同一拼法。早先中英都用 `join(' ')`，中文会多出半角空格，逐像素对比才发现。
 
 ### 4.7 空态与运行时引导
 
@@ -462,29 +486,48 @@ tone 色的实现统一用 `color-mix(in srgb, <state-color> N%, transparent)`�
 
 ### 4.8 输入区
 
-**来源：index-lh_YM6sT.css 的 ._wrap_14sgc_1 / ._input_14sgc_25 / ._editor_61ozo_1**
+**来源：宿主主对话区 composer（`dsh-client-ui-conversation` 的 `GRgSLq_*` 族，全文见 `_probe/composer-css.txt`）**
 
-**令牌**：`.dsh-pi-box` → `border-l3` + `radius-lg` + `bg-layer-1`，聚焦时边框转 `state-business-primary`；`.dsh-pi-ta` → `label-primary` + `font-s-14-font-size` + `--dsh-content-font-delta`；占位符 `label-dimmed`；`.dsh-pi-widget-body` → `border-l2` + `radius-sm` + `bg-layer-2` + `label-secondary` + `font-xxxs-11-*` + `--ds-font-family-code`；`.dsh-pi-statusbar` → `font-xxxs-11-*` + `label-caption`。
+composer 自 0.6.2 起整体换成宿主主对话区的语言：卡面、圆形 `+`、模型与推理档位两个 picker、右侧圆形发送键、卡下方统计行。0.4.x 那个「带描边的多行盒子 + 四个文字按钮」已经不存在，本轮只保留它的缩略图部分。
+
+**令牌**：
+
+- `.dsh-pi-box` → `--dsw-radius-panel`（28px）+ `--dsw-specific-input-major` 底 + `--dsw-elevation-soft` 投影；`:focus-within` 只局部覆盖 `--dsw-elevation-stroke-color`
+- `.dsh-pi-ta` → `label-primary` + `font-s-14-font-size` + `--dsh-content-font-delta`，`caret-color:state-business-primary`；占位符 `label-caption`
+- `.dsh-pi-add` → `specific-selector` 底 + `label-primary`，hover `interactive-bg-hover-solid`
+- `.dsh-pi-picker` → `label-secondary` + `font-xs-13-*`（weight 500），hover `interactive-bg-hover-solid`
+- `.dsh-pi-send` → `button-info-fill` 底 + `label-primary-foreground`，hover `button-info-hover`，`:disabled` opacity .4
+- `.dsh-pi-stop` → `interactive-bg-hover-solid` 底 + `label-primary`，hover `interactive-bg-hover-danger`
+- `.dsh-pi-widget-body` → `border-l2` + `radius-sm` + `bg-layer-2` + `label-secondary` + `font-xxxs-11-*` + `--ds-font-family-code`
+- `.dsh-pi-statusbar` → `font-xxxs-11-*` + `label-caption`
+- `.dsh-pi-thumb` → 内描边 `border-l3`；`.dsh-pi-thumb-x` → `bg-mask-1` + `static-neutral-bluish-00`
 
 **几何**：
 
 | 元素 | 值 |
 | --- | --- |
-| `.dsh-pi-composer` | `padding:8px 12px 12px`，`background:bg-base`（与消息区同色，靠间距分隔而非色差） |
-| `.dsh-pi-box` | `border:.5px solid border-l3`、`radius-lg`（16px）、`background:bg-layer-1` |
-| `.dsh-pi-ta` | `min-height:52px`、`max-height:220px`、`border:0`、`outline:0`、`resize` 未设（默认 none 于 textarea 内联场景） |
+| `.dsh-pi-composer` | `padding:0 12px 4px`、`background:bg-base`、`column` + `align-items:center`（卡与 dock 同宽同心） |
+| `.dsh-pi-composer-inner` | `column` + `gap:6px`、`width:100%` |
+| `.dsh-pi-box` | `border:0`、`radius-panel`（28px）、`gap:12px`、`padding-top:8px`、soft 投影、`transition:box-shadow .16s` |
+| `.dsh-pi-ta` | `min-height:52px`、`max-height:220px`、`border:0`、`outline:0`、`padding:4px 8px 0 14px` |
+| `.dsh-pi-bar` | `flex-wrap` + `gap:12px` + `padding:2px 8px 6px`；左 `.dsh-pi-bar-actions`（`gap:8px`、`flex:0 1 auto`）、右 `.dsh-pi-bar-right`（`flex:1 1 auto` + `justify-content:flex-end`） |
+| `.dsh-pi-add` | `28px × 28px`、`999px` |
+| `.dsh-pi-picker` / `-wrap` | `height:28px`、`max-width:220px`、`radius-sm` |
+| `.dsh-pi-picker-native` | `position:absolute`、`inset:0`、`opacity:0`（原生 `<select>` 叠在自绘外壳上，交互与键盘可达性交给系统） |
+| `.dsh-pi-send` / `.dsh-pi-stop` | `34px × 34px`、`999px`、`translateY(-2px)`，同一位置互斥显示 |
 | `.dsh-pi-widget-body` | `max-height:120px`、可滚动 |
 | `.dsh-pi-thumb` | `52px × 52px`、`radius-sm`、内描边 `border-l3` |
-| `.dsh-pi-thumb-x` | `16px × 16px`、`radius-xs`、`bg-mask-1` 底 + `static-neutral-bluish-00` 叉号 |
+| `.dsh-pi-thumb-x` | `16px × 16px`、`radius-xs` |
 
-**状态**：输入框聚焦有**两条通道**——`:focus-within`（`:462`）与 `[data-focus="1"]`（`:463`），两者都把边框改成 `state-business-primary`。双通道是刻意的冗余：`:focus-within` 在部分浏览器/嵌套结构下对内部 textarea 不触发（见附录 C 待确认 2），`data-focus` 由 React 侧显式维护。
+**状态**：聚焦只有**一条通道** —— `client.js:599` 的 `.dsh-pi-box:focus-within{--dsw-elevation-stroke-color:var(--dsw-alias-state-business-primary)}`：把 elevation 的描边层换成品牌色，投影保留。0.4–0.6.1 曾并行一条 `[data-focus="1"]` 通道，0.6.2 换成 elevation 表达后已删除（全文件 grep `data-focus` 命中 0，旧文档的双通道描述作废）。卡内按钮各自有 hover / `:disabled` / `[data-open="1"]` 三态。
 
 **差异**：
 
-1. **DSH 的 `._wrap_14sgc_1` 是 32px 高的单行搜索框**（`height:32px`、`border-l4`、`radius-md`、`bg-layer-1`），dsh-pi 的 `.dsh-pi-box` 是多行输入外壳（`radius-lg`、`border-l3`）。两者不是同一个组件，只共享 `:focus-within → state-business-primary` 这个交互配方。
-2. **dsh-pi 的搜索框（`.dsh-pi-search`）才对应 DSH 的 `._wrap_14sgc_1`**，但参数不同：dsh-pi 28px 高 / `radius-sm` / `bg-layer-3` / `border-l4`；DSH 32px / `radius-md` / `bg-layer-1` / `border-l4`。同族不同档。
-3. **`_editor_61ozo_1` 是 DSH 的多行编辑器**（`flex:1 1 auto`、`box-sizing:border-box`），dsh-pi 的 `.dsh-pi-ta` 用 `min-height` / `max-height` 而不是 flex 拉伸。面板高度固定，不需要自适应。
-4. **缩略图尺寸有据**：52px 是 DSH 附件缩略图的常见档，但 `index-lh_YM6sT.css` 里没有可直接对应的类（见附录 C）。
+1. **卡面与宿主同源**：`.dsh-pi-box` 与宿主 `._card`（`GRgSLq_card`）逐项同值 —— `radius-panel` + `specific-input-major` + `elevation-soft` + `gap:12px` + `padding-top:8px`。差别只在宿主把 composer 拆成更多子组件，我们用一层 `-inner` 收口。
+2. **三个圆钮与宿主同值**：`.dsh-pi-add` / `-picker` / `-send` 对宿主 `._add` / `._select` / `._primary`，尺寸 28 / 28 / 34 全同。唯一实质差异是发送键前景：宿主硬写 `#fff`，我们走 `label-primary-foreground` 令牌（门禁禁止硬色值）。
+3. **`.dsh-pi-search` 才属于 `._wrap_14sgc_1` 那一族**，参数不同：dsh-pi 28px / `radius-sm` / `bg-layer-3` / `border-l4`；DSH 32px / `radius-md` / `bg-layer-1` / `border-l4`。同族不同档。
+4. **`.dsh-pi-ta` 用 `min-height` / `max-height` 而不是 flex 拉伸**：面板高度固定，不需要 `_editor_61ozo_1` 那种自适应。
+5. **缩略图尺寸仍无据**：52px 无法在 `index-lh_YM6sT.css` 的 748 条规则里溯源（见附录 C 待确认 4）。
 
 ### 4.9 弹出菜单
 
@@ -525,7 +568,7 @@ tone 色的实现统一用 `color-mix(in srgb, <state-color> N%, transparent)`�
 
 **这是整套组件里唯一没有 DSH 直接对标物的一处**。`index-lh_YM6sT.css` 里的 `._pane_3oazc_211` 与 `._surface_3oazc_127` 只提供容器骨架（flex + min-height:0 + overflow），没有任何「抽屉外观」的类。DSH 的抽屉由应用层自己组合。所以 `.dsh-pi-sheet` 的配色配方是从多处借的：`bg-base` + `border-l2` 分隔 + `-sess` 卡的 `bg-layer-1` 到 `bg-layer-2` 的 hover 升级。
 
-`client.js:500` 的注释说「DSH `._float` 的配方：bg-layer-2 + radius-panel + elevation-prominent + 局部描边色」，但实际渲染用的是 `bg-base` 铺满。注释与实现不一致——见附录 B 的 D-06。
+`client.js:674` 的注释说「DSH `._float` 的配方：bg-layer-2 + radius-panel + elevation-prominent + 局部描边色」，但实际渲染用的是 `bg-base` 铺满。注释与实现不一致——见附录 B 的 D-06。
 
 **状态**：抽屉本身无状态；内部卡片有默认 / hover / `data-current` / `data-clickable` / `data-leaf` 五态；搜索框有聚焦 / 占位符两态。
 
@@ -533,7 +576,7 @@ tone 色的实现统一用 `color-mix(in srgb, <state-color> N%, transparent)`�
 
 1. **无 DSH 对标物**（见上）。判定依据只能到「令牌全部合法」这一层，不能宣称「与 DSH 某组件一致」。
 2. **`.dsh-pi-sess` 的 hover 同时改底色与描边色**（`bg-layer-1 → bg-layer-2`、`border-l2 → border-l4`），这需要两条令牌同时移动。DSH 的 `._item_1p5el_105` hover 只改底色。dsh-pi 的做法信息量更大，属可接受的扩展。
-3. **注释与实现不一致**（`client.js:500`，见上）。
+3. **注释与实现不一致**（`client.js:674`，见上）。
 
 ### 4.11 开关
 
@@ -541,7 +584,7 @@ tone 色的实现统一用 `color-mix(in srgb, <state-color> N%, transparent)`�
 
 **令牌**：`.dsh-pi-switch` → `border-l3`（关闭底）、`brand-primary`（开启底）；`.dsh-pi-switch-thumb` → `label-primary-foreground`（开启滑块）、`switch-thumb`（关闭滑块）。
 
-**几何与状态逐条对照**（`client.js:527-534` vs DSH 原文）：
+**几何与状态逐条对照**（`client.js:707-714` vs DSH 原文）：
 
 | 属性 | dsh-pi | DSH `._switch_1ik0f_5` | 判定 |
 | --- | --- | --- | --- |
@@ -560,12 +603,12 @@ tone 色的实现统一用 `color-mix(in srgb, <state-color> N%, transparent)`�
 
 十一项一致、一项差异。这是全套组件里对齐程度最高的一处。**唯一差异**是 dsh-pi 的胶囊多了 `transition:background-color .16s ease`，DSH 的开关底色是瞬变。加上过渡在观感上更柔和，但也意味着关闭瞬间有一帧中间色。
 
-**状态**：`role="switch"` + `aria-checked` + `aria-labelledby`，React 侧用 `id="dsh-pi-sw-<key>"` 关联标签。`SettingsSheet`（`client.js:2248-2268`）里只有 `autoCompaction` 与 `autoRetry` 两个真开关；`steeringMode` 与 `followUpMode` 仍是 `.dsh-pi-btn` 文字按钮（`client.js:2261-2266`），与 DSH 的 `._toggle_jrv99_5` 同族但不是开关形态。
+**状态**：`role="switch"` + `aria-checked` + `aria-labelledby`，React 侧用 `id="dsh-pi-sw-<key>"` 关联标签。`SettingsSheet`（`client.js:3601-3628`）里只有 `autoCompaction` 与 `autoRetry` 两个真开关（`client.js:3619` / `:3620`）；`steeringMode` 与 `followUpMode` 仍是 `.dsh-pi-btn` 文字按钮（`client.js:3622-3626`），与 DSH 的 `._toggle_jrv99_5` 同族但不是开关形态。
 
 **差异**：
 
 1. 胶囊过渡（见上）。
-2. **四个设置项只有两个是开关**。注释 `client.js:2244` 说「开关对齐 DSH 的 `._switch_1ik0f_5`（36x20 胶囊 + 16px 滑块），不再是文字按钮」，但实际只改了两个。另外两个是双值枚举（`one-at-a-time` / `all`），做成开关语义不成立（不是布尔），保持文字按钮是对的；但注释的措辞会让人误以为四项都改了。
+2. **四个设置项只有两个是开关**。注释 `client.js:3604` 说「开关对齐 DSH 的 `._switch_1ik0f_5`（36x20 胶囊 + 16px 滑块），不再是文字按钮」，但实际只改了两个。另外两个是双值枚举（`one-at-a-time` / `all`），做成开关语义不成立（不是布尔），保持文字按钮是对的；但注释的措辞会让人误以为四项都改了。
 
 ### 4.12 对话框
 
@@ -589,7 +632,7 @@ tone 色的实现统一用 `color-mix(in srgb, <state-color> N%, transparent)`�
 **入场动画逐帧对照**：
 
 ```css
-@keyframes dsh-pi-modal-in{0%{opacity:0}to{opacity:1}}          /* client.js:569 */
+@keyframes dsh-pi-modal-in{0%{opacity:0}to{opacity:1}}          /* client.js:749 */
 @keyframes _modalEnter_14mp3_1{0%{opacity:0}to{opacity:1}}      /* DSH 原文 */
 ```
 
@@ -606,27 +649,28 @@ tone 色的实现统一用 `color-mix(in srgb, <state-color> N%, transparent)`�
 
 > 目录选择器（`DirSheet`）的规格单独放在第 6 章，因为它的交互复杂度远超一般组件，且它是本次改造的核心。
 
-
 ---
 
 ## 5 现状 → 目标映射表
 
-逐类列出 CSS 数组里的全部 **114** 个 `.dsh-pi-*`（脚本 `matchAll(/\.dsh-pi-([a-zA-Z0-9-]+)/g)` 去重得到）。判定分四档：
+逐类列出 CSS 数组里的全部 **148** 个 `.dsh-pi-*`（脚本 `matchAll(/\.dsh-pi-([a-zA-Z0-9-]+)/g)` 去重得到）。判定分四档：
 
 | 判定 | 数量 | 判据 |
 | --- | --- | --- |
-| **A 已对齐** | 20 | 有明确 DSH 依据，且几何与令牌逐值一致（差异只在可忽略的个别值） |
-| **B 近似** | 31 | 有同族 DSH 组件，但尺寸档、描边色、阴影级或结构不同 |
-| **C 无对应物** | 61 | DSH 里没有该组件（纯布局类，或面板专有语义），只能保证令牌合法 |
+| **A 已对齐** | 32 | 有明确 DSH 依据，且几何与令牌逐值一致（差异只在可忽略的个别值） |
+| **B 近似** | 45 | 有同族 DSH 组件，但尺寸档、描边色、阴影级或结构不同 |
+| **C 无对应物** | 69 | DSH 里没有该组件（纯布局类，或面板专有语义），只能保证令牌合法 |
 | **D 待确认** | 2 | 引用的 DSH 依据需重采探针才能断言 |
-| 合计 | 114 | — |
+| 合计 | 148 | — |
 
-四档之和 20 + 31 + 61 + 2 = 114，与实测类数完全吻合，无遗漏无重复。
+四档之和 32 + 45 + 69 + 2 = 148，与实测类数完全吻合，无遗漏无重复。
 
-### 5.1 A 档：已对齐（20）
+### 5.1 A 档：已对齐（32）
 
 | `.dsh-pi-*` | DSH 依据 | 依据说明 |
 | --- | --- | --- |
+| `add` | Composer `._add`（`GRgSLq_add`） | 28×28 / `999px` / `specific-selector` 底 / `label-primary` / hover `interactive-bg-hover-solid` / `:disabled` opacity .5 六项同；DSH 多一条 `corner-shape:round` |
+| `add-item` | `._item_1p5el_105`（菜单项） | `min-height:34px` / `6px 8px` / `radius-md` / 13px-20px / hover `interactive-bg-hover` 五项同（`gap:10px` 是两列布局所需） |
 | `btn-primary` | `._primary_1ulci_36` | `button-primary-fill` + `label-primary-foreground` + hover `button-primary-hover`，三项全同 |
 | `bubble-user` | `._bubble_1sgyj_1` | `radius-xl` / `10px 16px` / `specific-bubble` / 行高 `calc(22px + delta)` 逐值同；仅 `max-width` 82% vs 100% |
 | `chip` | `._tag_brmue_4` | `1px 8px` / `999px` / `corner-shape:round` / 11px / weight 500 逐项同 |
@@ -642,19 +686,36 @@ tone 色的实现统一用 `color-mix(in srgb, <state-color> N%, transparent)`�
 | `fence` | `._card_1mqf1_1` | `margin:16px 0` / `radius-lg` / `markdown-code-block` / `font-markdown-code-block` 四项全同 |
 | `fence-lang` | `._header_1mqf1_10` | `padding:10px 18px 8px 22px` 逐值同；字体 11px/18px 比例字体 vs 11px/14px + `font-family` |
 | `item` | `._item_1p5el_105` | `min-height:34px` / `6px 8px` / `radius-md` / 13px-20px / hover 底色 五项全同 |
+| `picker` | Composer `._select`（`GRgSLq_select`） | `height:28px` / `radius-sm` / `max-width:220px` / 13px-500 / `label-secondary` 五项同；hover 用 `interactive-bg-hover-solid`（DSH 是 `-hover`） |
 | `pre` | `._body_1mqf1_81` | `padding:6px 22px 20px` 逐值同 |
+| `proc` | `._root_l4nv8_9`（过程行根） | 两边都是**内容无壳**：无描边、无圆角、无底色、无阴影（`border:0;border-radius:0;background:transparent;box-shadow:none`） |
+| `proc-head` | `._row_l4nv8_26` + `._title_l4nv8_104` | 行高 24px（`calc(24px + delta)`）/ 字号 `--dsh-content-font-size-secondary`(13px) / `label-tertiary` / hover 转 `label-primary` 四项同；DSH 给 `height`，我们给 `line-height` + flex 居中，视觉同高 |
+| `proc-icon` | `._leading_l4nv8_52` | 16×16 图标框 / `flex:none` / `label-tertiary` 三项同；DSH `margin-right:6px`，我们 7px |
+| `proc-label` | `._title_l4nv8_104` | 13px 继承 / `label-tertiary` / `white-space:nowrap` 三项同 |
+| `proc-text` | `._row_l4nv8_26`（`color:inherit` 那一侧） | `flex:1 1 auto` / `min-width:0` / `text-overflow:ellipsis` / `label-tertiary` 四项同 |
 | `root` | 全 DSH 组件的 `:focus-visible` + `var(…, fallback)` 手法 | `bg-base` / `font-family` / `font-s-14` 基线 + 重绑 `--dsw-focus-ring-color`（DSH 默认 `transparent`） |
+| `send` | Composer `._primary`（`GRgSLq_primary`） | 34×34 / `999px` / `button-info-fill` / hover `button-info-hover` / `:disabled` opacity .4 / `translateY(-2px)` / `.1s` 七项同；DSH 前景硬写 `#fff`，我们走 `label-primary-foreground` 令牌 |
 | `switch` | `._switch_1ik0f_5` | 36×20 / `padding:2px` / `999px` / `corner-shape:round` / `border-l3` / `brand-primary` / `opacity:.5` 七项全同；多一条 `transition:background-color .16s` |
 | `switch-thumb` | `._thumb_1ik0f_33` | 16×16 / 50% / `label-primary-foreground` / `.12s ease` / `switch-thumb` / `translate(16px)` 六项全同 |
 | `tag` | `._tag_brmue_4` | 同 chip；tone 只有 4 种 vs DSH 8 种，但所用四色与 10% / 12% 全部对得上 |
+| `working` | `ChatView ._running`（`dsh-client-ui-chat`） | 上 hairline `.5px` + `padding-top:10px` + `label-deep-diving` + `font-size:calc(var(--dsh-content-font-size) - 2px)` + `line-height:calc(22px + delta)` 五项同 |
+| `working-icon` | `._runningIcon` | 14×14 / `flex:none` / `overflow:hidden` 三项同；DSH 是 APNG 蒙版 + `background:currentColor`，我们 16 网格静态 SVG（`WhaleTailIcon`） |
+| `working-text` | `._runningText` | `font-variant-numeric:tabular-nums` / `min-width:0` / 省略号 三项同 |
 
-这 20 个类是本轮改造的主要成果。判定「已对齐」的门槛是：**几何与令牌都能逐值指到 DSH 原文的某一条规则**，而不是「看起来像」。其中 `-switch` 与 `-switch-thumb` 十二项里有十一项逐字相同（唯一差异见 4.11）；`-fence` / `-fence-lang` / `-pre` 的三个 padding 与 DSH 逐值相同；`-dir-dialog` 的 680×500 与 picker 的 `_dialog` 相同。
+这 32 个类是本轮改造的主要成果。判定「已对齐」的门槛是：**几何与令牌都能逐值指到 DSH 原文的某一条规则**，而不是「看起来像」。其中 `-switch` 与 `-switch-thumb` 十二项里有十一项逐字相同（唯一差异见 4.11）；`-fence` / `-fence-lang` / `-pre` 的三个 padding 与 DSH 逐值相同；`-dir-dialog` 的 680×500 与 picker 的 `_dialog` 相同。
 
-### 5.2 B 档：近似（31）
+### 5.2 B 档：近似（45）
 
 | `.dsh-pi-*` | DSH 依据 | 差在哪 |
 | --- | --- | --- |
+| `add-desc` | `._shortcutKeys_1p5el_221` | 同承担「右侧次要信息」；DSH 11px/16px + `label-caption`，dsh-pi 11px/16px 但用 `label-tertiary`（比 caption 重一档） |
+| `add-icon` | `._itemIcon_1p5el_165` | 同为菜单项图标框 + `label-secondary`；DSH 14×14 + `menu-icon`，dsh-pi 20×20 |
+| `add-key` | `._shortcutKeys_1p5el_221` | 同「英文键名」11px；DSH 比例字体 + `label-caption`，dsh-pi 等宽字族 + `label-caption` |
+| `add-label` | `._itemLabel_1p5el_208` | 同承担主标签；dsh-pi 拆成 `add-label`（不缩）+ `add-key`（可缩）两段，DSH 是单段 `flex:1` |
+| `add-text` | `._itemLabel_1p5el_208` | 同为主标签容器；dsh-pi 用 `baseline` 对齐把键名与说明并排，DSH 把快捷键推到行尾 |
 | `alert` | `color-mix` 手法同 `._tag_brmue_4` | DSH 无 alert 组件；底罩色用 `color-mix(state-error 10%)`，与 tag 的 danger 档同一手法 |
+| `bar-actions` | Composer `._tools` / `._modes` | 同为左组 `align-items:center` + `gap`；DSH `gap:12px`，dsh-pi `gap:8px` |
+| `bar-right` | Composer `._trailing` | 同为右组 + `margin-left:auto`；DSH `flex:none`，dsh-pi `flex:1 1 auto` + `justify-content:flex-end` |
 | `box` | `._wrap_14sgc_1:focus-within` | 共享 `:focus-within → state-business-primary` 配方；尺寸档不同（多行外壳 vs 32px 单行） |
 | `btn` | `._button_1ulci_2` + `._sm_1ulci_28` + `._outline_1ulci_56` | 28px / `radius-sm` / `0 10px` / hairline 内描边一致；描边色 `border-l4` vs `border-l3`，无 `_md` 36px 档 |
 | `btn-danger` | `._button_1ulci_2` 变体族 | DSH 无 `_danger`；`state-error-primary` 文本 + `interactive-bg-hover-danger` 底，语义色取值一致 |
@@ -662,6 +723,7 @@ tone 色的实现统一用 `color-mix(in srgb, <state-color> N%, transparent)`�
 | `btn-icon` | `._button_1ulci_2` | `width:28px` 正方，DSH 无 icon 变体 |
 | `dialog-actions` | `._dialog_14mp3_33` footer | `padding:22px 24px 24px` vs DSH 的 `gap:20px` + `padding:0 0 24px` |
 | `dialog-body` | `._dialog_14mp3_33` 内容区 | `padding:14px 24px 0` vs DSH 的 `gap` |
+| `dialog-head` | `._dialog_14mp3_33` 头部 | `padding:22px … 0 24px` 同族；DSH `22px 14px 12px 24px`（带下边距），dsh-pi 下边距移到 body |
 | `dialog-msg` | `._dialog_14mp3_33` 内容区 | `--dsh-content-font-size` + `calc(22px + delta)` 与 DSH 气泡同法；DSH 对话框正文无独立类 |
 | `dir-crumbs` | picker `_crumbBar` | `flex` + `gap` + `flex-wrap` 同；DSH `min-height:24px` + `margin-left:-9px`，dsh-pi `min-height:20px` 无负 margin |
 | `dir-foot` | picker `_footerBar` | `flex` + `gap` + `flex-wrap` 同；DSH `border-top:.5px` + `padding:16px 24px`，dsh-pi 无分隔线 |
@@ -672,26 +734,33 @@ tone 色的实现统一用 `color-mix(in srgb, <state-color> N%, transparent)`�
 | `dot` | `._dot_1i3xo_2` | 同用四状态色；DSH 是空 span + `:after{inset:20%;background:currentColor}`，dsh-pi 是 7px 实心圆写 `background`；状态名不同 |
 | `empty` | `._empty_1j4y1_104` | `label-secondary` 同；dsh-pi 是整页空态（`padding:48px 24px` + 标题 + 引导），DSH 的 empty 只是行内文本 |
 | `empty-row` | `._empty_1j4y1_104` | 同族「无内容」行；DSH 13px + `label-secondary`，dsh-pi 12px + `label-dimmed`（更次要） |
+| `fileref` | `MessageItem ._fileCard`（`LOmM4q_fileCard`） | 同为「文件」可点块：`radius` + 内 hairline + `specific-input-major` 同族底；DSH 是 240px 定宽卡片 + `radius-lg` + `border-l2`，dsh-pi 是行内 chip + `radius-sm` + `border-l3` |
+| `fileref-name` | `._fileName`（`LOmM4q`） | 同为文件名 + 省略号；DSH 14px，dsh-pi 11px 等宽（行内 chip 需要更小的字面） |
 | `gate-card` | `._card_u7vgf_24` | 同族「居中卡片」；DSH `flex column` + `gap:16px` 无阴影，dsh-pi `padding:20px` + `elevation-panel` |
 | `item-name` | `._itemLabel_1p5el_208` | 同承担「主名 + 省略号」；DSH 比例字体 + `text-overflow`，dsh-pi 等宽 |
 | `menu` | `._list_1p5el_7` | `padding:4px` + `border-l1` 描边覆盖 同；阴影 dsh-pi `elevation-panel` vs DSH `elevation-prominent` |
+| `menu-add` | `._list_1p5el_7` 的定位族 | 同族弹出层；DSH 由浮层自算位置，dsh-pi 贴 `left:0` 且加宽到 288px（两列布局所需） |
 | `menu-head` | `._label_1p5el_146` | `11px` / `label-tertiary` / `6px 8px` 同；行高 14px vs 15px |
+| `menu-section` | `._label_1p5el_146` | 同「分组标题」11px + `label-caption`；DSH `padding:6px 8px` + 行高 15px，dsh-pi `8px 8px 4px` + 行高 16px |
 | `mini-ta` | `._input_14sgc_25` | 同族输入控件；DSH 单行无边框，dsh-pi 多行 + `min-height:84px` + `border-l4` |
 | `notice` | `color-mix` 手法同 `._tag_brmue_4` | 三 tone 用 10% / 12% / 10%；DSH 无 notice 组件 |
 | `opt` | `._item_1p5el_105` 同族 | `min-height:34px` / `radius-md` / 13px 同；DSH item 底透明，dsh-pi `bg-layer-3` 实底 + `[data-active]` 内描边 |
+| `picker-native` | Composer `._select`（原生 select 那条路径） | 同为「原生控件承接交互」；DSH 用自绘浮层，dsh-pi 用透明 `<select>` 覆盖（`opacity:0` + `inset:0`），外观由 `picker-wrap` 表达 |
+| `picker-wrap` | Composer `._select` | 尺寸档与令牌同 `picker`；DSH 是单个 `select`，dsh-pi 是「外观层 + 原生控件」两层 |
+| `proc-body` | `._body_jrv99_22`（过程展开区） | 同族展开区：左 `border-l3` 竖线 + 缩进；DSH 竖线 2px + `markdown-code-block` 底，dsh-pi 1px 无底 |
 | `search` | `._wrap_14sgc_1` | `border-l4` 同；28px / `radius-sm` / `bg-layer-3` vs 32px / `radius-md` / `bg-layer-1` |
-| `select` | `._wrap_14sgc_1` 同族 | 同参数族偏差；DSH 无 select 组件 |
+| `stop` | Composer `._primary[data-sending]` | 同位置换成「停止」语义；DSH 保持 `button-info-fill` 底 + spinner，dsh-pi 换 `interactive-bg-hover-solid` 底 + `StopSquareIcon` |
 | `ta` | `._input_14sgc_25` | 同族输入控件；DSH 无边框 14px/22px，dsh-pi 加 `min-height:52px` / `max-height:220px` |
-| `think` | `._toggle_jrv99_5` | 同族「过程信息」；DSH 是按钮 + 展开 body，dsh-pi 是左侧 2px 竖线块 |
 | `tool-body` | `._body_jrv99_22` | 同族展开区；DSH 有 `markdown-code-block` 底 + `border-l1` 描边，dsh-pi 只有左侧 `border-l3` + `max-height:340px` |
 | `widget-body` | `._body_jrv99_22` 同族 | 等宽 11px + 可滚动；dsh-pi 无极底色、无描边、`max-height:120px` |
 
 B 档的共同特征是「同族不同档」：要么尺寸差一档（28 vs 32、30 vs 28、440 vs 380），要么描边色差一级（`border-l4` vs `border-l3`），要么阴影差一级（`elevation-panel` vs `elevation-prominent`），要么结构不同（DSH 用按钮 + body，dsh-pi 用左侧竖线块）。**这些都不是错，但都不该被描述成「一致」。**
 
-### 5.3 C 档：无对应物（61）
+### 5.3 C 档：无对应物（69）
 
 | `.dsh-pi-*` | DSH 依据 | 说明 |
 | --- | --- | --- |
+| `add-wrap` | — | `position:relative` + `display:flex`，纯定位容器（给 `menu-add` 当锚点） |
 | `bar` | — | 布局行：`flex` + `gap` |
 | `bar-hint` | — | 11px + `label-caption`，DSH 无可对标 |
 | `body` | — | 消息正文容器，纯布局 |
@@ -706,6 +775,8 @@ B 档的共同特征是「同族不同档」：要么尺寸差一档（28 vs 32�
 | `dir-target` | — | 等宽 11px + `label-caption`，DSH 页脚无目标路径文本 |
 | `empty-actions` | — | 0.4.x 新增的工作区入口按钮行，DSH 空态无对应结构 |
 | `empty-meta` | — | 等宽 12px + `label-caption`，面板专有 |
+| `fileref-block` | — | 「围栏里整块只有一条路径」形态的外壳：`margin:8px 0` + `line-height:26px` |
+| `fileref-dir` | — | chip 里的目录尾巴，`label-tertiary`；0.6.1 起默认不渲染，保留类以防回退 |
 | `gate` | — | 运行时门禁整页，面板专有 |
 | `gate-actions` | — | 按钮行，纯布局 |
 | `gate-path` | — | 等宽 11px + `label-tertiary`，面板专有 |
@@ -723,12 +794,18 @@ B 档的共同特征是「同族不同档」：要么尺寸差一档（28 vs 32�
 | `kv-v` | — | `label-primary` 值，面板专有 |
 | `menu-list` | — | 滚动容器，纯布局 |
 | `mono` | — | 等宽 11px + `label-tertiary`，面板专有 |
+| `picker-label` | — | 外观层的文本槽，`pointer-events:none`（点击要落到原生 select） |
+| `picker-name` | — | `picker` 里模型名那一格，纯排版 |
+| `proc-note` | — | 过程行右侧注脚（`tabular-nums` + 三 tone），DSH 的对应信息在 `RunningStatus` 里，没有独立类 |
+| `proc-path` | — | 过程行里可点的路径（`underline 1px dotted` + `text-underline-offset:3px`），DSH 无同类 |
+| `proj` | — | 项目层行，样式与 `sess` 完全一致（只差 `[data-temporary="1"]` 时标题转 `label-secondary`），DSH 无会话/项目卡组件 |
 | `prose` | — | markdown 正文容器，`--dsh-content-font-size` + `calc(24px + delta)`；DSH 由 markdown 渲染层控制，不在 `index-lh_YM6sT.css` |
 | `queue` | — | 排队消息提示，面板专有 |
 | `row` | — | 消息行，纯布局 |
 | `row-user` | — | 用户消息对齐，纯布局 |
 | `row2` | — | 两列输入行，纯布局 |
 | `scroll` | — | 滚动容器（重绑 `--dsh-scrollbar-thumb`），面板专有 |
+| `sep` | — | 父行里的 2×2 中点（`label-caption`，running 时转品牌色 + 脉冲）。DSH 用文字 `·` 拼，不是元素 |
 | `sess` | — | 会话卡，`bg-layer-1` + 内描边 `border-l2`，DSH 无对应组件 |
 | `sess-line` | — | 会话卡副行 |
 | `sess-title` | — | 会话卡标题 |
@@ -740,13 +817,12 @@ B 档的共同特征是「同族不同档」：要么尺寸差一档（28 vs 32�
 | `spacer` | — | `flex:1 1 auto`，通用布局 |
 | `sr` | — | `clip:rect(0,0,0,0)`，通用 a11y 类，不需要 DSH 依据 |
 | `statusbar` | — | 11px + `label-caption`，面板专有 |
+| `sub` | — | 子行组：`margin-left:22px` 让左侧 1px 竖线落在父行图标框左缘 + `padding-left:8px` |
 | `switch-label` | — | `font-s-14` + `label-primary`，DSH 开关无标签类 |
 | `switch-row` | — | `grid 1fr auto` + `gap:12px`，面板专有布局 |
-| `think-body` | — | `calc(22px + delta)`，面板专有 |
 | `thumb-x` | — | 16×16 / `radius-xs` / `bg-mask-1` + `static-neutral-bluish-00` |
-| `tool` | — | 平铺行（无框无底无阴影），`client.js:415-420` 注释说明理由；DSH 无可对标 |
+| `tool` | — | 平铺行（无框无底无阴影），`client.js:513-520` 注释说明理由（「框套框的噪音墙」在 `:518`）；DSH 无可对标 |
 | `tool-head` | — | `::before` 三角 `\25B8` + `[open]` 旋转，面板专有 |
-| `tool-name` | — | 等宽工具名，面板专有 |
 | `tree` | — | 等宽 `font-xxs-12-font-size`，DSH 无树组件 |
 | `tree-kind` | — | `label-caption` + `min-width:56px` |
 | `tree-node` | — | `radius-sm` + hover，DSH 无树组件 |
@@ -754,9 +830,9 @@ B 档的共同特征是「同族不同档」：要么尺寸差一档（28 vs 32�
 | `usage` | — | `tabular-nums`，面板专有 |
 | `widget` | — | 状态 widget 容器 |
 
-61 个类占全部类的 53.5%。这个比例本身是个重要结论：**dsh-pi 的界面一半以上在 DSH 设计系统里没有对应组件。** 这不是缺陷——面板要做的事（会话卡、token 用量、工具行、目录树、运行时门禁）本就不在 DSH 的组件集里。对它们能做的保证只有两条：
+69 个类占全部类的 46.6%（旧账 61/114 = 53.5%，0.6.x 补进来的 38 个新类里有 22 个能指到 DSH 依据，比例因此下降）。这个比例本身是个重要结论：**dsh-pi 的界面接近一半在 DSH 设计系统里没有对应组件。** 这不是缺陷——面板要做的事（会话卡、token 用量、工具行、目录树、运行时门禁）本就不在 DSH 的组件集里。对它们能做的保证只有两条：
 
-1. **令牌合法**（门禁第 2 条）：只用 `--dsw-*` 与 6 个白名单外部变量；
+1. **令牌合法**（门禁第 2 条）：只用 `--dsw-*` 与 7 个白名单外部变量；
 2. **无硬色值**（门禁第 1 条）：任何颜色都来自令牌，所以换主题时全会跟着变。
 
 不能做的保证是「与 DSH 某个组件视觉一致」——因为没有那个组件。
@@ -772,11 +848,11 @@ B 档的共同特征是「同族不同档」：要么尺寸差一档（28 vs 32�
 
 ### 5.5 与 m02100 原始假设的偏差
 
-m02100 说「现状 → 目标映射表（`client.js` :305-450）」。实际 CSS 数组区间是 **`:337` – `:586`**（192 段），不是 `:305-450`——那一段落在 i18n 表与工具函数之间，没有 CSS。
+m02100 说「现状 → 目标映射表（`client.js` :305-450）」。当前快照的 CSS 数组区间是 **`:443` – `:769`**（240 段），不是 `:305-450`——那一段落在 i18n 表与工具函数之间，没有 CSS。
 
-m02100 说「185 段 / 26978 字符 / 295 处 `var()` / 66 个唯一变量」。实测按当前快照是 **192 段 / 27903 字符 / 306 处 `var()` / 66 个唯一变量**。唯一变量数对得上，其余三项是版本差异（DirSheet 与「此电脑」层加入后规则变多）。
+m02100 说「185 段 / 26978 字符 / 295 处 `var()` / 66 个唯一变量」。当前快照实测 **240 段 / 35680 字符 / 356 次 `var(` 文本出现（门禁按顶层引用计 351 处）/ 74 个唯一变量**（`node test/css-tokens.mjs --report` 的汇总行印「令牌引用: 351 处 / 74 个唯一变量」，字节数与段数在同一块的前两行）。四项都变了：0.6.0–0.6.4 陆续加入文件标签、`CloseButton`、composer 卡面与 `+` 菜单、过程行与工作状态行，规则数与令牌面都扩大。`var(` 计数在 0.6.4 收尾时为 **356**（顶层 351 + 兜底嵌套 5）。
 
-m02100 说「令牌清单」时未指定范围。本文按**实际被引用的 63 个 `--dsw-*`** 收口，而不是照抄 `tokens.txt` 的 414 个——后者是 DSH 的全量令牌表，与 dsh-pi 无关。
+m02100 说「令牌清单」时未指定范围。本文按**实际被引用的 74 个令牌（含 7 个本地兜底令牌）** 收口，而不是照抄 `tokens.txt` 的 414 个——后者是 DSH 的全量令牌表，与 dsh-pi 无关。
 
 ---
 
@@ -821,28 +897,28 @@ DSH 自带 `@deepseek-ai/dsh-client-ui-directory-picker-browse`，源码在探�
 
 ### 6.3 dsh-pi 的 DirSheet 交互规格
 
-`DirSheet`（`client.js:1845-2135`）与纯函数 `dirPickModel`（`client.js:1814-1843`）。把数据模型单独抽成纯函数是为了让门禁能直接断言（`test/client-render.mjs` 有 7 组断言）。
+`DirSheet`（`client.js:3198-3496`）与纯函数 `dirPickModel`（`client.js:3167-3196`）。把数据模型单独抽成纯函数是为了让门禁能直接断言（`test/client-render.mjs` 的 9.13 / 9.14 / 9.15 三节共 40 条：SSR 首帧 15 条、Miller 分栏与采纳目标 14 条、「此电脑」层 11 条）。
 
 #### 6.3.1 三个入口
 
 | 入口 | 位置 | 渲染条件 | 形态 |
 | --- | --- | --- | --- |
-| 空态按钮 | `EmptyState` `client.js:1423-1429` | `typeof props.onPickDir === 'function'` | `.dsh-pi-empty-actions` > `.dsh-pi-btn`：`DirIcon(14)` + 文案 `pickDir`（「选择新的工作区」） |
-| 输入栏图标按钮 | `Composer` `client.js:1684` | 恒定 | `.dsh-pi-bar` 的第一个按钮（`-ghost` 变体），只有 `DirIcon(14)`，`title=pickDir` |
-| 抽屉挂载 | `client.js:3749-3755` | `drawer === 'dir'` | `DirSheet`，`startDir = meta.cwd || runtime.workspace`，`onPick = switchDir` |
+| 空态按钮 | `EmptyState` `client.js:2448-2459`（判据 `typeof props.onPickDir === 'function'` 在 `:2449`） | 有 `onPickDir` 才渲染 | `.dsh-pi-empty-actions` > `.dsh-pi-btn`：`DirIcon(14)` + 文案 `pickDir` |
+| `+` 菜单项 | `Composer` 的 `addItems` `client.js:2802-2813`，目录项在 `:2804` | 恒定 | `{ key: 'dir', label: pickDir, keyName: 'workspace', icon: DirIcon, run: props.onPickDir }`。**0.6.2 起不再占 `.dsh-pi-bar` 的独立按钮位**：那一行改成宿主的「圆形 `+` + 模型 picker + 推理档位 picker」，目录与附件都收进 `+` 菜单（`.dsh-pi-bar` 在 `:2868`，首个按钮 `.dsh-pi-add` 在 `:2875`） |
+| 弹窗挂载 | `client.js:5363-5369`（`var drawerNode` 在 `:5307`） | `drawer === 'dir'` | `DirSheet`，`startDir = activeCwd === '' ? runtime.workspace : activeCwd`，`onPick = switchDir` |
 
-挂载点在 `client.js:3770`（EmptyState）与 `client.js:3784`（Composer），都是 `onPickDir: function(){ setDrawer('dir') }`。
+挂载点在 `client.js:5384`（EmptyState）与 `client.js:5400`（Composer），都是 `onPickDir: function () { setDrawer('dir') }`。
 
 #### 6.3.2 初始状态
 
-`listingState` 的初值（`client.js:1840`）：
+`listingState` 的初值（`client.js:3200`）：
 
 ```js
 { loading: true, error: null, dir: props.startDir, parent: null,
   writable: true, entries: [], truncated: false, home: '', roots: [] }
 ```
 
-挂载后立刻 `useEffect(function(){ go(startDir) }, [])`（`client.js:1894`）。`go` 的四步（`client.js:1869-1892`）：
+挂载后立刻 `useEffect(function () { go(props.startDir === undefined ? '' : String(props.startDir)) }, [])`（`client.js:3254`）。`go` 的四步（`client.js:3229-3252`）：
 
 1. `setSelected(null)` + `setRootsView(false)`（回到普通层）；
 2. 把 `loading` 置真、保留其余字段（不闪白）；
@@ -856,7 +932,7 @@ div.dsh-pi-dialog-wrap
 └ div.dsh-pi-dir-dialog[role=dialog][aria-modal=true][aria-label=选择工作区]
   ├ div.dsh-pi-dir-head
   │ ├ div.dsh-pi-dir-title  选择工作区
-  │ └ button.dsh-pi-btn.dsh-pi-btn-ghost  ×
+  │ └ button.dsh-pi-btn.dsh-pi-btn-ghost.dsh-pi-btn-icon[title=关闭][aria-label=关闭]  (16px CloseIcon)
   └ div.dsh-pi-dir
     ├ div.dsh-pi-dir-crumbs  C: › Users › PC › pi-workspace  (只有末段 data-last=1)
     ├ div.dsh-pi-row2  [input 输入绝对路径后回车] [input 筛选]
@@ -881,24 +957,24 @@ div.dsh-pi-dialog-wrap
 | **S5 此电脑层** | 点「此电脑」入口 | 面包屑只剩一段「此电脑」；`col0` 列盘符（`data-drive=1`）+ 一条「上一级」 | **禁用**（`rootsView` 且无选中时 `target` 为 `null`） |
 | **S6 失败** | `api.directories` 抛错 | `col0`（或 `col1`）内 `.dsh-pi-alert` 显示 message；旧内容不消失 | 沿用 prev 的 `target` |
 
-S5 是 0.4.x 新增的、DSH picker 没有的层。存在的理由写在 `client.js:1863-1864`：Windows 上从工作目录一路往上只能走到当前盘的根，**别的盘的工程永远进不去**。所以 `index.js` 的 `/directories` 多返回一个 `roots` 数组，面板在「上一级 / 主目录」之后插一个「此电脑」入口。
+S5 是 0.4.x 新增的、DSH picker 没有的层。存在的理由写在两处注释（`client.js:3173-3174` 与 `:3223-3224`）：Windows 上从工作目录一路往上只能走到当前盘的根，**别的盘的工程永远进不去**。所以 `index.js` 的 `/directories` 多返回一个 `roots` 数组，面板在「上一级 / 主目录」之后插一个「此电脑」入口。
 
-`dirPickModel` 里专门为 S5 写了一条约束（`client.js:1817-1819`）：**此电脑层什么都没选时 `target` 必须是 `null`，不能回落到 `current`**，否则「用这个工作区」会把上一浏览层级当成目标。
+`dirPickModel` 里专门为 S5 写了一条约束（`client.js:3184-3186`，判定在 `:3186`）：**此电脑层什么都没选时 `target` 必须是 `null`，不能回落到 `current`**，否则「用这个工作区」会把上一浏览层级当成目标。
 
 #### 6.3.4 鼠标动作
 
 | 动作 | 落点 | 行为 | 代码 |
 | --- | --- | --- | --- |
-| 单击子目录 | `col0` 行 | `setDeep(null)` + `setSelected(path)` + `setTyped(path)`；触发 `col1` 加载 | `makeRow` `:1992-2014` |
-| 双击子目录 | 同上 | 清 `query` + `setDeep(null)` + `enter(path)`（直接进入该层，收起 `col1`） | 同上 |
-| 单击盘符 | 此电脑层行 | 同上（盘符有 `path`） | `:2028-2048` |
-| 双击盘符 | 同上 | 直接进入盘符根 | 同上 |
-| 点「上一级」 | `..` 行 | `enter(parent)` | `:2050-2057` |
-| 点「主目录」 | `~` 行 | `enter(home)` | `:2071-2078` |
-| 点「此电脑」 | 普通层入口 | `setDeep(null)` + `setSelected(null)` + `setRootsView(true)` | `:2059-2069` |
-| 点面包屑某段 | 头部 | 该段 `path` 为空或等于当前 `dir` 时 **无操作**，否则 `enter(path)` | `:1945-1966` |
+| 单击子目录 | `col0` 行 | `setDeep(null)` + `setSelected(path)` + `setTyped(path)`；触发 `col1` 加载 | `makeRow` `:3352-3374`（onClick `:3361-3365`） |
+| 双击子目录 | 同上 | 清 `query` + `setDeep(null)` + `enter(path)`（直接进入该层，收起 `col1`） | 同上（onDoubleClick `:3366-3370`） |
+| 单击盘符 | 此电脑层行 | 同上（盘符有 `path`） | 盘符分支 `:3388-3408`（`data-drive="1"` 在 `:3397`） |
+| 双击盘符 | 同上 | 直接进入盘符根 | 同上（onDoubleClick `:3402-3404`） |
+| 点「上一级」 | `..` 行 | `enter(parent)` | `:3411-3417`（用 `listing.parent`） |
+| 点「主目录」 | `~` 行 | `enter(home)` | `:3432-3438`（`listing.home !== listing.dir` 才渲染） |
+| 点「此电脑」 | 普通层入口 | `setDeep(null)` + `setSelected(null)` + `setRootsView(true)` | `:3422-3429`（`data-pc="1"` 在 `:3426`） |
+| 点面包屑某段 | 头部 | 该段 `path` 为空或等于当前 `dir` 时 **无操作**，否则 `enter(path)` | `pathCrumbs` `:3301`，渲染 `:3305-3326`（`data-last` `:3315`，同路径 return `:3319`） |
 
-双击的第二下必须把 `query` 清掉——否则进入新层时旧过滤词还在，用户会看到空列表。`client.js:2003` 的 `setQuery('')` 就是为这个。
+双击的第二下必须把 `query` 清掉——否则进入新层时旧过滤词还在，用户会看到空列表。`client.js:3367` 的 `setQuery('')` 就是为这个（`enter` 里另有一处，在 `:3257`）。
 
 #### 6.3.5 键盘动作
 
@@ -906,19 +982,19 @@ S5 是 0.4.x 新增的、DSH picker 没有的层。存在的理由写在 `client
 
 | 输入框 | 位置 | `Enter` | 其余键 |
 | --- | --- | --- | --- |
-| 绝对路径（`flex:1 1 auto`，占位符 `dirInputHint`） | `:1968-1976` | `enter(typed.trim())` | 普通文本输入 |
-| 筛选（`width:160px`，占位符 `filter`） | `:1978-1988` | 无绑定 | 驱动 `query`，实时过滤**最后一栏** |
+| 绝对路径（`flex:1 1 auto`，占位符 `dirInputHint`） | `:3328-3341`（与筛选同一个 `.dsh-pi-row2`） | `enter(typed.trim())`，空串不动作（`:3336-3340`） | 普通文本输入 |
+| 筛选（`width:160px`，占位符 `filter`） | `:3342-3348` | 无绑定 | 驱动 `query`（onChange `:3347`），实时过滤**最后一栏** |
 
-这是一个明确的缺口：DSH picker 同样没有方向键导航（`README.zh.md` 说无搜索、无多选），所以两边都只有鼠标路径。但对面板来说 `Esc` 关闭对话框是基本预期，当前只能点右上角 `×`。
+这也是一个缺口，但**不是只剩一条路**：0.6.1 起每个抽屉与弹窗的右上角都是统一的 `CloseButton`（`client.js:1973`，`.dsh-pi-btn-icon` + 16px `CloseIcon`，32×32 命中区），点它等价于取消。仍然缺的是键盘 `Esc`（无全局 keydown 监听）与方向键列表导航；DSH picker 同样没有方向键导航（`README.zh.md` 说无搜索、无多选），所以两边都只有鼠标路径。
 
 #### 6.3.6 过滤语义
 
-`dirPickModel` 的匹配（`client.js:1812-1815`）：
+`dirPickModel` 的匹配（`client.js:3179-3182`）：
 
 ```js
 var match = function (entry) {
   if (query === '') return true;
-  return String(entry.name || '').toLowerCase().indexOf(query) >= 0;
+  return String(entry.name === undefined ? '' : entry.name).toLowerCase().indexOf(query) >= 0;
 };
 ```
 
@@ -936,11 +1012,11 @@ const narrowing = needle !== '' && entries.some(matches);
 | 输入 `workspace` | 命中 `my-workspace`、`workspace-old` | 只命中 `workspace-old` |
 | 输入 `zzz`（无命中） | **空栏** | **显示全量**（用户能立刻看出「这个过滤没用」而不是「这层没东西」） |
 
-过滤只作用于**最后一栏**（`client.js:1820-1821`）：`main` 在 `selected === null` 时才 `filter(match)`，一旦选中，第一栏就恢复全量，第二栏才是被过滤的那栏。这一点与 DSH 同构，是对的。
+过滤只作用于**最后一栏**（`client.js:3192-3193`）：`main` 在 `selected === null` 时才 `filter(match)`，一旦选中，第一栏就恢复全量，第二栏才是被过滤的那栏。这一点与 DSH 同构，是对的。
 
 #### 6.3.7 采纳优先级
 
-`target` 的三级回落（`client.js:1819`）：
+`target` 的三级回落（`client.js:3186`）：
 
 ```js
 var target = deep !== null ? deep
@@ -948,13 +1024,13 @@ var target = deep !== null ? deep
            : (rootsView ? null : current));
 ```
 
-`accept()`（`client.js:1901-1909`）**不带参数**，自己算 `target`；若 `target` 为 `null` 或空串直接 `return`（这就是「选盘符不会把盘符当工作区」的实现），否则 `setBusy(true)` 后调 `props.onPick(target)`。
+`accept()`（`client.js:3261-3269`）**不带参数**，自己算 `target`：`:3262` 若 `busy === true` 直接 return；`:3263` 重新调 `dirPickModel(...)` 算 target；`:3266` 若 `target === null || target === ''` 直接 return（这就是「选盘符不会把盘符当工作区」的实现）；否则 `setBusy(true)`（`:3267`）后调 `props.onPick(target)`（`:3268`）。
 
-页脚的 `disabled` 条件（`client.js:2111`）是 `targetDir === '' || busy === true || listing.loading === true`——注意它用的是**字符串是否为空**，不是 `target === null`，因为渲染时 `target` 已经被包成 `String(...)`。
+页脚的 `disabled` 条件（`client.js:3471`）是 `targetDir === '' || busy === true || listing.loading === true`（`canAccept`，用在 `:3478` 的按钮上）——注意它用的是**字符串是否为空**，不是 `target === null`，因为渲染时 `target` 已经被 `String(...)` 包过（`targetDir` 在 `:3470`）。
 
 #### 6.3.8 采纳后的时序：`switchDir`
 
-`switchDir`（`client.js:3209-3223`）是「切换工作区」的全部逻辑。JSDoc（`client.js:3202`）写明这是**面板里唯一会销毁并重建 pi 子进程的操作**：
+`switchDir`（`client.js:4670-4691`）是「切换工作区」的全部逻辑。JSDoc（`client.js:4666-4669`）写明这是**面板里唯一会销毁并重建 pi 子进程的操作**：
 
 ```text
 用户点「用这个工作区」
@@ -970,13 +1046,13 @@ var target = deep !== null ? deep
       8. notice(dirSwitched + ' · ' + landed)
 ```
 
-第 7 步的 `startSession`（`client.js:2946-2977`）有一个关键分支：
+第 7 步的 `startSession`（`client.js:4407-4438`）有一个关键分支：
 
 ```js
 var existing = target !== null ? [] : state.sessions;
 ```
 
-**指定了 cwd 就强制新建，绝不复用已有会话**（`client.js:2950`）。原因很直接：已有会话跑在旧 cwd 的子进程里，复用它等于什么都没改。所以带 `cwd` 时 `existing` 恒为空数组，必走 `api.create({ cwd: target })`。
+**指定了 cwd 就强制新建，绝不复用已有会话**（`client.js:4418`）。原因很直接：已有会话跑在旧 cwd 的子进程里，复用它等于什么都没改。所以带 `cwd` 时 `existing` 恒为空数组，必走 `api.create({ cwd: target })`。
 
 `landed` 取 `metaRef.current.cwd`（子进程真实落地的目录），不是用户输入的字符串——因为宿主可能做路径规范化（`expandUserPath`）。通知里显示 `landed` 而不是 `target`，是为了让用户看到「实际进的是哪」。
 
@@ -998,25 +1074,25 @@ var existing = target !== null ? [] : state.sessions;
 | 10 | 取消 | 只有右上角 `×` | 页脚显式 `Cancel` 按钮 | 低 |
 | 11 | 页脚布局 | 左 `-dir-target` 文本、右「用这个工作区」 | 左 `New folder` + `Show hidden`、右 `Cancel` + `Open` | 低（dsh-pi **多显示了目标路径**，是优点） |
 | 12 | 容器底 | 抽屉用 `.dsh-pi-sheet`（`bg-base` 铺满）；`DirSheet` 例外，用 `-dir-dialog`（`radius-panel` + `bg-layer-2`） | `_dialog` 恒为 `radius-panel` + `bg-layer-2` | 低 |
-| 13 | 死键 | `dirMissing` 在 i18n 表里定义（ZH `:180` / EN `:329`），`client.js` **0 处引用** | 无此问题 | 低 |
+| 13 | 死键 | `dirMissing` 在 i18n 表里定义（ZH `:195` / EN `:397`），`client.js` **0 处引用** | 无此问题 | 低 |
 | 14 | 分栏分隔 | 相邻兄弟选择器 `.dsh-pi-dir-col + .dsh-pi-dir-col{border-left:.5px}` | 独立 `_divider` span（`.5px` `border-l3`） | 低 |
 | 15 | 开关过渡 | `.dsh-pi-switch` 多一条 `transition:background-color .16s ease` | `._switch_1ik0f_5` 无过渡 | 极低 |
-| 16 | 设置项一致性 | 4 个设置项里只有 `autoCompaction` / `autoRetry` 是开关，另两个仍是文字按钮；注释 `client.js:2244` 的措辞会让人以为全改了 | 无对应 | 中 |
+| 16 | 设置项一致性 | 4 个设置项里只有 `autoCompaction` / `autoRetry` 是开关，另两个仍是文字按钮；注释 `client.js:3604` 的措辞会让人以为全改了 | 无对应 | 中 |
 | 17 | home 来源 | `os.homedir()`，由宿主在 `/directories` 响应里给 | `listing` 字段的一部分 | 低 |
 
 补充三条**注释与实现不一致**（不是 dsh-pi 与 DSH 的差异，是 dsh-pi 内部的文档债）：
 
 | 位置 | 注释说什么 | 实际是什么 |
 | --- | --- | --- |
-| `client.js:500` | 「DSH `._float` 的配方：`bg-layer-2` + `radius-panel` + `elevation-prominent` + 局部描边色」 | `:501` 的 `.dsh-pi-sheet` 是 `bg-base` 铺满，没有 `radius`、没有阴影 |
-| `client.js:565-566` | 「header（padding `22px 14px 12px 24px`）」 | `:570` 的 `.dsh-pi-dialog h3` 是 `padding:22px 24px 0` |
-| `client.js:2244` | 「开关对齐 DSH 的 `._switch_1ik0f_5`……不再是文字按钮」 | 只有两个是开关；`steeringMode` / `followUpMode`（`client.js:2261-2266`）仍是 `.dsh-pi-btn` 文字按钮 |
+| `client.js:674` | 「DSH `._float` 的配方：`bg-layer-2` + `radius-panel` + `elevation-prominent` + 局部描边色」 | `:675` 的 `.dsh-pi-sheet` 是 `bg-base` 铺满，没有 `radius`、没有阴影 |
+| `client.js:745-746` | 「header（padding `22px 14px 12px 24px`）」 | `:750` 的 `.dsh-pi-dialog-head` 是 `padding:22px 18px 0 24px`，`:751` 的 `.dsh-pi-dialog-head h3` 是 `padding:0` |
+| `client.js:3604` | 「开关对齐 DSH 的 `._switch_1ik0f_5`……不再是文字按钮」 | 只有两个是开关；`steeringMode` / `followUpMode`（`client.js:3622-3626`）仍是 `.dsh-pi-btn` 文字按钮 |
 
 三条都属「描述超前于实现」。第六条（筛选无命中出空栏 vs 显示全量）是本轮唯一被用户直接感知的语义差异。
 
 ### 6.5 宿主契约：`GET /directories`
 
-`index.js:771-793` 的路由，响应：
+`index.js:905` 的路由（响应体 `:912-926`），响应：
 
 ```json
 { "ok": true,
@@ -1029,21 +1105,21 @@ var existing = target !== null ? [] : state.sessions;
   "roots": [{ "name": "C:", "path": "C:\\" }, { "name": "D:", "path": "D:\\" }] }
 ```
 
-字段来源逐条（`listDirectories` `index.js:1071-1107`）：
+字段来源逐条（`listDirectories` `index.js:1212-1248`）：
 
 | 字段 | 实现 | 备注 |
 | --- | --- | --- |
 | `dir` | `path.resolve()` 后的绝对路径 | — |
 | `parent` | `dirname(dir) === dir ? null : dirname(dir)` | 盘根给 `null` |
-| `writable` | `fs.promises.access(dir, W_OK)` | 整段 `try/catch`；不可写也照常返回（`index.js:1105` 注释：「只读目录照样列出、只是不能在那里开会话」） |
+| `writable` | `fs.promises.access(dir, W_OK)` | 整段 `try/catch`；不可写也照常返回（`index.js:1246` 注释：「只读目录 / 权限不足：照样能把目录列出来，只是不能在这里开会话」） |
 | `entries` | `opendir` + `dirent.isDirectory()` 过滤 | **符号链接天然跳过**（`dirent` 来自 `lstat` 语义）；**无 hidden 过滤**，`.git` 照常列出 |
 | `truncated` | 超过 `limit`（默认 50，上限 200） | — |
 | `home` | `os.homedir()` | **不是 `listing` 字段**，是路由层另加的 |
 | `roots` | `await listRoots()` | 0.4.1 新增 |
 
-错误码：`opendir` 失败时 `ENOENT` / `ENOTDIR` → **404** `no such directory`，其余 → **500**。排序用 `localeCompare(a.name, b.name, { numeric: true, sensitivity: 'base' })`（`index.js:1093`），所以 `a2` 排在 `a10` 前面。
+错误码：`opendir` 失败时 `ENOENT` / `ENOTDIR` → **404** `no such directory`，其余 → **500**（归一在 `index.js:1218-1219`）。排序用 `localeCompare(a.name, b.name, { numeric: true, sensitivity: 'base' })`（`index.js:1234`），所以 `a2` 排在 `a10` 前面。
 
-`listRoots()`（`index.js:1124-1145`）只对 Windows 有意义：
+`listRoots()`（`index.js:1433-1454`）只对 Windows 有意义：
 
 ```js
 // win32：探 A 到 Z，fs.promises.stat(letter + path.sep)，isDirectory 才保留
@@ -1051,14 +1127,14 @@ var existing = target !== null ? [] : state.sessions;
 // 非 win32：返回 [{ name: '/', path: '/' }]
 ```
 
-带 10 秒缓存（`ROOTS_TTL_MS = 10000`，`index.js:1110`；`rootsCache` `:1111`）。注释 `:1116-1120` 说实测四个盘全扫约 3ms，「一个不可读的盘符不该毁掉整个目录浏览」。
+带 10 秒缓存（`ROOTS_TTL_MS = 10000`，`index.js:1419`；`rootsCache` `:1420`）。注释 `:1422-1432` 说实测四个盘全扫约 3ms（`:1427`），「一个不可读的盘符不该毁掉整个目录浏览」（`:1429`）。
 
 **能力边界**：宿主只提供「列子目录」，没有 `fs.stat` 单点查询、没有 `mkdir`、没有 `rename`、没有 `delete`。所以 6.4 的第 8 / 9 条差异（隐藏项开关、新建文件夹）**不是面板偷懒，是宿主能力没给**。要补这两个能力，得先在 `index.js` 加 `POST /directories`（mkdir）与 `hidden` 参数。
 
 ### 6.6 端到端示例：从 `~/pi-workspace` 切到 `D:\code\agent`
 
 ```text
-① 用户点输入栏的文件夹图标
+① 用户点 composer 左侧的 `+`，菜单里选「工作区」（`addItems` 第 2 项，`client.js:2804`）
    Composer.onPickDir → setDrawer('dir')
    DirSheet 挂载，startDir = C:\Users\PC\pi-workspace
    go(startDir) → GET /directories?dir=C:\Users\PC\pi-workspace
@@ -1099,36 +1175,36 @@ var existing = target !== null ? [] : state.sessions;
 
 本章只写「机器能验什么」与「机器验不到什么」。所有断言都实跑过（离线，`exit 0`）。
 
-### 7.1 `test/css-tokens.mjs`（593 行）
+### 7.1 `test/css-tokens.mjs`（596 行）
 
 结构：
 
 | 区块 | 行号 | 作用 |
 | --- | --- | --- |
-| 常量 | `:44-74` | `ALLOWED_EXTRA_TOKENS` / `BANNED_TOKENS` / `MONO_LITERALS` / `NAMED_COLORS` / `COLOR_PROPS` |
-| `section()` | `:80` | 打印分节标题 |
-| `check()` | `:86` | 单条断言累加 |
-| `extractCss()` | `:217` | 从 `client.js` 还原 CSS 文本（处理 JS 单引号转义） |
-| `selfTest()` | `:420-435` | 18 条自检，验证正则本身没写错 |
-| 主流程 | `:437-451` | 抽取 → 断言 → 汇总 |
-| 观察项 | `:455-482` | 规则数 / 字符数 / `var()` 数 / 唯一变量数 / 类别分布 |
-| 七条硬断言 | `:554` `:558` `:564` `:570` `:574` `:578` `:582` | 见 3.8 |
-| 通过行 | `:593` | `PASS (N checks)` + `exit 0` |
+| 常量 | `:44-77` | `ALLOWED_EXTRA_TOKENS` / `BANNED_TOKENS` / `MONO_LITERALS` / `NAMED_COLORS` / `COLOR_PROPS` |
+| `section()` | `:83` | 打印分节标题 |
+| `check()` | `:89` | 单条断言累加 |
+| `extractCss()` | `:220` | 从 `client.js` 还原 CSS 文本（处理 JS 单引号转义） |
+| `selfTest()` | `:423-438` | 18 条自检，验证正则本身没写错 |
+| 主流程 | `:441-455` | 抽取 → 断言 → 汇总 |
+| 观察项 | `:465-485` | 规则数 / 字符数 / `var()` 数 / 唯一变量数 / 类别分布 |
+| 七条硬断言 | `:557` `:561` `:567` `:573` `:577` `:581` `:585` | 见 3.8 |
+| 通过行 | `:596` | `PASS (N checks)` + `exit 0` |
 
 关键常量：
 
 | 常量 | 行号 | 内容 |
 | --- | --- | --- |
-| `ALLOWED_EXTRA_TOKENS` | `:44-51` | `--ds-font-family-code`、`--dsh-content-font-size`、`--dsh-content-font-delta`、`--dsh-code-font-size`、`--dsh-code-font-delta`、`--dsw-elevation-stroke-color` |
-| `BANNED_TOKENS` | `:54` | `--dsw-alias-button-tool-bar-fill`、`--dsw-alias-button-tool-bar-hover`（在 `tokens.txt` 里是硬值 `#54555780` / `#54555799`） |
-| `MONO_LITERALS` | `:57` | `ui-monospace` / `SFMono-Regular` / `Menlo` / `Consolas` / `monospace` |
-| `NAMED_COLORS` | `:60-66` | 命名色黑名单（`white` / `black` / `red` …） |
-| `COLOR_PROPS` | `:68-74` | 需要查色的属性集（`color` / `background` / `border*-color` / `box-shadow` / `outline*` …） |
+| `ALLOWED_EXTRA_TOKENS` | `:44-54` | `--ds-font-family-code`、`--dsh-content-font-size`、`--dsh-content-font-size-secondary`、`--dsh-content-font-delta`、`--dsh-code-font-size`、`--dsh-code-font-delta`、`--dsw-elevation-stroke-color` |
+| `BANNED_TOKENS` | `:57` | `--dsw-alias-button-tool-bar-fill`、`--dsw-alias-button-tool-bar-hover`（在 `tokens.txt` 里是硬值 `#54555780` / `#54555799`） |
+| `MONO_LITERALS` | `:60` | `ui-monospace` / `SFMono-Regular` / `Menlo` / `Consolas` / `monospace` |
+| `NAMED_COLORS` | `:63-69` | 命名色黑名单（`white` / `black` / `red` …） |
+| `COLOR_PROPS` | `:71-77` | 需要查色的属性集（`color` / `background` / `border*-color` / `box-shadow` / `outline*` …） |
 
-实跑输出：
+实跑输出（0.6.4 实测）：
 
 ```text
-client.js 218023 字节 / mtime 2026-11-13T16:46:52.475Z / CSS 数组 192 段 / 27903 字符
+client.js 307602 字节 / CSS 数组 240 段 / 35680 字符
 -- 0 门禁自检  自检 18 条：全部通过
 -- 1 硬色值    0 处
 -- 2 令牌白名单 0 处越界
@@ -1137,29 +1213,29 @@ client.js 218023 字节 / mtime 2026-11-13T16:46:52.475Z / CSS 数组 192 段 / 
 -- 5 等宽字体栈 0 处裸写
 -- 6 焦点可见   有
 -- 7 减少动效   有
-PASS (90 checks)
+PASS (98 checks)
 ```
 
 「18 条自检」是这一整套门禁里最值得学的一处设计：**它先验证自己的正则**。用合成样例跑一次，样例里既有该报的（硬色值、缺兜底、裸字体栈），也有不该报的（合规写法）。没有自检的门禁最危险——正则写挂了整片全绿，而没人会发现。
 
-### 7.2 `test/client-render.mjs`（457 行，450 assertions）
+### 7.2 `test/client-render.mjs`（820 行，738 assertions）
 
-这是 SSR 渲染断言：用 `react-dom/server` 把组件渲染成字符串，再对 HTML 做字符串/正则断言。覆盖面板的全部主要组件。与本次改造直接相关的 7 条：
+这是 SSR 渲染断言：用 `react-dom/server` 把组件渲染成字符串，再对 HTML 做字符串/正则断言。覆盖面板的全部主要组件。与本次改造直接相关的 8 条：
 
 | 断言 | 行号 | 内容 |
 | --- | --- | --- |
 | 空态入口 | `:282` | 有 `onPickDir` 时必须渲染 `.dsh-pi-empty-actions` |
-| 空态入口条件 | `:287` | 没传 `onPickDir` 时**不得**渲染该容器 |
-| 开关类名 | `:304` | 设置抽屉里必须有 `class=dsh-pi-switch` |
-| 开关滑块 | `:308` | 必须有 `dsh-pi-switch-thumb` |
-| DirSheet 根 | `:331` | 必须渲染 `.dsh-pi-dir` |
-| 面包屑 | `:333` | 必须有 `.dsh-pi-dir-crumb` |
-| 首帧单栏 | `:338` | 未选中时 `.dsh-pi-dir-col` **恰好 1 个** |
-| `dirPickModel` | `:340-371` | 7 组纯函数断言，含 `dirPickModel(undefined).showSub === false`（`:371` 防 null 入参） |
+| 空态入口条件 | `:310` | 没传 `onPickDir` 时**不得**渲染该容器 |
+| 开关类名 | `:327` | 设置抽屉里必须有 `class="dsh-pi-switch"` |
+| 开关滑块 | `:331` | 必须有 `dsh-pi-switch-thumb` |
+| DirSheet 根 | `:452` | 必须渲染 `.dsh-pi-dir` |
+| 面包屑 | `:454` | 必须有 `.dsh-pi-dir-crumbs` |
+| 首帧单栏 | `:459` | 未选中时 `class="dsh-pi-dir-col"` **恰好 1 个** |
+| `dirPickModel` | `:470-522` | 25 条纯函数断言（9.14 Miller 分栏 14 条 + 9.15 盘符层 11 条），含 `dirPickModel(undefined).showSub === false`（`:501` 防 null 入参） |
 
 开关那两条断言的措辞值得单列：`role=switch` + `aria-checked` 的 `true` / `false` 两态都要出现，且「开 / 关」二字**不得**作为按钮文本（避免用文字冒充开关）。这是把无障碍语义写进断言，比只查类名强得多。
 
-`dirPickModel` 的 7 组断言是「纯函数抽出来」的直接回报：数据模型可以在没有 DOM、没有网络的情况下被完整验证。如果这段逻辑留在 `DirSheet` 的 `useState` 里，就只能靠渲染断言间接覆盖。
+`dirPickModel` 的 25 条纯函数断言是「纯函数抽出来」的直接回报：数据模型可以在没有 DOM、没有网络的情况下被完整验证。如果这段逻辑留在 `DirSheet` 的 `useState` 里，就只能靠渲染断言间接覆盖。整节 9.13 / 9.14 / 9.15 合计 40 条，全部打在目录选择器上。
 
 ### 7.3 门禁验不到的 5 处
 
@@ -1167,7 +1243,7 @@ PASS (90 checks)
 
 | # | 缺口 | 后果 | 能不能补 |
 | --- | --- | --- | --- |
-| 1 | **CSS 只验令牌，不验几何** | `28px` 写成 `30px`、`radius-sm` 写成 `radius-md` 都不会被拦。5.1 的「已对齐 20 个」全靠人工比对 | 能，但要引入 computed style 快照（JSDOM 不支持 `var()` 解析，得上真浏览器） |
+| 1 | **CSS 只验令牌，不验几何** | `28px` 写成 `30px`、`radius-sm` 写成 `radius-md` 都不会被拦。5.1 的「已对齐 32 个」全靠人工比对 | 能，但要引入 computed style 快照（JSDOM 不支持 `var()` 解析，得上真浏览器） |
 | 2 | **不验视觉回归** | 任何像素级偏移（padding 差 1px、阴影方向反了）都看不见 | 能，需要 Playwright + 基线图。当前仓库没有浏览器测试依赖 |
 | 3 | **不验交互行为** | 双击进目录、`col1` 加载竞态、`target` 三级回落这些只有 `dirPickModel` 的纯函数部分被覆盖；`go` / `accept` / 第二栏 `useEffect` 全是未测代码 | 能，需要 `@testing-library/react` + 假 `api` |
 | 4 | **不验无障碍** | `aria-current` 缺失（6.4 第 5 条）、`Esc` 关闭缺失、焦点陷阱缺失都不会被拦 | 能，`axe-core` 能覆盖大半 |
@@ -1184,7 +1260,7 @@ PASS (90 checks)
 
 ## 附录 A 行号索引
 
-全部基于 **client.js@3971 / 218023 B / mtime 2026-11-13T16:46:52Z / sha256 前缀 `b725c3103261`**。本轮 `client.js` 被并发改写 7 次（3707 → 3760 → 3789 → 3881 → 3885 → 3905 → 3912 → 3915），**任何行号都会漂移**。定位请用类名 grep：
+全部基于 **client.js@5619 / 307602 B / sha256 前缀 `ACDCFE28FDFB`（dsh-pi 0.6.4）**。`client.js` 在 0.5.0 之后被并发改写十余次（4130 → 4556 → 4789 → 4873 → 5170 → 5572 → 5614 → 5619），**任何行号都会漂移**。定位请用类名 grep：
 
 ```powershell
 Select-String -Path client.js -Pattern "\.dsh-pi-dir-cols\{"
@@ -1195,98 +1271,153 @@ Select-String -Path client.js -Pattern "function dirPickModel"
 
 | 名称 | 行号 |
 | --- | --- |
-| `CSS` 数组起 | `:337` |
-| `CSS` 数组止 | `:586` |
-| `PiIcon` | `1256` |
-| `DirIcon` | `1270` |
-| `DriveIcon` | `1281` |
-| `pathCrumbs` | `1299` |
-| `ThinkingBlock` | `1319` |
-| `ToolBlock` | `1326` |
-| `MessageRow` | `1373` |
-| `EmptyState` | `1423` |
-| `SlashMenu` | `1444` |
-| `Composer` | `1476` |
-| `Sheet` | `1710` |
-| `SessionsSheet`（容器）/ `SessionsList`（纯渲染） | `1885` / `1791` |
-| `dirPickModel` | `1814` |
-| `DirSheet` | `1845` |
-| `makeRow`（内嵌） | `1992` |
-| `TreeSheet` | `2152` |
-| `ForkSheet` | `2185` |
-| `StatsSheet` | `2203` |
-| `SettingsSheet` | `2248` |
-| `TextSheet` | `2278` |
-| `ExtensionDialog` | `2290` |
-| `ImageOverlay` | `2365` |
-| `SelfCheckChip` | `2471` |
-| `RuntimeGate` | `2505` |
-| `ModelsSheet` | `2553` |
-| `ThinkingSheet` | `2591` |
-| `NameSheet` | `2609` |
-| `BashBlock` | `2635` |
-| `PiPanel` | `2657` |
-| `startSession` | `2946` |
-| `switchDir` | `3209` |
-| `submit` | `3516` |
+| `CSS` 数组起 / 止 | `:443` / `:769` |
+| `PiIcon` | `1761` |
+| `DirIcon` / `FileIcon` / `DriveIcon` | `1775` / `1786` / `1798` |
+| `iconSvg`（图标工厂） | `1817` |
+| `CodeIcon` / `ImageFileIcon` / `ArchiveIcon` / `SheetFileIcon` / `DocIcon` | `1827` / `1835` / `1844` / `1853` / `1862` |
+| `ThinkIcon` / `HashIcon` / `TerminalIcon` / `FrameIcon` / `SearchIcon` / `PencilIcon` / `SparkIcon` | `1872` / `1881` / `1891` / `1899` / `1909` / `1917` / `1925` |
+| `WhaleTailIcon`（16 网格鲸鱼尾，工作状态行专用） | `1941` |
+| `CloseIcon` / `PaperclipIcon` / `CloseButton` | `1951` / `1959` / `1973` |
+| `ArrowUpIcon` / `StopSquareIcon`（发送键两态） | `1993` / `2005` |
+| `pathCrumbs` | `2088` |
+| `parseToolArgs` / `firstLineOf` | `2116` / `2127` |
+| `TOOL_VIEWS` / `toolViewOf` | `2138` / `2149` |
+| `TOOL_SUMMARY_FIELDS` / `primaryToolArg` | `2161` / `2163` |
+| `ProcPath` / `procSummary` / `procHead` | `2178` / `2204` / `2221` |
+| `ThinkingBlock` / `ToolBlock` / `ToolResultRow` | `2236` / `2248` / `2279` |
+| `WorkingRow` / `usageLine` | `2311` / `2329` |
+| `MessageRow` | `2362` |
+| `EmptyState` | `2448` |
+| `SlashMenu` | `2469` |
+| `Composer` | `2546` |
+| `submit`（Composer 内） | `2604` |
+| `Sheet` | `2926` |
+| `SessionsList`（纯渲染）/ `SessionsSheet`（容器） | `3003` / `3097` |
+| `dirPickModel` | `3167` |
+| `DirSheet` | `3198` |
+| `TreeSheet` | `3505` |
+| `ForkSheet` | `3538` |
+| `StatsSheet` | `3556` |
+| `SettingsSheet` | `3601` |
+| `TextSheet` | `3631` |
+| `FileSheet` | `3646` |
+| `ExtensionDialog` | `3674` |
+| `ImageOverlay` | `3753` |
+| `SelfCheckChip` | `3859` |
+| `RuntimeGate` | `3893` |
+| `ModelsSheet` | `3941` |
+| `ThinkingSheet` | `3979` |
+| `NameSheet` | `3997` |
+| `BashBlock` | `4023` |
+| `PiPanel` | `4054` |
+| `startSession` | `4407` |
+| `switchDir` | `4670` |
+| `markBusy` / `markIdle` / `createView` | `1373` / `1378` / `1383` |
+| `applyRecord` | `1594` |
+| `fmtDuration` | `2975` |
 
 ### A.2 CSS 关键行
 
 | 规则 | 行号 |
 | --- | --- |
-| `.dsh-pi-root` + 全局三条 | `:343-346` |
-| `@keyframes dsh-pi-pulse` | `:356` |
-| `.dsh-pi-dot` 及四态 | `:352-355` |
-| `.dsh-pi-chip` | `:360-365` |
-| `.dsh-pi-btn` 族 | `:375-387` |
-| `.dsh-pi-bubble-user` | `:395` |
-| `.dsh-pi-prose` | `:398-402` |
-| `.dsh-pi-fence` / `-fence-lang` / `-pre` | `:406-408` |
-| `.dsh-pi-think` | `:409-413` |
-| `.dsh-pi-tool` 族 | `:421-430` |
-| `.dsh-pi-tag` | `:433-437` |
-| `.dsh-pi-empty` 族 | `:445-449` |
-| `.dsh-pi-box` / `-ta` | `:461-469` |
-| `.dsh-pi-menu` 族 | `:479-489` |
-| `.dsh-pi-sheet` 族 | `:501-523` |
-| `.dsh-pi-switch` 族 | `:527-534` |
-| `.dsh-pi-dir` 族 | `:538-555` |
-| `.dsh-pi-dir-dialog` | `:559-562` |
-| `.dsh-pi-dialog` 族 | `:567-582` |
-| `@keyframes dsh-pi-modal-in` | `:569` |
-| `@media (prefers-reduced-motion)` | `:585` |
+| `.dsh-pi-root` + 全局三条 | `:449-452` |
+| `.dsh-pi-head` 族 | `:455-457` |
+| `.dsh-pi-dot` 及三态 | `:458-461` |
+| `@keyframes dsh-pi-pulse` | `:462` |
+| `.dsh-pi-chip` 族 | `:466-472` |
+| `.dsh-pi-btn` 族 | `:479-491` |
+| `.dsh-pi-scroll` / `-inner` | `:494` / `:495` |
+| `.dsh-pi-row` / `-row-user` / `-body` | `:496-497` / `:500` |
+| `.dsh-pi-bubble-user` | `:499` |
+| `.dsh-pi-prose` 族 | `:502-507` |
+| `.dsh-pi-code-inline` | `:508` |
+| `.dsh-pi-fence` / `-fence-lang` / `-pre` | `:510-512` |
+| `.dsh-pi-proc` / `.dsh-pi-tool` | `:521` / `:522` |
+| `-proc-head` / `-proc-icon` / `-proc-label` / `-sep` / `-proc-text`（含两 tone）/ `-proc-note`（含两 tone）/ `-proc-path` / 运行中点动画 | `:523-540` |
+| `.dsh-pi-sub`（子行组）/ `.dsh-pi-proc-body` / `.dsh-pi-tool-body` | `:542` / `:544` / `:545` |
+| `.dsh-pi-working` / `-working-icon` / `-working-text` | `:550-552` |
+| `.dsh-pi-tag` 五条（含四 tone） | `:555-559` |
+| `.dsh-pi-usage` / `-caret` | `:560` / `:561` |
+| `.dsh-pi-img` 族 | `:562-564` |
+| `.dsh-pi-fileref` 族 | `:568-573` |
+| `.dsh-pi-empty` 族 | `:576-580` |
+| `.dsh-pi-center` / `-gate` / `-gate-card` 族 | `:581` / `:582` / `:583-586` |
+| `.dsh-pi-composer` / `-inner` | `:595` / `:596` |
+| `.dsh-pi-box` / `:focus-within` | `:597` / `:599` |
+| `.dsh-pi-widget` / `-body` | `:600` / `:601` |
+| `.dsh-pi-statusbar` 族 | `:604-605` |
+| `.dsh-pi-ta` 族 | `:606-607` |
+| `.dsh-pi-bar` 族 / `-add` 族 / `-picker` 族 / `-send` / `-stop` / `-thumb` 族 | `:608-611` / `:613-617` / `:619-627` / `:629-631` / `:632-633` / `:634-638` |
+| `.dsh-pi-menu` 族（含 `-empty-row`）/ `-menu-add` 族 | `:641-651` / `:655-663` |
+| `.dsh-pi-alert` / `-notice` 族 / `-queue` | `:666` / `:667-670` / `:671` |
+| `.dsh-pi-sheet` 族 | `:675-685` |
+| `.dsh-pi-sess` / `-proj` 族 / `-kv` 族 / `-tree` 族 | `:687-694` / `:695-697` / `:698-704` |
+| `.dsh-pi-switch` 族 | `:707-714` |
+| `.dsh-pi-dir` 族 | `:718-735` |
+| `.dsh-pi-dir-dialog` 族 | `:739-742` |
+| `.dsh-pi-dialog-wrap` / `-dialog` / `-dialog-head` 族 | `:747` / `:748` / `:750-755` |
+| `@keyframes dsh-pi-modal-in` | `:749` |
+| `.dsh-pi-opt` 族 / `-mini-ta` / `-row2` / `-spacer` / `-sr` | `:758-760` / `:761-762` / `:763` / `:764` / `:765` |
+| `@media (prefers-reduced-motion)` | `:768` |
+| 数组结束 `].join('')` | `:769` |
 
 ### A.3 i18n 键（ZH / EN）
 
+`ZH` 自 `:36` 起、`EN` 自 `:239` 起（`ZH` 末键 `footerTokens` `:237`、`EN` 末键 `:439`，各 199 个键），两段键序一一对应（门禁用 `JSON.stringify` 比对键集）。
+
 | 键 | ZH | EN |
 | --- | --- | --- |
-| `pickDir` | 169 | 318 |
-| `dirTitle` | 170 | 319 |
-| `dirHint` | 171 | 320 |
-| `dirEmpty` | 172 | 321 |
-| `dirLoading` | 173 | 322 |
-| `dirUp` | 174 | 323 |
-| `dirHome` | 175 | 324 |
-| `dirThisPc` | 176 | 325 |
-| `dirPickDrive` | 177 | 326 |
-| `dirHere` | 178 | 327 |
-| `dirNotWritable` | 179 | 328 |
-| `dirMissing` | 180 | 329 |
-| `dirSwitched` | 181 | 330 |
-| `dirInputHint` | 182 | 331 |
-| `dirPickMark` | 183 | 332 |
-| `dirSwitching` | 184 | 333 |
+| `panelTitle` | 37 | 240 |
+| `procThink` | 65 | 268 |
+| `procBash` | 66 | 269 |
+| `procRead` | 67 | 270 |
+| `procReadImage` | 68 | 271 |
+| `procWrite` | 69 | 272 |
+| `procEdit` | 70 | 273 |
+| `procGrep` | 71 | 274 |
+| `procGlob` | 72 | 275 |
+| `procList` | 73 | 276 |
+| `procGeneric` | 74 | 277 |
+| `procResult` | 75 | 278 |
+| `deepDiving` | 76 | 279 |
+| `working` | 77 | 280 |
+| `durHour` | 79 | 282 |
+| `durMin` | 80 | 283 |
+| `durSec` | 81 | 284 |
+| `tokens` | 82 | 285 |
+| `exported` | 173 | 375 |
+| `footerTokens`（末键） | 237 | 439 |
+| `pickDir` | 184 | 386 |
+| `dirTitle` | 185 | 387 |
+| `dirHint` | 186 | 388 |
+| `dirEmpty` | 187 | 389 |
+| `dirLoading` | 188 | 390 |
+| `dirUp` | 189 | 391 |
+| `dirHome` | 190 | 392 |
+| `dirThisPc` | 191 | 393 |
+| `dirPickDrive` | 192 | 394 |
+| `dirHere` | 193 | 395 |
+| `dirNotWritable` | 194 | 396 |
+| `dirMissing` | 195 | 397 |
+| `dirSwitched` | 196 | 398 |
+| `dirInputHint` | 197 | 399 |
+| `dirPickMark` | 198 | 400 |
+| `dirSwitching` | 199 | 401 |
 
-`dirMissing` 是**死键**：只在 `:180` 与 `:329` 定义，`client.js` 零引用。`test/client-render.mjs` 会断言 ZH 与 EN 的键集一致，所以删它必须两边一起删，否则门禁红。
+`durHour` 与 `working` 之间隔着一行注释（`:78` / `:281`「单位自带尾随空格…」），所以键号在此处跳过 78 / 281。
+
+`dirMissing` 是**死键**：只在 `:195` 与 `:397` 定义，`client.js` 零引用。`test/client-render.mjs` 会断言 ZH 与 EN 的键集一致，所以删它必须两边一起删，否则门禁红。
 
 ### A.4 宿主侧（index.js）
 
 | 能力 | 行号 |
 | --- | --- |
-| `GET /directories` 路由 | `:771-793` |
-| `listDirectories()` | `:1071-1107` |
-| `ROOTS_TTL_MS` / `rootsCache` | `:1110` / `:1111` |
-| `listRoots()` | `:1124-1145` |
+| `GET /directories` 路由 | `:905-927` |
+| `listDirectories()` | `:1212` |
+| `ROOTS_TTL_MS` / `rootsCache` | `:1419` / `:1420` |
+| `listRoots()` | `:1433-1454` |
+| `readChangelog()` | `:1463` |
 
 ---
 
@@ -1296,21 +1427,21 @@ Select-String -Path client.js -Pattern "function dirPickModel"
 
 | 编号 | 差异 | 位置 | 严重度 | 性质 |
 | --- | --- | --- | --- | --- |
-| D-01 | 目录过滤用 `contains` 而非 `startsWith`；无命中出空栏而非全量 | `client.js:1812-1815` | 中 | 语义偏差 |
-| D-02 | 无路径输入预览（DSH 有 250ms 防抖预览） | `client.js:1968-1988` | 中 | 能力缺失 |
-| D-03 | 无隐藏项开关；`.git` 等点目录照常列出 | `index.js:1087` | 中 | 能力缺失（宿主未给） |
+| D-01 | 目录过滤用 `contains` 而非 `startsWith`；无命中出空栏而非全量 | `client.js:3179-3182` | 中 | 语义偏差 |
+| D-02 | 无路径输入预览（DSH 有 250ms 防抖预览） | `client.js:3328-3348` | 中 | 能力缺失 |
+| D-03 | 无隐藏项开关；`.git` 等点目录照常列出 | `index.js:1228`（`if (!dirent.isDirectory()) continue`，注释在 `:1227`） | 中 | 能力缺失（宿主未给） |
 | D-04 | 无新建文件夹；不存在的路径靠开会话时创建 | — | 中 | 能力缺失（宿主未给） |
-| D-05 | 当前目录标记用文字徽标而非 `aria-current` | `client.js:1992-2014` | 低 | 无障碍退步 |
-| D-06 | `.dsh-pi-sheet` 注释称用 DSH `_float` 配方，实际是 `bg-base` 铺满 | `client.js:500-501` | 低 | 注释与实现不符 |
-| D-07 | `.dsh-pi-dialog h3` 注释称 `22px 14px 12px 24px`，实际 `22px 24px 0` | `client.js:565-570` | 低 | 注释与实现不符 |
-| D-08 | 菜单阴影 `elevation-panel`，DSH 同级菜单用 `elevation-prominent` | `client.js:479` | 低 | 令牌等级偏差 |
-| D-09 | 按钮描边 `border-l4`，DSH `_outline` 用 `border-l3` | `client.js:375` | 低 | 令牌等级偏差 |
-| D-10 | 开关胶囊多一条 `transition:background-color .16s ease` | `client.js:527` | 极低 | 动效差异 |
-| D-11 | `dirMissing` 死键 | `client.js:180` / `:329` | 低 | 未使用键 |
+| D-05 | 当前目录标记用文字徽标而非 `aria-current` | `client.js:3352-3374`（`data-current` 与 `dsh-pi-dir-mark` 在 `:3359` / `:3373`） | 低 | 无障碍退步 |
+| D-06 | `.dsh-pi-sheet` 注释称用 DSH `_float` 配方，实际是 `bg-base` 铺满 | `client.js:674-675` | 低 | 注释与实现不符 |
+| D-07 | `.dsh-pi-dialog-head h3` 注释称 `22px 14px 12px 24px`，实际留白在 head（`:750` 的 `padding:22px 18px 0 24px`）、h3 本身 `padding:0` | `client.js:745-751` | 低 | 注释与实现不符 |
+| D-08 | 菜单阴影 `elevation-panel`，DSH 同级菜单用 `elevation-prominent` | `client.js:641` | 低 | 令牌等级偏差 |
+| D-09 | 按钮描边 `border-l4`，DSH `_outline` 用 `border-l3` | `client.js:479` | 低 | 令牌等级偏差 |
+| D-10 | 开关胶囊多一条 `transition:background-color .16s ease` | `client.js:707` | 极低 | 动效差异 |
+| D-11 | `dirMissing` 死键 | `client.js:195` / `:397` | 低 | 未使用键 |
 
 另有两条**不是差异但值得记录**的实现选择：
 
-- `-tool` 平铺行（无框无底）：`client.js:415-420` 有注释说明「十几次工具调用会成噪音墙」，是刻意决定，不是漏做；
+- `-tool` 平铺行（无框无底）：`client.js:513-520` 有注释说明「框套框的噪音墙」（`:518`），是刻意决定，不是漏做；
 - `-bubble-user` 的 `max-width:82%`：DSH 是 100%，dsh-pi 按 IM 惯例收窄，属合理分歧。
 
 ---
@@ -1323,7 +1454,7 @@ Select-String -Path client.js -Pattern "function dirPickModel"
 
 **为什么没确认**：需要真跑一个 pi 子进程（`pi --mode rpc`）并发一条 `POST /sessions`，本轮明令禁止运行会打真实 LLM 的测试。
 
-**为什么重要**：`dirHint` 的文案（ZH `:171`）向用户承诺「不存在的路径在开新会话时自动创建」。如果 pi 实际不创建，这句文案就是错的。
+**为什么重要**：`dirHint` 的文案（ZH `:186`）向用户承诺「不存在的路径在开新会话时自动创建」。如果 pi 实际不创建，这句文案就是错的。
 
 **怎么确认**：起一个 pi 子进程，`POST /sessions {"cwd":"<不存在的绝对路径>"}`，看返回是 `ok` 还是 500，再看磁盘上是否出现该目录。
 
@@ -1331,13 +1462,13 @@ Select-String -Path client.js -Pattern "function dirPickModel"
 
 **为什么没确认**：需要真浏览器矩阵。仓库当前没有浏览器测试依赖（`test/` 全是 Node 单测 + SSR 字符串断言）。
 
-**当前对策**：`client.js:462` 与 `:463` 写了**双通道**——`:focus-within`（纯 CSS）+ `[data-focus="1"]`（React 显式维护属性）。任何一条通都能亮边框，所以即使 `:focus-within` 在某些嵌套结构下失效，视觉上不会退化。
+**当前对策**：**只有一条通道** —— `client.js:599` 的 `.dsh-pi-box:focus-within{--dsw-elevation-stroke-color:var(--dsw-alias-state-business-primary)}`。0.4–0.6.1 曾同时维护 `.dsh-pi-box:focus-within`（`:462`）与 `[data-focus="1"]`（`:463`）双通道，0.6.2 把卡面换成 `--dsw-elevation-soft` 投影后，显式属性通道连同 JSX 里的 `data-focus` 一起删除（`grep data-focus client.js` = 0 命中）：描边由 elevation 的第一层表达，覆盖 `--dsw-elevation-stroke-color` 就够。
 
-**怎么确认**：Playwright 在 Chromium / Firefox / WebKit 三引擎里 `focus()` 内部 `textarea`，断言 `.dsh-pi-box` 的 `border-color` 等于 `state-business-primary` 的计算值。
+**怎么确认**：Playwright 在 Chromium / Firefox / WebKit 三引擎里 `focus()` 内部 `textarea`，断言 `.dsh-pi-box` 的 `box-shadow` 首层色等于 `state-business-primary` 的计算值（不再是 `border-color`）。
 
 ### C-3 `--dsh-code-font-size` 与 `--dsh-code-font-delta` 是否仍被 DSH 使用
 
-**为什么没确认**：这两个变量列在 `test/css-tokens.mjs:44-51` 的 `ALLOWED_EXTRA_TOKENS` 白名单里，但当前 `client.js` 的 CSS **一处都没引用**。它们可能是历史遗留，也可能是为将来预留。
+**为什么没确认**：这两个变量列在 `test/css-tokens.mjs:44-54` 的 `ALLOWED_EXTRA_TOKENS` 白名单里（该白名单 0.6.4 起共 7 个令牌），但当前 `client.js` 的 CSS **一处都没引用**。它们可能是历史遗留，也可能是为将来预留。
 
 **怎么确认**：在 `index-lh_YM6sT.css` 里 grep 这两个名字。若 DSH 自己也不用，白名单里应删掉（否则等于永久的空头许可）；若 DSH 用，则应升级为「必须带兜底」的强制项。
 
@@ -1357,10 +1488,10 @@ Select-String -Path client.js -Pattern "function dirPickModel"
 
 | 数值 | 采集方式 | 可信度 |
 | --- | --- | --- |
-| 114 个 `.dsh-pi-*` 类 | 脚本 `matchAll` 去重，与门禁同源 | A（可复现） |
-| 63 / 35 / 20 / 8 令牌分层 | 脚本统计 + 人工归类 | A（数字可复现，归类是判断） |
-| 192 段 / 27903 字符 / 306 次 `var()` | 门禁自身输出 | A |
-| 20 / 31 / 61 / 2 档位分布 | 114 类逐个人工判定 | B（判据主观，但每档都列了具体依据） |
+| 148 个 `.dsh-pi-*` 类 | 脚本 `matchAll` 去重，与门禁同源 | A（可复现） |
+| 70 / 39 / 20 / 6 令牌分层（另 `--dsw-specific-*` 4 + `--dsw-static-*` 1，外部兜底 4） | 脚本统计 + 人工归类 | A（数字可复现，归类是判断） |
+| 240 段 / 35680 字符 / 356 次 `var(`（顶层 351 处） | 门禁自身输出（字符数取汇总第 3 行，顶层引用取「令牌引用」行） | A |
+| 32 / 45 / 69 / 2 档位分布 | 148 类逐个人工判定 | B（判据主观，但每档都列了具体依据） |
 | DSH 规则原文与行号偏移 | 探针文件逐条 grep 验证存在 | A |
 | DSH picker 逻辑行号 | 探针源码逐条 grep | A |
 | `switch` 十一项一致 | 两边规则原文逐属性比对 | A |
@@ -1371,4 +1502,4 @@ Select-String -Path client.js -Pattern "function dirPickModel"
 
 ---
 
-_本文的样式与尺寸取证基于 client.js@4130（mtime 2026-11-14T06:06:46Z，sha256 前缀 `06fb24ca5cb7`）与 dsh-pi 0.5.1；当前版本为 client.js@5170（283968 B，sha256 前缀 `b0cc688879a9`）/ dsh-pi 0.6.3。所有行号会随后续改动漂移，定位请用类名 grep。_
+_本文的样式与尺寸取证基于 client.js@4130（mtime 2026-11-14T06:06:46Z，sha256 前缀 `06fb24ca5cb7`）与 dsh-pi 0.5.1；当前版本为 client.js@5619（307602 B，sha256 前缀 `ACDCFE28FDFB`）/ dsh-pi 0.6.4。所有行号会随后续改动漂移，定位请用类名 grep。_

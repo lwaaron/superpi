@@ -354,6 +354,84 @@ for (const [label, markup] of [['工具调用', toolHtml], ['bash 结果', bashH
 // 三处渲染必须共用同一个容器类名，样式改动才不会漏掉某一类过程行。
 assert(toolHtml.includes('echo hi') && bashHtml.includes('echo hi') && resultHtml.includes('hi'), '三类过程行都该渲染出内容')
 
+// ── 9.11c 过程行文字色 = label-tertiary（实拍逐像素对过目标图） ──────────────
+// 目标图摘要实心色 rgb(129,133,140) 就是 label-tertiary；label-secondary 的
+// rgb(97,102,107) 肉眼可辨地偏深，0.6.4 首轮实拍就是这么错的。
+const procTextRule = cssRule('.dsh-pi-proc-text')
+assert(procTextRule !== null, 'client.js 里该有 .dsh-pi-proc-text 规则')
+assert(procTextRule.includes('color:var(--dsw-alias-label-tertiary)'), '.dsh-pi-proc-text 该用 label-tertiary（目标图摘要色），实际 ' + procTextRule)
+const procHeadRule = cssRule('.dsh-pi-proc-head,.dsh-pi-tool-head')
+assert(procHeadRule !== null, 'client.js 里该有 .dsh-pi-proc-head 规则')
+assert(procHeadRule.includes('color:var(--dsw-alias-label-tertiary)'), '.dsh-pi-proc-head 继承色该是 label-tertiary（.dsh-pi-proc-path 靠 color:inherit 取它），实际 ' + procHeadRule)
+assert(procHeadRule.includes('label-secondary') === false, '过程行不该再用 label-secondary，实际 ' + procHeadRule)
+
+// ── 9.11d 展开区的 live 段只在运行中出现 ─────────────────────────────────
+// 跑完后 partialResult 与最终结果是同一件事的两副面孔，两段都印等于输出写两遍。
+const runningHtml = renderToStaticMarkup(React.createElement(ToolBlock, { t: zh, name: 'bash', argsText: '{"command":"echo hi"}', status: 'running', partial: 'LIVE-CHUNK' }))
+const doneHtml = renderToStaticMarkup(React.createElement(ToolBlock, { t: zh, name: 'bash', argsText: '{"command":"echo hi"}', status: 'done', partial: 'LIVE-CHUNK', resultText: 'FINAL-OUT' }))
+assert(runningHtml.includes('── live ──'), '运行中该显示 live 段（工具边跑边出进度），实际 ' + runningHtml.slice(0, 400))
+assert(doneHtml.includes('── live ──') === false, '跑完后不该再显示 live 段（会与 output 重复），实际 ' + doneHtml.slice(0, 400))
+assert(doneHtml.includes('── output ──') && doneHtml.includes('FINAL-OUT'), '跑完后该显示 output 段，实际 ' + doneHtml.slice(0, 400))
+
+// ── 9.11e 工作状态行：brand 蓝 + 鲸鱼尾 + 「···」（对齐 DSH RunningStatus） ──
+// 目标图（DSH 会话过程流截图）里这一行文字与图标同为 rgb(52,94,186) = #345EBA =
+// --dsw-alias-label-deep-diving，末尾是三个中点而不是省略号，图标是鲸鱼尾而不是星形。
+// 0.6.4 首轮实拍三处都错，这里逐条钉死，免得下次「看着差不多」又漂回去。
+const workingRule = cssRule('.dsh-pi-working')
+assert(workingRule !== null, 'client.js 里该有 .dsh-pi-working 规则')
+assert(workingRule.includes('color:var(--dsw-alias-label-deep-diving)'), '.dsh-pi-working 文字色该是 label-deep-diving（目标图 #345EBA），实际 ' + workingRule)
+assert(workingRule.includes('label-tertiary') === false, '.dsh-pi-working 不该再用 label-tertiary（那是过程行的色），实际 ' + workingRule)
+assert(workingRule.includes('font-size:calc(var(--dsh-content-font-size,14px) - 2px)'), '.dsh-pi-working 字号该是正文 - 2px（DSH running 行同式），实际 ' + workingRule)
+assert(workingRule.includes('line-height:calc(22px + var(--dsh-content-font-delta,0px))'), '.dsh-pi-working 行高该是 22px + delta（DSH running 行同式），实际 ' + workingRule)
+const workingIconRule = cssRule('.dsh-pi-working-icon')
+assert(workingIconRule !== null, 'client.js 里该有 .dsh-pi-working-icon 规则')
+assert(workingIconRule.includes('state-business-primary') === false, '图标该随父级 currentColor，不该单独取 business-primary（两个蓝不是同一个），实际 ' + workingIconRule)
+assert(workingIconRule.includes('width:14px') && workingIconRule.includes('height:14px'), '图标盒该是 14x14（DSH .runningIcon），实际 ' + workingIconRule)
+assert(workingIconRule.includes('animation:dsh-pi-pulse'), '图标该保留呼吸动画，实际 ' + workingIconRule)
+for (const lang of ['zh', 'en']) {
+  const label = strings[lang].working
+  assert(label.indexOf('{duration}') >= 0, lang + '.working 该含 {duration} 占位，实际 ' + label)
+  assert(label.endsWith('···'), lang + '.working 该以三个中点结尾（DSH 用 `···` 表示继续，不是省略号），实际 ' + label)
+  assert(label.indexOf('…') < 0, lang + '.working 不该再用省略号 …，实际 ' + label)
+}
+const fmtDuration = internals.fmtDuration
+assert(typeof fmtDuration === 'function', 'client.js 应导出 fmtDuration 以便测试')
+const durCases = [
+  [0, zh('durSec').replace('{n}', '0')],
+  [12000, zh('durSec').replace('{n}', '12')],
+  // 单位之间不加空格：中文目标图就是「43分54秒」（词条自带它需要的间距，EN 才是 'h '/'m '）
+  [2634000, zh('durMin').replace('{n}', '43') + zh('durSec').replace('{n}', '54')],
+  [7389000, zh('durHour').replace('{n}', '2') + zh('durMin').replace('{n}', '3') + zh('durSec').replace('{n}', '9')],
+]
+for (const [ms, want] of durCases) {
+  assert(fmtDuration(ms, zh) === want, 'fmtDuration(' + ms + ') 该是「' + want + '」，实际「' + fmtDuration(ms, zh) + '」')
+}
+assert(fmtDuration(90000, zh).indexOf(zh('durMin').replace('{n}', '1')) === 0, '90 秒该进位成「1分30秒」而不是「90秒」，实际 ' + fmtDuration(90000, zh))
+// 中文行内不该出现半角空格（单位紧贴数字），EN 才靠词条尾空格分隔
+assert(fmtDuration(2634000, zh).indexOf(' ') < 0, '中文用时不该带空格，实际 ' + fmtDuration(2634000, zh))
+assert(fmtDuration(7389000, en) === '2h 3m 9s', 'EN 该按词条尾空格拼成「2h 3m 9s」，实际 ' + fmtDuration(7389000, en))
+assert(fmtDuration(60000, en).indexOf('1m') === 0, 'EN 的分钟词条是 1m 前缀，实际 ' + fmtDuration(60000, en))
+const WhaleTailIcon = internals.WhaleTailIcon
+assert(typeof WhaleTailIcon === 'function', 'client.js 应导出 WhaleTailIcon 以便测试')
+const whaleHtml = renderToStaticMarkup(React.createElement(WhaleTailIcon, null))
+assert(whaleHtml.includes('viewBox="0 0 16 16"'), '鲸鱼尾该用 16 网格（DSH 原路径的坐标系），实际 ' + whaleHtml.slice(0, 160))
+assert(whaleHtml.includes('stroke-width="1"'), '鲸鱼尾描边该是 1（24 网格那套图标的 1.7 在 16 网格下会变粗），实际 ' + whaleHtml.slice(0, 160))
+const WorkingRow = internals.WorkingRow
+assert(typeof WorkingRow === 'function', 'client.js 应导出 WorkingRow 以便测试')
+const workingLive = renderToStaticMarkup(React.createElement(WorkingRow, { t: zh, since: Date.now() - 65000 }))
+assert(workingLive.includes('dsh-pi-working-icon'), '工作状态行该渲染图标位')
+assert(workingLive.includes('viewBox="0 0 16 16"'), '图标该是鲸鱼尾（16 网格），实际 ' + workingLive.slice(0, 300))
+assert(workingLive.indexOf(zh('durMin').replace('{n}', '1') + zh('durSec').replace('{n}', '5')) > 0, '有起点（65 秒）时该显示「1分5秒」，实际 ' + workingLive)
+assert(workingLive.includes('dsh-pi-working-text') && workingLive.indexOf('···') > 0, '有起点时文字该带 ··· 结尾，实际 ' + workingLive)
+assert(workingLive.includes('role="status"') && workingLive.includes('aria-live="polite"'), '该给读屏软件一条 live region（只播报「深度求索中」，不带每秒变的秒数）')
+assert(workingLive.includes('class="dsh-pi-sr"'), 'live region 该复用 .dsh-pi-sr 视觉隐藏类，实际 ' + workingLive.slice(0, 300))
+const workingNoSince = renderToStaticMarkup(React.createElement(WorkingRow, { t: zh }))
+assert(workingNoSince.includes(zh('deepDiving')), '没有起点时该只说「' + zh('deepDiving') + '」，实际 ' + workingNoSince)
+assert(workingNoSince.indexOf('用时') < 0, '没有起点时不该编一个用时出来，实际 ' + workingNoSince)
+// 第一秒内也报「1秒」：DSH 是 formatRunDuration(Math.max(1e3, now - startTime), t)
+// （dsh-client-ui-chat/lib/client.js:6402）；不钳位的话刚发出的一瞬会闪「0秒」。
+const workingJustStarted = renderToStaticMarkup(React.createElement(WorkingRow, { t: zh, since: Date.now() }))
+assert(workingJustStarted.indexOf(zh('durSec').replace('{n}', '1')) > 0, '刚起步时该至少报「1秒」而不是「0秒」，实际 ' + workingJustStarted)
 // ── 9.12 pathCrumbs：面包屑切分（只做字符串，不碰 fs） ─────────────────────
 const pathCrumbs = internals.pathCrumbs
 assert(typeof pathCrumbs === 'function', 'client.js 应导出 pathCrumbs 以便测试')

@@ -57,15 +57,28 @@ window.__ModuleLoader__.load({
       thinking: '思考',
       workspace: '目录',
       model: '模型',
-      busy: '运行中',
       dead: '已结束',
       loading: '正在连接 pi…',
       error: '出错了',
       reconnect: '重新连接',
-      tool: '工具',
-      result: '结果',
       failed: '失败',
-      thinkingLabel: '思考过程',
+      procThink: '思考',
+      procBash: '运行命令',
+      procRead: '读取',
+      procReadImage: '读取图片',
+      procWrite: '写入',
+      procEdit: '编辑',
+      procGrep: '搜索文件内容',
+      procGlob: '查找文件',
+      procList: '浏览目录',
+      procGeneric: '工具调用',
+      procResult: '结果',
+      deepDiving: '深度求索中',
+      working: '深度求索中，用时 {duration} ···',
+      // 单位自带尾随空格，靠 join('') 拼出「43分54秒」；与 DSH duration.* 一致（中文不带空格）
+      durHour: '{n}小时',
+      durMin: '{n}分',
+      durSec: '{n}秒',
       tokens: 'tokens',
       crashed: 'pi 子进程已退出',
       synced: '代码已同步',
@@ -247,15 +260,28 @@ window.__ModuleLoader__.load({
       thinking: 'Thinking',
       workspace: 'Workspace',
       model: 'Model',
-      busy: 'Running',
       dead: 'Exited',
       loading: 'Connecting to pi…',
       error: 'Something went wrong',
       reconnect: 'Reconnect',
-      tool: 'tool',
-      result: 'result',
       failed: 'failed',
-      thinkingLabel: 'Thinking',
+      procThink: 'Thinking',
+      procBash: 'Run command',
+      procRead: 'Read',
+      procReadImage: 'Read image',
+      procWrite: 'Write',
+      procEdit: 'Edit',
+      procGrep: 'Grep',
+      procGlob: 'Find files',
+      procList: 'List folder',
+      procGeneric: 'Tool call',
+      procResult: 'Result',
+      deepDiving: 'Deep diving',
+      working: 'Deep diving, {duration} ···',
+      // EN 的尾随空格就是拼接分隔符本身（DSH duration.hourUnit = 'h '），join('') 后成「2h 3m 9s」
+      durHour: '{n}h ',
+      durMin: '{n}m ',
+      durSec: '{n}s',
       tokens: 'tokens',
       crashed: 'pi child process exited',
       synced: 'Code in sync',
@@ -484,28 +510,46 @@ window.__ModuleLoader__.load({
       '.dsh-pi-fence{margin:16px 0;overflow:hidden;border:0;border-radius:var(--dsw-radius-lg);background:var(--dsw-alias-markdown-code-block);font:var(--dsw-font-markdown-code-block)}',
       '.dsh-pi-fence-lang{padding:10px 18px 8px 22px;border-bottom:0;background:var(--dsw-alias-markdown-code-block-banner);color:var(--dsw-alias-label-secondary);font-size:var(--dsw-font-xxxs-11-font-size);line-height:18px;font-family:var(--dsw-font-family)}',
       '.dsh-pi-pre{margin:0;padding:6px 22px 20px;overflow-x:auto;font:var(--dsw-font-markdown-code-block);color:var(--dsw-alias-label-primary)}',
-      '.dsh-pi-think{border-left:2px solid var(--dsw-alias-border-l3);padding-left:10px;color:var(--dsw-alias-label-tertiary);font-size:var(--dsw-font-xs-13-font-size);line-height:var(--dsw-font-xs-13-line-height)}',
-      '.dsh-pi-think summary{cursor:pointer;user-select:none;list-style:none;color:var(--dsw-alias-label-tertiary);padding:2px 0}',
-      '.dsh-pi-think summary:hover{color:var(--dsw-alias-label-secondary)}',
-      '.dsh-pi-think summary::-webkit-details-marker{display:none}',
-      '.dsh-pi-think-body{margin-top:6px;white-space:pre-wrap;word-break:break-word;line-height:calc(22px + var(--dsh-content-font-delta,0px))}',
-
-      // 工具行：过程流里的一次工具调用 / 一次工具结果（含 ! 的 bash 结果）。
+      // ── 过程行（思考 / 工具调用 / 工具结果）──────────────────────────────
       //
-      // 这里是「行」不是「卡」：一次任务常常连着十几次工具调用，每行都套圆角框 + hairline
-      // 会形成框套框的噪音墙（用户 18994 明确要求去掉圆角框）。DSH 自己的过程流也是平铺行：
-      // 只有箭头 + 名称 + 状态，靠行距分组，展开后才出现内容区。
-      // 展开区沿用 .dsh-pi-think 的左侧竖线语言，让「附着在一条消息下的补充信息」看起来是一类东西。
-      '.dsh-pi-tool{border:0;border-radius:0;background:transparent;box-shadow:none}',
-      '.dsh-pi-tool-head{display:flex;align-items:center;gap:8px;padding:3px 0;cursor:pointer;list-style:none;font-size:var(--dsw-font-xxs-12-font-size);line-height:var(--dsw-font-xxs-12-line-height);color:var(--dsw-alias-label-secondary)}',
-      // 悬停只提亮文字，不铺底色 —— 铺底色会在没有外框时露出一块矩形色斑。
-      '.dsh-pi-tool-head:hover{color:var(--dsw-alias-label-primary)}',
-      '.dsh-pi-tool-head:hover .dsh-pi-tool-name{color:var(--dsw-alias-label-primary)}',
-      '.dsh-pi-tool-head::-webkit-details-marker{display:none}',
-      '.dsh-pi-tool-head::before{content:"\\25B8";color:var(--dsw-alias-label-dimmed);font-size:10px;line-height:1;transition:transform .16s ease}',
-      '.dsh-pi-tool[open]>.dsh-pi-tool-head::before{transform:rotate(90deg)}',
-      '.dsh-pi-tool-name{font-family:var(--ds-font-family-code,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace);color:var(--dsw-alias-label-secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
-      '.dsh-pi-tool-body{margin:4px 0 0;padding:0 0 0 14px;border-top:0;border-left:1px solid var(--dsw-alias-border-l3);max-height:340px;overflow:auto;font-size:var(--dsw-font-xxxs-11-font-size);line-height:18px;white-space:pre-wrap;word-break:break-word;font-family:var(--ds-font-family-code,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace);color:var(--dsw-alias-label-secondary)}',
+      // 对齐 DSH 会话过程流（research/tool-pkg/client.js 的 ToolRow.module.css）：
+      // 一行 = [16px 图标位][label][2×2 实心圆点][单行摘要]，字号 13 / 行高 24，
+      // 无外框、无描边、无卡片。一次任务常连着十几条工具调用，行里再套卡片会形成
+      // 框套框的噪音墙（用户 18994 明确要求去掉圆角框），DSH 自己也是平铺行。
+      // 层级靠缩进表达：模型「想了什么」是父行，它「做了什么」缩进成子行并带一条
+      // 左侧竖线 —— 与 DSH 的 tool 行 + 嵌套子行同构。展开区沿用同一条竖线语言。
+      '.dsh-pi-proc{border:0;border-radius:0;background:transparent;box-shadow:none;display:block;min-width:0}',
+      '.dsh-pi-tool{border:0;border-radius:0;background:transparent;box-shadow:none;display:block;min-width:0}',
+      '.dsh-pi-proc-head,.dsh-pi-tool-head{display:flex;align-items:center;min-width:0;list-style:none;cursor:pointer;font-size:var(--dsh-content-font-size-secondary,13px);line-height:calc(24px + var(--dsh-content-font-delta,0px));color:var(--dsw-alias-label-tertiary)}',
+      '.dsh-pi-proc-head::-webkit-details-marker,.dsh-pi-tool-head::-webkit-details-marker{display:none}',
+      '.dsh-pi-proc-head::marker,.dsh-pi-tool-head::marker{content:""}',
+      // 悬停只提亮文字，不铺底色 —— 没有外框时铺底色会露出一块矩形色斑。
+      '.dsh-pi-proc-head:hover .dsh-pi-proc-text,.dsh-pi-proc-head:hover .dsh-pi-proc-label,.dsh-pi-proc-head:hover .dsh-pi-proc-path,.dsh-pi-tool-head:hover .dsh-pi-proc-text,.dsh-pi-tool-head:hover .dsh-pi-proc-label,.dsh-pi-tool-head:hover .dsh-pi-proc-path{color:var(--dsw-alias-label-primary)}',
+      '.dsh-pi-proc-head:focus-visible,.dsh-pi-tool-head:focus-visible{outline:var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary));outline-offset:2px}',
+      '.dsh-pi-proc-icon{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;width:16px;height:16px;margin-right:7px;color:var(--dsw-alias-label-tertiary)}',
+      '.dsh-pi-proc-label{flex:0 0 auto;font-weight:400;white-space:nowrap;color:var(--dsw-alias-label-tertiary)}',
+      '.dsh-pi-sep{flex:0 0 auto;width:2px;height:2px;margin:0 8px;border-radius:1px;background:var(--dsw-alias-label-caption)}',
+      '.dsh-pi-proc-text{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-tertiary)}',
+      '.dsh-pi-proc-text[data-tone="err"]{color:var(--dsw-alias-state-error-primary)}',
+      '.dsh-pi-proc-text[data-tone="warn"]{color:var(--dsw-alias-state-warn-primary)}',
+      '.dsh-pi-proc-note{flex:0 0 auto;margin-left:8px;color:var(--dsw-alias-label-caption);font-variant-numeric:tabular-nums;white-space:nowrap}',
+      '.dsh-pi-proc-note[data-tone="err"]{color:var(--dsw-alias-state-error-primary)}',
+      '.dsh-pi-proc-note[data-tone="warn"]{color:var(--dsw-alias-state-warn-primary)}',
+      // 可点路径：DSH 用 1px 点线下划线 + 3px 偏移，颜色与正文一致，不额外染色。
+      '.dsh-pi-proc-path{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin:0;padding:0;border:0;background:0 0;color:inherit;font:inherit;line-height:inherit;text-align:left;text-decoration:underline 1px dotted;text-underline-offset:3px;cursor:pointer}',
+      '.dsh-pi-proc[data-state="running"] .dsh-pi-sep,.dsh-pi-tool[data-state="running"] .dsh-pi-sep{background:var(--dsw-alias-state-business-primary);animation:dsh-pi-pulse 1.2s ease-in-out infinite}',
+      // 子行组：模型「做了什么」缩进到父行图标列之后，靠一条左侧竖线归组。
+      '.dsh-pi-sub{display:flex;flex-direction:column;gap:2px;margin:2px 0 0 22px;padding:1px 0 1px 8px;border-left:1px solid var(--dsw-alias-border-l3)}',
+      // 展开区：与图标列对齐的 22px 缩进 + 左侧竖线，和 DSH 折叠体同一套语言。
+      '.dsh-pi-proc-body{margin:2px 0 2px 22px;padding:0 0 0 14px;border-left:1px solid var(--dsw-alias-border-l3);white-space:pre-wrap;word-break:break-word;color:var(--dsw-alias-label-tertiary);line-height:calc(22px + var(--dsh-content-font-delta,0px))}',
+      '.dsh-pi-tool-body{margin:2px 0 4px;padding:0 0 0 14px;border-top:0;border-left:1px solid var(--dsw-alias-border-l3);max-height:340px;overflow:auto;font-family:var(--ds-font-family-code,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace);font-size:var(--dsw-font-xxxs-11-font-size);line-height:18px;white-space:pre-wrap;word-break:break-word;color:var(--dsw-alias-label-secondary)}',
+      // 底部「正在生成」行：DSH 在过程流末尾放一条极淡横线 + 一行状态。
+      // 颜色 / 字号 / 行高一律取 DSH running 行（ChatView.module.css）的原式：
+      // 文字是 brand 蓝 --dsw-alias-label-deep-diving（= color-mix(#4176e6 70%, #172554) = #345EBA），
+      // 字号是正文 - 2px（14-2=12），行高 22px —— 都比过程行（13/24）小一号，视觉上退到过程流之后。
+      '.dsh-pi-working{display:flex;align-items:center;gap:6px;margin-top:2px;padding-top:10px;border-top:.5px solid var(--dsw-alias-border-l3);color:var(--dsw-alias-label-deep-diving);font-size:calc(var(--dsh-content-font-size,14px) - 2px);line-height:calc(22px + var(--dsh-content-font-delta,0px))}',
+      '.dsh-pi-working-icon{flex:0 0 auto;display:inline-flex;width:14px;height:14px;animation:dsh-pi-pulse 1.6s ease-in-out infinite}',
+      '.dsh-pi-working-text{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-variant-numeric:tabular-nums}',
 
       // 状态标签 = DSH ._tag 的四种 tone（run/success/warning/danger）
       '.dsh-pi-tag{display:inline-flex;align-items:center;height:17px;padding:1px 8px;border:0;border-radius:999px;corner-shape:round;background:var(--dsw-alias-bg-module-platform);color:var(--dsw-alias-label-secondary);font-size:var(--dsw-font-xxxs-11-font-size);line-height:var(--dsw-font-xxxs-11-line-height);font-weight:500;white-space:nowrap}',
@@ -1318,6 +1362,24 @@ window.__ModuleLoader__.load({
      */
     var CHAT_TIMEOUT_MS = 0
 
+    /**
+     * busy 的进入 / 退出只走这两个口。
+     *
+     * 用时是「工作状态行」唯一的动态内容，散在五处手写 `busy = true` 必然漏记或残留
+     * （漏记 → 用时从 1 秒开始涨；残留 → 空闲时还挂着上次的 43 分）。
+     * resync / attach 会在中途把 busy 重设为快照值，因此这里必须幂等：
+     * 已经在忙就不重置起点，否则一轮任务里每重连一次计时就归零。
+     */
+    function markBusy(view) {
+      view.busy = true
+      if (!(view.busySince > 0)) view.busySince = Date.now()
+    }
+
+    function markIdle(view) {
+      view.busy = false
+      view.busySince = 0
+    }
+
     function createView() {
       return {
         messages: [],
@@ -1325,6 +1387,9 @@ window.__ModuleLoader__.load({
         openIndex: -1,
         streamingIndex: -1,
         busy: false,
+        // 工作状态行的计时起点：busy 由谁点亮不重要，用时必须从「真正开始」那一拍算起，
+        // 0 表示当前不是 busy（或还没记过点）。
+        busySince: 0,
         compacting: false,
         retrying: false,
         toolStatus: {},
@@ -1533,8 +1598,8 @@ window.__ModuleLoader__.load({
       var current = null
       var entry = null
 
-      if (type === 'agent_start') { view.busy = true; view.lastError = null; return }
-      if (type === 'turn_start') { view.busy = true; return }
+      if (type === 'agent_start') { markBusy(view); view.lastError = null; return }
+      if (type === 'turn_start') { markBusy(view); return }
       if (type === 'turn_end') {
         // 一轮结束：关掉流式指针，但 busy 不归零（agent 可能还有后续轮次）。
         view.openIndex = -1
@@ -1549,7 +1614,7 @@ window.__ModuleLoader__.load({
         return
       }
       if (type === 'agent_settled') {
-        view.busy = false
+        markIdle(view)
         view.retrying = false
         view.openIndex = -1
         view.streamingIndex = -1
@@ -1803,6 +1868,85 @@ window.__ModuleLoader__.load({
       ])
     }
 
+    /** 思考：圆内十字（对齐 DSH 过程行的 thinking 图标）。 */
+    function ThinkIcon(props) {
+      return iconSvg(props, [
+        h('circle', { key: 'c', cx: 12, cy: 12, r: 8.6 }),
+        h('path', { key: 'a', d: 'M9.1 9.1 14.9 14.9' }),
+        h('path', { key: 'b', d: 'M14.9 9.1 9.1 14.9' }),
+      ])
+    }
+
+    /** 代码：井号。DSH 过程行里「一次模型回合」的父行用它。 */
+    function HashIcon(props) {
+      return iconSvg(props, [
+        h('path', { key: 'a', d: 'M9.6 4.5 7.6 19.5' }),
+        h('path', { key: 'b', d: 'M16.4 4.5 14.4 19.5' }),
+        h('path', { key: 'c', d: 'M4.6 9.2h15' }),
+        h('path', { key: 'd', d: 'M4 14.8h15' }),
+      ])
+    }
+
+    /** 运行命令：终端提示符 >_。 */
+    function TerminalIcon(props) {
+      return iconSvg(props, [
+        h('path', { key: 'a', d: 'M6.5 8 10 12l-3.5 4' }),
+        h('path', { key: 'b', d: 'M12.5 16.4h5' }),
+      ])
+    }
+
+    /** 读取图片 / 读取文件：带框图。 */
+    function FrameIcon(props) {
+      return iconSvg(props, [
+        h('rect', { key: 'b', x: 3.5, y: 4.8, width: 17, height: 14.4, rx: 2 }),
+        h('path', { key: 'i', d: 'M7.4 8.6v6.8' }),
+        h('path', { key: 'l', d: 'M11 9.6h6.2' }),
+        h('path', { key: 'l2', d: 'M11 14.4h4' }),
+      ])
+    }
+
+    /** 搜索文件内容 / 查找文件：放大镜。 */
+    function SearchIcon(props) {
+      return iconSvg(props, [
+        h('circle', { key: 'c', cx: 10.6, cy: 10.6, r: 6.1 }),
+        h('path', { key: 'h', d: 'M15.2 15.2 20 20' }),
+      ])
+    }
+
+    /** 写入 / 编辑文件：铅笔。 */
+    function PencilIcon(props) {
+      return iconSvg(props, [
+        h('path', { key: 'p', d: 'M4.2 19.8h4l11-11a2.83 2.83 0 0 0-4-4l-11 11v4z' }),
+        h('path', { key: 't', d: 'M14.6 5.4 18.6 9.4' }),
+      ])
+    }
+
+    /** 兜底：四角星（DSH 的 others 也是这个语义）。 */
+    function SparkIcon(props) {
+      return iconSvg(props, [
+        h('path', { key: 'a', d: 'M12 4.5l1.9 4.6 4.6 1.9-4.6 1.9L12 19.5l-1.9-4.6L5.5 13l4.6-1.9z' }),
+      ])
+    }
+
+
+    /**
+     * 鲸鱼尾：工作状态行的品牌标记（DSH RunningWhaleTail 的静态分支）。
+     *
+     * 与上面那组图标**不同一套规格**，所以不走 iconSvg：DSH 的路径是按 16 网格画的、
+     * 描边 1 而不是 24 网格的 1.7。照抄路径与描边参数才能在同一字号下得到同样的粗细；
+     * 换成 24 网格重画会立刻看出来是另一个图标。
+     * 动效版（APNG 蒙版）是 DSH 的可选装饰，插件不引二进制资源，静态描边就是
+     * DSH 自己在 prefers-reduced-motion 下的退化成什么样。
+     */
+    function WhaleTailIcon() {
+      return h('svg', {
+        width: '100%', height: '100%', viewBox: '0 0 16 16', fill: 'none', stroke: 'currentColor',
+        strokeWidth: 1, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': 'true',
+        style: { display: 'block' },
+      }, h('path', {
+        d: 'M8.844 13.742C8.967 12.328 8.45 10.4 8.45 9.65C8.45 8.94 8.88 8.43 9.6 8.43C11.285 8.43 12.106 8.281 12.685 8.104C13.71 7.791 14.585 6.768 15.055 5.945C15.137 5.803 14.99 5.641 14.829 5.671C13.829 5.86 12.828 5.376 11.827 4.978C10.659 4.514 9.491 4.707 8.935 4.876C8.805 4.915 8.658 4.819 8.636 4.686C8.468 3.643 7.405 2.615 5.498 2.238C4.54 2.048 3.748 1.574 3.347 1.202C3.252 1.113 3.088 1.125 3.03 1.242C2.628 2.059 2.168 3.82 5.248 6.115C5.82 6.494 6.31 6.785 6.574 7.637C6.72 8.104 6.157 9.168 6.061 9.368C5.157 11.27 5.089 12.19 4.926 13.742',
+      }))
+    }
     /** 关闭：两条对角线。抽屉与弹窗右上角统一用它，不再用纯文本 '×'。 */
     function CloseIcon(props) {
       return iconSvg(props, [
@@ -1961,36 +2105,225 @@ window.__ModuleLoader__.load({
       return out
     }
 
+    // ── 过程行 ────────────────────────────────────────────────────────────────
+    //
+    // DSH 会话过程流的行解剖：一行 = [16px 图标][措辞][2×2 圆点][单行摘要]，
+    // 详情收在同一条行的展开区里，展开区带一条左侧竖线与图标列对齐。
+    // 四种行（思考 / 工具调用 / 工具结果 / ! bash）共用下面这一套构造器，
+    // 分开写会让间距、字号、灰阶四处漂移 —— 那正是 0.4.0 之前的样子。
+
+    /** pi 的工具参数是 JSON 文本；解析失败就当作「没有结构化参数」，不能让异常冒到渲染层。 */
+    function parseToolArgs(argsText) {
+      if (typeof argsText !== 'string' || argsText === '') return null
+      try {
+        var value = JSON.parse(argsText)
+        return value !== null && typeof value === 'object' ? value : null
+      } catch (error) {
+        return null
+      }
+    }
+
+    /** 单行摘要：只取第一行并压缩空白 —— 过程行永远是单行，超出部分交给 CSS 省略号。 */
+    function firstLineOf(text) {
+      var value = text === null || text === undefined ? '' : String(text)
+      var cut = value.indexOf('\n')
+      if (cut >= 0) value = value.slice(0, cut)
+      return value.trim()
+    }
+
+    // pi 的 8 个工具（packages/coding-agent/src/core/tools/）：read / write / edit / bash /
+    // powershell / grep / find / ls。措辞与图标按 DSH 的中文标题表对齐
+    // （tool.title.read=读取、bash=运行命令、edit=编辑、grep=搜索文件内容、glob=查找文件），
+    // 没有对应项的（ls）落到「浏览目录」，完全未知的工具才落到「工具调用」+ 星形图标。
+    var TOOL_VIEWS = {
+      read: { label: 'procRead', Icon: DocIcon },
+      write: { label: 'procWrite', Icon: FrameIcon },
+      edit: { label: 'procEdit', Icon: PencilIcon },
+      bash: { label: 'procBash', Icon: TerminalIcon },
+      powershell: { label: 'procBash', Icon: TerminalIcon },
+      grep: { label: 'procGrep', Icon: SearchIcon },
+      find: { label: 'procGlob', Icon: SearchIcon },
+      ls: { label: 'procList', Icon: ListIcon },
+    }
+
+    function toolViewOf(name, args) {
+      var key = typeof name === 'string' ? name : ''
+      var view = TOOL_VIEWS[key]
+      if (view === undefined) return { label: 'procGeneric', Icon: SparkIcon, name: key }
+      // 读图片与读文本是两条措辞、两个图标（DSH 的 readImage 亦然）；判据只能是扩展名。
+      if (key === 'read' && args !== null && typeof args.path === 'string' && fileKindOf(args.path) === 'image') {
+        return { label: 'procReadImage', Icon: FrameIcon, name: key }
+      }
+      return { label: view.label, Icon: view.Icon, name: key }
+    }
+
+    // 摘要优先取这些字段：命令 → 路径 → 模式。顺序固定，同一工具永远在同一行位置显示同一类信息。
+    var TOOL_SUMMARY_FIELDS = ['command', 'path', 'file_path', 'pattern', 'query', 'url']
+
+    function primaryToolArg(args) {
+      if (args === null) return null
+      for (var i = 0; i < TOOL_SUMMARY_FIELDS.length; i += 1) {
+        var field = TOOL_SUMMARY_FIELDS[i]
+        var value = args[field]
+        if (typeof value === 'string' && value.trim() !== '') return { field: field, text: value }
+      }
+      return null
+    }
+
+    /**
+     * 摘要格：路径可点（左键预览 / 右键定位），命令与模式是纯文本。
+     * DSH 的过程行只给路径一条 1px 点线下划线，其余正文不着色 —— 这里照抄，
+     * 不给每行都加可点态，否则整片过程流看起来像链接墙。
+     */
+    function ProcPath(props) {
+      var acts = normalizeFileActions(props.actions)
+      var text = String(props.path)
+      if (acts.open === null && acts.reveal === null) {
+        return h('span', { key: 'p', className: 'dsh-pi-proc-text', title: text }, text)
+      }
+      return h('button', {
+        key: 'p',
+        type: 'button',
+        className: 'dsh-pi-proc-path',
+        title: text,
+        onClick: function (event) {
+          event.preventDefault()
+          event.stopPropagation()
+          if (acts.open !== null) acts.open(text)
+        },
+        onContextMenu: function (event) {
+          if (acts.reveal === null) return
+          event.preventDefault()
+          event.stopPropagation()
+          acts.reveal(text)
+        },
+      }, text)
+    }
+
+    /** 摘要单元格的统一入口：有结构化主参数就用它，否则回落到调用名 / 原始参数首行。 */
+    function procSummary(props) {
+      var primary = props.primary
+      if (primary === null) {
+        return h('span', { key: 'p', className: 'dsh-pi-proc-text' }, props.fallback)
+      }
+      var text = firstLineOf(primary.text)
+      if (primary.field === 'path' || primary.field === 'file_path') {
+        return h(ProcPath, { key: 'p', path: text, actions: props.actions })
+      }
+      return h('span', { key: 'p', className: 'dsh-pi-proc-text', title: text }, text)
+    }
+
+    /**
+     * 行头：[图标][措辞][圆点][摘要][可选注脚]。
+     * 注脚放状态（失败 / exit N / truncated），它必须排在摘要之后，
+     * 否则摘要是弹性的（flex:1 1 auto），状态会被挤到行外。
+     */
+    function procHead(parts) {
+      var Icon = parts.Icon
+      var cells = [
+        h('span', { key: 'i', className: 'dsh-pi-proc-icon' }, h(Icon, { size: 15 })),
+        h('span', { key: 'l', className: 'dsh-pi-proc-label' }, parts.label),
+        h('span', { key: 's', className: 'dsh-pi-sep', 'aria-hidden': 'true' }),
+        parts.summary,
+      ]
+      var note = parts.note === null || parts.note === undefined ? '' : String(parts.note)
+      if (note !== '') {
+        cells.push(h('span', { key: 'n', className: 'dsh-pi-proc-note', 'data-tone': parts.noteTone === undefined ? '' : parts.noteTone }, note))
+      }
+      return cells
+    }
+
     function ThinkingBlock(props) {
       if (props.text === '') return null
-      return h('details', { className: 'dsh-pi-think' },
-        h('summary', null, props.t('thinkingLabel')),
-        h('div', { className: 'dsh-pi-think-body' }, props.text))
+      var summary = firstLineOf(props.text)
+      return h('details', { className: 'dsh-pi-proc', 'data-kind': 'thinking' },
+        h('summary', { className: 'dsh-pi-proc-head' }, procHead({
+          Icon: ThinkIcon,
+          label: props.t('procThink'),
+          summary: h('span', { key: 'p', className: 'dsh-pi-proc-text' }, summary),
+        })),
+        h('div', { className: 'dsh-pi-proc-body' }, props.text))
     }
 
     function ToolBlock(props) {
-      var tone = props.status === 'running' ? 'run' : props.status === 'error' ? 'err' : props.status === 'done' ? 'ok' : ''
-      var label = props.status === 'running' ? props.t('busy') : props.status === 'error' ? props.t('failed') : props.status === 'done' ? props.t('result') : ''
+      var t = props.t
+      var args = parseToolArgs(props.argsText)
+      var primary = primaryToolArg(args)
+      var view = toolViewOf(props.name, args)
       var body = props.argsText === '' ? '{}' : props.argsText
-      if (typeof props.partial === 'string' && props.partial !== '') body = body + '\n\n── live ──\n' + props.partial
-      return h('details', { className: 'dsh-pi-tool' },
-        h('summary', { className: 'dsh-pi-tool-head' },
-          h('span', { className: 'dsh-pi-tag' }, props.t('tool')),
-          h('span', { className: 'dsh-pi-tool-name' }, props.name),
-          label === '' ? null : h('span', { className: 'dsh-pi-tag', 'data-tone': tone }, label)),
+      // 只有还在跑的时候才露 live —— 结束后 partial 与 output 是同一份内容的两副面孔，
+      // 一起展示等于把结果印两遍（第一次实拍就撞上了）。
+      if (props.status === 'running' && typeof props.partial === 'string' && props.partial !== '') {
+        body = body + '\n\n── live ──\n' + props.partial
+      }
+      // 结果并进同一条行的展开区：一条调用只占一行，展开就是「参数 + 输出」。
+      var resultText = typeof props.resultText === 'string' ? props.resultText : ''
+      if (resultText !== '') body = body + '\n\n── output ──\n' + resultText
+      // 调用名本身只在「没有结构化参数」时才需要露出来（DSH 的 generic 行同此语义）。
+      var fallback = primary === null && view.label === 'procGeneric' ? view.name : ''
+      // 根 className 必须**恰好**是 dsh-pi-tool：门禁用 includes('class="dsh-pi-tool"') 精确匹配。
+      var attrs = { className: 'dsh-pi-tool' }
+      if (props.status === 'running') attrs['data-state'] = 'running'
+      if (props.status === 'error') attrs['data-state'] = 'error'
+      return h('details', attrs,
+        h('summary', { className: 'dsh-pi-proc-head' }, procHead({
+          Icon: view.Icon,
+          label: t(view.label),
+          summary: procSummary({ primary: primary, fallback: fallback, actions: props.onOpenFile }),
+          note: props.status === 'error' ? t('failed') : '',
+          noteTone: 'err',
+        })),
         h('pre', { className: 'dsh-pi-tool-body' }, body))
     }
 
     function ToolResultRow(props) {
       var message = props.message
       var text = textOfMessage(message)
-      return h('div', { className: 'dsh-pi-row', 'data-role': 'toolResult' },
-        h('div', { className: 'dsh-pi-body' },
-          h('details', { className: 'dsh-pi-tool' },
-            h('summary', { className: 'dsh-pi-tool-head' },
-              h('span', { className: 'dsh-pi-tag', 'data-tone': message.isError ? 'err' : 'ok' }, message.isError ? props.t('failed') : props.t('result')),
-              h('span', { className: 'dsh-pi-tool-name' }, message.toolName === null ? '' : message.toolName)),
-            h('pre', { className: 'dsh-pi-tool-body' }, text === '' ? '{}' : text))))
+      var view = toolViewOf(message.toolName, null)
+      var summary = firstLineOf(text)
+      return h('details', { className: 'dsh-pi-tool', 'data-role': 'toolResult' },
+        h('summary', { className: 'dsh-pi-proc-head' }, procHead({
+          Icon: view.Icon,
+          label: props.t('procResult'),
+          summary: h('span', {
+            key: 'p',
+            className: 'dsh-pi-proc-text',
+            'data-tone': message.isError ? 'err' : '',
+          }, summary === '' ? props.t('procResult') : summary),
+          note: message.isError ? props.t('failed') : '',
+          noteTone: 'err',
+        })),
+        h('pre', { className: 'dsh-pi-tool-body' }, text === '' ? '{}' : text))
+    }
+
+    /**
+     * 工作状态行：「深度求索中，用时 43分54秒 ···」。形状照 DSH 的 RunningStatus：
+     * 鲸鱼尾图标 + 一行 brand 蓝文字，末尾三个中点（不是省略号——DSH 用 `···` 表示还在继续）。
+     *
+     * 计时器挂在这一条节点自己身上，而不是面板级 —— 面板级每秒 repaint 会把整条
+     * 过程流（可能上百行、含流式 markdown）一起重算，只为刷新一行文字。
+     * 这里是唯一需要 1Hz 的地方，自己 state 自己跳。
+     *
+     * 没有起点（`since` 缺省）时只说「深度求索中」，不编一个用时出来；有起点时照 DSH `RunningStatus` 的 `formatRunDuration(Math.max(1e3, now - startTime), t)` 钳到 1 秒（首帧否则闪「0秒」）。
+     * 屏幕阅读器那边用 `role=status` + `aria-live=polite` 只播报不带秒数的那半句：
+     * 每秒都在变的数字进 live region 会把读屏软件刷成噪音。
+     */
+    function WorkingRow(props) {
+      var state = useState(0)
+      var setTick = state[1]
+      var since = props.since
+      var known = typeof since === 'number' && since > 0
+      useEffect(function () {
+        if (known === false) return undefined
+        var timer = window.setInterval(function () { setTick(function (value) { return value + 1 }) }, 1000)
+        return function () { window.clearInterval(timer) }
+      }, [since, known])
+      var label = props.t('deepDiving')
+      var text = known === false ? label : props.t('working').replace('{duration}', fmtDuration(Math.max(1000, Date.now() - since), props.t))
+      return h('div', { className: 'dsh-pi-working' },
+        h('span', { className: 'dsh-pi-sr', role: 'status', 'aria-live': 'polite', key: 'sr' }, label),
+        h('span', { className: 'dsh-pi-working-icon', key: 'icon' }, h(WhaleTailIcon, null)),
+        h('span', { className: 'dsh-pi-working-text', key: 'text' }, text))
     }
 
     function usageLine(usage, t) {
@@ -2015,10 +2348,22 @@ window.__ModuleLoader__.load({
       })
     }
 
+    /**
+     * 助手消息 → 过程流。
+     *
+     * 结构与 DSH 会话过程流同构：模型的「思考」是父行，紧随其后的「工具调用」缩进成
+     * 子行组（左竖线 + 22px 缩进）；纯文本 / 图片是正文块，它们把过程流切成若干段，
+     * 所以文本之后再次出现的工具调用会重新起一组，而不是继续挂在很久以前的思考下面。
+     *
+     * 工具结果不单独占一行：pi 把结果作为独立的 toolResult 消息送达，而 DSH 的
+     * 一次调用 = 一行、输出收在同一行的展开区里。折叠逻辑在 PiPanel 里按 toolCallId
+     * 建表后传进来（props.results）；对不上号的孤儿结果仍按行渲染，不能吞掉内容。
+     */
     function MessageRow(props) {
       var message = props.message
       var t = props.t
       var nodes = []
+      var groupCount = 0
       var i = 0
       if (message.role === 'user') {
         var userText = textOfMessage(message)
@@ -2029,33 +2374,68 @@ window.__ModuleLoader__.load({
               userImages.map(function (block, index) { return h(ImageBlock, { key: 'ui' + String(index), data: block.data, mimeType: block.mimeType, onOpen: props.onOpenImage }) })),
             userText === '' ? null : userText))
       }
-      if (message.role === 'toolResult') return h(ToolResultRow, { message: message, t: t })
+      if (message.role === 'toolResult') {
+        if (message.toolCallId !== null && props.results !== undefined && props.results[message.toolCallId] !== undefined) return null
+        return h(ToolResultRow, { message: message, t: t })
+      }
       if (message.role === 'bashExecution') {
         return h('div', { className: 'dsh-pi-row' }, h('div', { className: 'dsh-pi-body' }, h(BashBlock, { t: t, message: message })))
       }
       if (message.role !== 'assistant') return null
+
+      var openThinking = null
+      var openTools = null
+      var flushTools = function () {
+        if (openTools !== null && openTools.length > 0) {
+          nodes.push(h('div', { key: 'g' + String(groupCount), className: 'dsh-pi-sub' }, openTools))
+          groupCount += 1
+        }
+        openTools = null
+        openThinking = null
+      }
       for (i = 0; i < message.blocks.length; i += 1) {
         var block = message.blocks[i]
-        if (block.type === 'thinking') nodes.push(h(ThinkingBlock, { key: 'k' + String(i), t: t, text: block.text }))
-        else if (block.type === 'toolCall') {
+        if (block.type === 'thinking') {
+          if (block.text === '') continue
+          // 新的思考行：把上一组子行收口，避免两次思考的子行混在一起。
+          flushTools()
+          nodes.push(h(ThinkingBlock, { key: 'k' + String(i), t: t, text: block.text }))
+          openThinking = block
+        } else if (block.type === 'toolCall') {
           var entry = block.id === null ? undefined : props.toolStatus[block.id]
-          nodes.push(h(ToolBlock, {
+          var result = block.id === null || props.results === undefined ? undefined : props.results[block.id]
+          var row = h(ToolBlock, {
             key: 'k' + String(i),
             t: t,
             name: block.name,
             argsText: block.argsText,
             status: entry === undefined ? '' : entry.status,
             partial: entry === undefined ? '' : entry.partial,
-          }))
+            resultText: result === undefined ? '' : result.text,
+            resultError: result === undefined ? false : result.isError,
+            onOpenFile: props.onOpenFile,
+          })
+          if (openThinking === null) {
+            // 没有思考铺路时，工具调用自己就是一条顶层过程行（DSH 的独立 tool 行同理）。
+            if (openTools !== null) openTools.push(row)
+            else nodes.push(row)
+          } else {
+            if (openTools === null) openTools = []
+            openTools.push(row)
+          }
         } else if (block.type === 'image') {
+          flushTools()
           nodes.push(h(ImageBlock, { key: 'k' + String(i), data: block.data, mimeType: block.mimeType, onOpen: props.onOpenImage }))
         } else if (block.type === 'text' && block.text.trim() !== '') {
+          flushTools()
           nodes.push(h('div', { key: 'k' + String(i), className: 'dsh-pi-prose' }, renderMarkdown(block.text, props.onOpenFile)))
         }
       }
+      flushTools()
       if (message.streaming) nodes.push(h('span', { key: 'caret', className: 'dsh-pi-caret' }))
       if (message.stopReason === 'error') nodes.push(h('div', { key: 'stop', className: 'dsh-pi-alert' }, t('error')))
-      nodes.push(h('div', { key: 'usage' }, usageLine(message.usage, t)))
+      var usage = usageLine(message.usage, t)
+      if (usage !== null) nodes.push(h('div', { key: 'usage' }, usage))
       return h('div', { className: 'dsh-pi-row' }, h('div', { className: 'dsh-pi-body' }, nodes))
     }
 
@@ -2581,6 +2961,29 @@ window.__ModuleLoader__.load({
         return parsed.toLocaleString()
       }
       return ''
+    }
+
+    /**
+     * 工作状态行的用时：12秒 / 43分54秒 / 2小时3分9秒（中文单位不留空格，与 DSH 目标图一致）。
+     *
+     * 进位规则照抄 DSH 的 formatRunDuration（dsh-client-ui-chat/lib/client.js:5847-5875）：
+     * 小时只在真有小时时出现，分钟只在 total >= 60 时出现，秒恒出现（所以 90 秒是「1分30秒」）。
+     * 不显示毫秒——1Hz 刷新下毫秒位只会让数字跳动得更快。
+     * 拼接用 join('')：单位词条自带它需要的间距（中文不带、EN 带尾空格），
+     * 与 DSH `parts.map((part) => part.text).join('')` 完全同一拼法，不在这里自己插空格。
+     */
+    function fmtDuration(ms, t) {
+      var total = typeof ms === 'number' && isFinite(ms) && ms > 0 ? Math.floor(ms / 1000) : 0
+      var hours = Math.floor(total / 3600)
+      var minutes = Math.floor(total / 60) % 60
+      var seconds = total % 60
+      var parts = []
+      if (hours > 0) parts.push(t('durHour').replace('{n}', String(hours)))
+      if (total >= 60) parts.push(t('durMin').replace('{n}', String(minutes)))
+      parts.push(t('durSec').replace('{n}', String(seconds)))
+      // join('') 而不是 join(' ')：单位词条自带它需要的间距（中文不带、EN 带尾空格），
+      // 与 DSH `formatRunDuration(...).map((part) => part.text).join('')` 同一拼法。
+      return parts.join('')
     }
 
     /**
@@ -3622,14 +4025,23 @@ window.__ModuleLoader__.load({
       var bash = message.bash === null || message.bash === undefined
         ? { command: '', output: '', exitCode: null, cancelled: false, truncated: false }
         : message.bash
-      var tone = bash.cancelled === true ? 'warn' : bash.exitCode === null ? 'ok' : bash.exitCode === 0 ? 'ok' : 'err'
-      var label = bash.cancelled === true ? props.t('cancel') : bash.exitCode === null ? props.t('result') : 'exit ' + String(bash.exitCode)
-      return h('details', { className: 'dsh-pi-tool' },
-        h('summary', { className: 'dsh-pi-tool-head' },
-          h('span', { className: 'dsh-pi-tag' }, '!'),
-          h('span', { className: 'dsh-pi-tool-name' }, bash.command),
-          bash.truncated === true ? h('span', { className: 'dsh-pi-tag', 'data-tone': 'warn' }, 'truncated') : null,
-          h('span', { className: 'dsh-pi-tag', 'data-tone': tone }, label)),
+      // 状态注脚与工具行同一套语汇：失败才染色，成功不占位（成功的 exit 0 没有信息量）。
+      var failed = bash.cancelled !== true && typeof bash.exitCode === 'number' && bash.exitCode !== 0
+      var note = bash.cancelled === true
+        ? props.t('cancel')
+        : typeof bash.exitCode === 'number' && bash.exitCode !== 0
+          ? 'exit ' + String(bash.exitCode)
+          : bash.truncated === true ? 'truncated' : ''
+      var attrs = { className: 'dsh-pi-tool' }
+      if (failed === true) attrs['data-state'] = 'error'
+      return h('details', attrs,
+        h('summary', { className: 'dsh-pi-proc-head' }, procHead({
+          Icon: TerminalIcon,
+          label: props.t('procBash'),
+          summary: h('span', { key: 'p', className: 'dsh-pi-proc-text', title: bash.command }, firstLineOf(bash.command)),
+          note: note,
+          noteTone: failed === true || bash.cancelled === true ? (failed === true ? 'err' : 'warn') : 'warn',
+        })),
         h('pre', { className: 'dsh-pi-tool-body' }, bash.output === '' ? '' : bash.output))
     }
 
@@ -3855,7 +4267,8 @@ window.__ModuleLoader__.load({
       var resync = function (id) {
         return api.snapshot(id, viewRef.current.lastSeq).then(function (snapshot) {
           applyBatch(viewRef.current, Array.isArray(snapshot.events) ? snapshot.events : [])
-          viewRef.current.busy = snapshot.state === 'busy'
+          if (snapshot.state === 'busy') markBusy(viewRef.current)
+          else markIdle(viewRef.current)
           setMeta(snapshot)
           setBroken(false)
           flush()
@@ -3882,7 +4295,7 @@ window.__ModuleLoader__.load({
         source.addEventListener('exit', function (event) {
           var detail = null
           try { detail = JSON.parse(event.data) } catch (failure) { detail = null }
-          viewRef.current.busy = false
+          markIdle(viewRef.current)
           viewRef.current.notice = detail === null ? t('crashed') : t('crashed') + ' (code ' + String(detail.code) + ')'
           flush()
           resync(id)
@@ -3901,7 +4314,8 @@ window.__ModuleLoader__.load({
           view.streamingIndex = -1
           view.lastSeq = typeof snapshot.eventSeq === 'number' ? snapshot.eventSeq : 0
           applyBatch(view, Array.isArray(snapshot.events) ? snapshot.events : [])
-          view.busy = snapshot.state === 'busy'
+          if (snapshot.state === 'busy') markBusy(view)
+          else markIdle(view)
           sessionRef.current = id
           setMeta(snapshot)
           setPhase('ready')
@@ -4790,18 +5204,36 @@ window.__ModuleLoader__.load({
         })
       }
 
+      // 工具结果按 toolCallId 并进对应的调用行（一次调用 = 一行，输出收在展开区）。
+      // pi 把结果作为独立消息送达（另起一条 message_start），所以这里的表是「消息列表的
+      // 派生视图」，不是额外状态 —— 刷新历史、整表重建时自动跟着变，不会与 messages 脱节。
+      var results = {}
+      for (var ri = 0; ri < view.messages.length; ri += 1) {
+        var resultMessage = view.messages[ri]
+        if (resultMessage.role !== 'toolResult') continue
+        if (resultMessage.toolCallId === null) continue
+        results[resultMessage.toolCallId] = { text: textOfMessage(resultMessage), isError: resultMessage.isError === true }
+      }
+
       var rows = view.messages.map(function (message, index) {
         return h(MessageRow, {
           key: 'm' + String(message.seq) + '-' + String(index),
           t: t,
           message: message,
           toolStatus: view.toolStatus,
+          results: results,
           onOpenImage: function (image) { setOverlay(image) },
           // renderFileChip 的 normalizeFileActions 同时接受函数与 {open, reveal}，
           // 这里给对象形态，左键开预览、右键定位文件。
           onOpenFile: { open: openFile, reveal: revealFile },
         })
       })
+
+      // 工作状态行：过程流末尾那条「深度求索中，用时 43分54秒 …」。
+      // 它是唯一一处「只在忙的时候存在」的节点 —— 空闲态不占位、不留空行。
+      if (view.busy === true) {
+        rows = rows.concat([h(WorkingRow, { key: 'working', t: t, since: view.busySince })])
+      }
 
       var notices = []
       if (error !== null) notices.push(h('div', { key: 'err', className: 'dsh-pi-alert' }, String(error)))
@@ -5119,6 +5551,23 @@ window.__ModuleLoader__.load({
       ToolBlock: ToolBlock,
       ToolResultRow: ToolResultRow,
       MessageRow: MessageRow,
+      WorkingRow: WorkingRow,
+      ThinkingBlock: ThinkingBlock,
+      parseToolArgs: parseToolArgs,
+      firstLineOf: firstLineOf,
+      toolViewOf: toolViewOf,
+      primaryToolArg: primaryToolArg,
+      procHead: procHead,
+      procSummary: procSummary,
+      TOOL_VIEWS: TOOL_VIEWS,
+      fmtDuration: fmtDuration,
+      markBusy: markBusy,
+      markIdle: markIdle,
+      createView: createView,
+      SparkIcon: SparkIcon,
+      WhaleTailIcon: WhaleTailIcon,
+      TerminalIcon: TerminalIcon,
+      ThinkIcon: ThinkIcon,
       SelfCheckChip: SelfCheckChip,
       RuntimeGate: RuntimeGate,
       ExtensionDialog: ExtensionDialog,

@@ -44,6 +44,9 @@ const LF = String.fromCharCode(10)
 const ALLOWED_EXTRA_TOKENS = [
   '--ds-font-family-code',
   '--dsh-content-font-size',
+  // 过程行的行高 / 字号取 DSH 会话流的次级正文档：宿主自己也是 --dsw-font-length + delta
+  // 的组合，过程行混在前者的节奏里，用主档会让「过程」看起来比「正文」更重。
+  '--dsh-content-font-size-secondary',
   '--dsh-content-font-delta',
   '--dsh-code-font-size',
   '--dsh-code-font-delta',

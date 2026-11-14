@@ -21,3 +21,6 @@ node_modules/
 
 # npm pack 产物
 *.tgz
+
+# 开发期一次性探针脚本（SSR 肉眼看过程行等），不入库
+_probe/
