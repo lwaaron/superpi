@@ -3,13 +3,13 @@
 | 项 | 值 |
 | --- | --- |
 | 文档版本 | 1.0 |
-| 代码基线 | `client.js` 3971 行 / 218023 B / mtime `2026-11-13T16:46:52Z` / sha256 前 12 位 `b725c3103261` |
-| 版本号 | `package.json` version = **0.4.2**（`index.js` 的 `CONTRACT_VERSION` 同为 `0.4.2`；`client.js` 自 0.4.1 起未变，下表字节数与 sha 仍适用） |
+| 代码基线 | `client.js` 4130 行 / 226608 B / mtime `2026-11-14T06:06:46Z` / sha256 前 12 位 `06fb24ca5cb7` |
+| 版本号 | `package.json` version = **0.5.1**（`index.js` 的 `CONTRACT_VERSION` 同为 `0.5.1`；0.5.0 改动了历史会话抽屉与 `api.history` 签名，0.5.1 只修 `index.js` 里一处缩进，下表尺寸与 sha 仍取 0.5.0 的那一版） |
 | 设计系统基线 | DSH 客户端样式包 `index-lh_YM6sT.css`（87124 字符 / 748 条规则 / 17 个 `@keyframes`）与 `tokens.txt`（414 个 `--dsw-*` 令牌，浅深两套值） |
 | 采集口径 | 全部数值由脚本从仓库文件与探针文件读出；两种字符口径（源文本 / 门禁还原文本）分别标注 |
 | 适用范围 | 只描述样式令牌、组件规格与目录选择器交互。不改任何源码，本文件是**规格**而非实现 |
 
-> **行号会漂移。** `client.js` 在本轮取证期间被并发改写 7 次（3707 → 3760 → 3789 → 3881 → 3885 → 3905 → 3912 → 3915 行）。文中所有行号都基于上表钉定的那一版；读者若在别的版本上找不到对应行，请用类名 grep 定位（例如搜 `dsh-pi-dir-cols`），类名是稳定锚点，行号不是。
+> **行号会漂移。** `client.js` 在取证期间被并发改写多次，0.5.0 又因历史会话抽屉拆成容器 + 视图而涨到 4130 行。文中所有行号都基于上表钉定的那一版；读者若在别的版本上找不到对应行，请用类名 grep 定位（例如搜 `dsh-pi-dir-cols`），类名是稳定锚点，行号不是。
 
 ---
 
@@ -1208,7 +1208,7 @@ Select-String -Path client.js -Pattern "function dirPickModel"
 | `SlashMenu` | `1444` |
 | `Composer` | `1476` |
 | `Sheet` | `1710` |
-| `SessionsSheet` | `1740` |
+| `SessionsSheet`（容器）/ `SessionsList`（纯渲染） | `1885` / `1791` |
 | `dirPickModel` | `1814` |
 | `DirSheet` | `1845` |
 | `makeRow`（内嵌） | `1992` |
@@ -1371,4 +1371,4 @@ Select-String -Path client.js -Pattern "function dirPickModel"
 
 ---
 
-_本文基于 client.js@3971（mtime 2026-11-13T16:46:52Z，sha256 前缀 `b725c3103261`）与 dsh-pi 0.4.2。所有行号会随后续改动漂移，定位请用类名 grep。_
+_本文基于 client.js@4130（mtime 2026-11-14T06:06:46Z，sha256 前缀 `06fb24ca5cb7`）与 dsh-pi 0.5.1。所有行号会随后续改动漂移，定位请用类名 grep。_

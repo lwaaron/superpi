@@ -168,10 +168,10 @@ New-Item -ItemType Junction `
 ### 方式三：手工 pnpm add（不想跑脚本时）
 
 ```powershell
-npm pack                                        # 得到 dsh-pi-0.4.2.tgz
+npm pack                                        # 得到 dsh-pi-0.5.1.tgz
 cd "$env:USERPROFILE\.dsh\profiles\desktop"
 node "$env:USERPROFILE\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\pnpm\bin\pnpm.cjs" `
-  add "file:C:\path\to\dsh-pi-0.4.2.tgz" --ignore-scripts
+  add "file:C:\path\to\dsh-pi-0.5.1.tgz" --ignore-scripts
 ```
 
 不要在 profile 里用 `npm install`：npm 会另写一份 `package-lock.json`，而宿主插件管理器用的是 pnpm，两套锁文件互相看不见，下次插件安装就会把 node_modules 重建成 pnpm 理解的样子。
@@ -285,7 +285,7 @@ npm install --prefix <插件>/.runtime --save-exact --no-audit --no-fund --logle
 | POST | `/api/dsh-pi/runtime/refresh` | 重新解析（手工装好 pi 后不必重启 DSH） |
 | POST | `/api/dsh-pi/runtime/install` | 一键安装 pi 到 `.runtime`（幂等，并发只跑一次）；失败回 500 |
 | GET | `/api/dsh-pi/contract` | RPC 契约原文：`version` / `piVersion` / `rpcCommands`(33) / `events`(25) / `assistantEvents`(12) / `tuiCommands`(27) / `bashShortcuts`(2)，逐字段原样下发 |
-| GET | `/api/dsh-pi/sessions/history?cwd=&limit=` | 历史会话列表（扫 `~/.pi/agent/sessions`）；`limit` 默认 20、上限 200；宿主没注入时回 501 |
+| GET | `/api/dsh-pi/sessions/history?scope=&cwd=&limit=` | 历史会话列表（扫 `~/.pi/agent/sessions`）。`scope=all` 列**全部项目**并额外返回 `projects` 聚合数组；`scope=project`（或只给 `cwd`）只列该项目；两者都不给时按有没有 `cwd` 推断，**不再回落成插件 workspace**（0.4.2 及之前空 `cwd` 会回落，等于面板只能看见一个目录 —— 「历史会话只显示一条」的根因）。`limit` 默认 20、上限 200；宿主没注入时回 501 |
 | GET | `/api/dsh-pi/files?dir=&query=&limit=` | 只读列目录，给 @ 补全与「插入路径」用（RPC 协议没有 fs 能力）；`limit` 默认 50、上限 200；目录不存在回 404 |
 | GET | `/api/dsh-pi/pi/changelog` | 读 pi 包内的 `CHANGELOG.md`（上限 200 KiB）；找不到也回 200 |
 | POST | `/api/dsh-pi/sessions` | 新建会话，body 可带 `cwd` / `label` / `args` |
@@ -316,7 +316,9 @@ npm install --prefix <插件>/.runtime --save-exact --no-audit --no-fund --logle
 - 顶部还有一枚自检胶囊：绿「代码已同步」/ 黄「代码已更新 · 待重启」/ 黄「pi 需重新构建」，鼠标悬停给出结论、git 分支@短 sha 与缺失文件，点一下重新检查。请求失败就直接不渲染 —— 宁可少一个胶囊，也不要误报绿点。
 - pi 运行时缺失时整页切到引导（见上文），不创建会话、不产生半死不活的状态。
 - pi 进程退出时面板转红点并提供「重试」与「重新检查」，不会静默空白。
-- 历史会话抽屉读 `GET /sessions/history`（扫 `~/.pi/agent/sessions`），就地过滤，选中走 `switch_session`；`/fork` 抽屉读 `get_fork_messages`，选中走 `fork` 并把那条用户消息回填进编辑器。
+- **历史会话抽屉是两级的，与命令行 pi 的 `/resume` 同构**：第一层列**全部项目**（`scope=all`，聚合规则逐条照抄 pi 的 `groupSessionsByProject`：当前项目置顶 → 非临时项目优先 → 最近活动降序；临时目录判定沿用 pi 的 `TEMPORARY_PATH_PATTERNS` 三条正则），点进项目后第二层只列该 cwd 的会话（`scope=project&cwd=…`）。pi 的 scope 开关在进项目后就失效（`session-selector.ts:1663`），所以这里做成两级导航而不是切换按钮，语义等价、点击更少。选中走 `switch_session`。
+  跨项目切换后 `meta.sessionCwd` 用会话文件 header 的 `cwd` 校正（`get_state` 不回报 cwd，见 `rpc-types.ts:96-109`），面板里所有「当前工作区」显示点（空态 cwd、统计抽屉、目录抽屉起点）一律读 `sessionCwd` 而不是子进程的 spawn 目录。目标目录已被删除时 `MissingSessionCwdError` 翻成一条中文提示 —— pi 的 RPC 面没有 `cwdOverride` 分支（`rpc-mode.ts:624-630` 只转调 `switchSession`），面板替不了用户选「换目录继续」，只能指路命令行。
+  `/fork` 抽屉读 `get_fork_messages`，选中走 `fork` 并把那条用户消息回填进编辑器。
 - **挂载即对账**：`attach` 之后补一次 `get_messages` 整表重建消息列表（`messagesFromHistory`）。原因是 `new_session` / `switch_session` / `fork` / `clone` 成功后 host 会 `resetEvents()` 把事件缓冲清空，历史消息不会再以事件形式重放 —— 只靠 `snapshot` 重放的话，切过去必然是空白（0.4.0 及之前「点开历史会话没有内容」就是这个根因；命令行 pi 从 jsonl 恢复所以不受影响）。两道防线：会话已切走则丢弃响应；`busy` 期间不覆盖列表，改记待办，等 `agent_settled` 那一拍由 `drainHydrate` 补上。
 
 ## 自检：现在跑的是不是磁盘上那份代码
@@ -336,8 +338,8 @@ npm install --prefix <插件>/.runtime --save-exact --no-audit --no-fund --logle
 ## 测试
 
 ```powershell
-npm test            # 十项门禁：selfcheck + client-render + css-tokens + runtime-resolve + config-hot
-                    # + host-parity + timeout + parity + restart-lib + version
+npm test            # 十一项门禁：selfcheck + client-render + css-tokens + runtime-resolve + config-hot
+                    # + host-parity + session-projects + timeout + parity + restart-lib + version
                     # 全离线（不起 pi、不打 LLM），全程实测 ~14.3 秒。两个大头：
                     #   test/restart-lib.mjs ~9.1 s（pwsh 7 与 PowerShell 5.1 各起一遍跑 fixture）
                     #   test/timeout.mjs     ~3.1 s（协议替身真等若干超时周期，把「弹窗让位」压到毫秒级）
@@ -364,11 +366,12 @@ pwsh -NoProfile -File .\tools\standalone-verify.ps1   # 全新 DSH_HOME 里只�
 | `test/timeout.mjs` | 28 条超时语义门禁：`timeoutLimitMs` 的三态（正数=毫秒上限 / `0``负数``Infinity`=不设上限 / `NaN``乱码``对象`=TypeError 绝不静默降级）、到期即 reject 且不留孤儿 pending、不设上限时进程关闭由 `handleExit` 兜底、**弹窗未答则计时期续期**、**应答后重开一整轮窗口**、续期上限耗尽时报「dialog(s) never answered」。用 `test/fixtures/fake-pi-rpc.mjs` 做协议替身，把 5 分钟的真实等待压到毫秒级 —— 这是 0.3.0 之前「红条与对话框并存」那个缺陷唯一可靠的门禁 |
 | `test/fixtures/fake-pi-rpc.mjs` | 假 pi RPC 子进程（`FAKE_PI_MODE=dialog/silent`）：只为复现「命令永不回答」与「命令在等弹窗」两种时序，不模拟其他行为 |
 | `test/fixtures/pi-ext-ui-probe.ts` | 扩展 UI 探针（人工验证用，不参与 `npm test`）：复制到 `%USERPROFILE%\.pi\agent\extensions\` 并重启 pi 会话后，`/dsh-ui-probe` 依次弹 select→confirm→input→editor，`/dsh-ui-notify` 验五个单向方法。**扩展对话框必须真人点，自动化只能测到 host 侧的时序**，所以探针留在仓库里当复现手段 |
-| `test/client-render.mjs` | `react-dom/server` 把面板渲染成字符串（含键集与循环展开共执行 464 次，条数由脚本自报 `PASS (464 assertions)`）：挡组件异常、文案缺键、中英键集不一致、引导页结构、以及扩展 UI 四种弹窗（confirm 的「否/确认」按钮集、select 的选项数、input 的 prefill/placeholder、editor 的多行回填、空 title 回落、`dialogBudgetMs` 的「声明值与 5 分钟上限取小」四类非法值回落）。**倒计时的「还剩 Ns」文案断言不到**——那行由 `useEffect` 驱动，SSR 阶段 `left` 为 `null` 不渲染，只能在真浏览器里验 |
+| `test/client-render.mjs` | `react-dom/server` 把面板渲染成字符串（含键集与循环展开共执行 497 次，条数由脚本自报 `PASS (497 assertions)`）：挡组件异常、文案缺键、中英键集不一致、引导页结构、以及扩展 UI 四种弹窗（confirm 的「否/确认」按钮集、select 的选项数、input 的 prefill/placeholder、editor 的多行回填、空 title 回落、`dialogBudgetMs` 的「声明值与 5 分钟上限取小」四类非法值回落）。**倒计时的「还剩 Ns」文案断言不到**——那行由 `useEffect` 驱动，SSR 阶段 `left` 为 `null` 不渲染，只能在真浏览器里验 |
 | `test/css-tokens.mjs` | CSS 门禁 90 条：禁硬色值（只准 `--dsw-*`）、令牌白名单、字体栈、`:focus-visible` 可见性、`prefers-reduced-motion` 兜底，另有 0 号自检确认门禁本身不是空跑 |
 | `test/restart-lib.mjs` | 重启脚本门禁：22 条 node 断言（文件层：UTF-8 BOM、无游离 CR、库模式开关、去注释后无裸 `Start-Process -FilePath $exe`、走 `ProcessStartInfo`、有自保护）+ `test/fixtures/restart-lib-checks.ps1` 的 31 条 PS 断言（`Get-LaunchSpec` 四种输入、`Get-DshHomeFromRoot` 五种、`Get-EnvPatch` 六种、`Get-LaunchRootPid`/`Test-SelfAncestorOf` 对活进程、`Test-DshPiHealth` 对五种假响应与死端口）。**pwsh 7 与 PowerShell 5.1 各跑一遍**，是「5.1 能不能读这个脚本」的唯一机器保障 |
 | `test/version.mjs` | 版本号单一真相：`/health`、`/state`、`/diagnostics` 报的版本必须等于 `package.json` 的 `version`；换版本重新加载要跟着变（防写死常量）；`package.json` 缺失时降级 `0.0.0` 而不是崩；README 里的 tarball 名必须跟版本对齐 |
-| `test/host-parity.mjs` | host 侧离线一致性 162 条：`buildSpawnArgs` 19 条（`persist=false` 不吃 `--continue`、用户自带 `--fork`/`--no-session` 不重复生成、空 `--name` 不传）、`pickCurrentSessionFile` 8 条、以及 `/respond` 的 409/400/415/200、`/reset`、四条替换命令的 reset+refresh、`/files` 排序与 404、`/pi/changelog` 三情形、未知路由 404。**路由与参数拼错了只会静默跑偏，所以单独立门禁** |
+| `test/session-projects.mjs` | 两级历史列表 55 条：`pathComparisonKey` 大小写归一、`isTemporaryPath` 三条正则逐条对齐 pi（`/tmp`、`appdata/local/temp`、`pi-runtime-*`）、`shortenHomePath` 的 `~` 缩写边界、`groupSessionsByProject` 的「当前项目 → 非临时 → 最近活动降序」与大小写合并、`listAllSessions`/`listSessions` 的「全部项目 vs 单项目」两种语义、`readSessionCwd` 只读 64KB 头行且首行非杂项时返回空、`firstRunningSessionFile` 的「跨项目也算当前会话」与活/死优先级。造一棵符合 pi 目录约定的假 `sessions/` 树来跑，不碰真会话 |
+| `test/host-parity.mjs` | host 侧离线一致性 166 条：`buildSpawnArgs` 19 条（`persist=false` 不吃 `--continue`、用户自带 `--fork`/`--no-session` 不重复生成、空 `--name` 不传）、`pickCurrentSessionFile` 8 条、以及 `/respond` 的 409/400/415/200、`/reset`、四条替换命令的 reset+refresh、`/files` 排序与 404、`/pi/changelog` 三情形、未知路由 404。**路由与参数拼错了只会静默跑偏，所以单独立门禁** |
 | `test/parity.mjs` | 与 pi 的三向对账 77 条：以 pi 的 `RpcCommand` 联合类型、`RpcSessionState` 接口、`docs/json.md` 事件表为事实来源，双向比对（我们缺的 = 缺口，我们编的 = 幻觉），再断言契约里 33 条命令 / 25 类事件 / 12 种 assistant 事件 / 27 条斜杠 / 9 个扩展 UI method 在面板里都有落地字面量，且 `CONTRACT_VERSION` 与 `package.json` 同步。0.2.5 时「只发 5/33 命令、只处理 12/25 事件、27 条斜杠一条没接而 `npm test` 全绿」正是这个门禁要拦的事 |
 | `tools/standalone-verify.ps1` | 全新 DSH_HOME 自证：建临时 profile → pnpm 装 tarball → 起独立实例 → 真实 LLM 往返 → 清理（端到端演练，不是单测） |
 

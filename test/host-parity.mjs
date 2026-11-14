@@ -147,7 +147,7 @@ function makeServer(deps) {
     sessionsDelete: () => {},
     requireSession: () => { const e = new Error('no such session'); e.statusCode = 404; throw e },
     spawnSession: () => { const e = new Error('spawnSession not stubbed'); throw e },
-    listHistory: async () => ({ cwd: '', agentDir: '', sessionDir: '', override: false, sessions: [], current: null }),
+    listHistory: async () => ({ scope: 'all', cwd: '', agentDir: '', sessionDir: '', override: false, total: 0, projects: [], sessions: [], current: null }),
     workspacePath: () => os.tmpdir(),
     ...deps,
   })
@@ -196,9 +196,9 @@ try {
       if (id !== 'sess-1') { const e = new Error('no such session: ' + id); e.statusCode = 404; throw e }
       return proc
     },
-    listHistory: async ({ cwd, limit }) => {
-      calls.history.push({ cwd, limit })
-      return { cwd: 'C:/work', agentDir: 'C:/.pi', sessionDir: 'C:/.pi/sessions', override: false, sessions: [{ path: 'a.jsonl', name: null, messageCount: 2 }], current: 'a.jsonl' }
+    listHistory: async ({ scope, cwd, limit }) => {
+      calls.history.push({ scope, cwd, limit })
+      return { scope: scope === 'all' ? 'all' : 'project', cwd: 'C:/work', agentDir: 'C:/.pi', sessionDir: 'C:/.pi/sessions', override: false, total: 1, projects: [], sessions: [{ path: 'a.jsonl', name: null, messageCount: 2 }], current: 'a.jsonl' }
     },
     spawnSession: body => { calls.spawn.push(body); return proc },
   })
@@ -223,9 +223,17 @@ try {
     check('history ok', history.body.ok === true)
     eq('history sessions 透传', history.body.sessions, [{ path: 'a.jsonl', name: null, messageCount: 2 }])
     eq('history current', history.body.current, 'a.jsonl')
-    eq('history 参数透传', calls.history.at(-1), { cwd: 'C:/work', limit: 7 })
+    eq('history 参数透传', calls.history.at(-1), { scope: '', cwd: 'C:/work', limit: 7 })
+    // scope 缺省 = '' 交给 host 推断（有 cwd 视为 project，无 cwd 视为 all），兼容旧调用。
     const historyDefault = await request(server.base, '/sessions/history')
     eq('history limit 默认 20', calls.history.at(-1).limit, 20)
+    eq('history 无参时 scope 缺省为空（由 host 推断 all）', calls.history.at(-1), { scope: '', cwd: '', limit: 20 })
+    await request(server.base, '/sessions/history?scope=all')
+    eq('history scope=all 透传', calls.history.at(-1), { scope: 'all', cwd: '', limit: 20 })
+    await request(server.base, '/sessions/history?scope=project&cwd=C%3A%2Fwork')
+    eq('history scope=project 透传', calls.history.at(-1), { scope: 'project', cwd: 'C:/work', limit: 20 })
+    await request(server.base, '/sessions/history?scope=bogus&cwd=C%3A%2Fwork')
+    eq('history 非法 scope 原样透传（host 层兜底为 project）', calls.history.at(-1).scope, 'bogus')
     check('history limit 上限 200', (await (async () => { await request(server.base, '/sessions/history?limit=9999'); return calls.history.at(-1).limit })()) === 200)
     check('history 非法 limit 回落 20', (await (async () => { await request(server.base, '/sessions/history?limit=abc'); return calls.history.at(-1).limit })()) === 20)
 

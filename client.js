@@ -182,6 +182,13 @@ window.__ModuleLoader__.load({
       dirInputHint: '输入绝对路径后回车',
       dirPickMark: '已选中',
       dirSwitching: '正在切换…',
+      allProjects: '全部项目',
+      projectsEmpty: '还没有任何已保存的会话。',
+      projectsLoading: '正在读取项目…',
+      projectsHint: '选择一个项目，再选其中的会话（等价于命令行 pi 的 /resume）。',
+      projectSessions: '{n} 个会话',
+      tempTag: '临时',
+      sessionCwdMissing: '这个会话原来的目录已不存在：{path}。会话文件还在，可用命令行 pi 打开它并选择换一个目录继续。',
     }
     var EN = {
       panelTitle: 'pi',
@@ -331,6 +338,13 @@ window.__ModuleLoader__.load({
       dirInputHint: 'Type an absolute path and press Enter',
       dirPickMark: 'selected',
       dirSwitching: 'Switching…',
+      allProjects: 'All projects',
+      projectsEmpty: 'No saved sessions yet.',
+      projectsLoading: 'Loading projects…',
+      projectsHint: 'Pick a project, then a session inside it (same as /resume in the CLI).',
+      projectSessions: '{n} sessions',
+      tempTag: 'temp',
+      sessionCwdMissing: 'The folder this session lived in no longer exists: {path}. The session file is still there — open it with the pi CLI and pick another folder.',
     }
 
     // ── 样式（只用 --dsw-* 变量；类名统一 .dsh-pi- 前缀）──────────────────────
@@ -505,9 +519,11 @@ window.__ModuleLoader__.load({
       '.dsh-pi-search:focus{border-color:var(--dsw-alias-state-business-primary)}',
       '.dsh-pi-search::placeholder{color:var(--dsw-alias-label-dimmed)}',
       '.dsh-pi-sheet-body{flex:1 1 auto;min-height:0;overflow-y:auto;padding:12px 14px 16px;display:flex;flex-direction:column;gap:8px}',
-      '.dsh-pi-sess{display:flex;flex-direction:column;gap:4px;padding:10px 12px;border:0;border-radius:var(--dsw-radius-md);background:var(--dsw-alias-bg-layer-1);box-shadow:inset 0 0 0 .5px var(--dsw-alias-border-l2);cursor:pointer;transition:background-color .16s ease,box-shadow .16s ease}',
-      '.dsh-pi-sess:hover{background:var(--dsw-alias-bg-layer-2);box-shadow:inset 0 0 0 .5px var(--dsw-alias-border-l4)}',
-      '.dsh-pi-sess[data-current="1"]{box-shadow:inset 0 0 0 .5px var(--dsw-alias-state-business-primary)}',
+      // 项目层与会话层共用一套行视觉（.dsh-pi-proj 只是语义钩子，样式与 .dsh-pi-sess 完全一致）。
+      '.dsh-pi-sess,.dsh-pi-proj{display:flex;flex-direction:column;gap:4px;padding:10px 12px;border:0;border-radius:var(--dsw-radius-md);background:var(--dsw-alias-bg-layer-1);box-shadow:inset 0 0 0 .5px var(--dsw-alias-border-l2);cursor:pointer;transition:background-color .16s ease,box-shadow .16s ease}',
+      '.dsh-pi-sess:hover,.dsh-pi-proj:hover{background:var(--dsw-alias-bg-layer-2);box-shadow:inset 0 0 0 .5px var(--dsw-alias-border-l4)}',
+      '.dsh-pi-sess[data-current="1"],.dsh-pi-proj[data-current="1"]{box-shadow:inset 0 0 0 .5px var(--dsw-alias-state-business-primary)}',
+      '.dsh-pi-proj[data-temporary="1"] .dsh-pi-sess-title{color:var(--dsw-alias-label-secondary)}',
       '.dsh-pi-sess-top{display:flex;align-items:center;gap:6px;font-size:var(--dsw-font-xxs-12-font-size);line-height:var(--dsw-font-xxs-12-line-height);color:var(--dsw-alias-label-secondary)}',
       '.dsh-pi-sess-title{flex:1 1 auto;min-width:0;font-weight:500;color:var(--dsw-alias-label-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
       '.dsh-pi-sess-line{font-size:var(--dsw-font-xxs-12-font-size);line-height:var(--dsw-font-xxs-12-line-height);color:var(--dsw-alias-label-secondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
@@ -661,10 +677,19 @@ window.__ModuleLoader__.load({
       },
       reset: function (id) { return requestJson('/sessions/' + encodeURIComponent(id) + '/reset', { method: 'POST', body: {}, timeoutMs: 20000 }) },
       close: function (id) { return requestJson('/sessions/' + encodeURIComponent(id), { method: 'DELETE', timeoutMs: 20000 }) },
-      history: function (cwd, limit) {
-        var query = '?limit=' + String(typeof limit === 'number' ? limit : 20)
-        if (typeof cwd === 'string' && cwd !== '') query += '&cwd=' + encodeURIComponent(cwd)
-        return requestJson('/sessions/history' + query)
+      /**
+       * 读历史会话。
+       *
+       * options.scope = 'all' → 扫 ~/.pi/agent/sessions 下所有项目（pi 的 SessionManager.listAll），
+       * options.scope = 'project' + options.cwd → 只读该 cwd 那个目录，
+       * 都不传时由 host 按有没有 cwd 推断（兼容旧调用）。
+       */
+      history: function (options) {
+        var opts = options !== null && typeof options === 'object' ? options : {}
+        var parts = ['limit=' + String(typeof opts.limit === 'number' ? opts.limit : 60)]
+        if (opts.scope === 'all' || opts.scope === 'project') parts.push('scope=' + opts.scope)
+        if (typeof opts.cwd === 'string' && opts.cwd !== '') parts.push('cwd=' + encodeURIComponent(opts.cwd))
+        return requestJson('/sessions/history?' + parts.join('&'))
       },
       files: function (dir, query, limit) {
         var parts = ['limit=' + String(typeof limit === 'number' ? limit : 50)]
@@ -1750,54 +1775,61 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * 历史会话抽屉 = 面板的 /resume。
+     * 历史会话抽屉 = 面板的 /resume。**两级**，逐条对齐 pi 的 SessionSelectorComponent：
+     *   第一层 ProjectList：全部项目（当前项目置顶 → 非临时 → 最近活动降序）
+     *   第二层 SessionList：点进项目后只列该 cwd 的会话
+     * pi 的 scope 开关在进项目后就失效（session-selector.ts:1663 `if (this.projectPath) return`），
+     * 所以这里不做「当前/全部」切换按钮，而是把它变成两级导航，语义等价、点击次数更少。
      *
-     * pi 的 RPC 面没有「列会话」命令（rpc-mode.ts 的 33 条里没有），
-     * 所以列表由 host 扫 ~/.pi/agent/sessions/<slug>/*.jsonl 生成（GET /sessions/history），
-     * 选中后用 switch_session {sessionPath} 切过去。这与 TUI 的 showSessionSelector → switchSession 等价。
+     * pi 的 RPC 面没有「列会话」命令（rpc-mode.ts 的 33 条里没有），列表由 host 扫
+     * ~/.pi/agent/sessions/<slug>/*.jsonl 生成（GET /sessions/history?scope=all|project），
+     * 选中后用 switch_session {sessionPath} 切过去。
+     *
+     * 本函数是**纯渲染视图**：不取数、不持有导航状态，全部由 props 决定。
+     * 容器 SessionsSheet 负责取数与层级切换，因此这里可以直接被客户端渲染测试喂假数据。
      */
-    function SessionsSheet(props) {
+    function SessionsList(props) {
       var t = props.t
-      var stateList = useState({ loading: true, error: null, sessions: [] })
-      var info = stateList[0]
-      var setInfo = stateList[1]
-      var stateQuery = useState('')
-      var query = stateQuery[0]
-      var setQuery = stateQuery[1]
+      var level = props.level
+      var project = props.project
+      var info = props.info
+      var query = props.query
 
-      useEffect(function () {
-        var stopped = false
-        setInfo({ loading: true, error: null, sessions: [] })
-        api.history(props.cwd, 60).then(function (body) {
-          if (stopped) return
-          setInfo({ loading: false, error: null, sessions: Array.isArray(body.sessions) ? body.sessions : [] })
-        }).catch(function (error) {
-          if (stopped) return
-          setInfo({ loading: false, error: error.message, sessions: [] })
+      var needle = query.trim().toLowerCase()
+      var isProjects = level === 'projects'
+      var rows = []
+
+      if (isProjects) {
+        var projects = info.projects
+        if (needle !== '') {
+          projects = projects.filter(function (entry) {
+            return (String(entry.displayPath) + ' ' + String(entry.cwd)).toLowerCase().indexOf(needle) >= 0
+          })
+        }
+        rows = projects.map(function (entry) {
+          return h('div', {
+            key: 'p-' + String(entry.key),
+            className: 'dsh-pi-proj',
+            'data-current': entry.isCurrent === true ? '1' : '0',
+            'data-temporary': entry.isTemporary === true ? '1' : '0',
+            onClick: function () { props.onOpenProject(entry) },
+          },
+            h('div', { className: 'dsh-pi-sess-top' },
+              h('div', { className: 'dsh-pi-sess-title' }, entry.displayPath === '' ? String(entry.cwd) : String(entry.displayPath)),
+              entry.isCurrent === true ? h('span', { className: 'dsh-pi-tag', 'data-tone': 'ok' }, t('current')) : null,
+              entry.isTemporary === true ? h('span', { className: 'dsh-pi-tag', 'data-tone': 'warn' }, t('tempTag')) : null,
+              h('span', null, t('projectSessions').replace('{n}', String(entry.sessionCount)))),
+            h('div', { className: 'dsh-pi-mono' }, fmtTime(entry.lastActivity) + ' · ' + String(entry.cwd)))
         })
-        return function () { stopped = true }
-      }, [props.cwd])
-
-      var filtered = info.sessions
-      if (query.trim() !== '') {
-        var needle = query.trim().toLowerCase()
-        filtered = filtered.filter(function (session) {
-          var haystack = [session.name, session.firstMessage, session.lastMessage, session.path].join(' ').toLowerCase()
-          return haystack.indexOf(needle) >= 0
-        })
-      }
-
-      return h(Sheet, { t: t, title: t('sessions'), onClose: props.onClose, actions: h('input', {
-        className: 'dsh-pi-search',
-        value: query,
-        placeholder: t('filter'),
-        onChange: function (event) { setQuery(event.target.value) },
-      }) },
-        info.loading ? h('div', { className: 'dsh-pi-empty-row' }, t('sessionsLoading')) : null,
-        info.error === null ? null : h('div', { className: 'dsh-pi-alert' }, info.error),
-        info.loading === false && info.error === null && filtered.length === 0 ? h('div', { className: 'dsh-pi-empty-row' }, t('sessionsEmpty')) : null,
-        h('div', { className: 'dsh-pi-sess-line' }, t('sessionsHint')),
-        filtered.map(function (session) {
+      } else {
+        var sessions = info.sessions
+        if (needle !== '') {
+          sessions = sessions.filter(function (session) {
+            var haystack = [session.name, session.firstMessage, session.lastMessage, session.path].join(' ').toLowerCase()
+            return haystack.indexOf(needle) >= 0
+          })
+        }
+        rows = sessions.map(function (session) {
           var current = props.currentPath !== null && props.currentPath === session.path
           return h('div', {
             key: session.path,
@@ -1811,7 +1843,97 @@ window.__ModuleLoader__.load({
               h('span', null, String(session.messageCount) + ' ' + t('messages'))),
             h('div', { className: 'dsh-pi-sess-line' }, session.lastMessage === '' ? t('untitled') : session.lastMessage),
             h('div', { className: 'dsh-pi-mono' }, fmtTime(session.modified) + ' · ' + session.path))
-        }))
+        })
+      }
+
+      var title = isProjects ? t('sessions') : String(project === null ? '' : (project.displayPath === '' ? project.cwd : project.displayPath))
+      var actions = []
+      actions.push(h('input', {
+        key: 'q',
+        className: 'dsh-pi-search',
+        value: query,
+        placeholder: t('filter'),
+        onChange: function (event) { props.onQuery(event.target.value) },
+      }))
+      if (isProjects === false) {
+        actions.push(h('button', {
+          key: 'back',
+          type: 'button',
+          className: 'dsh-pi-btn dsh-pi-btn-ghost',
+          onClick: function () { props.onBack() },
+        }, '← ' + t('allProjects')))
+      }
+
+      var emptyText = isProjects ? t('projectsEmpty') : t('sessionsEmpty')
+      var hintText = isProjects ? t('projectsHint') : t('sessionsHint')
+      var loadingText = isProjects ? t('projectsLoading') : t('sessionsLoading')
+
+      return h(Sheet, { t: t, title: title, onClose: props.onClose, actions: actions },
+        info.loading ? h('div', { className: 'dsh-pi-empty-row' }, loadingText) : null,
+        info.error === null ? null : h('div', { className: 'dsh-pi-alert' }, info.error),
+        info.loading === false && info.error === null && rows.length === 0 ? h('div', { className: 'dsh-pi-empty-row' }, emptyText) : null,
+        h('div', { className: 'dsh-pi-sess-line' }, hintText),
+        rows)
+    }
+
+    /**
+     * 抽屉的**容器**：只管「现在在哪一层、要哪个 cwd 的数据」，把取数结果交给无状态视图。
+     * 之所以拆成 SessionsSheet（容器）+ SessionsList（纯渲染），是因为两级抽屉的渲染分支
+     * 全靠 host 返回的数据决定，把取数写在渲染里就只能靠真浏览器验证；拆开之后
+     * client-render 可以直接喂假数据断言项目层／会话层两套 DOM，倒计时类断言仍归真浏览器。
+     */
+    function SessionsSheet(props) {
+      var t = props.t
+      var stateLevel = useState('projects')
+      var level = stateLevel[0]
+      var setLevel = stateLevel[1]
+      var stateProject = useState(null)
+      var project = stateProject[0]
+      var setProject = stateProject[1]
+      var stateInfo = useState({ loading: true, error: null, projects: [], sessions: [], total: 0 })
+      var info = stateInfo[0]
+      var setInfo = stateInfo[1]
+      var stateQuery = useState('')
+      var query = stateQuery[0]
+      var setQuery = stateQuery[1]
+
+      var openCwd = level === 'sessions' && project !== null ? String(project.cwd) : ''
+
+      useEffect(function () {
+        var stopped = false
+        setInfo({ loading: true, error: null, projects: [], sessions: [], total: 0 })
+        var request = openCwd === ''
+          ? api.history({ scope: 'all', limit: 200 })
+          : api.history({ scope: 'project', cwd: openCwd, limit: 200 })
+        request.then(function (body) {
+          if (stopped) return
+          setInfo({
+            loading: false,
+            error: null,
+            projects: Array.isArray(body.projects) ? body.projects : [],
+            sessions: Array.isArray(body.sessions) ? body.sessions : [],
+            total: typeof body.total === 'number' ? body.total : 0,
+          })
+        }).catch(function (error) {
+          if (stopped) return
+          setInfo({ loading: false, error: String(error !== null && error !== undefined && error.message !== undefined ? error.message : error), projects: [], sessions: [], total: 0 })
+        })
+        return function () { stopped = true }
+      }, [openCwd])
+
+      return h(SessionsList, {
+        t: t,
+        level: level,
+        project: project,
+        info: info,
+        query: query,
+        currentPath: props.currentPath,
+        onQuery: function (next) { setQuery(next) },
+        onOpenProject: function (entry) { setProject(entry); setQuery(''); setLevel('sessions') },
+        onBack: function () { setQuery(''); setProject(null); setLevel('projects') },
+        onPick: props.onPick,
+        onClose: props.onClose,
+      })
     }
 
     /**
@@ -3468,15 +3590,45 @@ window.__ModuleLoader__.load({
         }, function () { setSheetText('') })
       }
 
+      /** 切到一条历史会话（等价于命令行 pi 的 /resume 选中某条）。
+       *
+       * 跨项目切换要处理两件事：
+       *  1) 会话自己的 cwd ≠ 子进程 spawn 时的 cwd。pi 的 get_state 不回报 cwd
+       *     （rpc-types.ts:96-109），host 在 switch_session 后用会话文件 header 的 cwd
+       *     校正 proc.sessionCwd（index.js），snapshot 里带 sessionCwd —— 这里再用列表行
+       *     自带的 cwd 兜一层（同一份数据源），保证 meta.sessionCwd 一定是这条会话的目录。
+       *  2) 目标目录已被删除时 pi 抛 MissingSessionCwdError，RPC 面没有 cwdOverride 分支
+       *     （rpc-mode.ts:624-630 只转调 switchSession），面板只能给出可读提示。
+       */
       var pickSession = function (session) {
         var id = sessionRef.current
         if (id === null || session === null || session === undefined) return
         setDrawer(null)
+        var targetCwd = typeof session.cwd === 'string' ? session.cwd : ''
         rpc(id, { type: 'switch_session', sessionPath: session.path }).then(function (data) {
           if (data !== null && data !== undefined && data.cancelled === true) return null
-          return reload(id)
+          return reload(id).then(function (result) {
+            if (targetCwd !== '') {
+              setMeta(function (prev) {
+                if (prev === null) return prev
+                if (String(prev.sessionCwd) === targetCwd) return prev
+                return Object.assign({}, prev, { sessionCwd: targetCwd })
+              })
+            }
+            return result
+          })
         }, function (failure) {
-          notice(String(failure !== null && failure !== undefined && failure.message !== undefined ? failure.message : failure), 'err')
+          var text = String(failure !== null && failure !== undefined && failure.message !== undefined ? failure.message : failure)
+          if (text.indexOf('Stored session working directory does not exist') >= 0) {
+            var missing = targetCwd
+            if (missing === '') {
+              var tail = text.replace(/^[\s\S]*?does not exist:\s*/, '')
+              missing = tail.split('\n')[0]
+            }
+            notice(t('sessionCwdMissing').replace('{path}', String(missing)), 'err')
+            return null
+          }
+          notice(text, 'err')
           return null
         })
       }
@@ -3639,7 +3791,13 @@ window.__ModuleLoader__.load({
 
       var view = viewRef.current
       var state = meta === null ? 'starting' : meta.exit !== null && meta.exit !== undefined ? 'dead' : view.busy === true ? 'busy' : 'ready'
-      var emptyMeta = meta === null ? null : String(meta.cwd)
+      // 会话自己的目录（不是子进程的 spawn 目录）。跨项目 switch_session 之后两者会不同：
+      // host 在 switch_session 成功后用会话文件 header 的 cwd 校正 proc.sessionCwd
+      // （index.js 的 readSessionCwd），snapshot 里带 sessionCwd。老 host 没有该字段时回落 cwd。
+      var activeCwd = meta === null
+        ? ''
+        : String(meta.sessionCwd !== undefined && meta.sessionCwd !== null ? meta.sessionCwd : meta.cwd)
+      var emptyMeta = meta === null ? null : activeCwd
       var currentModel = meta !== null && meta.model !== null && meta.model !== undefined && typeof meta.model.id === 'string' ? meta.model : null
       var sessionName = meta !== null && typeof meta.sessionName === 'string' && meta.sessionName !== '' ? meta.sessionName : view.title
       var slashEntries = slashItems(contract, dynamic)
@@ -3755,7 +3913,6 @@ window.__ModuleLoader__.load({
       if (drawer === 'sessions') {
         drawerNode = h(SessionsSheet, {
           t: t,
-          cwd: meta === null ? '' : String(meta.cwd),
           currentPath: meta === null || meta.sessionFile === undefined ? null : meta.sessionFile,
           onPick: pickSession,
           onClose: function () { setDrawer(null) },
@@ -3791,7 +3948,7 @@ window.__ModuleLoader__.load({
           t: t,
           stats: stats,
           entries: entriesReport,
-          state: Object.assign({ cwd: meta === null ? '' : meta.cwd }, info === null ? {} : info),
+          state: Object.assign({ cwd: activeCwd }, info === null ? {} : info),
           onClose: function () { setDrawer(null) },
         })
       } else if (drawer === 'settings') {
@@ -3811,7 +3968,7 @@ window.__ModuleLoader__.load({
       } else if (drawer === 'dir') {
         drawerNode = h(DirSheet, {
           t: t,
-          startDir: meta === null || meta.cwd === undefined || meta.cwd === '' ? (runtime !== null && typeof runtime.workspace === 'string' ? runtime.workspace : '') : String(meta.cwd),
+          startDir: activeCwd === '' ? (runtime !== null && typeof runtime.workspace === 'string' ? runtime.workspace : '') : activeCwd,
           onPick: switchDir,
           onClose: function () { setDrawer(null) },
         })
@@ -3950,6 +4107,8 @@ window.__ModuleLoader__.load({
       dirPickModel: dirPickModel,
       EmptyState: EmptyState,
       SettingsSheet: SettingsSheet,
+      SessionsList: SessionsList,
+      SessionsSheet: SessionsSheet,
       pathCrumbs: pathCrumbs,
       buildContract: buildContract,
       messagesFromHistory: messagesFromHistory,

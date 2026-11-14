@@ -18,7 +18,7 @@ DSH（DeepSeek Runtime）插件：把 pi 编码 agent 装进 DSH 的侧栏面板
 | `src/pi-rpc.mjs` | JSONL 帧解析、命令 id 配对、事件环形缓冲、扩展 UI 挂起表（`pendingUi` `:142` / `trackUi()` `:273` / `respond()` `:446`，`extension_ui_response` 在 `send()` 里被强制改道 `:374-378` 以免被重新分配 id）、**超时让位机制**（`timeoutLimitMs()` `:43` 归一化三态；`armTimer()` `:414` 到点时若有弹窗挂起就续期而非 reject，上限 `MAX_TIMEOUT_DEFERRALS` 12 轮；`restartPendingTimers()` `:472` 在每次应答后重开一整轮窗口）。 |
 | `src/pi-runtime.mjs` | pi 与 node 的 8 步解析链 + 一键安装（不依赖任何宿主路径）。 |
 | `src/rpc-contract.mjs` | 三方事实的结构化快照：33 条 RPC 命令、25 类事件、12 种 assistant 事件、27 条 TUI 内置命令、9 个扩展 UI method、`classifyInput()`、`validateContract()`。**命令表/事件表/斜杠表只在这里定义一份**，`client.js` 不许硬编码。 |
-| `src/session-store.mjs` | 只读枚举 `~/.pi/agent/sessions` 下的 pi 会话文件（语义对齐 `session-manager.ts:802-897`）。已接线：`index.js:33-39` import，`GET /sessions/history`（`index.js:750`）暴露给面板的 `SessionsSheet`（`client.js:1534`）。 |
+| `src/session-store.mjs` | 只读枚举 `~/.pi/agent/sessions` 下的 pi 会话文件（语义对齐 `session-manager.ts:802-897`），另有 `pathComparisonKey` / `isTemporaryPath` / `shortenHomePath` / `groupSessionsByProject`（对齐 `cli/session-picker.ts:26-62` 与 `session-selector.ts:760-769`）与 `readSessionCwd`（读 header.cwd，供跨项目切换回填）。已接线：`index.js:33-39` import 八个函数，`GET /sessions/history?scope=`（`index.js:805`）暴露给面板的 `SessionsSheet`（`client.js:1885` 容器）/ `SessionsList`（`client.js:1791` 纯渲染）。 |
 | `client.js` | 浏览器半区：React 面板，零构建、零 JSX，只 `require('react')`。 |
 | `docs/parity.md` | 能力矩阵。两端对齐的唯一账本。 |
 
@@ -64,13 +64,14 @@ DSH（DeepSeek Runtime）插件：把 pi 编码 agent 装进 DSH 的侧栏面板
 ## 7. 验证命令
 
 ```powershell
-npm test                                        # 10 项离线门禁，全程实测 ~14.3 秒：
-                                                # selfcheck → client-render(464) → css-tokens(90)
-                                                # → runtime-resolve → config-hot → host-parity(162)
-                                                # → timeout(28) → parity(77) → restart-lib(31×2 引擎) → version
+npm test                                        # 11 项离线门禁，全程实测 ~15 秒：
+                                                # selfcheck → client-render(497) → css-tokens(90)
+                                                # → runtime-resolve → config-hot → host-parity(166)
+                                                # → session-projects(55) → timeout(28) → parity(77)
+                                                # → restart-lib(31×2 引擎) → version
                                                 # 耗时大头：restart-lib ~9.1 s（起 pwsh 7 + 5.1 各跑一遍 fixture）、
                                                 # timeout ~3.1 s（真等超时周期）；其余合计 <1.5 s
-npm run test:all                                # 上面 10 项 + 真起 pi 子进程跑一轮 LLM
+npm run test:all                                # 上面 11 项 + 真起 pi 子进程跑一轮 LLM
 npm run test:fresh                              # 全新机器：无运行时 → missing → 一键安装 → 能开会话（需网络）
 pwsh -NoProfile -File tools\standalone-verify.ps1   # 全新 DSH_HOME 自证（装 tarball、起独立端口、跑一轮、清理）
 pwsh -NoProfile -File install-plugin.ps1 -Profile desktop   # 装进 desktop profile（含 rollback 脚本）
@@ -80,7 +81,7 @@ pwsh -NoProfile -File install-plugin.ps1 -Profile desktop   # 装进 desktop pro
 
 `test/fixtures/` 放两类「不能在门禁里自造」的东西：`fake-pi-rpc.mjs`（pi RPC 协议替身，`FAKE_PI_MODE=dialog|silent` 让超时语义可以在毫秒级被实测，`test/timeout.mjs` 用它）与 `pi-ext-ui-probe.ts`（真扩展，**只能靠真人点击验证**——扩展 UI 的九个 method 没有替身能覆盖「用户到底点了没」。用法写在文件头：复制到 `%USERPROFILE%\.pi\agent\extensions\`、重启 pi 会话、依次跑 `/dsh-ui-probe` 与 `/dsh-ui-notify`、验完删除）。
 
-## 8. 现状快照（2026-11-13 · v0.4.2）
+## 8. 现状快照（2026-11-13 · v0.5.1）
 
 - **RPC 命令**：pi 侧 33 条，面板已实现 32 条 + `steer` 1 条走等价路径（`prompt` + `streamingBehavior:'steer'`，`client.js:2447`），缺口 0。
 - **扩展 UI**：9 种请求全部已实现（`applyExtensionUi()` `client.js:898-943`），3 种应答全通（`POST /sessions/:id/respond` `index.js:839-858`）。倒计时取 `min(pi 声明值, 5 分钟兜底)`（`dialogBudgetMs()` `client.js:883`，`DIALOG_FALLBACK_MS` `src/rpc-contract.mjs:260`），且 host 侧命令 timer 会为挂起的弹窗让位（`restartPendingTimers()` `src/pi-rpc.mjs:472`）——**这两侧必须同时成立**，否则就是 0.2.5 那个「红条与对话框并存」的缺陷。
@@ -92,5 +93,6 @@ pwsh -NoProfile -File install-plugin.ps1 -Profile desktop   # 装进 desktop pro
 - **过程行（0.4.0）**：工具调用 / 工具结果 / `!` bash 三类行去掉圆角卡片外壳（`border-radius:0`、`background:transparent`、无 hairline），改平铺行 + 展开区左侧竖线，与 `.dsh-pi-think` 同一套语言。一次任务十几条工具卡若每条都套圆角 + 描边，会形成框套框的噪音墙。
 - **会话历史对账（0.4.1）**：`attach` 之后补一次 `get_messages` 整表重建（`messagesFromHistory()`，`client.js` 内由 `hydrate()` 调用）。根因：`new_session` / `switch_session` / `fork` / `clone` 成功后 host 会 `proc.resetEvents()`（`SESSION_REPLACING_COMMANDS`，`index.js:74`）把事件缓冲清空，历史消息不再以事件重放 —— 只靠 `snapshot` 重放的话切过去必然空白（0.4.0 及之前「点开历史会话没有内容」）。两道防线：会话已切走则丢弃响应（`sessionRef.current !== id`）；`busy` 期间不覆盖列表，改挂 `hydratePendingRef`，由 `drainHydrate()` 在 `agent_settled` 之后补。`bashRef` 语义不变（仍只表示「bash 正在跑」，Esc `abort_bash` 依赖它）。
 - **重启脚本（0.4.2）**：`tools/restart-dsh.ps1` 重写，杀的是**启动根**并按**原命令行原文**重建（`ProcessStartInfo.Arguments`），环境变量按目标实例 `/selfcheck` 报的 `root` 反推 `DSH_HOME`、清 `DSH_PORT`、`ELECTRON_RUN_AS_NODE` 按需设；推不出来 `exit 3`，脚本自己在目标实例内部时也 `exit 3`（`-Force` 可越过），`-Plan` 只打印计划。旧实现三处缺陷：`Start-Process -FilePath $exe` 丢 6 个启动参数、杀宿主 pid 导致没人重新拉起、继承 `ELECTRON_RUN_AS_NODE=1` 等污染环境。库模式 `$env:DSH_PI_RESTART_LIB=1` 只加载函数，供测试不触动真实例。
-- 门禁规模（0.4.2）：`test/client-render.mjs` 464 断言、`test/css-tokens.mjs` 90、`test/host-parity.mjs` 162（含 roots 10 条）、`test/parity.mjs` 77（§7 新增 12 条钉死对账接线）、`test/restart-lib.mjs` 22 条 node 断言 + 双引擎各 31 条 PS 断言（文件层 BOM/CR/无裸 `Start-Process` + 假服务 5 种响应 + bat 门禁）。
+- **历史会话两级（0.5.0）**：`/resume` 抽屉改成「项目层 → 会话层」，与命令行 pi 的 `SessionSelectorComponent` 同构。根因是 0.4.2 及之前 `SessionsSheet` 把当前 `meta.cwd` 当唯一过滤条件、而 host `listHistory` 在 `cwd` 为空时回落 `detected.workspace`，抽屉永远只列得出一个项目。现 `GET /sessions/history?scope=all` 返回全部项目 + `projects` 聚合（`groupSessionsByProject` 排序规则逐条照抄 pi：当前项目置顶 → 非临时优先 → 最近活动降序，临时目录判定沿用 `TEMPORARY_PATH_PATTERNS`）；`scope=project&cwd=` 只列该项目。跨项目切换后 `proc.sessionCwd` 由会话文件 header 的 `cwd` 回填（`readSessionCwd`）—— `get_state` 不回报 cwd，不补这一步面板的「当前工作区」会一直是子进程的 spawn 目录。`MissingSessionCwdError` 翻成中文提示：pi 的 RPC 面没有 `cwdOverride` 分支（`rpc-mode.ts:624-630`），面板替不了用户选「换目录继续」。
+- 门禁规模（0.5.0，0.5.1 未变）：`test/client-render.mjs` 497 断言、`test/css-tokens.mjs` 90、`test/host-parity.mjs` 166（含 roots 10 条与新 scope 语义）、`test/session-projects.mjs` 55（聚合规则 / 临时路径 / 会话 cwd 读取）、`test/parity.mjs` 77（§7 新增 12 条钉死对账接线）、`test/restart-lib.mjs` 22 条 node 断言 + 双引擎各 31 条 PS 断言（文件层 BOM/CR/无裸 `Start-Process` + 假服务 5 种响应 + bat 门禁）。
 - 逐条账本见 `docs/parity.md`；机器保障是 `npm test` 里的 `test/parity.mjs` + `test/host-parity.mjs` + `test/timeout.mjs`。

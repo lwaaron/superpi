@@ -32,7 +32,10 @@ import {
 } from './src/rpc-contract.mjs'
 import {
   expandUserPath,
+  groupSessionsByProject,
+  listAllSessions,
   listSessions,
+  readSessionCwd,
   resolveAgentDir,
   samePath,
   sessionRootDir,
@@ -58,7 +61,7 @@ const API_PREFIX = '/api/' + PLUGIN_ID
 const MAX_SESSIONS = 8
 const MAX_BODY_BYTES = 4 * 1024 * 1024
 /** GET /contract 里 version 字段的取值：本插件对外的契约版本，与 package.json 解耦。 */
-const CONTRACT_VERSION = '0.4.2'
+const CONTRACT_VERSION = '0.5.1'
 /** 历史会话列表的条数窗口（与 src/session-store.mjs 的 DEFAULT_LIMIT/MAX_LIMIT 一致）。 */
 const HISTORY_DEFAULT_LIMIT = 20
 const HISTORY_MAX_LIMIT = 200
@@ -385,6 +388,25 @@ export function pickCurrentSessionFile({ running = [], target = '' } = {}) {
   return null
 }
 
+/**
+ * 全部项目视图里的「正在使用」标记：只要面板正开着某个会话，就把它标出来——
+ * 跨项目时同样成立（这正是旧实现做不到的：它按 cwd 过滤，跨项目一律不算）。
+ * @param {Array<{ sessionFile?: string|null, state?: string }>} running
+ * @param {Array<{ path?: string }>} [known] 已列出的会话，用于排除「会话文件不属于本机 sessions 目录」的情况
+ * @returns {string|null}
+ */
+export function firstRunningSessionFile(running = [], known = []) {
+  const live = (Array.isArray(running) ? running : []).filter(item => item !== null && typeof item === 'object' &&
+    typeof item.sessionFile === 'string' && item.sessionFile !== '')
+  if (live.length === 0) return null
+  const alive = live.filter(item => item.state !== 'dead')
+  const pool = alive.length > 0 ? alive : live
+  if (!Array.isArray(known) || known.length === 0) return pool[0].sessionFile
+  const paths = new Set(known.map(item => (item !== null && typeof item === 'object' && typeof item.path === 'string' ? item.path : '')))
+  const matched = pool.find(item => paths.has(item.sessionFile))
+  return matched === undefined ? null : matched.sessionFile
+}
+
 export function apply(ctx, config = {}) {
   const log = makeLog(ctx)
   /**
@@ -605,7 +627,8 @@ export function apply(ctx, config = {}) {
    */
   const listRunningSessions = () => [...sessions.values()].map(proc => ({
     id: proc.id,
-    cwd: proc.cwd,
+    cwd: proc.sessionCwd ?? proc.cwd,
+    sessionCwd: proc.sessionCwd ?? proc.cwd,
     sessionId: proc.lastState?.sessionId ?? null,
     sessionFile: proc.lastState?.sessionFile ?? null,
     sessionName: proc.lastState?.sessionName ?? null,
@@ -615,16 +638,45 @@ export function apply(ctx, config = {}) {
   /**
    * 列历史会话。agentDir / sessionDir 走 pi 同一套解析链（PI_CODING_AGENT_DIR、
    * PI_CODING_AGENT_SESSION_DIR），所以设了环境变量也能列对。
+   *
+   * 两种 scope，对应 pi 的 SessionManager.list（单项目）与 SessionManager.listAll（全部项目）：
+   *  - scope='project' + cwd：只列该 cwd 的会话（面板历史抽屉的第二层，也是 pi 的默认层）。
+   *  - scope='all'（默认，cwd 为空时）：扫 sessions/ 下所有项目子目录，额外返回 projects 聚合
+   *    （面板历史抽屉的第一层，对齐 pi 的 ProjectList）。
+   * 旧调用方「不带 cwd」曾经被静默回落成 workspace，导致面板只看得到一个项目 —— 现在不带 cwd
+   * 就是「全部项目」，回落只发生在显式 scope='project' 且 cwd 缺失时。
    */
-  const listHistory = async ({ cwd, limit } = {}) => {
-    const target = typeof cwd === 'string' && cwd.trim() !== ''
-      ? expandUserPath(cwd, { env: process.env, home: os.homedir(), base: detected.workspace })
-      : detected.workspace
-    const agentDir = resolveAgentDir({ env: process.env, home: os.homedir() })
-    const root = sessionRootDir({ agentDir, env: process.env, home: os.homedir() })
-    const items = await listSessions({ agentDir, cwd: target, limit, env: process.env, home: os.homedir() })
-    const current = pickCurrentSessionFile({ running: listRunningSessions(), target })
-    return { cwd: target, agentDir, sessionDir: root.dir, override: root.override, sessions: items, current }
+  const listHistory = async ({ scope, cwd, limit } = {}) => {
+    const home = os.homedir()
+    const env = process.env
+    const hasCwd = typeof cwd === 'string' && cwd.trim() !== ''
+    const mode = scope === 'project' || scope === 'all' ? scope : hasCwd ? 'project' : 'all'
+    const target = mode === 'project'
+      ? (hasCwd ? expandUserPath(cwd, { env, home, base: detected.workspace }) : detected.workspace)
+      : ''
+    const agentDir = resolveAgentDir({ env, home })
+    const root = sessionRootDir({ agentDir, env, home })
+    const running = listRunningSessions()
+    // limit 只截 sessions；分组需要全量，否则非当前项目的会话数会被截掉。
+    const all = await listAllSessions({ agentDir, cwd: target, env, home })
+    const sessions = typeof limit === 'number' && limit > 0 ? all.slice(0, limit) : all
+    const projects = mode === 'all'
+      ? groupSessionsByProject(all, { currentCwd: running.length > 0 ? running[0].sessionCwd : '' })
+      : []
+    const current = mode === 'project'
+      ? pickCurrentSessionFile({ running, target })
+      : firstRunningSessionFile(running, all)
+    return {
+      scope: mode,
+      cwd: target,
+      agentDir,
+      sessionDir: root.dir,
+      override: root.override,
+      total: all.length,
+      projects,
+      sessions,
+      current,
+    }
   }
 
   const selfCheck = () => buildSelfCheck(detected)
@@ -746,12 +798,16 @@ export function createHandler(deps) {
       /**
        * 历史会话列表。必须排在 /^\/sessions\/([^/]+)/ 之前，
        * 否则 'history' 会被当成会话 id 走进 requireSession 拿 404。
+       *
+       * ?scope=all|project；缺省时按有没有 cwd 推断（有 cwd → project，无 → all）。
+       * 面板历史抽屉第一层用 all（拿 projects 聚合），第二层用 project（拿某个 cwd 的会话）。
        */
       if (method === 'GET' && routePath === '/sessions/history') {
         if (typeof deps.listHistory !== 'function') return send(501, { error: 'history unavailable' })
         const cwd = url.searchParams.get('cwd') ?? ''
+        const scope = url.searchParams.get('scope') ?? ''
         const limit = clampCount(url.searchParams.get('limit'), HISTORY_DEFAULT_LIMIT, HISTORY_MAX_LIMIT)
-        const result = await deps.listHistory({ cwd, limit })
+        const result = await deps.listHistory({ scope, cwd, limit })
         return send(200, { ok: true, ...result })
       }
       /** @ 补全与「插入路径」：RPC 协议没有 fs 能力，只能由 host 代读（只读，不递归）。 */
@@ -850,6 +906,13 @@ export function createHandler(deps) {
           // 状态回填统一交给 PiProcess.noteCommand：set_model / set_session_name / 会话替换
           // 这些命令的响应里带着新值，不回填的话 /snapshot 会一直报旧值。
           proc.noteCommand?.(body, data)
+          // switch_session 之后 pi 的 get_state 不回报 cwd（rpc-types.ts:96-109 没有该字段），
+          // 只能从目标会话文件的 header 里补，否则面板的 cwd 还停在 spawn 时那个目录。
+          if (body.type === 'switch_session' && body.cancelled !== true && data?.cancelled !== true &&
+            typeof proc.setSessionCwd === 'function') {
+            const nextCwd = await readSessionCwd(body.sessionPath)
+            proc.setSessionCwd(nextCwd)
+          }
           // 这四条命令会把 pi 内部的会话指针挪到别处（甚至换掉 sessionFile）。旧事件留在
           // 缓冲里，面板下一次重连回放就会把两个会话混着渲染，所以成功即清空。
           // 判定放在 send 之后：失败的命令（比如 clone 无叶子节点）不该丢事件。

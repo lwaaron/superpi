@@ -476,6 +476,64 @@ assert(allSystem.length === 0, '只有 system 时该得到空列表，实际 ' +
 const dirty = internals.messagesFromHistory([null, 'x', { role: 'user', content: 'hi' }])
 assert(dirty.length === 1 && dirty[0].blocks[0].text === 'hi', '脏数据该被跳过，string content 兜底成 text 块')
 
+// ── 9.17 历史会话抽屉：两级导航（0.5.0 修「历史会话只显示一条」） ──────────────
+// 根因：面板把当前 cwd 当成唯一过滤条件，host 端空 cwd 又回落 workspace，
+// 结果抽屉永远只列得出一个项目的会话。修法是照 pi SessionSelectorComponent 做两级：
+// 第一层列全部项目（当前置顶 → 非临时优先 → 最近活动降序），点进项目再列该 cwd 的会话。
+// SessionsList 是纯渲染视图（容器 SessionsSheet 负责取数与层级切换），所以这里能直接喂假数据。
+assert(typeof internals.SessionsList === 'function', 'client.js 应导出 SessionsList 以便测试')
+const projEntries = [
+  { key: 'c:\\users\\pc\\pi-workspace', cwd: 'C:\\Users\\PC\\pi-workspace', displayPath: '~\\pi-workspace', sessionCount: 3, lastActivity: '2026-11-13T10:00:00.000Z', isTemporary: false, isCurrent: true },
+  { key: 'd:\\proj', cwd: 'D:\\proj', displayPath: 'D:\\proj', sessionCount: 1, lastActivity: '2026-11-12T10:00:00.000Z', isTemporary: false, isCurrent: false },
+  { key: 'c:\\temp\\pi-runtime-1', cwd: 'C:\\temp\\pi-runtime-1', displayPath: 'C:\\temp\\pi-runtime-1', sessionCount: 2, lastActivity: '2026-11-13T09:00:00.000Z', isTemporary: true, isCurrent: false },
+]
+const sessEntries = [
+  { path: 'D:\\proj\\a.jsonl', name: null, firstMessage: 'q1', lastMessage: '答一', messageCount: 4, modified: '2026-11-12T10:00:00.000Z', cwd: 'D:\\proj' },
+  { path: 'D:\\proj\\b.jsonl', name: 'NAMED', firstMessage: 'q2', lastMessage: '答二', messageCount: 9, modified: '2026-11-11T10:00:00.000Z', cwd: 'D:\\proj' },
+]
+const projectLevel = renderToStaticMarkup(React.createElement(internals.SessionsList, {
+  t: zh, level: 'projects', project: null, query: '', currentPath: null,
+  info: { loading: false, error: null, projects: projEntries, sessions: [], total: 6 },
+  onQuery() {}, onOpenProject() {}, onBack() {}, onPick() {}, onClose() {},
+}))
+assert(projectLevel.includes('class="dsh-pi-proj"'), '项目层该渲染 .dsh-pi-proj 行')
+assert(projectLevel.includes('class="dsh-pi-sess"') === false, '项目层不该混入会话行（项目行复用 sess-top/sess-title 排版，但外层类名必须是 dsh-pi-proj）')
+assert(projectLevel.includes('data-current="1"'), '当前项目该打 data-current=1')
+assert(projectLevel.includes('data-temporary="1"'), '临时项目该打 data-temporary=1')
+assert(projectLevel.includes(zh('tempTag')), '临时项目该显示「' + zh('tempTag') + '」标签')
+assert(projectLevel.includes('~\\pi-workspace'), '项目行标题该用 displayPath（~ 缩写），而不是绝对路径')
+assert(projectLevel.includes(zh('projectSessions').replace('{n}', '3')), '项目行该显示会话数：' + zh('projectSessions').replace('{n}', '3'))
+assert(projectLevel.includes('← ' + zh('allProjects')) === false, '项目层不该出现返回按钮')
+const sessionLevel = renderToStaticMarkup(React.createElement(internals.SessionsList, {
+  t: zh, level: 'sessions', project: projEntries[1], query: '', currentPath: 'D:\\proj\\b.jsonl',
+  info: { loading: false, error: null, projects: [], sessions: sessEntries, total: 2 },
+  onQuery() {}, onOpenProject() {}, onBack() {}, onPick() {}, onClose() {},
+}))
+assert(sessionLevel.includes('class="dsh-pi-sess"'), '会话层该渲染 .dsh-pi-sess 行')
+assert(sessionLevel.includes('class="dsh-pi-proj"') === false, '会话层不该混入项目行')
+assert(sessionLevel.includes('← ' + zh('allProjects')), '会话层该有回到项目层的按钮')
+assert(sessionLevel.includes('D:\\proj'), '会话层标题该是项目路径')
+assert(sessionLevel.includes('dsh-pi-tag'), '会话层该给当前会话打「' + zh('current') + '」标签')
+assert(sessionLevel.includes(zh('sessionsHint')), '会话层该显示会话提示文案')
+const filteredLevel = renderToStaticMarkup(React.createElement(internals.SessionsList, {
+  t: zh, level: 'projects', project: null, query: 'd:\\proj', currentPath: null,
+  info: { loading: false, error: null, projects: projEntries, sessions: [], total: 6 },
+  onQuery() {}, onOpenProject() {}, onBack() {}, onPick() {}, onClose() {},
+}))
+assert(filteredLevel.split('class="dsh-pi-proj"').length - 1 === 1, '搜索该把项目层过滤到 1 行（路径也参与匹配）')
+const loadingLevel = renderToStaticMarkup(React.createElement(internals.SessionsList, {
+  t: zh, level: 'projects', project: null, query: '', currentPath: null,
+  info: { loading: true, error: null, projects: [], sessions: [], total: 0 },
+  onQuery() {}, onOpenProject() {}, onBack() {}, onPick() {}, onClose() {},
+}))
+assert(loadingLevel.includes(zh('projectsLoading')), '项目层加载态该用「' + zh('projectsLoading') + '」而不是会话文案')
+const emptyLevel = renderToStaticMarkup(React.createElement(internals.SessionsList, {
+  t: en, level: 'projects', project: null, query: '', currentPath: null,
+  info: { loading: false, error: null, projects: [], sessions: [], total: 0 },
+  onQuery() {}, onOpenProject() {}, onBack() {}, onPick() {}, onClose() {},
+}))
+assert(emptyLevel.includes(en('projectsEmpty')), '英文空项目层该显示 ' + en('projectsEmpty'))
+assert(emptyLevel.includes(en('projectsHint')), '英文项目层该显示 ' + en('projectsHint'))
 // ── 10. 整棵面板在 loading 阶段能渲染，不抛异常 ────────────────────────────
 const panelHtml = renderToStaticMarkup(React.createElement(internals.PiPanel, { t: zh }))
 assert(panelHtml.includes('dsh-pi-root'), 'PiPanel 应渲染出 dsh-pi-root')

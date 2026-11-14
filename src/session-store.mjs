@@ -18,7 +18,7 @@
 import { createReadStream } from 'node:fs'
 import { open, readdir, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 
 /** 超过这个大小改用首尾窗口读取。 */
 export const LARGE_FILE_BYTES = 4 * 1024 * 1024
@@ -39,6 +39,8 @@ const BACKSLASH = String.fromCharCode(92)
 const SEP_CLASS = '[/' + BACKSLASH + BACKSLASH + ':]'
 const LEADING_SEP = new RegExp('^[/' + BACKSLASH + BACKSLASH + ']')
 const ANY_SEP = new RegExp(SEP_CLASS, 'g')
+/** 连续反斜杠（把 Windows 路径归一成 / 用）。 */
+const WINDOWS_SEP = new RegExp(BACKSLASH + BACKSLASH + '+', 'g')
 
 /**
  * 展开 ~ 与 %VAR% / $VAR%，然后绝对化（对齐 pi 的 normalizePath + resolvePath）。
@@ -119,6 +121,43 @@ export function samePath(a, b, { caseInsensitive = process.platform === 'win32' 
   }
   const left = normalize(a)
   return left !== '' && left === normalize(b)
+}
+
+/**
+ * 路径比较键：对齐 pi 的 getPathComparisonKey（paths.ts:46-50）。
+ * resolve 之后在 Windows 上转小写——不碰 fs，所以对尚不存在的目录也有效。
+ */
+export function pathComparisonKey(input, { caseInsensitive = process.platform === 'win32' } = {}) {
+  if (typeof input !== 'string' || input.trim() === '') return ''
+  const resolved = resolve(input.trim())
+  return caseInsensitive ? resolved.toLowerCase() : resolved
+}
+
+/**
+ * 项目层排序用的临时目录判定，正则逐条照抄 pi 的 TEMPORARY_PATH_PATTERNS
+ * （session-selector.ts:760-769）：单测/探针产生的 tmp、appdata/local/temp、pi-runtime-* 目录。
+ */
+const TEMPORARY_PATH_PATTERNS = [
+  new RegExp('^/?(tmp|var/tmp|private/var/folders)/', 'i'),
+  new RegExp('(^|/)(appdata/local/temp|temp|tmp)(/|$)', 'i'),
+  new RegExp('(^|/)pi-runtime[-' + BACKSLASH + 'w.]*', 'i'),
+]
+
+export function isTemporaryPath(target) {
+  if (typeof target !== 'string' || target === '') return false
+  const normalized = target.replace(WINDOWS_SEP, '/')
+  return TEMPORARY_PATH_PATTERNS.some(pattern => pattern.test(normalized))
+}
+
+/** 单元格里的短路径：对齐 pi 的 shortenHomePath（paths.ts:73-78）。 */
+export function shortenHomePath(input, home = homedir()) {
+  if (typeof input !== 'string' || input === '') return ''
+  const homeDir = typeof home === 'string' && home !== '' ? home : homedir()
+  if (!isAbsolute(input)) return input
+  const rel = relative(homeDir, input)
+  if (rel === '') return '~'
+  if (rel.startsWith('..') || isAbsolute(rel)) return input
+  return '~' + sep + rel
 }
 
 export function parseLine(line) {
@@ -352,16 +391,16 @@ function clampLimit(value) {
 }
 
 /**
- * 列出会话。
- * @param {{ agentDir?: string, sessionDir?: string, cwd?: string, limit?: number, env?: object, home?: string }} options
+ * 列出全部会话（不做条数截断）。
+ * @param {{ agentDir?: string, sessionDir?: string, cwd?: string, env?: object, home?: string }} options
  *   cwd 省略/为空 → 扫 sessions/ 下所有项目子目录（等价 pi 的 listAll）。
+ *   cwd 非空 → 只扫该项目目录（等价 pi 的 SessionManager.list）。
  * @returns {Promise<Array<object>>} modified 降序
  */
-export async function listSessions(options = {}) {
+export async function listAllSessions(options = {}) {
   const env = options.env ?? process.env
   const home = options.home ?? homedir()
   const agentDir = options.agentDir === undefined || options.agentDir === '' ? resolveAgentDir({ env, home }) : options.agentDir
-  const limit = clampLimit(options.limit)
   const cwd = typeof options.cwd === 'string' ? options.cwd.trim() : ''
   const root = sessionRootDir({ agentDir, env, home, sessionDir: options.sessionDir })
   const dirs = []
@@ -397,5 +436,88 @@ export async function listSessions(options = {}) {
   let list = infos.filter(info => info !== null)
   if (root.override && cwd !== '') list = list.filter(info => samePath(info.cwd, cwd))
   list.sort((a, b) => new Date(b.modified).getTime() - new Date(a.modified).getTime())
+  return list
+}
+
+/**
+ * 列出会话（带条数上限）。cwd 语义见 listAllSessions。
+ * @returns {Promise<Array<object>>} modified 降序，最多 limit 条
+ */
+export async function listSessions(options = {}) {
+  const limit = clampLimit(options.limit)
+  const list = await listAllSessions(options)
   return list.slice(0, limit)
+}
+
+/**
+ * 按项目（会话 cwd）聚合会话，用于面板历史会话抽屉的项目层。
+ * 排序与字段逐条对齐 pi 的 groupSessionsByProject
+ * （pi-main/packages/coding-agent/src/cli/session-picker.ts:26-62）：
+ *   当前项目 → 非临时项目 → 最后活动时间降序。
+ * @param {Array<object>} sessions SessionInfo 数组（可含任意多余字段）
+ * @param {{ currentCwd?: string }} [options] 面板当前会话的 cwd，用于置顶与 isCurrent
+ * @returns {Array<{ key: string, cwd: string, displayPath: string, sessionCount: number, lastActivity: string, isTemporary: boolean, isCurrent: boolean }>}
+ */
+export function groupSessionsByProject(sessions, { currentCwd = '' } = {}) {
+  const list = Array.isArray(sessions) ? sessions : []
+  const currentKey = pathComparisonKey(currentCwd)
+  const byProject = new Map()
+  for (const session of list) {
+    if (session === null || typeof session !== 'object') continue
+    const cwd = typeof session.cwd === 'string' ? session.cwd : ''
+    const key = pathComparisonKey(cwd)
+    const modified = new Date(session.modified).getTime()
+    let entry = byProject.get(key)
+    if (entry === undefined) {
+      entry = {
+        key,
+        cwd,
+        displayPath: shortenHomePath(cwd),
+        sessionCount: 0,
+        lastActivity: session.modified,
+        lastActivityMs: Number.isNaN(modified) ? 0 : modified,
+        isTemporary: isTemporaryPath(cwd),
+        isCurrent: currentKey !== '' && key === currentKey,
+      }
+      byProject.set(key, entry)
+    }
+    entry.sessionCount += 1
+    if (!Number.isNaN(modified) && modified > entry.lastActivityMs) {
+      entry.lastActivity = session.modified
+      entry.lastActivityMs = modified
+    }
+  }
+  const rank = entry => (entry.isCurrent ? 0 : entry.isTemporary ? 2 : 1)
+  return [...byProject.values()]
+    .sort((a, b) => rank(a) - rank(b) || b.lastActivityMs - a.lastActivityMs)
+    .map(entry => ({
+      key: entry.key,
+      cwd: entry.cwd,
+      displayPath: entry.displayPath,
+      sessionCount: entry.sessionCount,
+      lastActivity: entry.lastActivity,
+      isTemporary: entry.isTemporary,
+      isCurrent: entry.isCurrent,
+    }))
+}
+
+/**
+ * 只读会话文件头，拿 header.cwd。
+ * 跨项目 switch_session 之后 get_state 不回报 cwd（rpc-types.ts:96-109 没有该字段），
+ * host 必须自己从会话文件补，否则面板显示的还是 spawn 时的旧目录。
+ * 只读首 64KB，避免为了一个字段把几百 MB 的会话读一遍。
+ * @returns {Promise<string>} 拿不到返回 ''
+ */
+export async function readSessionCwd(filePath) {
+  if (typeof filePath !== 'string' || filePath === '') return ''
+  try {
+    const head = await readWindow(filePath, 0, 65536)
+    const newline = head.indexOf('\n')
+    const firstLine = newline >= 0 ? head.slice(0, newline) : head
+    const header = parseLine(firstLine)
+    if (header === null || header.type !== 'session') return ''
+    return typeof header.cwd === 'string' ? header.cwd : ''
+  } catch {
+    return ''
+  }
 }

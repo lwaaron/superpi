@@ -138,6 +138,14 @@ export class PiProcess extends EventEmitter {
     this.stderrLines = []
     this.exitInfo = null
     this.lastState = null
+    /**
+     * 会话自己的 cwd，与进程 cwd（this.cwd）分开记。
+     *
+     * pi 的每条会话都在 header 里带 cwd，switch_session 之后会话的 cwd 可能和 spawn 时
+     * 那个目录不同；而 get_state 不回报 cwd（rpc-types.ts:96-109 没有该字段），
+     * 所以由 host 从会话文件 header 读出来写这里。null = 还没校正过，读 cwd 时回落到进程 cwd。
+     */
+    this.sessionCwd = null
     /** 待应答的扩展 UI 请求：id -> { id, method, title?, message?, options?, placeholder?, prefill?, seq, receivedAt } */
     this.pendingUi = new Map()
     this.proc = null
@@ -147,6 +155,16 @@ export class PiProcess extends EventEmitter {
 
   get pid() {
     return this.proc === null ? null : this.proc.pid
+  }
+
+  /**
+   * 校正会话 cwd（switch_session 之后由 host 调用）。
+   * 传空串表示「不知道」——回落到进程 cwd，绝不把 cwd 清成空，否则 UI 里目录会消失。
+   */
+  setSessionCwd(nextCwd) {
+    const text = typeof nextCwd === 'string' && nextCwd.trim() !== '' ? nextCwd.trim() : ''
+    this.sessionCwd = text === '' ? null : text
+    return this.sessionCwd
   }
 
   start() {
@@ -527,7 +545,9 @@ export class PiProcess extends EventEmitter {
     return {
       id: this.id,
       label: this.label,
+      // cwd 是进程目录（spawn 时定死）；sessionCwd 是当前会话文件的 cwd，跨项目切换后会变。
       cwd: this.cwd,
+      sessionCwd: this.sessionCwd ?? this.cwd,
       pid: this.pid,
       state: this.state,
       createdAt: this.createdAt,
