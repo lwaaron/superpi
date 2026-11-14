@@ -16,6 +16,7 @@
  * 下则手工配 config.cliPath 或环境变量 PI_CLI_PATH）。
  */
 
+import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import fs from 'node:fs'
 import os from 'node:os'
@@ -61,13 +62,32 @@ const API_PREFIX = '/api/' + PLUGIN_ID
 const MAX_SESSIONS = 8
 const MAX_BODY_BYTES = 4 * 1024 * 1024
 /** GET /contract 里 version 字段的取值：本插件对外的契约版本，与 package.json 解耦。 */
-const CONTRACT_VERSION = '0.5.1'
+const CONTRACT_VERSION = '0.6.3'
 /** 历史会话列表的条数窗口（与 src/session-store.mjs 的 DEFAULT_LIMIT/MAX_LIMIT 一致）。 */
 const HISTORY_DEFAULT_LIMIT = 20
 const HISTORY_MAX_LIMIT = 200
 /** @ 补全的条数窗口：面板一屏最多也就几十条，给多了纯浪费带宽。 */
 const FILES_DEFAULT_LIMIT = 50
 const FILES_MAX_LIMIT = 200
+/**
+ * 面板内预览的读取上限。
+ *
+ * 文本 512KiB：够整篇 markdown / 一屏代码 / 一整份日志的头部；再大用户在面板里也读不完，
+ * 而一次性把 10MB 文本塞进 DOM 只会把面板卡死。
+ * 图片 8MiB：截图（1080p PNG 常见 1~3MB）都能内联预览；超过就走「文件太大」，不做缩放
+ * ——缩放要额外依赖，且面板预览不是图像编辑器。
+ */
+const FILE_TEXT_MAX_BYTES = 512 * 1024
+const FILE_IMAGE_MAX_BYTES = 8 * 1024 * 1024
+/** 二进制判定的采样窗口：前 8KiB 里出现 NUL 就按二进制处理（与 git 的判据同源）。 */
+const FILE_BINARY_PROBE_BYTES = 8192
+/**
+ * 「在资源管理器里定位文件」的等待上限。
+ *
+ * explorer.exe 会把自己挂到已有的桌面进程上然后立刻退出，但冷启动时可能拖到秒级；
+ * 这里只等进程 spawn 完成，不等它退出 —— 等 explorer 退出会把请求拖死（它可能要几秒）。
+ */
+const REVEAL_SPAWN_WAIT_MS = 1500
 /** /changelog 的读取上限：CHANGELOG.md 通常几十 KB，200KiB 足够整篇。 */
 const CHANGELOG_MAX_BYTES = 200 * 1024
 /**
@@ -821,6 +841,64 @@ export function createHandler(deps) {
         return send(200, { ok: true, dir: listing.dir, entries: listing.entries, truncated: listing.truncated })
       }
       /**
+       * 面板预览：读一个文件的内容。
+       *
+       * 为什么由 host 读而不是浏览器直接渲染路径：pi 的会话 cwd 与本插件的工作区都可能
+       * 落在任意盘符（用户的实际工程在 D: 上，arte facts 也在那儿），浏览器侧没有读盘能力；
+       * 而 pi 的 RPC 契约里根本没有 fs 读文件能力（只有 bash，用它读文件会把内容塞进
+       * 对话上下文，既费 token 也不该为了看一眼文件就产生一次工具调用）。
+       *
+       * 语义：
+       *  - 只读，不递归，不跟随目录（要读目录用 /files）；
+       *  - path 支持 ~ / %VAR% / 相对路径（相对 workspace 解析），与 /files 的 dir 同一套规则；
+       *  - 文本上限 FILE_TEXT_MAX_BYTES，图片上限 FILE_IMAGE_MAX_BYTES，超限截断并标 truncated；
+       *  - 前 FILE_BINARY_PROBE_BYTES 里出现 NUL 判为二进制，只回元信息不回内容；
+       *  - 路径不存在 / 不是文件分别回 404 / 400。
+       */
+      if (method === 'GET' && routePath === '/file') {
+        const workspace = typeof deps.workspacePath === 'function' ? deps.workspacePath() : ''
+        const rawPath = (url.searchParams.get('path') ?? '').trim()
+        if (rawPath === '') {
+          const failure = new Error('path required')
+          failure.statusCode = 400
+          throw failure
+        }
+        const target = normalizeDir(expandUserPath(rawPath, { env: process.env, home: os.homedir(), base: workspace }))
+        return send(200, await readPreviewFile(target))
+      }
+      /**
+       * 在系统文件管理器里定位一个文件（面板文件标签的右键动作）。
+       *
+       * 为什么不从浏览器侧直接开：浏览器的 file:// 被 Chromium 拦死，而且插件根本拿不到
+       * 「用资源管理器打开」这种系统能力。宿主进程是用户的桌面环境，只有它能做这件事。
+       *
+       * 语义与 Windows 资源管理器的 /select 完全一致：弹出父目录、选中这个文件。
+       * 目录本身也能定位（/select 会打开它）；路径不存在回 404 —— 静默失败会让用户
+       * 以为右键坏了，必须如实报出来。
+       *
+       * 注入点：deps.revealPath 可替换（测试用），默认实现走 explorer.exe。
+       */
+      if (method === 'POST' && routePath === '/reveal') {
+        const workspace = typeof deps.workspacePath === 'function' ? deps.workspacePath() : ''
+        const body = (await readJsonBody(req)) ?? {}
+        const rawPath = typeof body.path === 'string' ? body.path.trim() : ''
+        if (rawPath === '') {
+          const failure = new Error('path required')
+          failure.statusCode = 400
+          throw failure
+        }
+        const target = normalizeDir(expandUserPath(rawPath, { env: process.env, home: os.homedir(), base: workspace }))
+        const reveal = typeof deps.revealPath === 'function' ? deps.revealPath : revealInFileManager
+        try {
+          await reveal(target)
+        } catch (error) {
+          const failure = new Error(error?.code === 'ENOENT' ? 'no such file' : String(error?.message ?? 'cannot reveal'))
+          failure.statusCode = error?.code === 'ENOENT' ? 404 : 500
+          throw failure
+        }
+        return send(200, { ok: true, path: target })
+      }
+      /**
        * 工作目录选择抽屉：只列子目录（+ parent + writable），供面板逐级浏览。
        * 与 /files 同一套参数与错误语义；额外回一个 home，面板据此提供「回到主目录」。
        */
@@ -1167,6 +1245,174 @@ async function listDirectories({ dir, query = '', limit = FILES_DEFAULT_LIMIT })
     writable = true
   } catch { /* 只读目录 / 权限不足：照样能把目录列出来，只是不能在这里开会话 */ }
   return { dir, parent, writable, entries, truncated }
+}
+
+/**
+ * 面板预览能直接渲染的图片类型。只认扩展名，不嗅探魔数：
+ * 预览失败时面板显示「无法预览」，代价可见；嗅探错误反而会让二进制被当图片塞进 img。
+ */
+const IMAGE_MIME_BY_EXT = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  '.bmp': 'image/bmp',
+  '.ico': 'image/x-icon',
+  '.avif': 'image/avif',
+}
+
+/** 文本类扩展名 → MIME。仅用于让面板选择 markdown / 代码 / 纯文本三种渲染器。 */
+const TEXT_MIME_BY_EXT = {
+  '.md': 'text/markdown',
+  '.markdown': 'text/markdown',
+  '.json': 'application/json',
+  '.jsonl': 'application/x-ndjson',
+  '.js': 'text/javascript',
+  '.mjs': 'text/javascript',
+  '.cjs': 'text/javascript',
+  '.ts': 'text/typescript',
+  '.tsx': 'text/typescript',
+  '.jsx': 'text/javascript',
+  '.css': 'text/css',
+  '.html': 'text/html',
+  '.htm': 'text/html',
+  '.xml': 'text/xml',
+  '.yml': 'text/yaml',
+  '.yaml': 'text/yaml',
+  '.toml': 'text/toml',
+  '.sh': 'text/x-shellscript',
+  '.ps1': 'text/x-powershell',
+  '.bat': 'text/x-batch',
+  '.py': 'text/x-python',
+  '.rs': 'text/x-rust',
+  '.go': 'text/x-go',
+  '.java': 'text/x-java',
+  '.sql': 'text/x-sql',
+  '.diff': 'text/x-diff',
+  '.patch': 'text/x-diff',
+  '.log': 'text/plain',
+  '.txt': 'text/plain',
+  '.csv': 'text/csv',
+}
+
+/**
+ * 读一个文件，切成面板能直接呈现的三种形态：text / image / binary。
+ *
+ * 为什么把自己限死在「一次性读一小段」：面板是只读预览，用户要的是「看一眼交接单写了什么」，
+ * 不是把 200MB 日志载入浏览器。文本走 UTF-8 解码、图片走 base64 data URL、其余只回元信息，
+ * 面板据此显示「无法预览」而不是把乱码涂满屏幕。
+ *
+ * @returns {Promise<{ ok: true, path: string, name: string, dir: string, size: number, mtime: string, kind: 'text'|'image'|'binary', mimeType: string, text?: string, data?: string, truncated: boolean }>}
+ */
+async function readPreviewFile(target) {
+  let info
+  try {
+    info = await fs.promises.stat(target)
+  } catch (error) {
+    const failure = new Error(error?.code === 'ENOENT' ? 'no such file' : 'cannot read file')
+    failure.statusCode = error?.code === 'ENOENT' ? 404 : 500
+    throw failure
+  }
+  if (info.isDirectory()) {
+    // 目录不是「文件」：面板点开目录没有意义，明确回 400 而不是渲染空内容。
+    const failure = new Error('not a file')
+    failure.statusCode = 400
+    throw failure
+  }
+  const ext = path.extname(target).toLowerCase()
+  const base = {
+    ok: true,
+    path: target,
+    name: path.basename(target),
+    dir: path.dirname(target),
+    size: info.size,
+    mtime: info.mtime.toISOString(),
+  }
+  const imageMime = IMAGE_MIME_BY_EXT[ext]
+  if (imageMime !== undefined) {
+    if (info.size > FILE_IMAGE_MAX_BYTES) return { ...base, kind: 'binary', mimeType: imageMime, truncated: false }
+    const bytes = await fs.promises.readFile(target)
+    return { ...base, kind: 'image', mimeType: imageMime, data: bytes.toString('base64'), truncated: false }
+  }
+  // 文本：多读一个字节用来判「是否超限」，避免为了知道长度而 stat 两次。
+  let handle
+  try {
+    handle = await fs.promises.open(target, 'r')
+  } catch (error) {
+    const failure = new Error('cannot read file')
+    failure.statusCode = error?.code === 'ENOENT' ? 404 : 500
+    throw failure
+  }
+  try {
+    const buffer = Buffer.allocUnsafe(Math.min(info.size, FILE_TEXT_MAX_BYTES) + 1)
+    const read = await handle.read(buffer, 0, buffer.length, 0)
+    const slice = buffer.subarray(0, read.bytesRead)
+    // NUL 字节判定：Git 用同样的判据区分文本/二进制，误判率在真实工程文件上足够低。
+    const probe = slice.subarray(0, Math.min(slice.length, FILE_BINARY_PROBE_BYTES))
+    if (probe.indexOf(0) !== -1) {
+      return { ...base, kind: 'binary', mimeType: 'application/octet-stream', truncated: false }
+    }
+    const truncated = info.size > FILE_TEXT_MAX_BYTES || read.bytesRead > FILE_TEXT_MAX_BYTES
+    const text = slice.subarray(0, Math.min(slice.length, FILE_TEXT_MAX_BYTES)).toString('utf8')
+    return {
+      ...base,
+      kind: 'text',
+      mimeType: TEXT_MIME_BY_EXT[ext] ?? 'text/plain',
+      text,
+      truncated,
+    }
+  } finally {
+    await handle.close().catch(() => {})
+  }
+}
+
+/**
+ * 在系统文件管理器里定位 target（父目录打开 + 选中该文件）。
+ *
+ * Windows：explorer.exe /select,"<path>"。注意 explorer 的退出码不可信（即使成功也常回 1），
+ * 所以只判「进程有没有起来」，并按 REVEAL_SPAWN_WAIT_MS 设上限 —— 等它退出可能几秒。
+ * 先把路径 stat 一遍：不存在就抛 ENOENT，让上层回 404 而不是弹出一个空文件夹。
+ *
+ * POSIX：没有统一的「选中」语义，退化为打开父目录（macOS 用 open -R 可以选中）。
+ */
+function revealInFileManager(target) {
+  return new Promise((resolve, reject) => {
+    let info
+    try {
+      info = fs.statSync(target)
+    } catch (error) {
+      reject(error)
+      return
+    }
+    const dir = info.isDirectory() ? target : path.dirname(target)
+    const args = process.platform === 'win32'
+      ? ['/select,' + target]
+      : process.platform === 'darwin'
+        ? ['-R', target]
+        : [dir]
+    const command = process.platform === 'win32' ? 'explorer.exe' : process.platform === 'darwin' ? 'open' : 'xdg-open'
+    let settled = false
+    let child
+    try {
+      child = spawn(command, args, { stdio: 'ignore', detached: true, windowsHide: false })
+    } catch (error) {
+      reject(error)
+      return
+    }
+    const finish = error => {
+      if (settled) return
+      settled = true
+      if (error === undefined) resolve()
+      else reject(error)
+    }
+    // explorer.exe 常常把命令转交给已有实例后立刻以非 0 退出：只要 spawn 成功就算派出去了。
+    const timer = setTimeout(() => finish(), REVEAL_SPAWN_WAIT_MS)
+    if (typeof timer.unref === 'function') timer.unref()
+    child.on('error', error => { clearTimeout(timer); finish(error) })
+    child.on('exit', () => { clearTimeout(timer); finish() })
+    if (typeof child.unref === 'function') child.unref()
+  })
 }
 
 /** 盘符探测的缓存窗口：插拔 U 盘/网络盘后最多晚 10s 出现，避免每次浏览都扫 26 个根。 */

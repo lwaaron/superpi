@@ -534,6 +534,200 @@ const emptyLevel = renderToStaticMarkup(React.createElement(internals.SessionsLi
 }))
 assert(emptyLevel.includes(en('projectsEmpty')), '英文空项目层该显示 ' + en('projectsEmpty'))
 assert(emptyLevel.includes(en('projectsHint')), '英文项目层该显示 ' + en('projectsHint'))
+// ── 10. 助手文本里的文件路径 → 可点标签（右栏预览的入口） ──────────────────
+//
+// 识别规则必须「宁可少认，不要误认」：URL、版本号、example.com、/model 这类命令
+// 一旦被标成文件，正文就变得没法读了。所以正例与反例都要锁住。
+const NL = String.fromCharCode(10)
+const BS = String.fromCharCode(92)
+const chip = (value) => renderToStaticMarkup(React.createElement('div', null, internals.renderFileChip(value, 'k', null)))
+assert(chip('C:' + BS + 'Users' + BS + 'PC' + BS + 'a.md').includes('class="dsh-pi-fileref"'), '盘符绝对路径该渲染成 dsh-pi-fileref 按钮')
+assert(chip('C:' + BS + 'Users' + BS + 'a.md').includes('type="button"'), '文件标签必须是真正的 button：键盘 Tab 要能落上去')
+assert(chip('C:' + BS + 'a.md').includes('data-path='), '文件标签要把原始路径放在 data-path 上，供点击时取')
+assert(chip('C:' + BS + 'a.md').includes('dsh-pi-fileref-name">a.md'), '文件标签末段该是文件名')
+assert(internals.isFilePathToken('C:' + BS + 'x' + BS + 'y.json') === true, '盘符路径是真的')
+assert(internals.isFilePathToken('~/notes/todo.md') === true, '~/ 开头的路径是真的')
+assert(internals.isFilePathToken('./src/index.ts') === true, './ 开头的相对路径是真的')
+assert(internals.isFilePathToken('src/modes/interactive-mode.ts') === true, '带分隔符的相对路径是真的')
+assert(internals.isFilePathToken('README.md') === true, '白名单扩展名的裸文件名是真的')
+assert(internals.isFilePathToken('https://example.com/a.md') === false, 'URL 不是文件')
+assert(internals.isFilePathToken('example.com') === false, '域名不是文件（.com 不在白名单）')
+assert(internals.isFilePathToken('v1.2.3') === false, '版本号不是文件（数字扩展名一律不认）')
+assert(internals.isFilePathToken('/model') === false, '/model 是斜杠命令，不是文件')
+assert(internals.isFilePathToken('C:' + BS + 'a.md.') === false, '尾部句号说明它不是一条干净的路径')
+assert(internals.splitFileTokens('见 C:' + BS + 'Users' + BS + 'x' + BS + 'a.md。').length === 1, '中文句号包着的路径该被切出来')
+const prose = renderToStaticMarkup(React.createElement('div', null, internals.renderMarkdown('结论在 C:' + BS + 'out' + BS + 'report.md 里。', null)))
+assert(prose.includes('dsh-pi-fileref'), '段落正文里的路径该变成标签')
+assert(prose.includes('结论在'), '标签前后的纯文本必须原样保留（不吞字）')
+assert(prose.includes('里。'), '路径后面的纯文本也要保留')
+assert(prose.includes('data-openable="0"'), '没有 opener 时标签标 data-openable=0，不假装可点')
+const fenced = renderToStaticMarkup(React.createElement('div', null, internals.renderMarkdown('```' + NL + 'D:' + BS + 'work' + BS + 'artifacts' + BS + 'handoff.md' + NL + '```', null)))
+assert(fenced.includes('dsh-pi-fileref-block'), '围栏里整块只有一条路径时整块变成标签（用户截图就是这种）')
+assert(fenced.includes('dsh-pi-fence') === false, '整块变成标签后不该再套一层代码块')
+const multiFence = renderToStaticMarkup(React.createElement('div', null, internals.renderMarkdown('```' + NL + 'npm run build' + NL + 'npm test' + NL + '```', null)))
+assert(multiFence.includes('dsh-pi-fence'), '多行代码块必须保持代码块，绝不拆成标签')
+const inlineCode = renderToStaticMarkup(React.createElement('div', null, internals.renderMarkdown('路径是 `' + 'C:' + BS + 'a' + BS + 'b.md' + '` 别复制', null)))
+assert(inlineCode.includes('dsh-pi-fileref'), '行内反引号里整段是路径时该变成标签（助手常这么写）')
+const plainInline = renderToStaticMarkup(React.createElement('div', null, internals.renderMarkdown('`npm test`', null)))
+assert(plainInline.includes('dsh-pi-code-inline'), '行内 code 不是路径时必须保持 code 样式')
+const addr = internals.sessionFileAddress('s-1', 'C:' + BS + 'Users' + BS + 'a b' + BS + 'x.md')
+assert(addr.indexOf('dsh-resource://file/session/s-1/') === 0, '文件地址必须是 session 作用域：absolute 作用域没有授权会话，读不出来')
+assert(addr.includes('C:/Users/a%20b/x.md'), '反斜杠要转正斜杠、段内空格要编码、盘符冒号保持字面：' + addr)
+assert(internals.absolutePathOf('C:' + BS + 'w', 'a' + BS + 'b.md') === 'C:' + BS + 'w' + BS + 'a' + BS + 'b.md', '相对路径按 pi 的 cwd 补绝对')
+assert(internals.absolutePathOf('C:' + BS + 'w', 'D:' + BS + 'z.md') === 'D:' + BS + 'z.md', '已经是绝对路径就原样返回')
+const fileSheetText = renderToStaticMarkup(React.createElement(internals.FileSheet, { t: zh, view: { loading: false, path: 'C:' + BS + 'a.md', error: null, kind: 'text', mimeType: 'text/markdown', text: '# hi', data: '', size: 4, truncated: false }, onClose() {} }))
+assert(fileSheetText.includes(zh('filePreview')), '回落预览的标题该是「' + zh('filePreview') + '」')
+assert(fileSheetText.includes('# hi'), '文本预览该原样显示内容')
+const fileSheetBin = renderToStaticMarkup(React.createElement(internals.FileSheet, { t: zh, view: { loading: false, path: 'C:' + BS + 'a.exe', error: null, kind: 'binary', mimeType: 'application/octet-stream', text: '', data: '', size: 2048, truncated: false }, onClose() {} }))
+assert(fileSheetBin.includes(zh('binaryFile').replace('{size}', '2048')), '二进制只报大小，不假装能渲染')
+
+// ── 11. 文件标签的两种动作 + 关闭按钮统一 + 输入框提示语 ────────────────────
+//
+// 这一组挡三类回归：①右键定位（reveal）被接线漏掉，标签悄悄变成只有左键可用
+// ②抽屉 / 目录弹窗 / 扩展弹窗的关闭入口又分叉回纯文本 '×'
+// ③快捷键提示又被塞回 placeholder，输入第一个字符就消失。
+const chipWithActions = (value, actions) => renderToStaticMarkup(React.createElement('div', null, internals.renderFileChip(value, 'k', actions)))
+const onlyOpen = chipWithActions('C:' + BS + 'a.md', { open() {}, reveal: null })
+assert(onlyOpen.includes('data-openable="1"'), '只给 open 时标签标 data-openable=1')
+assert(onlyOpen.includes('data-revealable="0"'), '没有 reveal 时标 data-revealable=0（不假装能右键）')
+const bothActions = chipWithActions('C:' + BS + 'a.md', { open() {}, reveal() {} })
+assert(bothActions.includes('data-openable="1"') && bothActions.includes('data-revealable="1"'), '同时给 open/reveal 时两个标记都该是 1')
+assert(chipWithActions('C:' + BS + 'a.md', () => {}).includes('data-revealable="0"'), '直接传函数等于只给 open，reveal 仍标 0')
+assert(bothActions.includes('data-kind="doc"'), '标签要带类型：a.md 归到 doc，实际 ' + bothActions)
+assert(chipWithActions('C:' + BS + 'a.zip', { open() {}, reveal() {} }).includes('data-kind="archive"'), '.zip 归到 archive')
+assert(chipWithActions('C:' + BS + 'a.ts', { open() {}, reveal() {} }).includes('data-kind="code"'), '.ts 归到 code')
+assert(chipWithActions('C:' + BS + 'a.png', { open() {}, reveal() {} }).includes('data-kind="image"'), '.png 归到 image')
+assert(chipWithActions('C:' + BS + 'a.unknownext', { open() {}, reveal() {} }).includes('data-kind="file"'), '未知扩展名兜底成 file，不能崩')
+// 标签只露文件名（用户要求「只显示图标 + 文件名 + 后缀」），目录不再作为灰字出现。
+assert(bothActions.includes('dsh-pi-fileref-dir') === false, '文件标签不该再显示目录灰字')
+assert(bothActions.includes('>a.md<'), '文件标签正文就是文件名')
+
+// 关闭按钮：三处入口共用同一个组件，图标是 svg 而不是文本 ×
+const closeHtml = renderToStaticMarkup(React.createElement(internals.CloseButton, { t: zh, onClick() {} }))
+assert(closeHtml.includes('dsh-pi-btn-icon'), '关闭按钮该带 dsh-pi-btn-icon（28px 命中区，与其它按钮同高）')
+assert(closeHtml.includes('<svg'), '关闭按钮该用描边图标，不是纯文本 ×')
+assert(closeHtml.includes('aria-label="' + zh('close') + '"'), '关闭按钮要有 aria-label，读屏用户才认得')
+assert(closeHtml.includes('>×<') === false, '关闭按钮不该再输出文本 ×')
+assert(settingsHtml.includes('dsh-pi-btn-icon'), '设置抽屉的关闭按钮该是图标按钮（跟 Sheet 同款）')
+assert(settingsHtml.includes('>×<') === false, '设置抽屉不该再输出文本 ×')
+assert(dirHtml.includes('dsh-pi-btn-icon'), '目录弹窗的关闭按钮该是图标按钮（以前这里连 type=button 都没有）')
+assert(dirHtml.includes('>×<') === false, '目录弹窗不该再输出文本 ×')
+assert(dialogHtml({ method: 'confirm', title: 'T', message: 'M' }).includes('dsh-pi-dialog-head'), '扩展弹窗该有带关闭按钮的头部')
+assert(dialogHtml({ method: 'confirm', title: 'T', message: 'M' }).includes('dsh-pi-btn-icon'), '扩展弹窗的关闭按钮与抽屉同款')
+
+// 提示语：placeholder 只留一句，快捷键进 bar 的固定位置
+assert(zh('composerHint').includes('Enter') === false, 'placeholder 不该再塞快捷键（输入一个字符就消失，窄面板还会被截断），实际 ' + JSON.stringify(zh('composerHint')))
+assert(en('composerHint').includes('Enter') === false, 'en placeholder 同理，实际 ' + JSON.stringify(en('composerHint')))
+for (const key of ['composerTipIdle', 'composerTipBusy']) {
+  assert(typeof zh(key) === 'string' && zh(key) !== '', 'zh 缺 ' + key)
+  assert(typeof en(key) === 'string' && en(key) !== '', 'en 缺 ' + key)
+}
+assert(zh('composerTipIdle').includes('Enter') && zh('composerTipIdle').includes('Shift'), '空闲提示要讲清 Enter / Shift+Enter')
+assert(zh('composerTipBusy').includes('steer') && zh('composerTipBusy').includes('Esc'), '运行中提示要讲清 steer 与 Esc 停止')
+assert(zh('revealFile') !== '' && en('revealFile') !== '', '右键定位要有自己的文案键')
+assert(zh('revealFileFailed').includes('{path}'), '定位失败文案要带 {path} 占位')
+
+// ── 9.5 composer 重排：卡面 + 圆形 +\- 菜单 + 底部统计行 ───────────────────
+// 用户给的宿主截图里，输入区是一张 28px 圆角白卡：左上圆形「+」，右侧圆形发送键，
+// 输入框本身没有边框，提示语进 bar，统计另起一行。这里逐项钉住，防止回退成「一排文字按钮」。
+const Composer = internals.Composer
+assert(typeof Composer === 'function', 'client.js 应导出 Composer 以便测试')
+const composerProps = {
+  t: zh,
+  busy: false,
+  images: [],
+  onRemoveImage() {},
+  onSubmit() {},
+  onStop() {},
+  onFollowUp() {},
+  onDequeue() {},
+  onCycleModel() {},
+  onCycleThinking() {},
+  onImages() {},
+  onPathsUnavailable() {},
+  onPickDir() {},
+  onOpenModels() {},
+  onOpenThinking() {},
+  onOpenSessions() {},
+  onOpenStats() {},
+  onOpenSettings() {},
+  onOpenHotkeys() {},
+  onCompact() {},
+  onNewSession() {},
+  onSetThinking() {},
+  slashEntries: [],
+  editorText: '',
+  widgets: [],
+  onEditorTextConsumed() {},
+  searchFiles() { return [] },
+  model: { id: 'deepseek-v4', provider: 'deepseek' },
+  thinking: 'medium',
+  thinkingLevels: ['low', 'medium', 'high'],
+}
+const composerHtml = renderToStaticMarkup(React.createElement(Composer, composerProps))
+assert(composerHtml.includes('dsh-pi-box'), '输入区该有卡面 dsh-pi-box')
+assert(composerHtml.includes('dsh-pi-ta'), '输入区该有 textarea.dsh-pi-ta')
+assert(composerHtml.includes('dsh-pi-add'), '左端该有圆形 + 按钮（宿主同款）')
+assert(composerHtml.includes('aria-expanded="false"'), '+ 按钮该带 aria-expanded，菜单没开时是 false')
+assert(composerHtml.includes('dsh-pi-send'), '右端该有圆形发送键 dsh-pi-send')
+assert(composerHtml.includes('disabled=""'), '空输入时发送键该禁用')
+assert(composerHtml.includes('dsh-pi-bar-hint'), '快捷键提示仍在 bar 里固定位置')
+assert(composerHtml.includes('dsh-pi-picker'), '有模型时该渲染模型下拉')
+assert(composerHtml.includes('deepseek-v4'), '模型下拉显示模型 id')
+assert(composerHtml.includes('dsh-pi-picker-native'), '推理等级用原生 select 叠在自绘外壳里（可点、可键盘）')
+assert(composerHtml.includes('>medium<'), '推理等级下拉该选中当前档位')
+assert(composerHtml.includes('dsh-pi-btn-icon') === false, 'bar 里不该再有旧的图标文字按钮（都并进 + 菜单了）')
+// 附件与目录收进 + 菜单后，bar 左侧只剩 + / 模型 / 推理等级三个控件。
+assert(composerHtml.includes(zh('attachFile')) === false, '回形针按钮该收进 + 菜单，不再占 bar')
+assert(composerHtml.includes(zh('pickDir')) === false, '目录按钮该收进 + 菜单，不再占 bar')
+
+// 运行中：同一位置换成方形停止键，且不再额外挂「排队 / 停止」文字按钮
+const busyHtml = renderToStaticMarkup(React.createElement(Composer, Object.assign({}, composerProps, { busy: true })))
+assert(busyHtml.includes('dsh-pi-stop'), '运行中右端该变成停止圆钮 dsh-pi-stop')
+assert(busyHtml.includes('Esc'), '停止圆钮 title 该提示 Esc')
+assert(busyHtml.includes('>' + zh('queue') + '<') === false, '排队不再占按钮（Alt+Enter 走键盘），实际 ' + busyHtml.slice(0, 120))
+
+// AddMenu：分组标题 + 图标 + 中英双列 + 右侧说明
+const AddMenu = internals.AddMenu
+assert(typeof AddMenu === 'function', 'client.js 应导出 AddMenu 以便测试')
+const addItems = [
+  { key: 'file', group: 'add', groupLabel: zh('addGroupAdd'), label: zh('addFile'), keyName: 'file', desc: zh('addFileDesc'), icon: internals.PaperclipIcon, run() {} },
+  { key: 'compact', group: 'cmd', groupLabel: zh('addGroupCommands'), label: zh('compactNow'), keyName: 'compact', desc: zh('addCompactDesc'), icon: internals.CloseIcon, run() {} },
+]
+const addHtml = renderToStaticMarkup(React.createElement(AddMenu, { t: zh, items: addItems, onPick() {}, onClose() {} }))
+assert(addHtml.includes('dsh-pi-menu-add'), '加号菜单该有自己的定位类（向左展开，不铺满整行）')
+assert(addHtml.includes('role="menu"'), '加号菜单该声明 role=menu')
+assert(addHtml.includes('dsh-pi-menu-section'), '菜单该按「添加 / 指令」分组')
+assert(addHtml.includes(zh('addGroupAdd')) && addHtml.includes(zh('addGroupCommands')), '两组标题都该出现')
+assert(addHtml.includes('dsh-pi-add-icon'), '每项左侧该有图标')
+assert(addHtml.includes('dsh-pi-add-key'), '每项该带英文键名（宿主同款两列）')
+assert(addHtml.includes('>file<') && addHtml.includes('>compact<'), '英文键名该渲染出来')
+assert(addHtml.includes(zh('addFileDesc')), '每项右侧该有灰色说明')
+assert(addHtml.includes('role="menuitem"') , '菜单项该声明 role=menuitem')
+assert(addHtml.includes('data-active="-1"') === false, '没有 hover 时不该把某项标成 active')
+
+// dock：统计行属于 composer 容器（宿主 .GRgSLq_dock 就在 root 里、卡下方），不是面板根上的另一条
+const withFooter = renderToStaticMarkup(React.createElement(Composer, Object.assign({}, composerProps, {
+  footer: React.createElement('div', { className: 'dsh-pi-statusbar' }, 'x'),
+})))
+assert(withFooter.includes('dsh-pi-statusbar'), '传了 footer 就该渲染统计行')
+assert(withFooter.indexOf('dsh-pi-box') < withFooter.indexOf('dsh-pi-statusbar'), '统计行该在输入卡之后（宿主同序）')
+assert(composerHtml.includes('dsh-pi-statusbar') === false, '没传 footer 时不该凭空造一条统计行')
+
+// 统计行：轮 / 步 / token / 缓存命中要有文案键，且数字带千分位
+assert(zh('footerTurns').includes('{n}') && en('footerTurns').includes('{n}'), '轮数文案要带 {n}')
+assert(zh('footerSteps').includes('{n}') && en('footerSteps').includes('{n}'), '步数文案要带 {n}')
+assert(zh('footerTokens').includes('{n}') && en('footerTokens').includes('{n}'), 'token 文案要带 {n}')
+assert(zh('footerCache').includes('{pct}') && en('footerCache').includes('{pct}'), '缓存命中文案要带 {pct}')
+assert(typeof internals.fmtCount === 'function', 'client.js 应导出 fmtCount')
+assert(internals.fmtCount(0) === '0', '0 不带千分位')
+assert(internals.fmtCount(999) === '999', '三位数不带千分位')
+assert(internals.fmtCount(1000) === '1,000', '四位数带千分位')
+assert(internals.fmtCount(1234567) === '1,234,567', '七位数带两个千分位')
+assert(internals.fmtCount(undefined) === '0', '缺字段按 0 算，不能出 NaN')
+assert(internals.fmtCount('abc') === '0', '非数字按 0 算')
+assert(internals.numOr0(null) === 0 && internals.numOr0(2) === 2, 'numOr0 兜底')
+
 // ── 10. 整棵面板在 loading 阶段能渲染，不抛异常 ────────────────────────────
 const panelHtml = renderToStaticMarkup(React.createElement(internals.PiPanel, { t: zh }))
 assert(panelHtml.includes('dsh-pi-root'), 'PiPanel 应渲染出 dsh-pi-root')

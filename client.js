@@ -49,7 +49,9 @@ window.__ModuleLoader__.load({
       stop: '停止',
       send: '发送',
       queue: '排队',
-      composerHint: '给 pi 说点什么…  / 唤起命令，! 直接跑 bash，Enter 发送，Shift+Enter 换行',
+      composerHint: '给 pi 说点什么, / 调用指令, @ 文件',
+      composerTipIdle: 'Enter 发送 · Shift+Enter 换行 · / 命令 · @ 文件 · ! 跑 bash',
+      composerTipBusy: '发送 = steer 插话 · Alt+Enter 排队 · Esc 停止',
       emptyTitle: '和 pi 对话',
       emptyHint: '在目录里读写文件、跑命令，整个会话跑在独立子进程里，出问题不会影响 DSH 本体。',
       thinking: '思考',
@@ -189,6 +191,37 @@ window.__ModuleLoader__.load({
       projectSessions: '{n} 个会话',
       tempTag: '临时',
       sessionCwdMissing: '这个会话原来的目录已不存在：{path}。会话文件还在，可用命令行 pi 打开它并选择换一个目录继续。',
+      openFile: '在预览区打开',
+      openFileFailed: '打不开这个文件：{path}',
+      openFileNoSession: '右侧预览需要一个正在显示的会话；这里先用面板内预览。',
+      filePreview: '文件预览',
+      attachFile: '插入文件路径',
+      attachFileHint: '图片会作为附件发送；其它文件按 pi 命令行的方式把路径插进输入框',
+      pathInserted: '已插入 {n} 个文件路径',
+      pathUnavailable: '这个环境拿不到 {n} 个文件的本地路径（只有桌面版能拿到），改用输入框里的 @ 选择文件吧',
+      binaryFile: '这是二进制文件，面板内不渲染它的内容（{size} 字节）。',
+      fileTruncated: '…（文件较大，这里只显示前 512 KiB）',
+      revealFile: '在文件管理器里显示',
+      revealFileFailed: '打不开文件管理器：{path}',
+      addMenu: '添加',
+      addGroupAdd: '添加',
+      addGroupCommands: '指令',
+      addFile: '文件',
+      addFileDesc: '选图片当附件，其它文件插入路径',
+      addDirDesc: '换一个工作区开会话',
+      addSessionsDesc: '从磁盘上的历史会话里挑一个',
+      addCompactDesc: '把当前上下文压缩成摘要',
+      addModelDesc: '切换 provider 与模型',
+      addThinkingDesc: '切换推理等级',
+      addStatsDesc: '本次会话的用量与条目',
+      addSettingsDesc: '自动压缩、自动重试、插话模式',
+      addHotkeysDesc: '键盘操作一览',
+      addNewDesc: '同一进程内重开一棵会话树',
+      hotkeys: '快捷键',
+      footerTurns: '{n} 轮',
+      footerSteps: '{n} 步',
+      footerCache: '缓存命中 {pct}%',
+      footerTokens: '{n} tok',
     }
     var EN = {
       panelTitle: 'pi',
@@ -206,7 +239,9 @@ window.__ModuleLoader__.load({
       stop: 'Stop',
       send: 'Send',
       queue: 'Queue',
-      composerHint: 'Say something to pi…  / for commands, ! for bash, Enter to send, Shift+Enter for newline',
+      composerHint: 'Say something to pi, / commands, @ files',
+      composerTipIdle: 'Enter to send · Shift+Enter for newline · / commands · @ files · ! for bash',
+      composerTipBusy: 'Send = steer while busy · Alt+Enter to queue · Esc to stop',
       emptyTitle: 'Talk to pi',
       emptyHint: 'Read and write files, run commands — the whole session runs in its own child process, so it cannot hurt DSH itself.',
       thinking: 'Thinking',
@@ -345,6 +380,37 @@ window.__ModuleLoader__.load({
       projectSessions: '{n} sessions',
       tempTag: 'temp',
       sessionCwdMissing: 'The folder this session lived in no longer exists: {path}. The session file is still there — open it with the pi CLI and pick another folder.',
+      openFile: 'Open in preview',
+      openFileFailed: 'Cannot open this file: {path}',
+      openFileNoSession: 'The right preview needs a session on screen; showing the in-panel preview instead.',
+      filePreview: 'File preview',
+      attachFile: 'Insert file path',
+      attachFileHint: 'Images are sent as attachments; other files insert their path, exactly like the pi CLI',
+      pathInserted: 'Inserted {n} file path(s)',
+      pathUnavailable: 'This host cannot resolve the local path of {n} file(s) — only the desktop app can; pick them with @ in the composer instead',
+      binaryFile: 'Binary file: the panel does not render its bytes ({size} bytes).',
+      fileTruncated: '… (large file: showing the first 512 KiB only)',
+      revealFile: 'Reveal in file manager',
+      revealFileFailed: 'Cannot open the file manager: {path}',
+      addMenu: 'Add',
+      addGroupAdd: 'Add',
+      addGroupCommands: 'Commands',
+      addFile: 'File',
+      addFileDesc: 'Images become attachments, other files insert a path',
+      addDirDesc: 'Start a session in another workspace',
+      addSessionsDesc: 'Pick a session from disk',
+      addCompactDesc: 'Compress the current context into a summary',
+      addModelDesc: 'Switch provider and model',
+      addThinkingDesc: 'Switch reasoning effort',
+      addStatsDesc: 'Usage and entries for this session',
+      addSettingsDesc: 'Auto-compaction, auto-retry, steering mode',
+      addHotkeysDesc: 'Every keyboard shortcut',
+      addNewDesc: 'Start a fresh session tree in this process',
+      hotkeys: 'Shortcuts',
+      footerTurns: '{n} turns',
+      footerSteps: '{n} steps',
+      footerCache: 'cache {pct}%',
+      footerTokens: '{n} tok',
     }
 
     // ── 样式（只用 --dsw-* 变量；类名统一 .dsh-pi- 前缀）──────────────────────
@@ -380,8 +446,6 @@ window.__ModuleLoader__.load({
       '.dsh-pi-chip-name{overflow:hidden;text-overflow:ellipsis}',
 
       // 头部下拉（思考档位）：沿用 DSH 输入框的配方（.5px border-l4 + bg-layer-3 + radius-sm）。
-      '.dsh-pi-select{height:28px;padding:0 6px;border:.5px solid var(--dsw-alias-border-l4);border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-secondary);font-size:var(--dsw-font-xxs-12-font-size);line-height:var(--dsw-font-xxs-12-line-height);cursor:pointer;transition:border-color .16s ease}',
-      '.dsh-pi-select:hover{border-color:var(--dsw-alias-state-business-primary)}',
 
       // ── 按钮 ────────────────────────────────────────────────────────────────
       // 基线 = DSH ._button + ._sm（28px / radius-sm / 12px）+ ._outline 的 hairline；
@@ -454,6 +518,15 @@ window.__ModuleLoader__.load({
       '.dsh-pi-img{max-width:min(100%,360px);max-height:240px;border:0;border-radius:var(--dsw-radius-md);cursor:zoom-in;display:block}',
       '.dsh-pi-img-open{position:fixed;inset:0;z-index:60;background:var(--dsw-alias-bg-mask-photo);display:flex;align-items:center;justify-content:center;padding:40px;cursor:zoom-out}',
       '.dsh-pi-img-open img{max-width:100%;max-height:100%;border-radius:var(--dsw-radius-md)}',
+      // 结论里的文件 = 可点标签（用户 m22969：过程里生成的文件要点得开）。
+      // 用 button 而不是 span：Tab 能落到它上面、Enter 能打开，焦点环由根选择器统一兜底。
+      // 目录段压暗、文件名提亮，长路径只截目录不截名字 —— 名字才是识别依据。
+      '.dsh-pi-fileref{display:inline-flex;align-items:center;gap:4px;max-width:100%;margin:0 1px;padding:0 6px;border:0;border-radius:var(--dsw-radius-sm);box-shadow:inset 0 0 0 .5px var(--dsw-alias-border-l3);background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary);font-family:var(--ds-font-family-code,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace);font-size:var(--dsw-font-xxxs-11-font-size);line-height:20px;vertical-align:baseline;cursor:pointer;transition:background-color .16s ease,box-shadow .16s ease}',
+      '.dsh-pi-fileref:hover{background:var(--dsw-alias-interactive-bg-hover);box-shadow:inset 0 0 0 .5px var(--dsw-alias-state-business-primary)}',
+      '.dsh-pi-fileref svg{flex:0 0 auto;color:var(--dsw-alias-state-business-primary)}',
+      '.dsh-pi-fileref-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      '.dsh-pi-fileref-dir{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-tertiary)}',
+      '.dsh-pi-fileref-block{margin:8px 0;padding:0 10px;line-height:26px}',
 
       // ── 空态 / 运行时引导 ───────────────────────────────────────────────────
       '.dsh-pi-empty{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:48px 24px;text-align:center;color:var(--dsw-alias-label-secondary);flex:1 1 auto}',
@@ -470,19 +543,50 @@ window.__ModuleLoader__.load({
       '.dsh-pi-gate-searched{display:flex;flex-direction:column;gap:2px;font-size:var(--dsw-font-xxxs-11-font-size);line-height:18px;color:var(--dsw-alias-label-dimmed)}',
 
       // ── 输入区 ──────────────────────────────────────────────────────────────
-      '.dsh-pi-composer{flex:0 0 auto;background:var(--dsw-alias-bg-base);padding:8px 12px 12px;position:relative}',
-      '.dsh-pi-composer-inner{display:flex;flex-direction:column;gap:6px}',
-      '.dsh-pi-box{position:relative;display:flex;flex-direction:column;border:.5px solid var(--dsw-alias-border-l3);border-radius:var(--dsw-radius-lg);background:var(--dsw-alias-bg-layer-1);transition:border-color .16s ease}',
-      '.dsh-pi-box:focus-within{border-color:var(--dsw-alias-state-business-primary)}',
-      '.dsh-pi-box[data-focus="1"]{border-color:var(--dsw-alias-state-business-primary)}',
-      '.dsh-pi-widget{display:flex;flex-direction:column;gap:2px}',
+      // Composer 的卡面与行布局逐条对齐宿主主对话区（dsh-client-ui-conversation 的 composer）：
+      // 28px 圆角 + specific-input-major 底 + soft elevation、顶部 8px 内缩、12px 行距，
+      // 行内左侧圆形「+」、右侧圆形发送键。宿主里这些是硬编码的 CSS 变量引用，
+      // 这里同样只引用令牌，深浅色与品牌色由主题注入。
+      // 容器是 column + 居中：卡与 dock 同宽同心，跟宿主 .GRgSLq_root 一样。
+      '.dsh-pi-composer{flex:0 0 auto;background:var(--dsw-alias-bg-base);display:flex;flex-direction:column;align-items:center;padding:0 12px 4px;position:relative}',
+      '.dsh-pi-composer-inner{display:flex;flex-direction:column;gap:6px;width:100%;min-width:0}',
+      '.dsh-pi-box{position:relative;display:flex;flex-direction:column;gap:12px;padding-top:8px;border:0;border-radius:var(--dsw-radius-panel);background:var(--dsw-specific-input-major);box-shadow:var(--dsw-elevation-soft);transition:box-shadow .16s ease}',
+      // 聚焦时把 elevation 的描边层换成品牌色：既保留投影，又给出焦点反馈（宿主同理）。
+      '.dsh-pi-box:focus-within{--dsw-elevation-stroke-color:var(--dsw-alias-state-business-primary)}',
+      '.dsh-pi-widget{display:flex;flex-direction:column;gap:2px;padding:8px 10px 0}',
       '.dsh-pi-widget-body{margin:0;padding:6px 10px;border:.5px solid var(--dsw-alias-border-l2);border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-secondary);font-size:var(--dsw-font-xxxs-11-font-size);line-height:18px;white-space:pre-wrap;word-break:break-word;font-family:var(--ds-font-family-code,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace);max-height:120px;overflow:auto}',
-      '.dsh-pi-statusbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:4px 2px 0;font-size:var(--dsw-font-xxxs-11-font-size);line-height:18px;color:var(--dsw-alias-label-caption)}',
+      // dock：卡下方的统计行（宿主 .GRgSLq_dock）—— 居中、12px 间距、上方 4px。
+      // 状态文案（steering / 排队）与统计数字共用一行，中点分隔。
+      '.dsh-pi-statusbar{display:flex;align-items:center;justify-content:center;gap:12px;flex-wrap:wrap;max-width:100%;padding:4px 2px 0;font-size:var(--dsw-font-xxxs-11-font-size);line-height:18px;color:var(--dsw-alias-label-caption);font-variant-numeric:tabular-nums}',
       '.dsh-pi-statusbar span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:240px}',
-      '.dsh-pi-ta{width:100%;min-height:52px;max-height:220px;resize:none;border:0;outline:0;background:transparent;color:var(--dsw-alias-label-primary);padding:10px 14px 4px;font-family:inherit;font-size:var(--dsw-font-s-14-font-size);line-height:calc(22px + var(--dsh-content-font-delta,0px))}',
-      '.dsh-pi-ta::placeholder{color:var(--dsw-alias-label-dimmed)}',
-      '.dsh-pi-bar{display:flex;align-items:center;gap:6px;padding:4px 8px 6px 10px}',
-      '.dsh-pi-bar-hint{flex:1 1 auto;min-width:0;font-size:var(--dsw-font-xxxs-11-font-size);line-height:18px;color:var(--dsw-alias-label-caption);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      '.dsh-pi-ta{box-sizing:border-box;width:100%;min-height:52px;max-height:220px;resize:none;border:0;outline:0;background:transparent;color:var(--dsw-alias-label-primary);caret-color:var(--dsw-alias-state-business-primary);padding:4px 8px 0 14px;font-family:inherit;font-size:var(--dsw-font-s-14-font-size);line-height:calc(24px + var(--dsh-content-font-delta,0px))}',
+      '.dsh-pi-ta::placeholder{color:var(--dsw-alias-label-caption)}',
+      '.dsh-pi-bar{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;min-width:0;padding:2px 8px 6px}',
+      '.dsh-pi-bar-actions{display:flex;align-items:center;gap:8px;min-width:0;flex:0 1 auto}',
+      '.dsh-pi-bar-right{display:flex;align-items:center;gap:8px;flex:1 1 auto;min-width:0;justify-content:flex-end}',
+      '.dsh-pi-bar-hint{min-width:0;font-size:var(--dsw-font-xxxs-11-font-size);line-height:18px;color:var(--dsw-alias-label-caption);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      // 「+」：宿主 ._add —— 28×28 圆形、selector 底、图标居中。
+      '.dsh-pi-add-wrap{position:relative;flex:0 0 auto;display:flex}',
+      '.dsh-pi-add{display:grid;place-items:center;width:28px;height:28px;padding:0;border:0;border-radius:999px;background:var(--dsw-specific-selector);color:var(--dsw-alias-label-primary);cursor:pointer;transition:background-color .12s ease}',
+      '.dsh-pi-add:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover-solid)}',
+      '.dsh-pi-add:disabled{opacity:.5;cursor:not-allowed}',
+      '.dsh-pi-add[data-open="1"]{background:var(--dsw-alias-interactive-bg-hover-solid)}',
+      // 模型 / 推理等级选择器：宿主 ._select —— 28 高、透明底、13px 次级色、hover 才出底。
+      '.dsh-pi-picker{display:inline-flex;align-items:center;gap:4px;max-width:220px;height:28px;padding:0 6px 0 8px;border:0;border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-label-secondary);font-family:inherit;font-size:var(--dsw-font-xs-13-font-size);line-height:var(--dsw-font-xs-13-line-height);font-weight:500;cursor:pointer;transition:background-color .12s ease}',
+      '.dsh-pi-picker:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover-solid)}',
+      '.dsh-pi-picker:disabled{opacity:.5;cursor:not-allowed}',
+      '.dsh-pi-picker-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      // 推理档位用原生 select 叠在自绘外壳上：保留键盘可达与系统下拉，视觉仍是 picker。
+      '.dsh-pi-picker-wrap{position:relative;display:inline-flex;align-items:center;gap:4px;height:28px;padding:0 6px 0 8px;border-radius:var(--dsw-radius-sm);color:var(--dsw-alias-label-secondary);font-size:var(--dsw-font-xs-13-font-size);line-height:var(--dsw-font-xs-13-line-height);font-weight:500;transition:background-color .12s ease}',
+      '.dsh-pi-picker-wrap:hover{background:var(--dsw-alias-interactive-bg-hover-solid)}',
+      '.dsh-pi-picker-native{position:absolute;inset:0;width:100%;height:100%;border:0;padding:0;margin:0;opacity:0;cursor:pointer;font:inherit}',
+      '.dsh-pi-picker-label{min-width:0;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;pointer-events:none}',
+      // 发送键：宿主 ._primary —— 34×34 圆形、info-fill 底、上移 2px。
+      '.dsh-pi-send{flex:0 0 auto;display:grid;place-items:center;width:34px;height:34px;padding:0;border:0;border-radius:999px;background:var(--dsw-alias-button-info-fill);color:var(--dsw-alias-label-primary-foreground);cursor:pointer;transform:translateY(-2px);transition:background-color .1s ease}',
+      '.dsh-pi-send:hover:not(:disabled){background:var(--dsw-alias-button-info-hover)}',
+      '.dsh-pi-send:disabled{opacity:.4;cursor:default}',
+      '.dsh-pi-stop{flex:0 0 auto;display:grid;place-items:center;width:34px;height:34px;padding:0;border:0;border-radius:999px;background:var(--dsw-alias-interactive-bg-hover-solid);color:var(--dsw-alias-label-primary);cursor:pointer;transform:translateY(-2px);transition:background-color .1s ease}',
+      '.dsh-pi-stop:hover{background:var(--dsw-alias-interactive-bg-hover-danger)}',
       '.dsh-pi-thumbs{display:flex;flex-wrap:wrap;gap:6px;padding:8px 10px 0}',
       '.dsh-pi-thumb{position:relative;width:52px;height:52px;border-radius:var(--dsw-radius-sm);overflow:hidden;box-shadow:inset 0 0 0 .5px var(--dsw-alias-border-l3)}',
       '.dsh-pi-thumb img{width:100%;height:100%;object-fit:cover;display:block}',
@@ -502,6 +606,18 @@ window.__ModuleLoader__.load({
       '.dsh-pi-item-side{flex:0 0 auto;font-size:var(--dsw-font-xxxs-11-font-size);line-height:var(--dsw-font-xxxs-11-line-height);color:var(--dsw-alias-label-caption)}',
       '.dsh-pi-empty-row{padding:12px;text-align:center;color:var(--dsw-alias-label-dimmed);font-size:var(--dsw-font-xxs-12-font-size);line-height:var(--dsw-font-xxs-12-line-height)}',
 
+      // 「+」菜单：宿主是两列（左图标 + 主标签 + 英文键，右灰色说明）。宽度按内容走，
+      // 不再像 slash 补全那样撑满卡片。
+      '.dsh-pi-menu-add{left:0;right:auto;min-width:288px;max-width:min(360px,calc(100vw - 48px))}',
+      '.dsh-pi-menu-section{padding:8px 8px 4px;font-size:var(--dsw-font-xxxs-11-font-size);line-height:var(--dsw-font-xxxs-11-line-height);color:var(--dsw-alias-label-caption)}',
+      '.dsh-pi-add-item{display:flex;align-items:center;gap:10px;width:100%;min-height:34px;padding:6px 8px;border:0;border-radius:var(--dsw-radius-md);background:transparent;cursor:pointer;font-size:var(--dsw-font-xs-13-font-size);line-height:var(--dsw-font-xs-13-line-height);color:var(--dsw-alias-label-primary);text-align:left}',
+      '.dsh-pi-add-item[data-active="1"]{background:var(--dsw-alias-interactive-bg-hover)}',
+      '.dsh-pi-add-icon{display:grid;place-items:center;flex:0 0 auto;width:20px;height:20px;color:var(--dsw-alias-label-secondary)}',
+      '.dsh-pi-add-text{display:flex;align-items:baseline;gap:6px;min-width:0;flex:1 1 auto}',
+      '.dsh-pi-add-label{flex:0 0 auto;white-space:nowrap}',
+      '.dsh-pi-add-key{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--ds-font-family-code,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace);font-size:var(--dsw-font-xxxs-11-font-size);line-height:var(--dsw-font-xxxs-11-line-height);color:var(--dsw-alias-label-caption)}',
+      '.dsh-pi-add-desc{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--dsw-font-xxxs-11-font-size);line-height:var(--dsw-font-xxxs-11-line-height);color:var(--dsw-alias-label-tertiary)}',
+
       // ── 提示 ────────────────────────────────────────────────────────────────
       '.dsh-pi-alert{padding:8px 12px;border:0;border-radius:var(--dsw-radius-sm);background:color-mix(in srgb,var(--dsw-alias-state-error-primary) 10%,transparent);color:var(--dsw-alias-state-error-primary);font-size:var(--dsw-font-xxs-12-font-size);line-height:var(--dsw-font-xxs-12-line-height);white-space:pre-wrap;word-break:break-word}',
       '.dsh-pi-notice{padding:8px 12px;border:0;border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-secondary);font-size:var(--dsw-font-xxs-12-font-size);line-height:var(--dsw-font-xxs-12-line-height)}',
@@ -514,6 +630,10 @@ window.__ModuleLoader__.load({
       // DSH ._float 的配方：bg-layer-2 + radius-panel + elevation-prominent + 局部描边色。
       '.dsh-pi-sheet{position:absolute;inset:0;z-index:30;display:flex;flex-direction:column;background:var(--dsw-alias-bg-base)}',
       '.dsh-pi-sheet-head{display:flex;align-items:center;gap:8px;padding:12px 14px;border-bottom:.5px solid var(--dsw-alias-border-l2);flex:0 0 auto}',
+      // 关闭按钮：28x28 命中区与 .dsh-pi-btn 基线对齐，图标 16px（覆盖 .dsh-pi-btn svg 的 15px），
+      // 右边距收紧 4px，视觉上与 14px 内边距的标题栏同宽。
+      '.dsh-pi-sheet-head .dsh-pi-btn-icon,.dsh-pi-dir-head .dsh-pi-btn-icon{width:32px;height:32px;margin-right:-4px}',
+      '.dsh-pi-sheet-head .dsh-pi-btn-icon svg,.dsh-pi-dir-head .dsh-pi-btn-icon svg{width:16px;height:16px}',
       '.dsh-pi-sheet-title{flex:1 1 auto;min-width:0;font:var(--dsw-font-base-strong-16);color:var(--dsw-alias-label-primary)}',
       '.dsh-pi-search{height:28px;padding:0 10px;border:.5px solid var(--dsw-alias-border-l4);border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-primary);font-family:inherit;font-size:var(--dsw-font-xxs-12-font-size);line-height:var(--dsw-font-xxs-12-line-height);outline:0;min-width:0;transition:border-color .16s ease}',
       '.dsh-pi-search:focus{border-color:var(--dsw-alias-state-business-primary)}',
@@ -583,7 +703,10 @@ window.__ModuleLoader__.load({
       '.dsh-pi-dialog-wrap{position:absolute;inset:0;z-index:40;display:flex;align-items:center;justify-content:center;background:var(--dsw-alias-bg-mask-1);padding:20px}',
       '.dsh-pi-dialog{display:flex;flex-direction:column;width:min(440px,100%);max-height:100%;overflow:hidden;border:0;border-radius:var(--dsw-radius-panel);background:var(--dsw-alias-bg-layer-2);box-shadow:var(--dsw-elevation-prominent);animation:dsh-pi-modal-in .16s ease-in-out}',
       '@keyframes dsh-pi-modal-in{0%{opacity:0}to{opacity:1}}',
-      '.dsh-pi-dialog h3{margin:0;padding:22px 24px 0;font:var(--dsw-font-base-strong-16);color:var(--dsw-alias-label-primary)}',
+      '.dsh-pi-dialog-head{display:flex;align-items:flex-start;gap:8px;padding:22px 18px 0 24px}',
+      '.dsh-pi-dialog-head h3{flex:1 1 auto;min-width:0;margin:0;padding:0;font:var(--dsw-font-base-strong-16);color:var(--dsw-alias-label-primary)}',
+      '.dsh-pi-dialog-head .dsh-pi-btn-icon{width:32px;height:32px;margin-top:-6px}',
+      '.dsh-pi-dialog-head .dsh-pi-btn-icon svg{width:16px;height:16px}',
       '.dsh-pi-dialog .dsh-pi-mono{margin:6px 24px 0}',
       '.dsh-pi-dialog-msg{margin:0;padding:10px 24px 0;color:var(--dsw-alias-label-secondary);font-size:var(--dsh-content-font-size,var(--dsw-font-s-14-font-size));line-height:calc(22px + var(--dsh-content-font-delta,0px));white-space:pre-wrap;word-break:break-word}',
       '.dsh-pi-dialog-body{display:flex;flex-direction:column;gap:6px;min-height:0;overflow-y:auto;padding:14px 24px 0}',
@@ -696,6 +819,23 @@ window.__ModuleLoader__.load({
         if (typeof dir === 'string' && dir !== '') parts.push('dir=' + encodeURIComponent(dir))
         if (typeof query === 'string' && query !== '') parts.push('query=' + encodeURIComponent(query))
         return requestJson('/files?' + parts.join('&'))
+      },
+      /**
+       * 读单个文件给右侧预览用（host GET /file）。
+       * 文本超过 512KB 由 host 截断并回 truncated=true；二进制只回元信息不回内容。
+       */
+      file: function (target) {
+        var text = String(target === undefined || target === null ? '' : target)
+        return requestJson('/file?path=' + encodeURIComponent(text), { timeoutMs: 30000 })
+      },
+      /**
+       * 在系统文件管理器里定位这个文件（host POST /reveal）。
+       * host 侧 Windows 走 explorer /select，macOS 走 open -R，Linux 走 xdg-open 父目录；
+       * explorer 的退出码不可信（成功也常回 1），所以这里只认 HTTP 结果，不看进程退出码。
+       */
+      reveal: function (target) {
+        var text = String(target === undefined || target === null ? '' : target)
+        return requestJson('/reveal', { method: 'POST', body: { path: text }, timeoutMs: 20000 })
       },
       directories: function (dir, query, limit) {
         var parts = ['limit=' + String(typeof limit === 'number' ? limit : 200)]
@@ -819,29 +959,278 @@ window.__ModuleLoader__.load({
       return parts.join('\n')
     }
 
+    // ── 文件路径 → 可点标签 ───────────────────────────────────────────────────
+    //
+    // 助手回复里提到的文件必须能在结论里直接点开（用户 m22969）。面板不自己造预览器：
+    // DSH 内置的 documentpreview 已经能渲染 markdown / 代码 / 图片，这里只负责把
+    // session 作用域的文件地址交给 sidebarRight，让右栏去显示。
+    //
+    // 识别路径的原则是「宁可少认，不要误认」：只有能确定它是文件时才算，否则
+    // /model、1.5、https://… 这些都会被误标成文件，反而让正文变得没法读。
+
+    var FILE_URL = /^[A-Za-z][A-Za-z0-9+.-]*:\/\//
+    var FILE_EXT = /\.[A-Za-z0-9]{1,12}$/
+    // 没有分隔符的裸文件名只认这些扩展名 —— 否则 example.com、v1.2.3 之类会被误标成文件。
+    var FILE_BARE_EXT = {
+      md: 1, markdown: 1, mdx: 1, txt: 1, rst: 1, log: 1, csv: 1, tsv: 1,
+      json: 1, jsonl: 1, json5: 1, yml: 1, yaml: 1, toml: 1, ini: 1, cfg: 1, conf: 1, env: 1, properties: 1,
+      js: 1, mjs: 1, cjs: 1, jsx: 1, ts: 1, tsx: 1, mts: 1, cts: 1, vue: 1, svelte: 1, astro: 1,
+      py: 1, pyi: 1, ipynb: 1, rs: 1, go: 1, java: 1, kt: 1, kts: 1, swift: 1, dart: 1, lua: 1, rb: 1, php: 1, pl: 1, r: 1,
+      c: 1, h: 1, cc: 1, cpp: 1, cxx: 1, hpp: 1, cs: 1, m: 1, mm: 1,
+      sh: 1, bash: 1, zsh: 1, fish: 1, bat: 1, cmd: 1, ps1: 1, psm1: 1,
+      sql: 1, graphql: 1, gql: 1, proto: 1, thrift: 1,
+      html: 1, htm: 1, xhtml: 1, css: 1, scss: 1, sass: 1, less: 1, styl: 1,
+      xml: 1, xsl: 1, svg: 1, plist: 1, gradle: 1, lock: 1, gitignore: 1, dockerignore: 1,
+      png: 1, jpg: 1, jpeg: 1, gif: 1, webp: 1, bmp: 1, ico: 1, avif: 1, tif: 1, tiff: 1, psd: 1,
+      pdf: 1, doc: 1, docx: 1, xls: 1, xlsx: 1, ppt: 1, pptx: 1, odt: 1, rtf: 1, epub: 1,
+      zip: 1, tar: 1, gz: 1, tgz: 1, bz2: 1, xz: 1, rar: 1, '7z': 1, jar: 1, war: 1, whl: 1, exe: 1, msi: 1, dll: 1,
+      mp3: 1, wav: 1, flac: 1, ogg: 1, mp4: 1, mov: 1, avi: 1, mkv: 1, webm: 1, woff: 1, woff2: 1, ttf: 1, otf: 1,
+    }
+    var FILE_BARE = /^[A-Za-z0-9._-]+\.([A-Za-z][A-Za-z0-9]{0,11})$/
+    var FILE_ABS = /^(?:[A-Za-z]:[\\/]|\\\\|~[\\/]|\.{1,2}[\\/]|\/)/
+    var FILE_TAIL = /[.,;:!?，。；：！？、)\]】}》」』·…]+$/
+    var FILE_RUN = /[^\s"'<>|*?\u3000]+/g
+    var FILE_LEAD = /[({\[「『（【]/
+    var FILE_SEP = /[\\/]/
+
+    /** 这个 token 是不是一条文件路径。 */
+    function isFilePathToken(value) {
+      if (typeof value !== 'string') return false
+      if (value === '' || value.length > 400) return false
+      if (FILE_URL.test(value)) return false
+      if (/\s/.test(value)) return false
+      if (FILE_TAIL.test(value)) return false
+      // 必须以「带扩展名的末段」收尾，否则 .git、make 这类词也会被认成文件。
+      if (FILE_EXT.test(value) === false) return false
+      if (FILE_ABS.test(value)) return true
+      if (FILE_SEP.test(value)) return true
+      var bare = FILE_BARE.exec(value)
+      if (bare === null) return false
+      return FILE_BARE_EXT[bare[1].toLowerCase()] === 1
+    }
+
+    /** 把一段文本切成 [{ start, end, value }]，只返回能确认是文件路径的片段。 */
+    function splitFileTokens(text) {
+      var source = String(text === undefined || text === null ? '' : text)
+      var out = []
+      FILE_RUN.lastIndex = 0
+      var match = null
+      while ((match = FILE_RUN.exec(source)) !== null) {
+        var raw = match[0]
+        var lead = 0
+        while (lead < raw.length && FILE_LEAD.test(raw.charAt(lead))) lead += 1
+        var value = raw.slice(lead)
+        var caret = value.length
+        while (caret > 0 && FILE_TAIL.test(value.charAt(caret - 1))) caret -= 1
+        value = value.slice(0, caret)
+        if (value === '') continue
+        if (isFilePathToken(value) === false) continue
+        var start = match.index + lead
+        out.push({ start: start, end: start + value.length, value: value })
+      }
+      return out
+    }
+
+    /**
+     * 文件类型 → 图标。
+     *
+     * 标签上只留「图标 + 文件名」。既然路径被省掉了，类型就必须靠图标一眼看出来，
+     * 否则 md / ts / png 在正文里长得一模一样，标签的信息量等于零。
+     */
+    var FILE_EXT_GROUPS = [
+      ['code', 'js jsx mjs cjs ts tsx py rs go java kt kts c h cc cpp cxx hpp cs rb php swift sh bash zsh fish ps1 bat cmd sql html htm css scss sass less json jsonc json5 yml yaml toml ini cfg conf env xml vue svelte astro lua pl r dart ex exs erl hs ml clj gradle mk cmake dockerfile proto graphql gql'],
+      ['image', 'png jpg jpeg gif webp bmp ico avif svg tif tiff heic heif psd'],
+      ['archive', 'zip tar gz tgz bz2 xz zst 7z rar jar war iso dmg'],
+      ['sheet', 'csv tsv xls xlsx xlsm ods numbers'],
+      ['doc', 'md markdown mdx txt text rst log pdf doc docx odt rtf ppt pptx key pages epub'],
+    ]
+    var FILE_EXT_KIND = (function () {
+      var table = {}
+      for (var i = 0; i < FILE_EXT_GROUPS.length; i += 1) {
+        var group = FILE_EXT_GROUPS[i]
+        var names = group[1].split(' ')
+        for (var j = 0; j < names.length; j += 1) table[names[j]] = group[0]
+      }
+      return table
+    })()
+
+    function fileExtensionOf(name) {
+      var text = String(name)
+      var dot = text.lastIndexOf('.')
+      if (dot < 0 || dot + 1 >= text.length) return ''
+      return text.slice(dot + 1).toLowerCase()
+    }
+
+    /** 'code' | 'image' | 'archive' | 'sheet' | 'doc' | 'file' */
+    function fileKindOf(name) {
+      var kind = FILE_EXT_KIND[fileExtensionOf(name)]
+      return kind === undefined ? 'file' : kind
+    }
+
+    function fileIconElement(name, key, size) {
+      var kind = fileKindOf(name)
+      if (kind === 'code') return h(CodeIcon, { key: key, size: size })
+      if (kind === 'image') return h(ImageFileIcon, { key: key, size: size })
+      if (kind === 'archive') return h(ArchiveIcon, { key: key, size: size })
+      if (kind === 'sheet') return h(SheetFileIcon, { key: key, size: size })
+      if (kind === 'doc') return h(DocIcon, { key: key, size: size })
+      return h(FileIcon, { key: key, size: size })
+    }
+
+    /**
+     * 文件标签的动作集合。
+     *
+     * 兼容两种调用：只给一个函数 = 只要「打开」；给对象 = { open, reveal }。
+     * 不拆成两个位置参数，是因为这两个动作要一路透传过
+     * renderMarkdown → renderInline → pushTextNodes，多一个参数就多一处漏传。
+     */
+    function normalizeFileActions(actions) {
+      if (typeof actions === 'function') return { open: actions, reveal: null }
+      if (actions !== null && typeof actions === 'object') {
+        return {
+          open: typeof actions.open === 'function' ? actions.open : null,
+          reveal: typeof actions.reveal === 'function' ? actions.reveal : null,
+        }
+      }
+      return { open: null, reveal: null }
+    }
+
+    /**
+     * 文件标签 = 一个真正的按钮。
+     *
+     * 用 button 而不是 span：键盘 Tab 能落到它上面，回车能打开 —— 这条由
+     * .dsh-pi-root :is(button,…):focus-visible 的焦点环统一兜底。
+     *
+     * 标签只显示「类型图标 + 文件名（含后缀）」：完整路径信息量太大，一段回复里
+     * 三个同目录文件就会把正文挤爆。路径仍然保留在 title 与 data-path 上 ——
+     * 悬停可看全，右键在资源管理器里定位（见 onContextMenu）。
+     */
+    function renderFileChip(value, key, actions, inline) {
+      var target = String(value)
+      var sep = Math.max(target.lastIndexOf('\\'), target.lastIndexOf('/'))
+      var base = sep >= 0 ? target.slice(sep + 1) : target
+      var acts = normalizeFileActions(actions)
+      var parts = [
+        fileIconElement(base, 'i', 12),
+        h('span', { key: 'n', className: 'dsh-pi-fileref-name' }, base),
+      ]
+      return h('button', {
+        key: key,
+        type: 'button',
+        className: inline === true ? 'dsh-pi-fileref dsh-pi-fileref-block' : 'dsh-pi-fileref',
+        title: target,
+        'data-path': target,
+        'data-kind': fileKindOf(base),
+        'data-openable': acts.open === null ? '0' : '1',
+        'data-revealable': acts.reveal === null ? '0' : '1',
+        onClick: function (event) {
+          event.preventDefault()
+          event.stopPropagation()
+          if (acts.open !== null) acts.open(target)
+        },
+        onContextMenu: function (event) {
+          if (acts.reveal === null) return
+          event.preventDefault()
+          event.stopPropagation()
+          acts.reveal(target)
+        },
+      }, parts)
+    }
+
+    /** 纯文本片段：按路径切开，路径段换成可点标签，其余原样保留。 */
+    function pushTextNodes(nodes, chunk, keyPrefix, onOpenFile) {
+      var text = String(chunk)
+      if (text === '') return
+      var tokens = splitFileTokens(text)
+      if (tokens.length === 0) { nodes.push(text); return }
+      var last = 0
+      for (var i = 0; i < tokens.length; i += 1) {
+        if (tokens[i].start > last) nodes.push(text.slice(last, tokens[i].start))
+        nodes.push(renderFileChip(tokens[i].value, keyPrefix + '-f' + String(i), onOpenFile))
+        last = tokens[i].end
+      }
+      if (last < text.length) nodes.push(text.slice(last))
+    }
+
+
+    /** 把相对路径按 cwd 补成绝对路径。 */
+    function absolutePathOf(cwd, path) {
+      var value = String(path)
+      if (FILE_ABS.test(value)) return value
+      var root = typeof cwd === 'string' ? cwd : ''
+      if (root === '') return value
+      var sep = FILE_BACKSLASH.test(root) ? '\\' : '/'
+      return root.replace(/[\\/]+$/, '') + sep + value.replace(/^(?:\.\/)+/, '')
+    }
+
+    /** 桌面 App（dsh-app://app）才有这条桥；浏览器里 window.__DSH_HOST_PATHS__ 不存在。 */
+    function pathOfFile(file) {
+      var host = typeof window === 'undefined' || window === null ? null : window.__DSH_HOST_PATHS__
+      if (host === null || host === undefined || typeof host.pathFor !== 'function') return ''
+      try {
+        var value = host.pathFor(file)
+        return typeof value === 'string' ? value : ''
+      } catch (err) {
+        return ''
+      }
+    }
+
+    // ── 文件地址（与 DSH 内置文件引用同一套拼法）──────────────────────────────
+    //
+    // 右栏的 documentpreview 只认 dsh-resource://file/<scope>/… 这种地址；absolute 作用域
+    // 没有授权 Session，读取会以 workspace-file/unknown-workspace 失败，所以这里一律拼
+    // session 作用域。
+    //
+    // 为什么不做「绝对路径压成工作区相对」（DSH 的 fileAddressFor 会压）：pi 的工作目录和
+    // DSH 会话的工作目录是两个目录，压成相对路径后会被 DSH 按它自己的根解析，指到别处。
+    // 绝对路径是唯一不产生歧义、也不依赖对方根目录的写法。
+
+    var FILE_BACKSLASH = /\\/
+    var FILE_ADDRESS_PREFIX = 'dsh-resource://file/'
+
+    function encodeFileSegment(segment) {
+      return encodeURIComponent(String(segment)).replace(/%3A/gi, ':')
+    }
+
+    /** dsh-resource://file/session/<id>/<path>：反斜杠转正斜杠，盘符冒号保持字面。 */
+    function sessionFileAddress(sessionId, path) {
+      var normalized = String(path).replace(/\\/g, '/').replace(/^(?:\.\/)+/, '')
+      var encoded = []
+      var parts = normalized.split('/')
+      for (var i = 0; i < parts.length; i += 1) encoded.push(encodeFileSegment(parts[i]))
+      return FILE_ADDRESS_PREFIX + 'session/' + encodeFileSegment(sessionId) + '/' + encoded.join('/')
+    }
+
+
     // ── 极简 markdown（无依赖，绝不拼 HTML 字符串）───────────────────────────
 
     var FENCE = /^\x60\x60\x60(\S*)\s*$/
     var INLINE = /(\x60[^\x60]+\x60)|(\*\*[^*]+\*\*)/g
 
-    function renderInline(text, prefix) {
+    function renderInline(text, prefix, onOpenFile) {
       var nodes = []
       var last = 0
       var match = null
       var index = 0
       INLINE.lastIndex = 0
       while ((match = INLINE.exec(text)) !== null) {
-        if (match.index > last) nodes.push(text.slice(last, match.index))
-        if (match[1] !== undefined) nodes.push(h('code', { key: prefix + '-c' + String(index), className: 'dsh-pi-code-inline' }, match[1].slice(1, -1)))
-        else nodes.push(h('strong', { key: prefix + '-b' + String(index) }, match[2].slice(2, -2)))
+        if (match.index > last) pushTextNodes(nodes, text.slice(last, match.index), prefix + '-' + String(index), onOpenFile)
+        if (match[1] !== undefined) {
+          // 行内 code 里如果整段就是一条路径，也让它可点 —— 助手常把路径包在反引号里。
+          var inner = match[1].slice(1, -1)
+          if (isFilePathToken(inner)) nodes.push(renderFileChip(inner, prefix + '-c' + String(index), onOpenFile))
+          else nodes.push(h('code', { key: prefix + '-c' + String(index), className: 'dsh-pi-code-inline' }, inner))
+        } else {
+          nodes.push(h('strong', { key: prefix + '-b' + String(index) }, match[2].slice(2, -2)))
+        }
         index += 1
         last = INLINE.lastIndex
       }
-      if (last < text.length) nodes.push(text.slice(last))
+      if (last < text.length) pushTextNodes(nodes, text.slice(last), prefix + '-' + String(index), onOpenFile)
       return nodes
     }
 
-    function renderMarkdown(text) {
+    function renderMarkdown(text, onOpenFile) {
       var lines = String(text === undefined ? '' : text).split('\n')
       var blocks = []
       var buffer = []
@@ -852,7 +1241,7 @@ window.__ModuleLoader__.load({
         var body = buffer.join('\n').replace(/\s+$/, '')
         buffer = []
         if (body === '') return
-        blocks.push(h('p', { key: 'p' + String(key) }, renderInline(body, 'p' + String(key))))
+        blocks.push(h('p', { key: 'p' + String(key) }, renderInline(body, 'p' + String(key), onOpenFile)))
         key += 1
       }
       while (i < lines.length) {
@@ -864,6 +1253,13 @@ window.__ModuleLoader__.load({
           i += 1
           while (i < lines.length && FENCE.test(lines[i]) === false) { code.push(lines[i]); i += 1 }
           i += 1
+          // 围栏里整块就是一条路径时，它本来就是「一个文件」，不要再让人去复制粘贴。
+          var only = code.length === 1 ? code[0].trim() : ''
+          if (only !== '' && isFilePathToken(only)) {
+            blocks.push(renderFileChip(only, 'f' + String(key), onOpenFile, true))
+            key += 1
+            continue
+          }
           blocks.push(h('div', { key: 'f' + String(key), className: 'dsh-pi-fence' },
             lang === '' ? null : h('div', { className: 'dsh-pi-fence-lang' }, lang),
             h('pre', { className: 'dsh-pi-pre' }, h('code', null, code.join('\n')))))
@@ -872,7 +1268,7 @@ window.__ModuleLoader__.load({
         }
         if (/^#{1,6}\s+/.test(lines[i])) {
           flush()
-          blocks.push(h('h3', { key: 'h' + String(key) }, renderInline(lines[i].replace(/^#{1,6}\s+/, ''), 'h' + String(key))))
+          blocks.push(h('h3', { key: 'h' + String(key) }, renderInline(lines[i].replace(/^#{1,6}\s+/, ''), 'h' + String(key), onOpenFile)))
           key += 1
           i += 1
           continue
@@ -881,7 +1277,7 @@ window.__ModuleLoader__.load({
           flush()
           var items = []
           while (i < lines.length && /^\s*[-*]\s+/.test(lines[i])) {
-            items.push(h('li', { key: 'li' + String(items.length) }, renderInline(lines[i].replace(/^\s*[-*]\s+/, ''), 'li' + String(key) + '-' + String(items.length))))
+            items.push(h('li', { key: 'li' + String(items.length) }, renderInline(lines[i].replace(/^\s*[-*]\s+/, ''), 'li' + String(key) + '-' + String(items.length), onOpenFile)))
             i += 1
           }
           blocks.push(h('ul', { key: 'u' + String(key) }, items))
@@ -1321,6 +1717,18 @@ window.__ModuleLoader__.load({
         h('path', { d: 'M3 7.5a1.5 1.5 0 0 1 1.5-1.5h4l2 2.5h8A1.5 1.5 0 0 1 20 10v7.5a1.5 1.5 0 0 1-1.5 1.5h-14A1.5 1.5 0 0 1 3 17.5z' }))
     }
 
+    /** 文件图标（折角纸张，同 PiIcon 描边风格）。 */
+    function FileIcon(props) {
+      var size = props !== null && props !== undefined && typeof props.size === 'number' ? props.size : 15
+      return h('svg', {
+        width: size, height: size, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor',
+        strokeWidth: 1.7, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': 'true',
+        style: { flex: '0 0 auto' },
+      },
+        h('path', { d: 'M6.5 3.5h7.5l4 4v13a1 1 0 0 1-1 1h-10.5a1 1 0 0 1-1-1v-16a1 1 0 0 1 1-1z' }),
+        h('path', { d: 'M14 3.5v4h4' }))
+    }
+
     /** 盘符/卷图标：横向的盒子 + 底部指示灯，与 DirIcon 同一描边风格。 */
     function DriveIcon(props) {
       var size = props !== null && props !== undefined && typeof props.size === 'number' ? props.size : 15
@@ -1332,6 +1740,199 @@ window.__ModuleLoader__.load({
         h('rect', { x: 3, y: 6, width: 18, height: 12, rx: 2 }),
         h('path', { d: 'M3 14h18' }),
         h('circle', { cx: 17, cy: 17, r: 0.9, fill: 'currentColor', stroke: 'none' }))
+    }
+
+    /**
+     * 一组「类型图标」：全部与 PiIcon 同一描边风格（24 网格 / 1.7 / round），
+     * 只用 currentColor，颜色由标签的 CSS 决定。
+     *
+     * 为什么不引入图标包：客户端 require 白名单里只有 react，插件必须零依赖；
+     * 也不引图片资源，描边路径能在任意 DPI 下清晰。
+     */
+    function iconSvg(props, children) {
+      var size = props !== null && props !== undefined && typeof props.size === 'number' ? props.size : 15
+      return h('svg', {
+        width: size, height: size, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor',
+        strokeWidth: 1.7, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': 'true',
+        style: { flex: '0 0 auto' },
+      }, children)
+    }
+
+    /** 代码文件：尖括号。 */
+    function CodeIcon(props) {
+      return iconSvg(props, [
+        h('path', { key: 'l', d: 'M9 8.5 5 12l4 3.5' }),
+        h('path', { key: 'r', d: 'M15 8.5 19 12l-4 3.5' }),
+      ])
+    }
+
+    /** 图片文件：相框 + 山与太阳。 */
+    function ImageFileIcon(props) {
+      return iconSvg(props, [
+        h('rect', { key: 'b', x: 3.5, y: 4.5, width: 17, height: 15, rx: 2 }),
+        h('circle', { key: 's', cx: 8.5, cy: 9.5, r: 1.4 }),
+        h('path', { key: 'm', d: 'M4 17l4.8-4.4a1.4 1.4 0 0 1 1.9 0L20 19.5' }),
+      ])
+    }
+
+    /** 压缩包：盒子 + 拉链。 */
+    function ArchiveIcon(props) {
+      return iconSvg(props, [
+        h('rect', { key: 'b', x: 3.5, y: 4.5, width: 17, height: 15, rx: 2 }),
+        h('path', { key: 'z', d: 'M12 4.5v3M12 9.5v2M12 13.5v2' }),
+        h('path', { key: 'h', d: 'M10 17.5h4' }),
+      ])
+    }
+
+    /** 表格：框 + 行线。 */
+    function SheetFileIcon(props) {
+      return iconSvg(props, [
+        h('rect', { key: 'b', x: 3.5, y: 5, width: 17, height: 14, rx: 2 }),
+        h('path', { key: 'v', d: 'M9.5 5v14M15 5v14' }),
+        h('path', { key: 'h', d: 'M3.5 12h17' }),
+      ])
+    }
+
+    /** 文档：折角纸 + 两行字（与 FileIcon 区分：纸内有内容线）。 */
+    function DocIcon(props) {
+      return iconSvg(props, [
+        h('path', { key: 'p', d: 'M6.5 3.5h7.5l4 4v13a1 1 0 0 1-1 1h-10.5a1 1 0 0 1-1-1v-16a1 1 0 0 1 1-1z' }),
+        h('path', { key: 'c', d: 'M14 3.5v4h4' }),
+        h('path', { key: 'l1', d: 'M9 12.5h6' }),
+        h('path', { key: 'l2', d: 'M9 16h4' }),
+      ])
+    }
+
+    /** 关闭：两条对角线。抽屉与弹窗右上角统一用它，不再用纯文本 '×'。 */
+    function CloseIcon(props) {
+      return iconSvg(props, [
+        h('path', { key: 'a', d: 'M7.5 7.5 16.5 16.5' }),
+        h('path', { key: 'b', d: 'M16.5 7.5 7.5 16.5' }),
+      ])
+    }
+
+    /** 回形针：插入文件。之前这里用的是产品 logo（PiIcon），语义不对。 */
+    function PaperclipIcon(props) {
+      return iconSvg(props, [
+        h('path', { key: 'p', d: 'M20.4 11.4l-8.5 8.5a5.4 5.4 0 0 1-7.6-7.6l8.5-8.5a3.6 3.6 0 0 1 5.1 5.1l-8.5 8.5a1.8 1.8 0 0 1-2.5-2.5l7.8-7.8' }),
+      ])
+    }
+
+    /**
+     * 抽屉 / 弹窗右上角统一的关闭按钮。
+     *
+     * 之前是纯文本 '×'（11px 字高、没有 -icon 类），在 16px 标题旁又小又轻，
+     * 而且 Sheet 带 type="button"、DirSheet 不带，两处已经分叉。现在所有关闭
+     * 入口共用这一个组件：28x28 命中区 + 16px 描边图标 + aria-label，
+     * 与 .dsh-pi-btn 基线的 28px 高度完全对齐。
+     */
+    function CloseButton(props) {
+      var label = props.t('close')
+      return h('button', {
+        type: 'button',
+        className: 'dsh-pi-btn dsh-pi-btn-ghost dsh-pi-btn-icon',
+        title: label,
+        'aria-label': label,
+        onClick: props.onClick,
+      }, h(CloseIcon, { size: 16 }))
+    }
+
+    /** 加号：composer 左侧的「添加」入口（对齐 DSH composer 的 + 按钮）。 */
+    function PlusIcon(props) {
+      return iconSvg(props, [
+        h('path', { key: 'v', d: 'M12 5.6v12.8' }),
+        h('path', { key: 'h', d: 'M5.6 12h12.8' }),
+      ])
+    }
+
+    /** 向上箭头：空闲态的发送键。 */
+    function ArrowUpIcon(props) {
+      return iconSvg(props, [
+        h('path', { key: 'v', d: 'M12 19V5.6' }),
+        h('path', { key: 'a', d: 'M6.1 11.4 12 5.5l5.9 5.9' }),
+      ])
+    }
+
+    /**
+     * 实心方块：运行中把发送键换成停止。
+     * DSH 的 composer 只有一颗主按钮（空闲=箭头、运行=方块），这里保持同一模型 ——
+     * 不再像 0.6.x 那样在旁边多挂一颗「停止 / 排队」文字按钮。
+     */
+    function StopSquareIcon(props) {
+      return iconSvg(props, [
+        h('rect', { key: 'r', x: 8.4, y: 8.4, width: 7.2, height: 7.2, rx: 1.6, fill: 'currentColor', stroke: 'none' }),
+      ])
+    }
+
+    /** 下拉箭头：模型 / 推理等级选择器右侧的 V 形。 */
+    function ChevronDownIcon(props) {
+      return iconSvg(props, [
+        h('path', { key: 'c', d: 'M6.5 9.6 12 15.1l5.5-5.5' }),
+      ])
+    }
+
+    /** 芯片：模型。 */
+    function ChipIcon(props) {
+      return iconSvg(props, [
+        h('rect', { key: 'r', x: 7, y: 7, width: 10, height: 10, rx: 2.2 }),
+        h('path', { key: 'p', d: 'M10.2 3.6v3.4M13.8 3.6v3.4M10.2 17v3.4M13.8 17v3.4M3.6 10.2h3.4M3.6 13.8h3.4M17 10.2h3.4M17 13.8h3.4' }),
+      ])
+    }
+
+    /** 闪电：推理等级。 */
+    function BoltIcon(props) {
+      return iconSvg(props, [
+        h('path', { key: 'b', d: 'M13.4 3 6.8 13.2h4.1l-1 7.8 6.6-10.2h-4.1z' }),
+      ])
+    }
+
+    /** 列表：历史会话。 */
+    function ListIcon(props) {
+      return iconSvg(props, [
+        h('path', { key: 'l', d: 'M9 6.5h11M9 12h11M9 17.5h11' }),
+        h('path', { key: 'd', d: 'M4.4 6.5h.02M4.4 12h.02M4.4 17.5h.02' }),
+      ])
+    }
+
+    /** 仪表：会话统计 / 上下文占用。 */
+    function GaugeIcon(props) {
+      return iconSvg(props, [
+        h('path', { key: 'a', d: 'M4 16.5a8.6 8.6 0 1 1 16 0' }),
+        h('path', { key: 'n', d: 'M12 16.5 15.6 11' }),
+      ])
+    }
+
+    /** 齿轮：设置。 */
+    function GearIcon(props) {
+      return iconSvg(props, [
+        h('circle', { key: 'c', cx: 12, cy: 12, r: 3 }),
+        h('path', { key: 'p', d: 'M12 3.4v2.4M12 18.2v2.4M3.4 12h2.4M18.2 12h2.4M6 6l1.7 1.7M16.3 16.3 18 18M18 6l-1.7 1.7M7.7 16.3 6 18' }),
+      ])
+    }
+
+    /** 环形箭头：重连。 */
+    function RefreshIcon(props) {
+      return iconSvg(props, [
+        h('path', { key: 'a', d: 'M20 12a8 8 0 1 1-2.4-5.7' }),
+        h('path', { key: 'b', d: 'M20.2 4.4v4.2h-4.2' }),
+      ])
+    }
+
+    /** 时钟：轮次 / 步数。 */
+    function ClockIcon(props) {
+      return iconSvg(props, [
+        h('circle', { key: 'c', cx: 12, cy: 12, r: 8.4 }),
+        h('path', { key: 'h', d: 'M12 7.6V12l3 1.9' }),
+      ])
+    }
+
+    /** 数据库：token 用量。 */
+    function DatabaseIcon(props) {
+      return iconSvg(props, [
+        h('path', { key: 'a', d: 'M4.4 7c0-1.7 3.4-3.1 7.6-3.1S19.6 5.3 19.6 7 16.2 10.1 12 10.1 4.4 8.7 4.4 7z' }),
+        h('path', { key: 'b', d: 'M4.4 7v10c0 1.7 3.4 3.1 7.6 3.1s7.6-1.4 7.6-3.1V7' }),
+        h('path', { key: 'c', d: 'M4.4 12c0 1.7 3.4 3.1 7.6 3.1s7.6-1.4 7.6-3.1' }),
+      ])
     }
 
     /**
@@ -1449,7 +2050,7 @@ window.__ModuleLoader__.load({
         } else if (block.type === 'image') {
           nodes.push(h(ImageBlock, { key: 'k' + String(i), data: block.data, mimeType: block.mimeType, onOpen: props.onOpenImage }))
         } else if (block.type === 'text' && block.text.trim() !== '') {
-          nodes.push(h('div', { key: 'k' + String(i), className: 'dsh-pi-prose' }, renderMarkdown(block.text)))
+          nodes.push(h('div', { key: 'k' + String(i), className: 'dsh-pi-prose' }, renderMarkdown(block.text, props.onOpenFile)))
         }
       }
       if (message.streaming) nodes.push(h('span', { key: 'caret', className: 'dsh-pi-caret' }))
@@ -1508,6 +2109,51 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * 「+」菜单：宿主主对话区那个圆形加号的弹层。
+     *
+     * 只列面板真正做得到的事（文件 / 工作区 / 模型 / 推理等级 / 压缩 / 统计 / 会话 / 设置 /
+     * 快捷键 / 新会话 / 重连）——宿主截图里的「目标 / 计划 / 反馈」在 pi 的 RPC 契约里没有
+     * 对应能力，编不出来就不放，否则点下去只能弹一句错误。
+     */
+    function AddMenu(props) {
+      var t = props.t
+      var state = useState(-1)
+      var active = state[0]
+      var setActive = state[1]
+      var items = props.items
+      var children = []
+      var lastGroup = null
+      for (var i = 0; i < items.length; i += 1) {
+        var item = items[i]
+        if (item.group !== lastGroup) {
+          lastGroup = item.group
+          children.push(h('div', { key: 'g:' + item.group, className: 'dsh-pi-menu-section' }, item.groupLabel))
+        }
+        children.push(h('button', {
+          key: 'i:' + item.key,
+          type: 'button',
+          className: 'dsh-pi-add-item',
+          'data-active': active === i ? '1' : '0',
+          role: 'menuitem',
+          onMouseEnter: function (index) { return function () { setActive(index) } }(i),
+          onMouseDown: function (pick) { return function (event) { event.preventDefault(); props.onPick(pick) } }(item),
+        },
+          h('span', { className: 'dsh-pi-add-icon' }, item.icon === null ? null : h(item.icon, { size: 16 })),
+          h('span', { className: 'dsh-pi-add-text' },
+            h('span', { className: 'dsh-pi-add-label' }, item.label),
+            h('span', { className: 'dsh-pi-add-key' }, item.keyName)),
+          item.desc === '' ? null : h('span', { className: 'dsh-pi-add-desc' }, item.desc)))
+      }
+      return h('div', {
+        className: 'dsh-pi-menu dsh-pi-menu-add',
+        role: 'menu',
+        onKeyDown: function (event) {
+          if (event.key === 'Escape') { event.preventDefault(); props.onClose() }
+        },
+      }, children)
+    }
+
+    /**
      * Composer：所有输入的必经之路。
      *
      * 三种提交形态（与 TUI 的 setupEditorSubmitHandler 一一对应）：
@@ -1533,6 +2179,29 @@ window.__ModuleLoader__.load({
       var stateFiles = useState([])
       var files = stateFiles[0]
       var setFiles = stateFiles[1]
+      var stateAddOpen = useState(false)
+      var addOpen = stateAddOpen[0]
+      var setAddOpen = stateAddOpen[1]
+      var addRef = useRef(null)
+
+      // 「+」菜单是浮层：点外面或按 Esc 都得关掉，否则它会一直盖在输入区上。
+      useEffect(function () {
+        if (addOpen !== true) return undefined
+        function onDocDown(event) {
+          var node = addRef.current
+          if (node !== null && node !== undefined && node.contains(event.target)) return
+          setAddOpen(false)
+        }
+        function onDocKey(event) {
+          if (event.key === 'Escape') setAddOpen(false)
+        }
+        document.addEventListener('mousedown', onDocDown)
+        document.addEventListener('keydown', onDocKey)
+        return function () {
+          document.removeEventListener('mousedown', onDocDown)
+          document.removeEventListener('keydown', onDocKey)
+        }
+      }, [addOpen])
 
       function resize() {
         var node = taRef.current
@@ -1669,31 +2338,76 @@ window.__ModuleLoader__.load({
         if (event.key === 'Enter' && event.shiftKey === false) { event.preventDefault(); submit() }
       }
 
-      function onPaste(event) {
-        var data = event.clipboardData
-        if (data === null || data === undefined || data.items === undefined) return
-        var picked = []
-        for (var i = 0; i < data.items.length; i += 1) {
-          var item = data.items[i]
-          if (item.kind === 'file' && item.type.indexOf('image/') === 0) {
-            var file = item.getAsFile()
-            if (file !== null) picked.push(file)
-          }
+      /** 把一段文本插到光标处，并按 pi 的规矩在前后补空格（interactive-mode.ts:3286-3292）。 */
+      function insertText(chunk) {
+        if (chunk === '') return
+        var node = taRef.current
+        var caret = node === null || node === undefined || typeof node.selectionStart !== 'number' ? text.length : node.selectionStart
+        var before = text.slice(0, caret)
+        var after = text.slice(caret)
+        var lead = before === '' || /\s$/.test(before) ? '' : ' '
+        var tail = after === '' || /^\s/.test(after) ? '' : ' '
+        setText(before + lead + chunk + tail + after)
+        setMenu(null)
+        if (node !== null && node !== undefined) {
+          var pos = (before + lead + chunk).length
+          window.setTimeout(function () { node.focus(); node.setSelectionRange(pos, pos) }, 0)
         }
-        if (picked.length === 0) return
-        event.preventDefault()
-        props.onImages(picked)
       }
 
-      function pickImage() {
+      /**
+       * 剪贴板 / 选择框里的文件怎么落地 —— 与命令行 pi 的 handleClipboardPaste 一一对应
+       * （pi-main/packages/coding-agent/src/modes/interactive/interactive-mode.ts:3278-3318）：
+       *   ① 图片 → 作为 ImageContent 附件（RPC 的 prompt/steer/follow_up 只有这一个附件通道）；
+       *   ② 其它文件 / 压缩包 → 把绝对路径文本插进输入框（pi 自己会用 read / bash 去打开它）；
+       *   ③ 拿不到本地路径（浏览器里访问 DSH 时 __DSH_HOST_PATHS__ 不存在）→ 明确告诉用户
+       *      改用 @ 补全，绝不假装成功。
+       * 面板不复制文件字节：RPC 契约里没有任意文件的附件字段，伪造成图片通道就是错的语义。
+       */
+      function takeFiles(list) {
+        var images = []
+        var paths = []
+        var unresolved = 0
+        var files = list === null || list === undefined ? [] : list
+        for (var i = 0; i < files.length; i += 1) {
+          var file = files[i]
+          if (file === null || file === undefined) continue
+          var type = typeof file.type === 'string' ? file.type : ''
+          if (type.indexOf('image/') === 0) { images.push(file); continue }
+          var local = pathOfFile(file)
+          if (local !== '') paths.push(local)
+          else unresolved += 1
+        }
+        if (images.length > 0) props.onImages(images)
+        if (paths.length > 0) insertText(paths.join('\n'))
+        if (unresolved > 0) props.onPathsUnavailable(unresolved)
+      }
+
+      function onPaste(event) {
+        var data = event.clipboardData
+        if (data === null || data === undefined) return
+        var fileItems = []
+        if (data.items !== undefined) {
+          for (var i = 0; i < data.items.length; i += 1) {
+            var item = data.items[i]
+            if (item.kind !== 'file') continue
+            var file = item.getAsFile()
+            if (file !== null) fileItems.push(file)
+          }
+        }
+        if (fileItems.length === 0) return
+        event.preventDefault()
+        takeFiles(fileItems)
+      }
+
+      function pickFiles() {
         var input = document.createElement('input')
         input.type = 'file'
-        input.accept = 'image/*'
         input.multiple = true
         input.onchange = function () {
           var picked = []
           for (var i = 0; i < input.files.length; i += 1) picked.push(input.files[i])
-          if (picked.length > 0) props.onImages(picked)
+          takeFiles(picked)
         }
         input.click()
       }
@@ -1701,6 +2415,46 @@ window.__ModuleLoader__.load({
       var placeholder = t('composerHint')
       var busy = props.busy
       var canSend = text.trim() !== '' || props.images.length > 0
+      var tip = busy === true ? t('composerTipBusy') : t('composerTipIdle')
+
+      // 「+」菜单的条目：分组 + 图标 + 中文标签 + 英文键 + 右侧说明，对齐宿主的加号菜单。
+      // 每一项都必须真的能做（点下去就有结果），宿主里 pi 没有对应能力的条目一律不放。
+      var addItems = [
+        { key: 'file', group: 'add', groupLabel: t('addGroupAdd'), label: t('addFile'), keyName: 'file', desc: t('addFileDesc'), icon: FileIcon, run: pickFiles },
+        { key: 'dir', group: 'add', groupLabel: t('addGroupAdd'), label: t('pickDir'), keyName: 'workspace', desc: t('addDirDesc'), icon: DirIcon, run: props.onPickDir },
+        { key: 'sessions', group: 'add', groupLabel: t('addGroupAdd'), label: t('sessions'), keyName: 'sessions', desc: t('addSessionsDesc'), icon: ClockIcon, run: props.onOpenSessions },
+        { key: 'compact', group: 'cmd', groupLabel: t('addGroupCommands'), label: t('compactNow'), keyName: 'compact', desc: t('addCompactDesc'), icon: ArchiveIcon, run: function () { props.onCompact() } },
+        { key: 'model', group: 'cmd', groupLabel: t('addGroupCommands'), label: t('model'), keyName: 'model', desc: t('addModelDesc'), icon: ChipIcon, run: props.onOpenModels },
+        { key: 'thinking', group: 'cmd', groupLabel: t('addGroupCommands'), label: t('thinking'), keyName: 'thinking', desc: t('addThinkingDesc'), icon: BoltIcon, run: props.onOpenThinking },
+        { key: 'stats', group: 'cmd', groupLabel: t('addGroupCommands'), label: t('stats'), keyName: 'stats', desc: t('addStatsDesc'), icon: GaugeIcon, run: props.onOpenStats },
+        { key: 'settings', group: 'cmd', groupLabel: t('addGroupCommands'), label: t('settings'), keyName: 'settings', desc: t('addSettingsDesc'), icon: GearIcon, run: props.onOpenSettings },
+        { key: 'hotkeys', group: 'cmd', groupLabel: t('addGroupCommands'), label: t('hotkeys'), keyName: 'hotkeys', desc: t('addHotkeysDesc'), icon: ListIcon, run: props.onOpenHotkeys },
+        { key: 'new', group: 'cmd', groupLabel: t('addGroupCommands'), label: t('newSession'), keyName: 'new', desc: t('addNewDesc'), icon: RefreshIcon, run: props.onNewSession },
+      ]
+
+      var modelName = props.model === null || props.model === undefined ? '' : String(props.model.id)
+      var thinkingLevels = Array.isArray(props.thinkingLevels) ? props.thinkingLevels : []
+
+      // 右端那颗圆钮与宿主同义：空闲时是「发出去」（向上箭头），运行中同一位置变「停下」（方块）。
+      // 运行中输入回车仍然是 steer 插话、Alt+Enter 仍然是排队 —— 这两个语义靠键盘走，
+      // 不占按钮（按钮只有一个，位置固定，语义随状态切换，用户不用重新找）。
+      var sendButton = busy === true
+        ? h('button', {
+          type: 'button',
+          className: 'dsh-pi-stop',
+          title: t('stop') + ' (Esc)',
+          'aria-label': t('stop'),
+          onClick: props.onStop,
+        }, h(StopSquareIcon, { size: 14 }))
+        : h('button', {
+          type: 'button',
+          className: 'dsh-pi-send',
+          disabled: canSend === false,
+          title: t('send') + ' (Enter)',
+          'aria-label': t('send'),
+          onClick: submit,
+        }, h(ArrowUpIcon, { size: 16 }))
+
       return h('div', { className: 'dsh-pi-composer' },
         h('div', { className: 'dsh-pi-composer-inner' },
           props.widgets.length === 0 ? null : h('div', { className: 'dsh-pi-widget' },
@@ -1732,19 +2486,57 @@ window.__ModuleLoader__.load({
               onPick: insertToken,
             }),
             h('div', { className: 'dsh-pi-bar' },
-              h('button', { type: 'button', className: 'dsh-pi-btn dsh-pi-btn-ghost', title: t('pickDir'), onClick: props.onPickDir }, h(DirIcon, { size: 14 })),
-              h('button', { type: 'button', className: 'dsh-pi-btn dsh-pi-btn-ghost', title: t('attachImage'), onClick: pickImage }, h(PiIcon, { size: 14 })),
-              busy ? h('button', { type: 'button', className: 'dsh-pi-btn dsh-pi-btn-ghost', title: t('followUpSend'), onClick: function () { if (text.trim() !== '') { var queued = text; setText(''); setMenu(null); props.onFollowUp(queued) } } }, t('followUpSend')) : null,
-              busy ? h('button', { type: 'button', className: 'dsh-pi-btn dsh-pi-btn-danger', onClick: props.onStop }, t('stop')) : null,
-              h('span', { className: 'dsh-pi-bar-hint' }, busy ? t('steerHint') : t('slashHint')),
-              h('span', { className: 'dsh-pi-spacer' }),
-              h('button', {
-                type: 'button',
-                className: 'dsh-pi-btn dsh-pi-btn-primary',
-                disabled: canSend === false,
-                onClick: submit,
-              }, busy ? t('queue') : t('send')))),
-          h('div', { className: 'dsh-pi-sr' }, placeholder)))
+              // 左：宿主是「圆形 + / 模型 / 推理等级」。附件与目录都收进 + 菜单，
+              // 否则行里会挤五个控件，跟宿主的样子就差远了。
+              h('div', { className: 'dsh-pi-bar-actions' },
+                h('span', { className: 'dsh-pi-add-wrap', ref: addRef },
+                  h('button', {
+                    type: 'button',
+                    className: 'dsh-pi-add',
+                    'data-open': addOpen === true ? '1' : '0',
+                    title: t('addMenu'),
+                    'aria-label': t('addMenu'),
+                    'aria-expanded': addOpen === true ? 'true' : 'false',
+                    onClick: function () { setAddOpen(addOpen !== true) },
+                  }, h(PlusIcon, { size: 16 })),
+                  addOpen === true ? h(AddMenu, {
+                    t: t,
+                    items: addItems,
+                    onPick: function (item) {
+                      setAddOpen(false)
+                      setMenu(null)
+                      var node = taRef.current
+                      if (node !== null && node !== undefined) node.focus()
+                      if (item !== null && item !== undefined && typeof item.run === 'function') item.run()
+                    },
+                    onClose: function () { setAddOpen(false) },
+                  }) : null),
+                modelName === '' ? null : h('button', {
+                  type: 'button',
+                  className: 'dsh-pi-picker',
+                  title: t('modelHint') + ' · ' + String(props.model.provider) + '/' + String(props.model.id),
+                  onClick: props.onOpenModels,
+                },
+                  h('span', { className: 'dsh-pi-picker-name' }, modelName),
+                  h(ChevronDownIcon, { size: 12 })),
+                thinkingLevels.length === 0 ? null : h('span', { className: 'dsh-pi-picker-wrap', title: t('thinkingHint') },
+                  h('span', { className: 'dsh-pi-picker-label' }, String(props.thinking)),
+                  h(ChevronDownIcon, { size: 12 }),
+                  h('select', {
+                    className: 'dsh-pi-picker-native',
+                    value: props.thinking,
+                    'aria-label': t('thinkingHint'),
+                    onChange: function (event) { props.onSetThinking(event.target.value) },
+                  }, thinkingLevels.map(function (level) { return h('option', { key: level, value: level }, String(level)) })))),
+              // 右：快捷键提示 + 圆形发送键。提示语是两套完整语义（空闲 / 运行中），
+              // 不借用 slashHint（那讲的是菜单导航，只在菜单弹出时才成立）。
+              h('div', { className: 'dsh-pi-bar-right' },
+                h('span', { className: 'dsh-pi-bar-hint', title: tip }, tip),
+                sendButton)),
+            h('div', { className: 'dsh-pi-sr' }, placeholder))),
+        // dock：宿主的统计行在输入卡下方、同一个 composer 容器里（.GRgSLq_dock）。
+        // 放在这里而不是面板根部，背景、左右内缩、随 composer 一起贴底，才跟宿主一致。
+        props.footer === null || props.footer === undefined ? null : props.footer)
     }
 
 
@@ -1756,8 +2548,25 @@ window.__ModuleLoader__.load({
         h('div', { className: 'dsh-pi-sheet-head' },
           h('div', { className: 'dsh-pi-sheet-title' }, props.title),
           props.actions === undefined ? null : props.actions,
-          h('button', { type: 'button', className: 'dsh-pi-btn dsh-pi-btn-ghost', onClick: props.onClose, title: props.t('close') }, '×')),
+          h(CloseButton, { t: props.t, onClick: props.onClose })),
         h('div', { className: 'dsh-pi-sheet-body' }, props.children))
+    }
+
+    /** 数值兜底：RPC 回来的用量字段可能缺省，缺省按 0 算，别让 NaN 漏进百分比。 */
+    function numOr0(value) {
+      return typeof value === 'number' && isFinite(value) ? value : 0
+    }
+
+    /** 大数字加千分位：统计行里 12 万 token 写成 120,000 才读得出来。 */
+    function fmtCount(value) {
+      var n = typeof value === 'number' && isFinite(value) ? Math.round(value) : 0
+      var text = String(Math.abs(n))
+      var out = ''
+      for (var i = 0; i < text.length; i += 1) {
+        if (i > 0 && (text.length - i) % 3 === 0) out += ','
+        out += text[i]
+      }
+      return (n < 0 ? '-' : '') + out
     }
 
     function fmtTime(value) {
@@ -2279,7 +3088,7 @@ window.__ModuleLoader__.load({
         },
           h('div', { className: 'dsh-pi-dir-head' },
             h('div', { className: 'dsh-pi-dir-title' }, t('dirTitle')),
-            h('button', { type: 'button', className: 'dsh-pi-btn dsh-pi-btn-ghost', title: t('close'), onClick: props.onClose }, '×')),
+            h(CloseButton, { t: t, onClick: props.onClose })),
           h('div', { className: 'dsh-pi-dir' }, body)))
     }
 
@@ -2422,6 +3231,37 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * 面板内文件预览 —— 右栏打不开时的回落，不是主路径。
+     *
+     * 主路径永远是 ctx.sidebarRight.openResource：DSH 内置 documentpreview 负责渲染
+     * markdown / 代码 / 图片，视觉与 DSH 其它文件标签完全一致。只有在「没有正在显示的
+     * DSH 会话」「宿主没提供 sidebarRight」这两种情况下才退到这里，而且必须用 notice
+     * 说明退化的原因（静默降级 = 用户以为右栏坏了）。
+     *
+     * 这里只做最保守的三态：文本原样、图片原样、二进制只报大小 —— 不假装能渲染 PDF/Office。
+     */
+    function FileSheet(props) {
+      var t = props.t
+      var view = props.view
+      var body = null
+      if (view.loading === true) {
+        body = h('div', { className: 'dsh-pi-empty-row' }, t('loading'))
+      } else if (view.error !== null && view.error !== undefined && view.error !== '') {
+        body = h('div', { className: 'dsh-pi-alert' }, String(view.error))
+      } else if (view.kind === 'image') {
+        body = h('img', { className: 'dsh-pi-img', alt: String(view.mimeType), src: 'data:' + String(view.mimeType) + ';base64,' + String(view.data) })
+      } else if (view.kind === 'binary') {
+        body = h('div', { className: 'dsh-pi-empty-row' }, t('binaryFile').replace('{size}', String(view.size)))
+      } else {
+        body = h('pre', { className: 'dsh-pi-pre', style: { whiteSpace: 'pre-wrap' } },
+          String(view.text === undefined || view.text === null ? '' : view.text) + (view.truncated === true ? '\n' + t('fileTruncated') : ''))
+      }
+      return h(Sheet, { t: t, title: t('filePreview'), onClose: props.onClose },
+        h('div', { className: 'dsh-pi-mono' }, String(view.path)),
+        body)
+    }
+
+    /**
      * 扩展 UI 弹窗：pi 的 select / confirm / input / editor 四种请求。
      *
      * 为什么要兜底超时：pi 的 createDialogPromise 只在扩展自己传了 timeout 时才收尾，
@@ -2498,7 +3338,11 @@ window.__ModuleLoader__.load({
       var label = request.method === 'confirm' ? t('extConfirm') : request.method === 'input' ? t('extInput') : request.method === 'editor' ? t('extEditor') : t('extSelect')
       return h('div', { className: 'dsh-pi-dialog-wrap' },
         h('div', { className: 'dsh-pi-dialog', role: 'dialog', 'aria-label': label },
-          h('h3', null, label + ' · ' + title),
+          // 扩展弹窗以前只有底部「取消 / 提交」，没有右上角关闭；这里补一个与抽屉同款的 CloseButton，
+          // 语义等于取消（回 cancelled:true），跟 pi 的 Esc 取消一致。
+          h('div', { className: 'dsh-pi-dialog-head' },
+            h('h3', null, label + ' · ' + title),
+            h(CloseButton, { t: t, onClick: function () { props.onRespond({ id: request.id, cancelled: true }) } })),
           left === null ? null : h('div', { className: 'dsh-pi-mono' }, t('extTimeout').replace('{n}', String(left))),
           body))
     }
@@ -2834,6 +3678,11 @@ window.__ModuleLoader__.load({
       var overlayState = useState(null)
       var overlay = overlayState[0]
       var setOverlay = overlayState[1]
+      // 面板内文件预览（FileSheet）的载荷。null = 没开预览。
+      // 只在右栏不可用时才被填值 —— 它不是主路径，见 FileSheet 上方注释。
+      var fileViewState = useState(null)
+      var fileView = fileViewState[0]
+      var setFileView = fileViewState[1]
       var drawerState = useState(null)
       var drawer = drawerState[0]
       var setDrawer = drawerState[1]
@@ -2852,6 +3701,11 @@ window.__ModuleLoader__.load({
       var statsState = useState(null)
       var stats = statsState[0]
       var setStats = statsState[1]
+      // 底部统计行用的是一份独立的 stats 快照：抽屉里的 stats 只在打开时拉一次，
+      // 而统计行要跟着每一轮结束刷新，两者生命周期不同，共用一份会让关闭抽屉后数据变旧。
+      var footerState = useState(null)
+      var footerStats = footerState[0]
+      var setFooterStats = footerState[1]
       var entriesState = useState(null)
       var entriesReport = entriesState[0]
       var setEntries = entriesState[1]
@@ -2976,7 +3830,12 @@ window.__ModuleLoader__.load({
         // 轮次结束是唯一的自然刷新点：此时 agent 已 idle，多问一次 get_commands 没有副作用。
         if (settled === true) {
           var sid = sessionRef.current
-          if (sid !== null) loadCommands(sid)
+          if (sid !== null) {
+            loadCommands(sid)
+            // 轮次结束是统计数字唯一变化的时刻（tokens / 缓存读只在 usage 事件里出现），
+            // 与命令表共用同一个 settle 点，避免多一次定时器。
+            loadFooterStats(sid)
+          }
         }
         drainHydrate()
       }
@@ -3048,6 +3907,9 @@ window.__ModuleLoader__.load({
           setPhase('ready')
           openStream(id, view.lastSeq)
           flush()
+          // 底部统计行不能等到下一次 settle：切会话 / 恢复历史会话时这里就是唯一的
+          // 首次填充点，不拉的话 dock 在用户发出第一条消息前一直是空的。
+          loadFooterStats(id)
           // 挂载即对账：首次进入、以及 switch_session / fork / clone / new_session 之后
           // host 的事件缓冲都是空的，历史消息只能靠 get_messages 拿回来。
           return hydrate(id).then(function () { return null })
@@ -3057,7 +3919,7 @@ window.__ModuleLoader__.load({
       /** 会话内容被替换（new_session / switch_session / fork / clone）后重新挂载。 */
       var reload = function (id) {
         closeStream()
-        return attach(id).then(function () { return loadState(id) }).then(function () { return loadLevels(id) }).then(function () { return loadCommands(id) })
+        return attach(id).then(function () { return loadState(id) }).then(function () { return loadLevels(id) }).then(function () { return loadCommands(id) }).then(function () { return loadFooterStats(id) })
       }
 
       var loadLevels = function (id) {
@@ -3073,6 +3935,14 @@ window.__ModuleLoader__.load({
        * 返回命令数组（失败返回 null），调用方需要「现在到底有没有这条命令」的判断依据时
        * 直接用返回值，不要去读 state——同一轮里的 setDynamic 还没生效。
        */
+      /** 底部统计行的数据源（轮次 / 步数 / tokens / 缓存命中 / 上下文占用）。 */
+      var loadFooterStats = function (id) {
+        return rpc(id, { type: 'get_session_stats' }).then(function (data) {
+          setFooterStats(data !== null && typeof data === 'object' ? data : null)
+          return data
+        }, function () { return null })
+      }
+
       var loadCommands = function (id) {
         return rpc(id, { type: 'get_commands' }).then(function (data) {
           var list = data !== null && data !== undefined && Array.isArray(data.commands) ? data.commands : []
@@ -3813,20 +4683,10 @@ window.__ModuleLoader__.load({
           h(PiIcon, null),
           h('span', { className: 'dsh-pi-brand' }, t('panelTitle')),
           h('span', { className: 'dsh-pi-dot', 'data-state': state, title: state }),
-          sessionName === null || sessionName === '' ? null : h('span', { className: 'dsh-pi-chip', title: t('sessionName') }, String(sessionName)),
-          h('span', {
-            className: 'dsh-pi-chip',
-            'data-clickable': '1',
-            title: t('modelHint') + ' · ' + (currentModel === null ? '—' : String(currentModel.provider) + '/' + String(currentModel.id)),
-            onClick: openModels,
-          }, h('span', { className: 'dsh-pi-chip-name' }, currentModel === null ? t('model') : String(currentModel.id)))),
+          sessionName === null || sessionName === '' ? null : h('span', { className: 'dsh-pi-chip', title: t('sessionName') }, String(sessionName))),
+        // 模型与推理等级不在这里：它们跟宿主一样落在输入框下沿（见 Composer 的 picker）。
+        // 头部的职责是「这是哪个 pi 进程、什么状态」，混进发送相关的开关会让两个区域语义打架。
         h(SelfCheckChip, { t: t, report: verify, onClick: runSelfCheck }),
-        levels.length === 0 ? null : h('select', {
-          className: 'dsh-pi-select',
-          value: thinking,
-          title: t('thinkingHint'),
-          onChange: function (event) { setLevel(event.target.value) },
-        }, levels.map(function (level) { return h('option', { key: level, value: level }, String(level)) })),
         h('button', { type: 'button', className: 'dsh-pi-btn dsh-pi-btn-ghost', title: t('nextModel') + ' (Ctrl+P)', onClick: cycleModel }, t('nextModel')),
         h('button', { type: 'button', className: 'dsh-pi-btn dsh-pi-btn-ghost', title: t('nextThinking') + ' (Shift+Tab)', onClick: cycleThinking }, t('nextThinking')),
         h('button', { type: 'button', className: 'dsh-pi-btn dsh-pi-btn-ghost', title: t('stats'), onClick: openStats }, t('stats')),
@@ -3865,6 +4725,71 @@ window.__ModuleLoader__.load({
                 h('button', { type: 'button', className: 'dsh-pi-btn', onClick: function () { startSession() } }, t('reconnect'))))))
       }
 
+      /**
+       * 点文件路径标签之后做什么。
+       *
+       * 主路径 = DSH 右侧预览区：内置 documentpreview 认领 dsh-resource://file/session/... 地址，
+       * markdown / 代码 / 图片都由它渲染，视觉与 DSH 自己的文件引用完全一致。这是唯一正确做法
+       * —— 插件里自己造一套预览 UI 只会和宿主不一致。
+       *
+       * 回落 = 面板内 FileSheet，仅在「当前没有正在显示的会话」「宿主没提供 sidebarRight」
+       * 这两种情况下发生，并且必须用 notice 说清原因（静默降级会让用户以为右栏坏了）。
+       *
+       * 注意 sessionFileAddress 用的是 DSH 会话 ID，不是 pi 的会话 ID：右栏的授权是
+       * 按 DSH 会话走的，用错 ID 会以 workspace-file/unknown-workspace 失败。
+       */
+      var openFile = function (path) {
+        var raw = path === undefined || path === null ? '' : String(path)
+        if (raw === '') return
+        if (typeof props.onOpenFile === 'function' && props.onOpenFile(raw, activeCwd) === true) return
+        notice(t('openFileNoSession'), 'warn')
+        var target = absolutePathOf(activeCwd, raw)
+        var placeholder = { loading: true, path: target, error: null, kind: 'text', mimeType: '', text: '', data: '', size: 0, truncated: false }
+        setFileView(placeholder)
+        api.file(target).then(function (result) {
+          setFileView({
+            loading: false,
+            path: String(result.path === undefined ? target : result.path),
+            error: null,
+            kind: String(result.kind === undefined ? 'text' : result.kind),
+            mimeType: String(result.mimeType === undefined ? '' : result.mimeType),
+            text: result.text === undefined ? '' : String(result.text),
+            data: result.data === undefined ? '' : String(result.data),
+            size: result.size === undefined ? 0 : result.size,
+            truncated: result.truncated === true,
+          })
+        }, function (failure) {
+          var message = failure !== null && failure !== undefined && typeof failure.message === 'string' ? failure.message : String(failure)
+          setFileView({
+            loading: false,
+            path: target,
+            error: t('openFileFailed').replace('{path}', raw) + ' · ' + message,
+            kind: 'text',
+            mimeType: '',
+            text: '',
+            data: '',
+            size: 0,
+            truncated: false,
+          })
+        })
+      }
+
+      /**
+       * 右键文件标签 → 在系统文件管理器里定位它（host POST /reveal）。
+       * 这是唯一一个直接动宿主外壳的动作，失败必须说出来：explorer 被组策略拦掉、
+       * 文件已被删都只在这里表现为一条 notice，不静默。
+       */
+      var revealFile = function (path) {
+        var raw = path === undefined || path === null ? '' : String(path)
+        if (raw === '') return
+        api.reveal(absolutePathOf(activeCwd, raw)).then(function () {
+          notice(t('revealFile'), 'ok')
+        }, function (failure) {
+          var message = failure !== null && failure !== undefined && typeof failure.message === 'string' ? failure.message : String(failure)
+          notice(t('revealFileFailed').replace('{path}', raw) + ' · ' + message, 'err')
+        })
+      }
+
       var rows = view.messages.map(function (message, index) {
         return h(MessageRow, {
           key: 'm' + String(message.seq) + '-' + String(index),
@@ -3872,6 +4797,9 @@ window.__ModuleLoader__.load({
           message: message,
           toolStatus: view.toolStatus,
           onOpenImage: function (image) { setOverlay(image) },
+          // renderFileChip 的 normalizeFileActions 同时接受函数与 {open, reveal}，
+          // 这里给对象形态，左键开预览、右键定位文件。
+          onOpenFile: { open: openFile, reveal: revealFile },
         })
       })
 
@@ -3892,7 +4820,9 @@ window.__ModuleLoader__.load({
         notices.push(h('div', { key: item.id, className: 'dsh-pi-notice', 'data-tone': String(item.tone === undefined ? 'info' : item.tone) }, String(item.text)))
       }
 
-      // 状态栏：扩展 setStatus 的内容（等价于 TUI 底部状态行）+ 会话文件
+      // 状态栏：扩展 setStatus 的内容（等价于 TUI 底部状态行）。
+      // 会话文件不在这里——宿主的 dock 只有用量数字，路径属于「会话统计」抽屉
+      // （TextSheet/StatsSheet 里单独一行），塞进 dock 会把数字挤到换行。
       var statusRow = []
       for (var statusKey in view.statuses) {
         if (Object.prototype.hasOwnProperty.call(view.statuses, statusKey) === false) continue
@@ -3900,7 +4830,40 @@ window.__ModuleLoader__.load({
       }
       if (view.queue.steering > 0) statusRow.push(h('span', { key: 'q1' }, String(view.queue.steering) + ' steering'))
       if (view.queue.followUp > 0) statusRow.push(h('span', { key: 'q2' }, String(view.queue.followUp) + ' ' + t('queued')))
-      if (meta !== null && typeof meta.sessionFile === 'string' && meta.sessionFile !== '') statusRow.push(h('span', { key: 'file', title: meta.sessionFile }, String(meta.sessionFile)))
+
+      // 统计行 = 宿主的 dock：轮次 / 步数 / tokens / 缓存命中 / 上下文占用。
+      // 数据来自 get_session_stats，只在轮次结束时刷新（见 flush 的 settled 分支）——
+      // 这些数字在生成过程中不会变，滚动中反复拉取只会给 pi 子进程添无谓的 RPC。
+      var dock = []
+      if (footerStats !== null && footerStats !== undefined) {
+        var turnCount = typeof footerStats.userMessages === 'number' ? footerStats.userMessages : 0
+        var stepCount = typeof footerStats.toolCalls === 'number' ? footerStats.toolCalls : 0
+        dock.push(h('span', { key: 'd-turns' }, t('footerTurns').replace('{n}', String(turnCount))))
+        dock.push(h('span', { key: 'd-steps' }, t('footerSteps').replace('{n}', String(stepCount))))
+        var tokenBag = footerStats.tokens !== null && footerStats.tokens !== undefined && typeof footerStats.tokens === 'object' ? footerStats.tokens : null
+        if (tokenBag !== null && typeof tokenBag.total === 'number' && tokenBag.total > 0) {
+          dock.push(h('span', { key: 'd-tokens' }, t('footerTokens').replace('{n}', fmtCount(tokenBag.total))))
+        }
+        // 缓存命中率按 pi TUI footer 的同一公式：cacheRead /（input + cacheRead + cacheWrite）。
+        var readSum = numOr0(tokenBag === null ? 0 : tokenBag.cacheRead)
+        var inSum = numOr0(tokenBag === null ? 0 : tokenBag.input)
+        var writeSum = numOr0(tokenBag === null ? 0 : tokenBag.cacheWrite)
+        if (readSum + inSum + writeSum > 0) {
+          var hitPct = Math.round((readSum / (readSum + inSum + writeSum)) * 100)
+          dock.push(h('span', { key: 'd-cache' }, t('footerCache').replace('{pct}', String(hitPct))))
+        }
+        var usage = footerStats.contextUsage !== null && footerStats.contextUsage !== undefined ? footerStats.contextUsage : null
+        if (usage !== null && typeof usage.percent === 'number') {
+          dock.push(h('span', { key: 'd-ctx', title: t('contextUsage') + ' · ' + fmtCount(usage.tokens) + ' / ' + fmtCount(usage.contextWindow) }, String(Math.round(usage.percent)) + '%'))
+        }
+      }
+
+      // 状态文案（steering / 排队 / 会话文件）+ 统计数字合成 composer 的 footer：
+      // 同一条行里两套语义，靠中点分隔（宿主的 dock 也是一行）。
+      var footerNode = statusRow.length === 0 && dock.length === 0 ? null : h('div', { className: 'dsh-pi-statusbar' },
+        statusRow,
+        statusRow.length === 0 || dock.length === 0 ? null : h('span', { key: 'd-sep', 'aria-hidden': 'true' }, '·'),
+        dock)
 
       var pending = view.pendingUi.length === 0 ? null : h(ExtensionDialog, {
         key: 'ui-' + String(view.pendingUi[0].id),
@@ -3987,7 +4950,6 @@ window.__ModuleLoader__.load({
           h('div', { className: 'dsh-pi-inner' },
             notices.length === 0 ? null : notices,
             view.messages.length === 0 ? h(EmptyState, { t: t, meta: emptyMeta, onPickDir: function () { setDrawer('dir') } }) : rows)),
-        statusRow.length === 0 ? null : h('div', { className: 'dsh-pi-statusbar', style: { padding: '4px 12px' } }, statusRow),
         h(Composer, {
           t: t,
           busy: view.busy === true,
@@ -4000,15 +4962,34 @@ window.__ModuleLoader__.load({
           onCycleModel: cycleModel,
           onCycleThinking: cycleThinking,
           onImages: addImages,
+          onPathsUnavailable: function (count) {
+            notice(t('pathUnavailable').replace('{n}', String(count)), 'warn')
+          },
           onPickDir: function () { setDrawer('dir') },
           slashEntries: slashEntries,
           editorText: view.editorText,
           widgets: widgets,
           onEditorTextConsumed: consumeEditorText,
           searchFiles: searchFiles,
+          // 模型与推理等级以前在 head 里（一行小字 + 原生下拉），现在跟宿主一样落在输入框下沿：
+          // 它们影响的是「下一条消息怎么发」，属于 composer 的语义，不属于面板头部。
+          model: currentModel,
+          thinking: thinking,
+          thinkingLevels: levels,
+          onSetThinking: setLevel,
+          onOpenModels: openModels,
+          onOpenThinking: function () { setDrawer('thinking') },
+          onOpenSessions: function () { setDrawer('sessions') },
+          onOpenStats: openStats,
+          onOpenSettings: openSettings,
+          onOpenHotkeys: function () { setDrawer('hotkeys') },
+          onCompact: function () { runCompact('') },
+          onNewSession: runNewSession,
+          footer: footerNode,
         }),
         drawerNode,
         pending,
+        fileView === null ? null : h(FileSheet, { t: t, view: fileView, onClose: function () { setFileView(null) } }),
         overlay === null ? null : h(ImageOverlay, { image: overlay, onClose: function () { setOverlay(null) } }))
     }
 
@@ -4062,6 +5043,42 @@ window.__ModuleLoader__.load({
         return ZH[key] === undefined ? key : ZH[key]
       }
 
+      /**
+       * 把「面板里点文件标签」接到 DSH 右侧预览区。
+       *
+       * 为什么用 ctx.get 而不是写进 exports.inject：
+       *   宿主对 inject 声明的服务是硬依赖 —— 任何一个取不到，本插件 entry 会永久停在
+       *   pending，直接卡死 dsh 启动。sidebarRight / sessions 是可选增强，必须惰性取，
+       *   取不到就返回 false 让面板退到 FileSheet。
+       *
+       * 为什么地址必须带 DSH 会话 ID：
+       *   dsh-resource://file/absolute/... 没有授权会话，读取会以
+       *   workspace-file/unknown-workspace 失败；只有 session 作用域会带上 DSH 的
+       *   工作区授权。sessionId 取 sidebarRight.mounted —— 就是当前屏幕上那个会话。
+       *
+       * 返回 true 表示「已经交给右栏」，调用方不要再弹面板内预览。
+       */
+      var openInSidebar = function (path, cwd) {
+        var sidebarRight = null
+        try {
+          sidebarRight = typeof ctx.get === 'function' ? ctx.get('sidebarRight') : null
+        } catch (error) {
+          sidebarRight = null
+        }
+        if (sidebarRight === null || sidebarRight === undefined) return false
+        if (typeof sidebarRight.openResource !== 'function') return false
+        var mounted = sidebarRight.mounted
+        var sessionId = mounted !== null && mounted !== undefined && typeof mounted.getSnapshot === 'function' ? mounted.getSnapshot() : undefined
+        if (typeof sessionId !== 'string' || sessionId === '') return false
+        var address = sessionFileAddress(sessionId, absolutePathOf(cwd === undefined ? '' : cwd, path))
+        try {
+          sidebarRight.openResource(address)
+        } catch (error) {
+          return false
+        }
+        return true
+      }
+
       ctx.inject(['slots'], function (sub) {
         var slots = sub.slots
         ctx.effect(function () {
@@ -4081,7 +5098,10 @@ window.__ModuleLoader__.load({
         ctx.effect(function () {
           return slots.inject('main', function () {
             return slots.register({ name: 'main', key: PANEL_ID, locale: NS }, function (slotProps) {
-              return h(PiPanel, { t: slotProps !== null && slotProps !== undefined && typeof slotProps.t === 'function' ? slotProps.t : translate })
+              return h(PiPanel, {
+                t: slotProps !== null && slotProps !== undefined && typeof slotProps.t === 'function' ? slotProps.t : translate,
+                onOpenFile: openInSidebar,
+              })
             })
           })
         }, PANEL_ID + ': main panel')
@@ -4114,6 +5134,25 @@ window.__ModuleLoader__.load({
       messagesFromHistory: messagesFromHistory,
       classifyInput: classifyInput,
       slashItems: slashItems,
+      isFilePathToken: isFilePathToken,
+      splitFileTokens: splitFileTokens,
+      renderFileChip: renderFileChip,
+      renderMarkdown: renderMarkdown,
+      renderInline: renderInline,
+      absolutePathOf: absolutePathOf,
+      sessionFileAddress: sessionFileAddress,
+      FileSheet: FileSheet,
+      fileKindOf: fileKindOf,
+      CloseButton: CloseButton,
+      CloseIcon: CloseIcon,
+      PaperclipIcon: PaperclipIcon,
+      PlusIcon: PlusIcon,
+      ArrowUpIcon: ArrowUpIcon,
+      StopSquareIcon: StopSquareIcon,
+      ChevronDownIcon: ChevronDownIcon,
+      AddMenu: AddMenu,
+      fmtCount: fmtCount,
+      numOr0: numOr0,
       strings: { zh: ZH, en: EN },
     }
 

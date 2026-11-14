@@ -357,6 +357,115 @@ try {
       await wsServer.close()
     }
 
+    // 3.7b /file（面板内预览：只读、限长、二进制不内联）
+    //
+    // 为什么单独一段：这条路由是「助手回复里点一个文件标签」的唯一后端，
+    // 它的三类返回（text / image / binary）直接决定面板渲染哪一支，
+    // 一旦 kind 判错，面板会把二进制涂成乱码或把 markdown 当纯文本。
+    const fileDir = path.join(tmp, 'preview')
+    fs.mkdirSync(fileDir, { recursive: true })
+    fs.writeFileSync(path.join(fileDir, 'note.md'), '# 标题\n\n正文一行\n')
+    fs.writeFileSync(path.join(fileDir, 'data.json'), '{"a":1}')
+    fs.writeFileSync(path.join(fileDir, 'blob.bin'), Buffer.from([1, 2, 0, 4, 5]))
+    // 1x1 PNG（最小合法图）：验证图片走 base64 data URL 而不是被当二进制。
+    const tinyPng = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64')
+    fs.writeFileSync(path.join(fileDir, 'pixel.png'), tinyPng)
+    const bigText = 'x'.repeat(512 * 1024 + 64)
+    fs.writeFileSync(path.join(fileDir, 'big.log'), bigText)
+
+    const mdFile = await request(server.base, '/file?path=' + encodeURIComponent(path.join(fileDir, 'note.md')))
+    check('file text 200', mdFile.status === 200, String(mdFile.status) + ' ' + JSON.stringify(mdFile.body).slice(0, 200))
+    eq('file text kind', mdFile.body.kind, 'text')
+    eq('file text 内容原样', mdFile.body.text, '# 标题\n\n正文一行\n')
+    eq('file text markdown mime', mdFile.body.mimeType, 'text/markdown')
+    eq('file text name', mdFile.body.name, 'note.md')
+    eq('file text dir', mdFile.body.dir, fileDir)
+    eq('file text size', mdFile.body.size, Buffer.byteLength('# 标题\n\n正文一行\n'))
+    check('file text truncated=false', mdFile.body.truncated === false)
+    check('file text mtime 是 ISO', typeof mdFile.body.mtime === 'string' && mdFile.body.mtime.includes('T'))
+
+    const jsonFile = await request(server.base, '/file?path=' + encodeURIComponent(path.join(fileDir, 'data.json')))
+    eq('file json mime', jsonFile.body.mimeType, 'application/json')
+    const noExt = path.join(fileDir, 'LICENSE')
+    fs.writeFileSync(noExt, 'plain')
+    const plainFile = await request(server.base, '/file?path=' + encodeURIComponent(noExt))
+    eq('file 未知扩展回落 text/plain', plainFile.body.mimeType, 'text/plain')
+
+    const pngFile = await request(server.base, '/file?path=' + encodeURIComponent(path.join(fileDir, 'pixel.png')))
+    eq('file image kind', pngFile.body.kind, 'image')
+    eq('file image mime', pngFile.body.mimeType, 'image/png')
+    eq('file image base64 往返一致', Buffer.from(String(pngFile.body.data), 'base64').equals(tinyPng), true)
+
+    const binFile = await request(server.base, '/file?path=' + encodeURIComponent(path.join(fileDir, 'blob.bin')))
+    eq('file binary kind（含 NUL 不内联）', binFile.body.kind, 'binary')
+    eq('file binary 不带 text', binFile.body.text, undefined)
+    eq('file binary 不带 data', binFile.body.data, undefined)
+    eq('file binary mime', binFile.body.mimeType, 'application/octet-stream')
+
+    const bigFile = await request(server.base, '/file?path=' + encodeURIComponent(path.join(fileDir, 'big.log')))
+    eq('file 超限 truncated', bigFile.body.truncated, true)
+    eq('file 超限截到 512KiB', bigFile.body.text.length, 512 * 1024)
+    eq('file 超限仍回真实 size', bigFile.body.size, bigText.length)
+
+    const missingFile = await request(server.base, '/file?path=' + encodeURIComponent(path.join(fileDir, 'nope.md')))
+    eq('file 不存在 → 404', missingFile.status, 404)
+    eq('file 不存在文案', missingFile.body.error, 'no such file')
+    const dirAsFile = await request(server.base, '/file?path=' + encodeURIComponent(fileDir))
+    eq('file 目录 → 400', dirAsFile.status, 400)
+    eq('file 目录文案', dirAsFile.body.error, 'not a file')
+    const noPath = await request(server.base, '/file')
+    eq('file 缺 path → 400', noPath.status, 400)
+    eq('file 缺 path 文案', noPath.body.error, 'path required')
+
+    // 相对路径与 ~ 都按 workspace 解析：与 /files 的 dir 同一套规则。
+    const relFileServer = await makeServer({ workspacePath: () => tmp })
+    try {
+      const relFile = await request(relFileServer.base, '/file?path=preview/note.md')
+      eq('file 相对路径按 workspace 解析', relFile.body.path, path.join(fileDir, 'note.md'))
+    } finally {
+      await relFileServer.close()
+    }
+
+    // 3.7c /reveal（助手回复里文件标签的右键 → 在资源管理器里定位）
+    //
+    // 为什么单独测：这条路的默认实现会真的弹出资源管理器窗口，测试必须能注入
+    // deps.revealPath 换成桩；同时 404 / 400 两条失败路径也要断言 —— 静默失败
+    // 会让用户以为右键坏了，那正是这类「副作用型接口」最典型的回归。
+    const revealCalls = []
+    const revealServer = await makeServer({ revealPath: async target => { revealCalls.push(target) } })
+    try {
+      const revealed = await request(revealServer.base, '/reveal', { method: 'POST', body: { path: path.join(fileDir, 'note.md') } })
+      eq('reveal 200', revealed.status, 200)
+      eq('reveal ok', revealed.body.ok, true)
+      eq('reveal 回解析后的绝对路径', revealed.body.path, path.join(fileDir, 'note.md'))
+      eq('reveal 真的调了注入的实现', revealCalls.length, 1)
+      eq('reveal 传给实现的是绝对路径', revealCalls[0], path.join(fileDir, 'note.md'))
+
+      const noRevealPath = await request(revealServer.base, '/reveal', { method: 'POST', body: {} })
+      eq('reveal 缺 path → 400', noRevealPath.status, 400)
+      eq('reveal 缺 path 文案', noRevealPath.body.error, 'path required')
+
+      const notFoundServer = await makeServer({ revealPath: async () => { const e = new Error('spawn ENOENT'); e.code = 'ENOENT'; throw e } })
+      try {
+        const notFound = await request(notFoundServer.base, '/reveal', { method: 'POST', body: { path: path.join(fileDir, 'nope.md') } })
+        eq('reveal 目标不存在 → 404', notFound.status, 404)
+        eq('reveal 不存在文案', notFound.body.error, 'no such file')
+      } finally {
+        await notFoundServer.close()
+      }
+
+      // 相对路径按 workspace 解析：与 /files、/file 同一套规则。
+      const relRevealCalls = []
+      const relRevealServer = await makeServer({ workspacePath: () => tmp, revealPath: async target => { relRevealCalls.push(target) } })
+      try {
+        const relReveal = await request(relRevealServer.base, '/reveal', { method: 'POST', body: { path: 'preview/note.md' } })
+        eq('reveal 相对路径按 workspace 解析', relReveal.body.path, path.join(fileDir, 'note.md'))
+      } finally {
+        await relRevealServer.close()
+      }
+    } finally {
+      await revealServer.close()
+    }
     // 3.8 /directories（工作目录选择抽屉：只列子目录 + parent + writable）
     const dirsRoot = path.join(tmp, 'dirs')
     fs.mkdirSync(path.join(dirsRoot, 'zeta'), { recursive: true })

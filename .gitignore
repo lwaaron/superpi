@@ -8,6 +8,12 @@ research/all-files.txt
 research/probe-events.txt
 research/_ws.txt
 
+# 宿主 asar 里 vendor 进来的第三方渲染器打包产物（pdf.js 7.1MB + exceljs 7.0MB）。
+# 它们不是 DSH 客户端代码，只是被打包进 documentpreview 的依赖；本仓库只做 UI 取证，
+# 不需要把 14MB 上游 bundle 塞进版本库。需要时用 research/_extract-sidebar.mjs 重新导出。
+research/sidebar-pkgs/*.pdf.js
+research/sidebar-pkgs/*.excel.js
+
 node_modules/
 
 # 一键安装的 pi 运行时（npm install 落的 24MB，不进版本库）
