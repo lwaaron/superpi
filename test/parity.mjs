@@ -286,7 +286,7 @@ if (piDir === null) {
     if (stateBlock !== null) {
       const stateFields = interfaceFields(stateBlock)
       console.log('RpcSessionState 字段 =', stateFields.length, '个')
-      // docs/parity.md 的 D-07：get_state 没有 autoRetryEnabled，设置抽屉的自动重试开关无法回读。
+      // docs/parity.md 的 D-07：get_state 没有 autoRetryEnabled，设置弹窗（0.7.0 起是居中弹窗）的自动重试开关无法回读。
       check('已知缺口 D-07：RpcSessionState 仍无 autoRetryEnabled（若 pi 补了这个字段，这条会红，届时可闭环）', stateFields.includes('autoRetryEnabled') === false)
       check('RpcSessionState 仍提供 sessionFile（面板靠它判已落盘）', stateFields.includes('sessionFile') === true)
       check('RpcSessionState 仍提供 pendingMessageCount（状态栏排队计数）', stateFields.includes('pendingMessageCount') === true)
@@ -367,7 +367,10 @@ const chatTimeoutUses = clientSource.split('CHAT_TIMEOUT_MS').length - 1
 check('prompt / bash / follow_up 都用 CHAT_TIMEOUT_MS（实际 ' + String(chatTimeoutUses) + ' 处）', chatTimeoutUses >= 4)
 check('client.js 不再硬编码 600000 的超时', clientSource.includes('600000') === false)
 check('顶栏「新会话」走 runNewSession（与 /new 同一条路径）', inOrder(clientSource, ["t('newSessionHint')", 'onClick: runNewSession'], 120) === true)
-check('顶栏另有显式「重连」走 endSession（换子进程是恢复手段，不是新会话）', inOrder(clientSource, ["t('reconnectHint')", 'onClick: endSession'], 120) === true)
+// 0.7.0 起「重连」不在顶栏明面：它收进「更多」菜单，并且要先过二次确认才真的换子进程。
+// 断言拆成两段 —— 菜单项只负责 setConfirm('reconnect')，endSession 在确认分支里。
+check('「重连」收进更多菜单（菜单项只唤起确认，不直接换子进程）', inOrder(clientSource, ["t('reconnectHint')", "setConfirm('reconnect')"], 160) === true)
+check('二次确认之后才走 endSession（换子进程是恢复手段，不是新会话）', inOrder(clientSource, ["confirm === 'reconnect'", 'endSession()'], 400) === true)
 check('host 侧 /command 显式区分 timeoutMs=0（不被 falsy 吞成默认值）', hostSource.includes('timeoutMs: limit ?? 0') === true)
 check('host 侧把 timeoutMs 从 pi 命令载荷里剥掉（RpcCommand 无此字段）', hostSource.includes('delete command.timeoutMs') === true)
 check('pi-rpc 的 send 支持「不设上限」（limitMs === null 时不起 timer）', hostSource.includes('if (limitMs !== null) waiter.timer = this.armTimer') === true)

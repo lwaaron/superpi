@@ -602,6 +602,189 @@ try {
     eq('POST /sessions body 透传给 spawnSession', calls.spawn.at(-1), { cwd: 'C:/work' })
     check('POST /sessions 返回 session 对象', typeof created.body.session === 'object' && created.body.session !== null)
 
+    // 3.12 面板偏好（项目重命名 / 会话置顶）
+    // 这两件事都没有 pi 通道：set_session_name 改的是单个会话的 session_info，
+    // 改不了项目层；置顶纯属面板概念。所以必须由 host 落盘，这里逐条钉死语义。
+    const uiPrefsMod = await import(pathToFileURL(path.join(root, 'src/ui-prefs.mjs')).href)
+    const prefsFile = path.join(tmp, 'prefs', 'ui-prefs.json')
+    const prefsDir = path.dirname(prefsFile)
+    const prefsServer = await makeServer({ uiPrefs: uiPrefsMod.createUiPrefsStore({ filePath: prefsFile }) })
+    try {
+      // 3.12.1 三条路由存在，且方法不匹配时走既有的 404 约定（不是 405）。
+      const emptyPrefs = await request(prefsServer.base, '/ui-prefs')
+      eq('ui-prefs GET 200（文件还不存在也照常返回）', emptyPrefs.status, 200)
+      eq('ui-prefs GET 空文件回落成空结构', emptyPrefs.body, { version: 1, updatedAt: emptyPrefs.body.updatedAt, projects: {}, sessions: {} })
+      check('ui-prefs GET updatedAt 是 ISO 时间', typeof emptyPrefs.body.updatedAt === 'string' && !Number.isNaN(Date.parse(emptyPrefs.body.updatedAt)), String(emptyPrefs.body.updatedAt))
+      eq('ui-prefs/project 用 GET → 404', (await request(prefsServer.base, '/ui-prefs/project')).status, 404)
+      eq('ui-prefs/session 用 GET → 404', (await request(prefsServer.base, '/ui-prefs/session')).status, 404)
+      eq('ui-prefs 用 POST → 404（只有 /ui-prefs 能 GET）', (await request(prefsServer.base, '/ui-prefs', { method: 'POST', body: {} })).status, 404)
+
+      // 3.12.2 project 写入 → GET 可见（全量返回，不是增量）。
+      const renamed = await request(prefsServer.base, '/ui-prefs/project', { method: 'POST', body: { key: 'c:\\work', name: '  我的项目  ' } })
+      eq('ui-prefs/project 写入 200', renamed.status, 200)
+      eq('ui-prefs/project 名字已 trim', renamed.body.projects['c:\\work'].name, '我的项目')
+      const afterRename = await request(prefsServer.base, '/ui-prefs')
+      eq('ui-prefs GET 能看到刚写的项目名', afterRename.body.projects['c:\\work'].name, '我的项目')
+      check('ui-prefs 条目带 createdAt/updatedAt', typeof afterRename.body.projects['c:\\work'].createdAt === 'string' && typeof afterRename.body.projects['c:\\work'].updatedAt === 'string')
+
+      // 3.12.3 createdAt 首次创建后不再变（本仓库的强制约定，客户端拿它做稳定排序键）。
+      const firstCreatedAt = afterRename.body.projects['c:\\work'].createdAt
+      await new Promise(done => setTimeout(done, 10))
+      const renamedAgain = await request(prefsServer.base, '/ui-prefs/project', { method: 'POST', body: { key: 'c:\\work', name: '改名了' } })
+      eq('ui-prefs/project 二次改名生效', renamedAgain.body.projects['c:\\work'].name, '改名了')
+      eq('ui-prefs createdAt 二次更新后不变', renamedAgain.body.projects['c:\\work'].createdAt, firstCreatedAt)
+      check('ui-prefs updatedAt 二次更新后刷新', renamedAgain.body.projects['c:\\work'].updatedAt !== firstCreatedAt, JSON.stringify(renamedAgain.body.projects))
+
+      // 3.12.4 name === '' 删除覆盖（不是存一个空名字）。
+      const cleared = await request(prefsServer.base, '/ui-prefs/project', { method: 'POST', body: { key: 'c:\\work', name: '' } })
+      eq('ui-prefs/project name:"" 删除覆盖', cleared.body.projects, {})
+
+      // 3.12.5 入参校验：key 缺 / name 非字符串 / name 过长，全是 400。
+      eq('ui-prefs/project key 缺 → 400', (await request(prefsServer.base, '/ui-prefs/project', { method: 'POST', body: { name: 'x' } })).status, 400)
+      eq('ui-prefs/project key 空串 → 400', (await request(prefsServer.base, '/ui-prefs/project', { method: 'POST', body: { key: '   ', name: 'x' } })).status, 400)
+      eq('ui-prefs/project name 非字符串 → 400', (await request(prefsServer.base, '/ui-prefs/project', { method: 'POST', body: { key: 'k', name: 42 } })).status, 400)
+      eq('ui-prefs/project name 121 字 → 400', (await request(prefsServer.base, '/ui-prefs/project', { method: 'POST', body: { key: 'k', name: 'x'.repeat(121) } })).status, 400)
+      eq('ui-prefs/project name 恰好 120 字 → 200', (await request(prefsServer.base, '/ui-prefs/project', { method: 'POST', body: { key: 'k', name: 'x'.repeat(120) } })).status, 200)
+      eq('ui-prefs/project 未知键一个都不留（白名单）', (await request(prefsServer.base, '/ui-prefs/project', { method: 'POST', body: { key: 'k2', name: 'n', junk: 'v' } })).body.projects.k2, { name: 'n', createdAt: (await request(prefsServer.base, '/ui-prefs')).body.projects.k2.createdAt, updatedAt: (await request(prefsServer.base, '/ui-prefs')).body.projects.k2.updatedAt })
+
+      // 3.12.6 session 置顶：写入 / 删除 / 类型校验。
+      const pinned = await request(prefsServer.base, '/ui-prefs/session', { method: 'POST', body: { path: 'C:\\sessions\\a.jsonl', pinned: true } })
+      eq('ui-prefs/session 置顶 200', pinned.status, 200)
+      eq('ui-prefs/session 置顶写入', pinned.body.sessions['C:\\sessions\\a.jsonl'].pinned, true)
+      check('ui-prefs/session 置顶带 createdAt', typeof pinned.body.sessions['C:\\sessions\\a.jsonl'].createdAt === 'string')
+      const pinnedAgain = await request(prefsServer.base, '/ui-prefs/session', { method: 'POST', body: { path: 'C:\\sessions\\a.jsonl', pinned: true } })
+      eq('ui-prefs/session 重复置顶幂等', pinnedAgain.body.sessions['C:\\sessions\\a.jsonl'].createdAt, pinned.body.sessions['C:\\sessions\\a.jsonl'].createdAt)
+      const unpinned = await request(prefsServer.base, '/ui-prefs/session', { method: 'POST', body: { path: 'C:\\sessions\\a.jsonl', pinned: false } })
+      eq('ui-prefs/session pinned:false 删除该条', unpinned.body.sessions, {})
+      eq('ui-prefs/session path 缺 → 400', (await request(prefsServer.base, '/ui-prefs/session', { method: 'POST', body: { pinned: true } })).status, 400)
+      eq('ui-prefs/session pinned 非布尔 → 400', (await request(prefsServer.base, '/ui-prefs/session', { method: 'POST', body: { path: 'p', pinned: 'yes' } })).status, 400)
+      eq('ui-prefs/session path 超 4096 → 400', (await request(prefsServer.base, '/ui-prefs/session', { method: 'POST', body: { path: 'p'.repeat(4097), pinned: true } })).status, 400)
+
+      // 3.12.6b 路由层必须走合并语义（setSession），不是只有一个 pinned 参数的旧入口：
+      // 面板上「重命名会话」与「置顶会话」是两个独立动作，各自只提交自己那个字段。
+      const namedOnly = await request(prefsServer.base, '/ui-prefs/session', { method: 'POST', body: { path: 'C:\\sessions\\m.jsonl', name: '  改过的名字  ' } })
+      eq('ui-prefs/session 只给 name → 200', namedOnly.status, 200)
+      eq('ui-prefs/session 只给 name 时名字已 trim', namedOnly.body.sessions['C:\\sessions\\m.jsonl'].name, '改过的名字')
+      eq('ui-prefs/session 只给 name 不许凭空置顶', namedOnly.body.sessions['C:\\sessions\\m.jsonl'].pinned, undefined)
+      const pinAfterName = await request(prefsServer.base, '/ui-prefs/session', { method: 'POST', body: { path: 'C:\\sessions\\m.jsonl', pinned: true } })
+      eq('ui-prefs/session 只给 pinned 时保留已有名字', pinAfterName.body.sessions['C:\\sessions\\m.jsonl'].name, '改过的名字')
+      eq('ui-prefs/session 只给 pinned 时置顶生效', pinAfterName.body.sessions['C:\\sessions\\m.jsonl'].pinned, true)
+      const clearName = await request(prefsServer.base, '/ui-prefs/session', { method: 'POST', body: { path: 'C:\\sessions\\m.jsonl', name: '' } })
+      eq('ui-prefs/session name:"" 清掉名字', clearName.body.sessions['C:\\sessions\\m.jsonl'].name, undefined)
+      eq('ui-prefs/session 清名字不动置顶', clearName.body.sessions['C:\\sessions\\m.jsonl'].pinned, true)
+      const dropAll = await request(prefsServer.base, '/ui-prefs/session', { method: 'POST', body: { path: 'C:\\sessions\\m.jsonl', pinned: false } })
+      eq('ui-prefs/session 名字与置顶都没了就删整条', dropAll.body.sessions, {})
+      eq('ui-prefs/session name 与 pinned 同给 → 200', (await request(prefsServer.base, '/ui-prefs/session', { method: 'POST', body: { path: 'C:\\sessions\\b.jsonl', pinned: true, name: '双给' } })).status, 200)
+      eq('ui-prefs/session 空 body 其余 → 400（至少给一个字段）', (await request(prefsServer.base, '/ui-prefs/session', { method: 'POST', body: { path: 'C:\\sessions\\b.jsonl' } })).status, 400)
+      eq('ui-prefs/session name 非字符串 → 400', (await request(prefsServer.base, '/ui-prefs/session', { method: 'POST', body: { path: 'C:\\sessions\\b.jsonl', name: 7 } })).status, 400)
+      eq('ui-prefs/session name 超 120 → 400', (await request(prefsServer.base, '/ui-prefs/session', { method: 'POST', body: { path: 'C:\\sessions\\b.jsonl', name: 'x'.repeat(121) } })).status, 400)
+      // 上面写的 C:\\sessions\\b.jsonl 要在进入 3.12.7 之前清干净（那里断言的是整文件回落）。
+      eq('ui-prefs/session 收尾清空（名字与置顶一起撤）', (await request(prefsServer.base, '/ui-prefs/session', { method: 'POST', body: { path: 'C:\\sessions\\b.jsonl', pinned: false, name: '' } })).body.sessions, {})
+
+      // 3.12.7 坏文件容错：手改坏了也不能把面板拖死（回空结构，绝不 500）。
+      fs.mkdirSync(prefsDir, { recursive: true })
+      fs.writeFileSync(prefsFile, '{ this is not json', 'utf8')
+      const broken = await request(prefsServer.base, '/ui-prefs')
+      eq('ui-prefs 坏 JSON → 200 空结构（不抛）', broken.status, 200)
+      eq('ui-prefs 坏 JSON 回落内容', broken.body, { version: 1, updatedAt: broken.body.updatedAt, projects: {}, sessions: {} })
+      // 结构不对（写成了数组 / 字段类型乱来）也要被修剪掉。
+      fs.writeFileSync(prefsFile, JSON.stringify({ version: 99, projects: { good: { name: 'ok' }, bad: { name: 5 }, '': { name: 'x' } }, sessions: { s1: { pinned: false }, s2: { pinned: true } } }), 'utf8')
+      const pruned = await request(prefsServer.base, '/ui-prefs')
+      eq('ui-prefs 结构不对只留合法条目', Object.keys(pruned.body.projects), ['good'])
+      eq('ui-prefs 缺 createdAt 时补一个', typeof pruned.body.projects.good.createdAt, 'string')
+      eq('ui-prefs pinned:false 的脏条目被丢弃', Object.keys(pruned.body.sessions), ['s2'])
+      eq('ui-prefs version 强制回 1', pruned.body.version, 1)
+
+      // 3.12.8 原子写：落盘后目录里不许残留 .tmp-*（半截文件攒多了迟早被误读）。
+      const written = await request(prefsServer.base, '/ui-prefs/project', { method: 'POST', body: { key: 'atomic', name: 'A' } })
+      eq('ui-prefs 原子写 200', written.status, 200)
+      eq('ui-prefs 原子写无 .tmp 残留', fs.readdirSync(prefsDir).filter(name => name.indexOf('.tmp-') !== -1), [])
+      eq('ui-prefs 落盘文件就是那一个', fs.readdirSync(prefsDir), ['ui-prefs.json'])
+      check('ui-prefs 落盘内容可解析', (() => { try { return JSON.parse(fs.readFileSync(prefsFile, 'utf8')).projects.atomic.name === 'A' } catch { return false } })())
+
+      // 3.12.9 并发两个 POST 不许交错坏文件（队列串行化 + rename 原子性）。
+      await Promise.all([
+        request(prefsServer.base, '/ui-prefs/project', { method: 'POST', body: { key: 'p1', name: 'P1' } }),
+        request(prefsServer.base, '/ui-prefs/project', { method: 'POST', body: { key: 'p2', name: 'P2' } }),
+        request(prefsServer.base, '/ui-prefs/session', { method: 'POST', body: { path: 'C:\\s\\c.jsonl', pinned: true } }),
+      ])
+      const afterConcurrent = await request(prefsServer.base, '/ui-prefs')
+      eq('ui-prefs 并发写不丢更新（1/2）', Object.keys(afterConcurrent.body.projects).sort(), ['atomic', 'good', 'p1', 'p2'])
+      eq('ui-prefs 并发写不丢更新（2/2）', Object.keys(afterConcurrent.body.sessions).sort(), ['C:\\s\\c.jsonl', 's2'])
+      eq('ui-prefs 并发后仍无 .tmp 残留', fs.readdirSync(prefsDir).filter(name => name.indexOf('.tmp-') !== -1), [])
+
+      // 3.12.10 不注入 store 时回 501，而不是静默 200 空值（客户端会以为「没偏好」）。
+      const noPrefs = await makeServer({ uiPrefs: undefined })
+      try {
+        eq('ui-prefs 未注入 store → 501', (await request(noPrefs.base, '/ui-prefs')).status, 501)
+      } finally {
+        await noPrefs.close()
+      }
+    } finally {
+      await prefsServer.close()
+    }
+
+    // 3.13 会话条目的合并语义（setSession：显示名 + 置顶两个独立偏好）
+    // 这一段直接打 store 而不是走 HTTP：显示名的路由接线在 index.js 里（本文件的
+    // 写作用域不含它），把语义钉在 store 层才不会被那一层的形状绑死。
+    const sessionPrefsFile = path.join(tmp, 'prefs-session', 'ui-prefs.json')
+    const sessionStore = uiPrefsMod.createUiPrefsStore({ filePath: sessionPrefsFile })
+    const namedPath = 'C:\\sessions\\named.jsonl'
+    /** 断言「这个 Promise 必须以指定文案 reject」——入参校验是 Promise 语义的一部分。 */
+    const rejectsWith = async (name, task, expected) => {
+      try {
+        await task
+        check(name, false, 'expected rejection')
+      } catch (error) {
+        check(name, error?.message === expected, 'got ' + String(error?.message))
+      }
+    }
+    // 3.13.1 只写名字：条目里有 name、没有 pinned 字段（「未置顶」的表达就是没有该字段）。
+    const nameOnly = await sessionStore.setSession(namedPath, { name: '  我的会话  ' })
+    eq('setSession 只写 name 时 name 已 trim', nameOnly.sessions[namedPath].name, '我的会话')
+    check('setSession 只写 name 时不落 pinned 字段', Object.prototype.hasOwnProperty.call(nameOnly.sessions[namedPath], 'pinned') === false, JSON.stringify(nameOnly.sessions[namedPath]))
+    check('setSession 新条目带 createdAt/updatedAt', typeof nameOnly.sessions[namedPath].createdAt === 'string' && typeof nameOnly.sessions[namedPath].updatedAt === 'string')
+    const namedCreatedAt = nameOnly.sessions[namedPath].createdAt
+    // 3.13.2 再加置顶：pinned===true 且名字保留（合并，不是覆盖整条）。
+    const pinnedWithName = await sessionStore.setSession(namedPath, { pinned: true })
+    eq('setSession 补 pinned 后 pinned===true', pinnedWithName.sessions[namedPath].pinned, true)
+    eq('setSession 补 pinned 后 name 保留', pinnedWithName.sessions[namedPath].name, '我的会话')
+    eq('setSession 合并写入不改 createdAt', pinnedWithName.sessions[namedPath].createdAt, namedCreatedAt)
+    // 3.13.3 取消置顶：name 仍保留（这一条是最容易写错的：删 pinned 不等于删整条）。
+    const unpinnedKeepName = await sessionStore.setSession(namedPath, { pinned: false })
+    eq('setSession 取消置顶后 name 仍保留', unpinnedKeepName.sessions[namedPath].name, '我的会话')
+    check('setSession 取消置顶后不落 pinned 字段', Object.prototype.hasOwnProperty.call(unpinnedKeepName.sessions[namedPath], 'pinned') === false, JSON.stringify(unpinnedKeepName.sessions[namedPath]))
+    // 3.13.4 清名字且本来就没置顶 → 条目整条删除（空壳条目没有语义）。
+    const clearedName = await sessionStore.setSession(namedPath, { name: '' })
+    check('setSession name:"" 且未置顶 → 删除条目', Object.prototype.hasOwnProperty.call(clearedName.sessions, namedPath) === false, JSON.stringify(clearedName.sessions))
+    // 3.13.5 一个字段都没给 → 400 文案（客户端漏传时能一眼看出缺什么）。
+    await rejectsWith('setSession 空补丁 → body requires a boolean pinned or a string name', sessionStore.setSession(namedPath, {}), 'body requires a boolean pinned or a string name')
+    await rejectsWith('setSession 不给补丁 → 同样 400', sessionStore.setSession(namedPath), 'body requires a boolean pinned or a string name')
+    // 3.13.6 name 长度上限与 project 一致（同一条上限，避免两个字段的规则分叉）。
+    await rejectsWith('setSession name 121 字 → name too long (max 120)', sessionStore.setSession(namedPath, { name: 'x'.repeat(121) }), 'name too long (max 120)')
+    await rejectsWith('setSession name 非字符串 → body requires a string name', sessionStore.setSession(namedPath, { name: 42 }), 'body requires a string name')
+    // 3.13.7 老格式文件（只有 pinned:true、没有 name）必须能正常读出来，name 为 undefined。
+    fs.mkdirSync(path.dirname(sessionPrefsFile), { recursive: true })
+    fs.writeFileSync(sessionPrefsFile, JSON.stringify({
+      version: 1,
+      updatedAt: '2026-01-01T00:00:00.000Z',
+      projects: {},
+      sessions: { 'C:\\old\\pinned.jsonl': { pinned: true, createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-02T00:00:00.000Z' } },
+    }), 'utf8')
+    const legacy = await sessionStore.read()
+    eq('老格式文件 pinned 读出为 true', legacy.sessions['C:\\old\\pinned.jsonl'].pinned, true)
+    check('老格式文件没有 name 字段（name 读出为 undefined，不是空串）', Object.prototype.hasOwnProperty.call(legacy.sessions['C:\\old\\pinned.jsonl'], 'name') === false && legacy.sessions['C:\\old\\pinned.jsonl'].name === undefined, JSON.stringify(legacy.sessions))
+    eq('老格式文件 createdAt 原样保留', legacy.sessions['C:\\old\\pinned.jsonl'].createdAt, '2026-01-01T00:00:00.000Z')
+    // 3.13.8 非法 name 只丢 name、保留 pinned（旧版本/手改写进的脏名字不该连置顶一起丢）。
+    fs.writeFileSync(sessionPrefsFile, JSON.stringify({
+      version: 1,
+      updatedAt: '2026-01-01T00:00:00.000Z',
+      projects: {},
+      sessions: { 'C:\\bad\\name.jsonl': { pinned: true, name: 'x'.repeat(121), createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' } },
+    }), 'utf8')
+    const dirtyName = await sessionStore.read()
+    eq('脏 name（超长）被丢弃但 pinned 保留', dirtyName.sessions['C:\\bad\\name.jsonl'], { pinned: true, createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' })
+
     // 3.11 未知路由仍 404
     const unknown = await request(server.base, '/nope')
     eq('未知路由 404', unknown.status, 404)

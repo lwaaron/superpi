@@ -34,7 +34,7 @@ window.__ModuleLoader__.load({
 
     // ── 文案（zh / en 必须键集一致，test/client-render.mjs 会断言）─────────────
     var ZH = {
-      panelTitle: 'pi',
+      panelTitle: 'SuperPi',
       newSession: '新会话',
       newSessionHint: '新会话（等价于命令行 pi 的 /new：同一进程内换一棵会话树）',
       reconnectHint: '重连（关掉 pi 子进程再起一个；会话记录不丢）',
@@ -179,8 +179,6 @@ window.__ModuleLoader__.load({
       loginHint: '请在你的浏览器中完成登录，完成后回到这里',
       followUpSend: '排队（follow_up）',
       dequeued: '已把排队消息取回输入框',
-      nextModel: '下一个模型',
-      nextThinking: '下一个思考档位',
       pickDir: '选择工作区',
       dirTitle: '选择工作区',
       dirHint: '单击选中、双击进入；不存在的路径在开新会话时自动创建',
@@ -192,7 +190,6 @@ window.__ModuleLoader__.load({
       dirPickDrive: '选一个盘符进入；双击可直接打开',
       dirHere: '用这个工作区',
       dirNotWritable: '这个目录不可写',
-      dirMissing: '目录还不存在，开会话时会自动创建',
       dirSwitched: '已在新工作区开会话',
       dirInputHint: '输入绝对路径后回车',
       dirPickMark: '已选中',
@@ -235,9 +232,30 @@ window.__ModuleLoader__.load({
       footerSteps: '{n} 步',
       footerCache: '缓存命中 {pct}%',
       footerTokens: '{n} tok',
+      // 顶栏「更多」与两个自造弹层的文案（用户 30427）。
+      moreActions: '更多操作',
+      pickModel: '切换模型',
+      pickThinking: '思考档位',
+      confirmCompact: '压缩上下文？',
+      confirmCompactBody: '把当前会话的上下文压成摘要，之后仍可继续对话。',
+      confirmReconnect: '重新连接？',
+      confirmReconnectBody: '会关掉 pi 子进程再起一个；会话记录留在磁盘上，但正在进行的一轮会中断。',
+      // 历史会话两级列表（项目层 → 会话层）的文案。
+      projectList: '项目列表',
+      searchProjects: '搜索项目',
+      searchSessions: '搜索会话',
+      newProject: '新建项目',
+      newProjectHint: '选一个工作区，并在那里开一个新会话',
+      renameProject: '重命名项目',
+      renameSession: '重命名会话',
+      pinSession: '置顶',
+      unpinSession: '取消置顶',
+      newSessionHere: '在此新建会话',
+      renamePrompt: '输入新名称',
+      sessionFallbackTitle: '未命名会话',
     }
     var EN = {
-      panelTitle: 'pi',
+      panelTitle: 'SuperPi',
       newSession: 'New session',
       newSessionHint: 'New session (same as /new: a fresh session tree in the same process)',
       reconnectHint: 'Reconnect (restart the pi child process; the session files stay)',
@@ -381,8 +399,6 @@ window.__ModuleLoader__.load({
       loginHint: 'Finish signing in with your browser, then come back here',
       followUpSend: 'Queue (follow_up)',
       dequeued: 'Queued messages restored to the editor',
-      nextModel: 'Next model',
-      nextThinking: 'Next thinking level',
       pickDir: 'Choose workspace',
       dirTitle: 'Choose workspace',
       dirHint: 'Click to select, double-click to enter; a missing path is created when the session starts',
@@ -394,7 +410,6 @@ window.__ModuleLoader__.load({
       dirPickDrive: 'Pick a drive; double-click to open it',
       dirHere: 'Use this workspace',
       dirNotWritable: 'This directory is not writable',
-      dirMissing: 'This directory does not exist yet — it will be created',
       dirSwitched: 'Started a session in the new workspace',
       dirInputHint: 'Type an absolute path and press Enter',
       dirPickMark: 'selected',
@@ -437,6 +452,25 @@ window.__ModuleLoader__.load({
       footerSteps: '{n} steps',
       footerCache: 'cache {pct}%',
       footerTokens: '{n} tok',
+      moreActions: 'More actions',
+      pickModel: 'Switch model',
+      pickThinking: 'Reasoning effort',
+      confirmCompact: 'Compact context?',
+      confirmCompactBody: 'Compress this conversation into a summary. You can keep talking afterwards.',
+      confirmReconnect: 'Reconnect?',
+      confirmReconnectBody: 'Stops the pi subprocess and starts a new one. Session history stays on disk; a running turn is interrupted.',
+      projectList: 'Projects',
+      searchProjects: 'Search projects',
+      searchSessions: 'Search sessions',
+      newProject: 'New project',
+      newProjectHint: 'Pick a workspace and start a new session there',
+      renameProject: 'Rename project',
+      renameSession: 'Rename session',
+      pinSession: 'Pin',
+      unpinSession: 'Unpin',
+      newSessionHere: 'New session here',
+      renamePrompt: 'Enter a new name',
+      sessionFallbackTitle: 'Untitled session',
     }
 
     // ── 样式（只用 --dsw-* 变量；类名统一 .dsh-pi- 前缀）──────────────────────
@@ -518,6 +552,13 @@ window.__ModuleLoader__.load({
       // 框套框的噪音墙（用户 18994 明确要求去掉圆角框），DSH 自己也是平铺行。
       // 层级靠缩进表达：模型「想了什么」是父行，它「做了什么」缩进成子行并带一条
       // 左侧竖线 —— 与 DSH 的 tool 行 + 嵌套子行同构。展开区沿用同一条竖线语言。
+      // 行节奏按参考截图逐像素反推。先把参考图里被「1px 点线下划线」切出来的细带并回各自
+      // 的行（那几处 h2 的带子是路径下划线，不是独立行），实测结果是：父→父 40 图 px、
+      // 父→首个子行 40、子→子 40、子行组→下一父行 44 —— 父子节奏一致，不存在「子行比父行
+      // 紧一半」。早先把下划线当成行，才算出 32:16 这个错结论。
+      // 比例尺用 CJK 字形 ink 高校准：参考图 label ink 17-18 图 px，本文件 13px 字号的 ink
+      // 是 13-14 css px，故 ≈1.3；40 图 px ÷ 1.3 ≈ 31 css，本文件父行步长 = 24 行盒 + body
+      // 的 8px gap = 32，两者对齐，因此子行也走同一节奏（见 .dsh-pi-sub 的 gap 与行盒）。
       '.dsh-pi-proc{border:0;border-radius:0;background:transparent;box-shadow:none;display:block;min-width:0}',
       '.dsh-pi-tool{border:0;border-radius:0;background:transparent;box-shadow:none;display:block;min-width:0}',
       '.dsh-pi-proc-head,.dsh-pi-tool-head{display:flex;align-items:center;min-width:0;list-style:none;cursor:pointer;font-size:var(--dsh-content-font-size-secondary,13px);line-height:calc(24px + var(--dsh-content-font-delta,0px));color:var(--dsw-alias-label-tertiary)}',
@@ -526,9 +567,12 @@ window.__ModuleLoader__.load({
       // 悬停只提亮文字，不铺底色 —— 没有外框时铺底色会露出一块矩形色斑。
       '.dsh-pi-proc-head:hover .dsh-pi-proc-text,.dsh-pi-proc-head:hover .dsh-pi-proc-label,.dsh-pi-proc-head:hover .dsh-pi-proc-path,.dsh-pi-tool-head:hover .dsh-pi-proc-text,.dsh-pi-tool-head:hover .dsh-pi-proc-label,.dsh-pi-tool-head:hover .dsh-pi-proc-path{color:var(--dsw-alias-label-primary)}',
       '.dsh-pi-proc-head:focus-visible,.dsh-pi-tool-head:focus-visible{outline:var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary));outline-offset:2px}',
-      '.dsh-pi-proc-icon{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;width:16px;height:16px;margin-right:7px;color:var(--dsw-alias-label-tertiary)}',
+      '.dsh-pi-proc-icon{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;width:16px;height:16px;margin-right:11px;color:var(--dsw-alias-label-tertiary)}',
       '.dsh-pi-proc-label{flex:0 0 auto;font-weight:400;white-space:nowrap;color:var(--dsw-alias-label-tertiary)}',
-      '.dsh-pi-sep{flex:0 0 auto;width:2px;height:2px;margin:0 8px;border-radius:1px;background:var(--dsw-alias-label-caption)}',
+      // 行内三段间距统一 11：图标→label（见上一行 margin-right）、label→圆点、圆点→摘要。
+      // 参考图里这三段是 15 / 14 / 15 图 px，几乎等宽 —— 等宽才是「整齐」的来源；
+      // 11 css 由 CJK 字形 ink 宽 16 图 px = 13 css 定出比例尺 ≈1.23 换算而来。
+      '.dsh-pi-sep{flex:0 0 auto;width:2px;height:2px;margin:0 11px;border-radius:1px;background:var(--dsw-alias-label-caption)}',
       '.dsh-pi-proc-text{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-tertiary)}',
       '.dsh-pi-proc-text[data-tone="err"]{color:var(--dsw-alias-state-error-primary)}',
       '.dsh-pi-proc-text[data-tone="warn"]{color:var(--dsw-alias-state-warn-primary)}',
@@ -538,10 +582,16 @@ window.__ModuleLoader__.load({
       // 可点路径：DSH 用 1px 点线下划线 + 3px 偏移，颜色与正文一致，不额外染色。
       '.dsh-pi-proc-path{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin:0;padding:0;border:0;background:0 0;color:inherit;font:inherit;line-height:inherit;text-align:left;text-decoration:underline 1px dotted;text-underline-offset:3px;cursor:pointer}',
       '.dsh-pi-proc[data-state="running"] .dsh-pi-sep,.dsh-pi-tool[data-state="running"] .dsh-pi-sep{background:var(--dsw-alias-state-business-primary);animation:dsh-pi-pulse 1.2s ease-in-out infinite}',
-      // 子行组：模型「做了什么」缩进到父行图标列之后，靠一条左侧竖线归组。
-      '.dsh-pi-sub{display:flex;flex-direction:column;gap:2px;margin:2px 0 0 22px;padding:1px 0 1px 8px;border-left:1px solid var(--dsw-alias-border-l3)}',
+      // 子行组：模型「做了什么」缩进成一组，靠一条左侧竖线归组。
+      // 横向：margin-left 26 让竖线落在父行 label 左缘（图标 16 + margin-right 11 = 27，差 1 是给
+      // 1px 描边的亚像素让位），padding-left 12 让子行图标距竖线 12（≈参考图 15 图 px ÷ 1.23）；
+      // 于是子行图标相对父行整体右移 38，与参考图的 46 图 px ÷ 1.23 ≈ 37 同量级。
+      // 纵向：组内 gap 与 body 一样是 8、行盒沿用父行的 24 ⇒ 子行步长 32，与父行完全同节奏；
+      // 上下 padding 归零，使「父行→首个子行」和「组末→下一父行」也是 32，整段过程流是一张
+      // 均匀的网格。早先子行压到 16px 行盒 + gap 0，行距只剩父行一半，看着像被挤扁。
+      '.dsh-pi-sub{display:flex;flex-direction:column;gap:8px;margin:0 0 0 26px;padding:0 0 0 12px;border-left:1px solid var(--dsw-alias-border-l3)}',
       // 展开区：与图标列对齐的 22px 缩进 + 左侧竖线，和 DSH 折叠体同一套语言。
-      '.dsh-pi-proc-body{margin:2px 0 2px 22px;padding:0 0 0 14px;border-left:1px solid var(--dsw-alias-border-l3);white-space:pre-wrap;word-break:break-word;color:var(--dsw-alias-label-tertiary);line-height:calc(22px + var(--dsh-content-font-delta,0px))}',
+      '.dsh-pi-proc-body{margin:2px 0 2px 26px;padding:0 0 0 14px;border-left:1px solid var(--dsw-alias-border-l3);white-space:pre-wrap;word-break:break-word;color:var(--dsw-alias-label-tertiary);line-height:calc(22px + var(--dsh-content-font-delta,0px))}',
       '.dsh-pi-tool-body{margin:2px 0 4px;padding:0 0 0 14px;border-top:0;border-left:1px solid var(--dsw-alias-border-l3);max-height:340px;overflow:auto;font-family:var(--ds-font-family-code,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace);font-size:var(--dsw-font-xxxs-11-font-size);line-height:18px;white-space:pre-wrap;word-break:break-word;color:var(--dsw-alias-label-secondary)}',
       // 底部「正在生成」行：DSH 在过程流末尾放一条极淡横线 + 一行状态。
       // 颜色 / 字号 / 行高一律取 DSH running 行（ChatView.module.css）的原式：
@@ -620,11 +670,10 @@ window.__ModuleLoader__.load({
       '.dsh-pi-picker:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover-solid)}',
       '.dsh-pi-picker:disabled{opacity:.5;cursor:not-allowed}',
       '.dsh-pi-picker-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
-      // 推理档位用原生 select 叠在自绘外壳上：保留键盘可达与系统下拉，视觉仍是 picker。
-      '.dsh-pi-picker-wrap{position:relative;display:inline-flex;align-items:center;gap:4px;height:28px;padding:0 6px 0 8px;border-radius:var(--dsw-radius-sm);color:var(--dsw-alias-label-secondary);font-size:var(--dsw-font-xs-13-font-size);line-height:var(--dsw-font-xs-13-line-height);font-weight:500;transition:background-color .12s ease}',
-      '.dsh-pi-picker-wrap:hover{background:var(--dsw-alias-interactive-bg-hover-solid)}',
-      '.dsh-pi-picker-native{position:absolute;inset:0;width:100%;height:100%;border:0;padding:0;margin:0;opacity:0;cursor:pointer;font:inherit}',
-      '.dsh-pi-picker-label{min-width:0;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;pointer-events:none}',
+  // 档位按钮与模型按钮并排：两者外观同源（.dsh-pi-picker），档位那个只多一点左边距，
+  // 免得两个 28px 胶囊贴在一起看不出边界。
+  '.dsh-pi-picker-level{margin-left:2px;padding:0 6px 0 8px}',
+  '.dsh-pi-picker-label{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
       // 发送键：宿主 ._primary —— 34×34 圆形、info-fill 底、上移 2px。
       '.dsh-pi-send{flex:0 0 auto;display:grid;place-items:center;width:34px;height:34px;padding:0;border:0;border-radius:999px;background:var(--dsw-alias-button-info-fill);color:var(--dsw-alias-label-primary-foreground);cursor:pointer;transform:translateY(-2px);transition:background-color .1s ease}',
       '.dsh-pi-send:hover:not(:disabled){background:var(--dsw-alias-button-info-hover)}',
@@ -689,9 +738,13 @@ window.__ModuleLoader__.load({
       '.dsh-pi-sess[data-current="1"],.dsh-pi-proj[data-current="1"]{box-shadow:inset 0 0 0 .5px var(--dsw-alias-state-business-primary)}',
       '.dsh-pi-proj[data-temporary="1"] .dsh-pi-sess-title{color:var(--dsw-alias-label-secondary)}',
       '.dsh-pi-sess-top{display:flex;align-items:center;gap:6px;font-size:var(--dsw-font-xxs-12-font-size);line-height:var(--dsw-font-xxs-12-line-height);color:var(--dsw-alias-label-secondary)}',
+      // 会话数/标签不许换行：0.7.0 实拍里「1 个会话」被挤成两行（「话」掉到第二行），卡片从 60px 涨到 96px。
+      '.dsh-pi-sess-top > span{flex:0 0 auto;white-space:nowrap}',
       '.dsh-pi-sess-title{flex:1 1 auto;min-width:0;font-weight:500;color:var(--dsw-alias-label-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
       '.dsh-pi-sess-line{font-size:var(--dsw-font-xxs-12-font-size);line-height:var(--dsw-font-xxs-12-line-height);color:var(--dsw-alias-label-secondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
       '.dsh-pi-mono{font-family:var(--ds-font-family-code,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace);font-size:var(--dsw-font-xxxs-11-font-size);line-height:18px;color:var(--dsw-alias-label-tertiary);word-break:break-all}',
+      // 侧栏/侧栏式列表里的路径行只占一行：break-all 会让长路径折成两三行、把卡片高度撑到 96px。
+      '.dsh-pi-sess .dsh-pi-mono,.dsh-pi-proj .dsh-pi-mono{word-break:normal;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
       '.dsh-pi-kv{display:grid;grid-template-columns:auto 1fr;gap:6px 14px;font-size:var(--dsw-font-xxs-12-font-size);line-height:var(--dsw-font-xxs-12-line-height)}',
       '.dsh-pi-kv-k{color:var(--dsw-alias-label-tertiary)}',
       '.dsh-pi-kv-v{color:var(--dsw-alias-label-primary);word-break:break-word;font-variant-numeric:tabular-nums}',
@@ -753,7 +806,7 @@ window.__ModuleLoader__.load({
       '.dsh-pi-dialog-head .dsh-pi-btn-icon svg{width:16px;height:16px}',
       '.dsh-pi-dialog .dsh-pi-mono{margin:6px 24px 0}',
       '.dsh-pi-dialog-msg{margin:0;padding:10px 24px 0;color:var(--dsw-alias-label-secondary);font-size:var(--dsh-content-font-size,var(--dsw-font-s-14-font-size));line-height:calc(22px + var(--dsh-content-font-delta,0px));white-space:pre-wrap;word-break:break-word}',
-      '.dsh-pi-dialog-body{display:flex;flex-direction:column;gap:6px;min-height:0;overflow-y:auto;padding:14px 24px 0}',
+      '.dsh-pi-dialog-body{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;gap:6px;overflow-y:auto;padding:14px 24px 0}',
       '.dsh-pi-dialog-actions{display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap;padding:22px 24px 24px}',
       '.dsh-pi-opt{display:flex;align-items:center;gap:8px;width:100%;min-height:34px;padding:6px 10px;border:0;border-radius:var(--dsw-radius-md);background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-primary);font-family:inherit;font-size:var(--dsw-font-xs-13-font-size);line-height:var(--dsw-font-xs-13-line-height);text-align:left;cursor:pointer;transition:background-color .16s ease,box-shadow .16s ease}',
       '.dsh-pi-opt:hover{background:var(--dsw-alias-interactive-bg-hover)}',
@@ -766,6 +819,58 @@ window.__ModuleLoader__.load({
 
       // ── 动效偏好 ────────────────────────────────────────────────────────────
       '@media (prefers-reduced-motion: reduce){.dsh-pi-root *,.dsh-pi-root *::before,.dsh-pi-root *::after{animation-duration:.01ms !important;animation-iteration-count:1 !important;transition-duration:.01ms !important}}',
+      // 模型 / 推理档位合一弹层：点左下角模型名向上弹出，两段同屏（用户 30427）。
+      // 复用 .dsh-pi-menu 的底/阴影/毛玻璃，只改锚定与宽度。
+      '.dsh-pi-picker-box{position:relative;display:flex;align-items:center;min-width:0;flex:0 1 auto}',
+      '.dsh-pi-picker-menu{left:0;right:auto;bottom:calc(100% + 6px);min-width:260px;max-width:min(380px,calc(100vw - 48px))}',
+      '.dsh-pi-picker-sec{padding:8px 8px 4px;font-size:var(--dsw-font-xxxs-11-font-size);line-height:var(--dsw-font-xxxs-11-line-height);color:var(--dsw-alias-label-caption)}',
+      '.dsh-pi-picker-row{display:flex;align-items:center;gap:8px;width:100%;min-height:32px;padding:5px 8px;border:0;border-radius:var(--dsw-radius-md);background:transparent;color:var(--dsw-alias-label-primary);font-family:inherit;font-size:var(--dsw-font-xs-13-font-size);line-height:var(--dsw-font-xs-13-line-height);text-align:left;cursor:pointer}',
+      '.dsh-pi-picker-row:hover{background:var(--dsw-alias-interactive-bg-hover)}',
+      '.dsh-pi-picker-row[data-current="1"]{box-shadow:inset 0 0 0 .5px var(--dsw-alias-state-business-primary)}',
+      '.dsh-pi-picker-row-name{min-width:0;flex:1 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      '.dsh-pi-picker-row-sub{flex:0 0 auto;font-size:var(--dsw-font-xxxs-11-font-size);line-height:16px;color:var(--dsw-alias-label-tertiary)}',
+      '.dsh-pi-picker-empty{padding:10px 8px;font-size:var(--dsw-font-xxs-12-font-size);color:var(--dsw-alias-label-dimmed)}',
+
+      // 顶栏「更多」：与「+」菜单同一套面板配方，锚在按钮右下、向下展开。
+      '.dsh-pi-more-wrap{position:relative;display:flex}',
+      '.dsh-pi-more-menu{left:auto;right:0;top:calc(100% + 6px);bottom:auto;min-width:184px;max-width:min(260px,calc(100vw - 32px))}',
+      '.dsh-pi-more-item{display:flex;align-items:center;gap:8px;width:100%;min-height:32px;padding:6px 8px;border:0;border-radius:var(--dsw-radius-md);background:transparent;color:var(--dsw-alias-label-primary);font-family:inherit;font-size:var(--dsw-font-xs-13-font-size);line-height:var(--dsw-font-xs-13-line-height);text-align:left;cursor:pointer}',
+      '.dsh-pi-more-item:hover{background:var(--dsw-alias-interactive-bg-hover)}',
+      '.dsh-pi-more-icon{display:grid;place-items:center;flex:0 0 auto;width:16px;height:16px;color:var(--dsw-alias-label-secondary)}',
+
+      // 历史会话：从左侧滑出的侧栏（不再铺满面板）。
+      '.dsh-pi-side-wrap{position:absolute;inset:0;z-index:30;display:flex;background:var(--dsw-alias-bg-mask-1)}',
+      '.dsh-pi-side{display:flex;flex-direction:column;width:min(360px,86%);height:100%;background:var(--dsw-alias-bg-base);box-shadow:var(--dsw-elevation-panel);animation:dsh-pi-side-in .18s ease-out}',
+      '@keyframes dsh-pi-side-in{0%{transform:translateX(-100%)}to{transform:translateX(0)}}',
+      '.dsh-pi-side-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap;flex:0 0 auto;padding:12px 10px 12px 16px;border-bottom:.5px solid var(--dsw-alias-border-l2)}',
+      '.dsh-pi-side-title{flex:1 1 auto;min-width:0;font:var(--dsw-font-base-strong-16);color:var(--dsw-alias-label-primary)}',
+      '.dsh-pi-side-body{flex:1 1 auto;min-height:0;overflow-y:auto;padding:12px 14px 16px;display:flex;flex-direction:column;gap:8px}',
+      '.dsh-pi-side-head .dsh-pi-btn-icon{width:32px;height:32px;margin-right:-4px}',
+      '.dsh-pi-side-head .dsh-pi-btn-icon svg{width:16px;height:16px}',
+      '.dsh-pi-side-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;flex:0 0 auto;padding:0 16px 10px}',
+      '.dsh-pi-side-actions .dsh-pi-search{flex:1 1 auto;min-width:0}',
+
+      // 侧栏 + 行内 ⋯ 菜单（0.8.0）：宿主包一层是为了让「侧栏 + 重命名弹窗」能并存 ——
+      // RenameDialog 走 Dialog（position:absolute 相对最近的定位祖先），必须在同一层里挂。
+      '.dsh-pi-side-host{position:absolute;inset:0;z-index:30;display:flex}',
+      // 返回键在标题左侧：不能被右侧关闭键的 -4px 负边距规则带偏。
+      '.dsh-pi-side-head .dsh-pi-side-back{width:28px;height:28px;margin-right:0;margin-left:-6px}',
+      '.dsh-pi-side-new{flex:0 0 auto;white-space:nowrap;gap:6px}',
+      // 行内「⋯」：靠右、22px 命中区；菜单锚在按钮上（.dsh-pi-more-menu 的 left:auto/right:0 正好接住）。
+      '.dsh-pi-row-more{position:relative;display:flex;flex:0 0 auto;margin-left:auto}',
+      '.dsh-pi-row-more > button{display:grid;place-items:center;width:22px;height:22px;padding:0;border:0;border-radius:var(--dsw-radius-xs);background:transparent;color:var(--dsw-alias-label-tertiary);cursor:pointer}',
+      '.dsh-pi-row-more > button:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}',
+      '.dsh-pi-row-more .dsh-pi-more-menu{min-width:160px;max-width:min(220px,calc(100vw - 32px))}',
+      // 会话标题（首条用户消息）单独占一格，压在消息数左侧；标题已是它时不再重复。
+      '.dsh-pi-sess-sum{flex:0 1 auto;max-width:44%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-tertiary)}',
+      '.dsh-pi-pin{display:grid;place-items:center;flex:0 0 auto;width:12px;height:12px;color:var(--dsw-alias-state-business-primary)}',
+
+      // 居中弹窗的加宽变体：会话统计 / 设置的行数比通用 440px 多。
+      '.dsh-pi-dialog-wide{width:min(560px,100%)}',
+      '.dsh-pi-dialog-grow{flex:1 1 auto;min-height:0;overflow-y:auto}',
+      '.dsh-pi-more-label{min-width:0;flex:1 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      // 底部留 22px：内容滚动到底时最后一行不能贴住卡片圆角（实拍 p071-04 发现贴边）。
+      '.dsh-pi-dialog-content{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;gap:8px;overflow-y:auto;padding:14px 24px 22px}',
     ].join('')
 
 
@@ -891,6 +996,15 @@ window.__ModuleLoader__.load({
       selfcheck: function () { return requestJson('/selfcheck') },
       runtime: function () { return requestJson('/runtime') },
       install: function () { return requestJson('/runtime/install', { method: 'POST', body: {}, timeoutMs: 900000 }) },
+      // 面板偏好（项目显示名 / 会话显示名与置顶）。三条都回全量结构，客户端不做增量合并。
+      uiPrefs: function () { return requestJson('/ui-prefs') },
+      setProjectPref: function (key, name) {
+        return requestJson('/ui-prefs/project', { method: 'POST', body: { key: key, name: name } })
+      },
+      // patch 只带要改的字段（{ name } 或 { pinned }）：缺省的字段在 host 侧等于「别动它」。
+      setSessionPref: function (sessionPath, patch) {
+        return requestJson('/ui-prefs/session', { method: 'POST', body: Object.assign({ path: sessionPath }, patch) })
+      },
     }
 
     /** command 的统一入口：成功返回 data，失败抛出带 command 名的错误。 */
@@ -2015,6 +2129,29 @@ window.__ModuleLoader__.load({
       ])
     }
 
+    /** 省略号：顶栏的「更多」入口（压缩上下文 / 重新连接都收在这里）。 */
+    function EllipsisIcon(props) {
+      return iconSvg(props, [
+        h('circle', { key: 'a', cx: 12, cy: 5.4, r: 1.35, fill: 'currentColor', stroke: 'none' }),
+        h('circle', { key: 'b', cx: 12, cy: 12, r: 1.35, fill: 'currentColor', stroke: 'none' }),
+        h('circle', { key: 'c', cx: 12, cy: 18.6, r: 1.35, fill: 'currentColor', stroke: 'none' }),
+      ])
+    }
+
+    /** 左向 V 形：历史会话侧栏从会话层退回项目层。 */
+    function ChevronLeftIcon(props) {
+      return iconSvg(props, [
+        h('path', { key: 'c', d: 'M14.5 5.4 8.9 11l5.6 5.6' }),
+      ])
+    }
+
+    /** 图钉：会话置顶 / 取消置顶（实心针尖，与 DSH 的 pin 同语汇）。 */
+    function PinIcon(props) {
+      return iconSvg(props, [
+        h('path', { key: 'p', d: 'M9.2 3.8h5.6l-.9 4.4 2.6 2.4v1.7h-3.3v6.2l-1.5 1.7-1.5-1.7v-6.2H6.9v-1.7l2.6-2.4-.3-4.4' }),
+      ])
+    }
+
     /** 芯片：模型。 */
     function ChipIcon(props) {
       return iconSvg(props, [
@@ -2563,6 +2700,7 @@ window.__ModuleLoader__.load({
       var addOpen = stateAddOpen[0]
       var setAddOpen = stateAddOpen[1]
       var addRef = useRef(null)
+      var pickerRef = useRef(null)
 
       // 「+」菜单是浮层：点外面或按 Esc 都得关掉，否则它会一直盖在输入区上。
       useEffect(function () {
@@ -2582,6 +2720,26 @@ window.__ModuleLoader__.load({
           document.removeEventListener('keydown', onDocKey)
         }
       }, [addOpen])
+
+      // 模型 / 思考档位弹层同理：点外面或 Esc 关闭。开合是受控的（pickerOpen 在面板上），
+      // 这里只负责把「关」这个意图回传，面板切档位之后也会自己收回弹层。
+      useEffect(function () {
+        if (props.pickerOpen !== true) return undefined
+        function onDocDown(event) {
+          var node = pickerRef.current
+          if (node !== null && node !== undefined && node.contains(event.target)) return
+          props.onClosePicker()
+        }
+        function onDocKey(event) {
+          if (event.key === 'Escape') props.onClosePicker()
+        }
+        document.addEventListener('mousedown', onDocDown)
+        document.addEventListener('keydown', onDocKey)
+        return function () {
+          document.removeEventListener('mousedown', onDocDown)
+          document.removeEventListener('keydown', onDocKey)
+        }
+      }, [props.pickerOpen])
 
       function resize() {
         var node = taRef.current
@@ -2891,23 +3049,41 @@ window.__ModuleLoader__.load({
                     },
                     onClose: function () { setAddOpen(false) },
                   }) : null),
-                modelName === '' ? null : h('button', {
-                  type: 'button',
-                  className: 'dsh-pi-picker',
-                  title: t('modelHint') + ' · ' + String(props.model.provider) + '/' + String(props.model.id),
-                  onClick: props.onOpenModels,
-                },
-                  h('span', { className: 'dsh-pi-picker-name' }, modelName),
-                  h(ChevronDownIcon, { size: 12 })),
-                thinkingLevels.length === 0 ? null : h('span', { className: 'dsh-pi-picker-wrap', title: t('thinkingHint') },
-                  h('span', { className: 'dsh-pi-picker-label' }, String(props.thinking)),
-                  h(ChevronDownIcon, { size: 12 }),
-                  h('select', {
-                    className: 'dsh-pi-picker-native',
-                    value: props.thinking,
-                    'aria-label': t('thinkingHint'),
-                    onChange: function (event) { props.onSetThinking(event.target.value) },
-                  }, thinkingLevels.map(function (level) { return h('option', { key: level, value: level }, String(level)) })))),
+                // 模型名与思考档位合成一个锚点，点开的是同一张向上弹层（用户 30427）：
+                // 原来模型名是按钮、档位是原生 select 叠在自绘外壳里，同一个位置两种交互；
+                // 而且换档位要铺开整个抽屉，选完再收起，来回四拍。
+                modelName === '' && thinkingLevels.length === 0 ? null : h('span', { className: 'dsh-pi-picker-box', ref: pickerRef },
+                  modelName === '' ? null : h('button', {
+                    type: 'button',
+                    className: 'dsh-pi-picker',
+                    title: t('modelHint') + ' · ' + String(props.model.provider) + '/' + String(props.model.id),
+                    'aria-haspopup': 'menu',
+                    'aria-expanded': props.pickerOpen === true ? 'true' : 'false',
+                    onClick: props.onOpenPicker,
+                  },
+                    h('span', { className: 'dsh-pi-picker-name' }, modelName),
+                    h(ChevronDownIcon, { size: 12 })),
+                  thinkingLevels.length === 0 ? null : h('button', {
+                    type: 'button',
+                    className: 'dsh-pi-picker dsh-pi-picker-level',
+                    title: t('thinkingHint'),
+                    'aria-haspopup': 'menu',
+                    'aria-expanded': props.pickerOpen === true ? 'true' : 'false',
+                    onClick: props.onOpenPicker,
+                  },
+                    h('span', { className: 'dsh-pi-picker-label' }, String(props.thinking)),
+                    h(ChevronDownIcon, { size: 12 })),
+                  props.pickerOpen === true ? h(ModelPicker, {
+                    t: t,
+                    models: props.models,
+                    loading: props.modelsLoading === true,
+                    current: props.model,
+                    thinking: props.thinking,
+                    levels: thinkingLevels,
+                    onPickModel: props.onPickModel,
+                    onPickThinking: props.onPickThinking,
+                    onClose: props.onClosePicker,
+                  }) : null)),
               // 右：快捷键提示 + 圆形发送键。提示语是两套完整语义（空闲 / 运行中），
               // 不借用 slashHint（那讲的是菜单导航，只在菜单弹出时才成立）。
               h('div', { className: 'dsh-pi-bar-right' },
@@ -2930,6 +3106,151 @@ window.__ModuleLoader__.load({
           props.actions === undefined ? null : props.actions,
           h(CloseButton, { t: props.t, onClick: props.onClose })),
         h('div', { className: 'dsh-pi-sheet-body' }, props.children))
+    }
+
+    /**
+     * 居中弹窗外壳（统计 / 设置 / 二次确认）。
+     *
+     * 与抽屉（Sheet）的分界是**语义**：抽屉是「进到另一个空间去挑东西」（历史会话、树、
+     * fork、目录），弹窗是「在当前对话上盖一层、处理完就回到原位」。统计与设置属于后者 ——
+     * 用户 30427 的原话是「弹出弹窗，不要使用页面」。
+     * 配方照抄 DirSheet / ExtensionDialog：遮罩 dsh-pi-dialog-wrap + 卡片 dsh-pi-dialog。
+     */
+    function Dialog(props) {
+      var className = props.wide === true ? 'dsh-pi-dialog dsh-pi-dialog-wide' : 'dsh-pi-dialog'
+      return h('div', { className: 'dsh-pi-dialog-wrap' },
+        h('div', { className: className, role: 'dialog', 'aria-modal': 'true', 'aria-label': props.title },
+          h('div', { className: 'dsh-pi-dialog-head' },
+            h('h3', null, props.title),
+            h(CloseButton, { t: props.t, onClick: props.onClose })),
+          h('div', { className: 'dsh-pi-dialog-content' }, props.children)))
+    }
+
+    /**
+     * 左侧滑入侧栏（历史会话）。
+     *
+     * 用户 30427 要的是「从页面左侧向右侧弹出侧边栏弹窗」—— 占满面板的抽屉会把当前对话
+     * 整个盖掉，选会话时看不到自己在哪儿；侧栏只取左边一条，右边留着上下文。
+     */
+    function SidePanel(props) {
+      // onBack 给了才出返回箭头：历史会话的会话层要能退回项目层，其它侧栏没有上一层。
+      var back = props.onBack === undefined ? null : h('button', {
+        type: 'button',
+        className: 'dsh-pi-btn dsh-pi-btn-ghost dsh-pi-btn-icon dsh-pi-side-back',
+        title: props.backTitle === undefined ? props.t('allProjects') : props.backTitle,
+        'aria-label': props.backTitle === undefined ? props.t('allProjects') : props.backTitle,
+        onClick: props.onBack,
+      }, h(ChevronLeftIcon, { size: 16 }))
+      return h('div', {
+        className: 'dsh-pi-side-wrap',
+        onClick: function (event) { if (event.target === event.currentTarget) props.onClose() },
+      },
+        h('div', { className: 'dsh-pi-side', role: 'dialog', 'aria-modal': 'true', 'aria-label': props.title },
+          h('div', { className: 'dsh-pi-side-head' },
+            back,
+            h('div', { className: 'dsh-pi-side-title' }, props.title),
+            h(CloseButton, { t: props.t, onClick: props.onClose })),
+          props.actions === undefined ? null : h('div', { className: 'dsh-pi-side-actions' }, props.actions),
+          h('div', { className: 'dsh-pi-side-body' }, props.children)))
+    }
+
+    /**
+     * 二次确认：压缩上下文 / 重新连接都是「不可撤销或会打断当前一轮」的动作，
+     * 从「更多」菜单里点出来之后必须再多问一次（用户 30427）。
+     */
+    function ConfirmDialog(props) {
+      var t = props.t
+      return h('div', { className: 'dsh-pi-dialog-wrap' },
+        h('div', { className: 'dsh-pi-dialog', role: 'alertdialog', 'aria-modal': 'true', 'aria-label': props.title },
+          h('div', { className: 'dsh-pi-dialog-head' },
+            h('h3', null, props.title),
+            h(CloseButton, { t: t, onClick: props.onCancel })),
+          h('p', { className: 'dsh-pi-dialog-msg' }, props.body),
+          h('div', { className: 'dsh-pi-dialog-actions' },
+            h('button', { type: 'button', className: 'dsh-pi-btn', onClick: props.onCancel }, t('cancel')),
+            h('button', { type: 'button', className: 'dsh-pi-btn dsh-pi-btn-primary', onClick: props.onConfirm }, t('extYes')))))
+    }
+
+    /** 顶栏「更多」的下拉：锚在按钮右下，向下展开，项 = 图标 + 文案。 */
+    function MoreMenu(props) {
+      var t = props.t
+      return h('div', {
+        className: 'dsh-pi-menu dsh-pi-more-menu',
+        role: 'menu',
+        onKeyDown: function (event) {
+          if (event.key === 'Escape') { event.preventDefault(); props.onClose() }
+        },
+      }, h('div', { className: 'dsh-pi-menu-list' }, props.items.map(function (item) {
+        return h('button', {
+          key: item.key,
+          type: 'button',
+          role: 'menuitem',
+          className: 'dsh-pi-more-item',
+          title: item.title === undefined ? item.label : item.title,
+          onClick: function () { props.onPick(item) },
+        },
+          h('span', { className: 'dsh-pi-more-icon' }, h(item.icon, { size: 16 })),
+          h('span', { className: 'dsh-pi-more-label' }, item.label))
+      })))
+    }
+
+    /**
+     * 模型 + 思考档位合一弹层（用户 30427：点左下角模型名向上弹出，思考模式放在同一层）。
+     *
+     * 原来这两件事各有一个占满面板的抽屉（ModelsSheet / ThinkingSheet），换个档位要
+     * 「铺开 → 找 → 点 → 收起」四拍；合成一层之后一次点击就能在两者之间横跳。
+     * 行是 menuitemradio（不是 menuitem）：两段都是单选，aria-checked 由当前值决定。
+     */
+    function ModelPicker(props) {
+      var t = props.t
+      var models = Array.isArray(props.models) ? props.models : []
+      var levels = Array.isArray(props.levels) ? props.levels : []
+      var rows = []
+      rows.push(h('div', { key: 'sec-model', className: 'dsh-pi-picker-sec' }, t('pickModel')))
+      if (props.loading === true) {
+        rows.push(h('div', { key: 'loading', className: 'dsh-pi-picker-empty' }, t('modelsLoading')))
+      } else if (models.length === 0) {
+        rows.push(h('div', { key: 'empty', className: 'dsh-pi-picker-empty' }, t('modelsEmpty')))
+      } else {
+        models.forEach(function (model, index) {
+          var current = props.current !== null && props.current !== undefined && props.current.provider === model.provider && props.current.id === model.id
+          rows.push(h('button', {
+            key: 'm' + String(index),
+            type: 'button',
+            role: 'menuitemradio',
+            'aria-checked': current ? 'true' : 'false',
+            'data-current': current ? '1' : '0',
+            className: 'dsh-pi-picker-row',
+            onClick: function (pick) { return function () { props.onPickModel(pick) } }(model),
+          },
+            h('span', { className: 'dsh-pi-picker-row-name' }, String(model.name === undefined || model.name === '' ? model.id : model.name)),
+            h('span', { className: 'dsh-pi-picker-row-sub' }, String(model.provider === undefined ? '' : model.provider))))
+        })
+      }
+      rows.push(h('div', { key: 'sec-thinking', className: 'dsh-pi-picker-sec' }, t('pickThinking')))
+      if (levels.length === 0) {
+        rows.push(h('div', { key: 'level-empty', className: 'dsh-pi-picker-empty' }, t('modelsEmpty')))
+      } else {
+        levels.forEach(function (level) {
+          var current = props.thinking === level
+          rows.push(h('button', {
+            key: 'l:' + String(level),
+            type: 'button',
+            role: 'menuitemradio',
+            'aria-checked': current ? 'true' : 'false',
+            'data-current': current ? '1' : '0',
+            className: 'dsh-pi-picker-row',
+            onClick: function () { props.onPickThinking(level) },
+          }, h('span', { className: 'dsh-pi-picker-row-name' }, String(level))))
+        })
+      }
+      return h('div', {
+        className: 'dsh-pi-menu dsh-pi-picker-menu',
+        role: 'menu',
+        onKeyDown: function (event) {
+          if (event.key === 'Escape') { event.preventDefault(); props.onClose() }
+        },
+      }, h('div', { className: 'dsh-pi-menu-list' }, rows))
     }
 
     /** 数值兜底：RPC 回来的用量字段可能缺省，缺省按 0 算，别让 NaN 漏进百分比。 */
@@ -2986,6 +3307,33 @@ window.__ModuleLoader__.load({
       return parts.join('')
     }
 
+    /** ui-prefs 里某条记录的名字；没有就地返回空串（投影层不造 undefined）。 */
+    function prefName(map, key) {
+      if (map === undefined || map === null) return ''
+      var entry = map[key]
+      if (entry === undefined || entry === null) return ''
+      return typeof entry.name === 'string' ? entry.name : ''
+    }
+
+    /** 会话是否置顶（ui-prefs 只在 pinned === true 时留条目）。 */
+    function prefPinned(map, path) {
+      if (map === undefined || map === null) return false
+      var entry = map[path]
+      return entry !== undefined && entry !== null && entry.pinned === true
+    }
+
+    /**
+     * 会话标题 = 首条用户消息的第一行。
+     * host 的 firstMessage 在没有消息时会回落成哨兵串 `(no messages)`（src/session-store.mjs:34），
+     * 直接当标题会出现一行英文占位；这里统一折成空串，由调用方回落到别的文案。
+     * 截到 60 字符是因为侧栏只有 360px，再长必然是省略号，先截能让 title 提示短一点。
+     */
+    function sessionHeadline(value) {
+      if (typeof value !== 'string') return ''
+      var line = value.split(String.fromCharCode(10))[0].trim()
+      if (line === '' || line === '(no messages)') return ''
+      return line.length > 60 ? line.slice(0, 60).trim() + '…' : line
+    }
     /**
      * 历史会话抽屉 = 面板的 /resume。**两级**，逐条对齐 pi 的 SessionSelectorComponent：
      *   第一层 ProjectList：全部项目（当前项目置顶 → 非临时 → 最近活动降序）
@@ -2999,6 +3347,10 @@ window.__ModuleLoader__.load({
      *
      * 本函数是**纯渲染视图**：不取数、不持有导航状态，全部由 props 决定。
      * 容器 SessionsSheet 负责取数与层级切换，因此这里可以直接被客户端渲染测试喂假数据。
+     *
+     * 0.8.0 起它还承担「面板自己的账」：prefs 覆盖项目名与会话名、置顶排到最前、
+     * 每行右侧的 ⋯ 菜单（重命名 / 在此新建会话 / 置顶）。这些都不在 pi 的 RPC 面里 ——
+     * 会话标题取 firstMessage、项目别名、置顶标记全是面板概念，落在 ui-prefs.json。
      */
     function SessionsList(props) {
       var t = props.t
@@ -3006,81 +3358,173 @@ window.__ModuleLoader__.load({
       var project = props.project
       var info = props.info
       var query = props.query
+      var prefs = props.prefs === undefined || props.prefs === null ? {} : props.prefs
+      var menuKey = typeof props.menuKey === 'string' ? props.menuKey : null
+      var onRowMenu = props.onRowMenu === undefined ? function () {} : props.onRowMenu
 
       var needle = query.trim().toLowerCase()
       var isProjects = level === 'projects'
       var rows = []
 
+      /**
+       * 行内「⋯」+ 下拉菜单：容器只存一个 menuKey（同时只允许一栏菜单展开）。
+        * 整个容器吞掉点击冒泡 —— 否则点 ⋯ 或点菜单项都等于点了整行（会把项目点进去 / 把会话切过去）；
+        * 菜单项一冒泡，重命名弹窗刚打开就被 onPick 把侧栏整体关掉（实拍 a080 抓到的真缺陷）。
+       */
+      var rowMore = function (key, items) {
+        var open = menuKey === key
+        return h('div', {
+          className: 'dsh-pi-row-more',
+          onClick: function (event) { event.stopPropagation() },
+        },
+          h('button', {
+            type: 'button',
+            title: t('moreActions'),
+            'aria-label': t('moreActions'),
+            'aria-haspopup': 'menu',
+            'aria-expanded': open ? 'true' : 'false',
+            onClick: function (event) {
+              event.stopPropagation()
+              onRowMenu(open ? null : key)
+            },
+          }, h(EllipsisIcon, { size: 14 })),
+          open ? h(MoreMenu, {
+            t: t,
+            items: items,
+            onPick: function (item) { item.run() },
+            onClose: function () { onRowMenu(null) },
+          }) : null)
+      }
+
       if (isProjects) {
         var projects = info.projects
         if (needle !== '') {
           projects = projects.filter(function (entry) {
-            return (String(entry.displayPath) + ' ' + String(entry.cwd)).toLowerCase().indexOf(needle) >= 0
+            var haystack = [String(entry.displayPath), String(entry.cwd), prefName(prefs.projects, entry.key)].join(' ').toLowerCase()
+            return haystack.indexOf(needle) >= 0
           })
         }
         rows = projects.map(function (entry) {
+          // 重命名优先于 displayPath：用户改过的名字才是他要找的那一行。
+          var renamed = prefName(prefs.projects, entry.key)
+          var title = renamed === '' ? (entry.displayPath === '' ? String(entry.cwd) : String(entry.displayPath)) : renamed
+          var key = 'proj:' + String(entry.key)
           return h('div', {
-            key: 'p-' + String(entry.key),
+            key: key,
             className: 'dsh-pi-proj',
             'data-current': entry.isCurrent === true ? '1' : '0',
             'data-temporary': entry.isTemporary === true ? '1' : '0',
+            'data-renamed': renamed === '' ? '0' : '1',
             onClick: function () { props.onOpenProject(entry) },
           },
             h('div', { className: 'dsh-pi-sess-top' },
-              h('div', { className: 'dsh-pi-sess-title' }, entry.displayPath === '' ? String(entry.cwd) : String(entry.displayPath)),
+              h('div', { className: 'dsh-pi-sess-title' }, title),
               entry.isCurrent === true ? h('span', { className: 'dsh-pi-tag', 'data-tone': 'ok' }, t('current')) : null,
               entry.isTemporary === true ? h('span', { className: 'dsh-pi-tag', 'data-tone': 'warn' }, t('tempTag')) : null,
-              h('span', null, t('projectSessions').replace('{n}', String(entry.sessionCount)))),
-            h('div', { className: 'dsh-pi-mono' }, fmtTime(entry.lastActivity) + ' · ' + String(entry.cwd)))
+              h('span', null, t('projectSessions').replace('{n}', String(entry.sessionCount))),
+              rowMore(key, [
+                { key: 'rename', label: t('renameProject'), icon: PencilIcon, run: function () { onRowMenu(null); props.onRenameProject(String(entry.key), title) } },
+                { key: 'new', label: t('newSessionHere'), icon: PlusIcon, run: function () { onRowMenu(null); props.onNewSessionAt(String(entry.cwd)) } },
+              ])),
+            h('div', { className: 'dsh-pi-mono', title: fmtTime(entry.lastActivity) + ' · ' + String(entry.cwd) }, fmtTime(entry.lastActivity) + ' · ' + String(entry.cwd)))
         })
       } else {
         var sessions = info.sessions
         if (needle !== '') {
           sessions = sessions.filter(function (session) {
-            var haystack = [session.name, session.firstMessage, session.lastMessage, session.path].join(' ').toLowerCase()
+            var haystack = [
+              session.name,
+              session.firstMessage,
+              session.lastMessage,
+              session.path,
+              prefName(prefs.sessions, session.path),
+            ].join(' ').toLowerCase()
             return haystack.indexOf(needle) >= 0
           })
         }
+        // 置顶的排最前：两遍 partition 而不是 sort —— host 给的顺序本身有意义（最近活动降序），
+        // 不能为了把置顶顶上去而把其余顺序交给引擎（sort 的稳定性在旧引擎上没有保证）。
+        var pinnedFirst = []
+        var rest = []
+        sessions.forEach(function (session) {
+          if (prefPinned(prefs.sessions, session.path)) pinnedFirst.push(session)
+          else rest.push(session)
+        })
+        sessions = pinnedFirst.concat(rest)
         rows = sessions.map(function (session) {
           var current = props.currentPath !== null && props.currentPath === session.path
+          var renamed = prefName(prefs.sessions, session.path)
+          var headline = sessionHeadline(session.firstMessage)
+          var piName = session.name === undefined || session.name === null ? '' : String(session.name)
+          // 标题优先级：用户改的名字 → pi 的会话名 → 首条用户消息摘要 → 末条消息 → 占位。
+          var title = renamed !== '' ? renamed : (piName !== '' ? piName : (headline !== '' ? headline : (session.lastMessage === '' || session.lastMessage === undefined ? t('sessionFallbackTitle') : String(session.lastMessage))))
+          // 「会话标题」单独占一格（消息数左侧）：只在标题已被名字（改过的名或 pi 的会话名）占据时
+          // 才有意义 —— 否则标题本身就是这段摘要，再放一遍是重复。
+          var capsule = headline !== '' && title !== headline ? headline : null
+          var pinned = prefPinned(prefs.sessions, session.path)
+          var key = 'sess:' + session.path
           return h('div', {
-            key: session.path,
+            key: key,
             className: 'dsh-pi-sess',
             'data-current': current ? '1' : '0',
+            'data-renamed': renamed === '' ? '0' : '1',
+            'data-pinned': pinned ? '1' : '0',
             onClick: function () { props.onPick(session) },
           },
             h('div', { className: 'dsh-pi-sess-top' },
-              h('div', { className: 'dsh-pi-sess-title' }, session.name === undefined || session.name === '' ? (session.lastMessage || t('untitled')) : session.name),
+              h('div', { className: 'dsh-pi-sess-title', title: title }, title),
               current ? h('span', { className: 'dsh-pi-tag', 'data-tone': 'ok' }, t('current')) : null,
-              h('span', null, String(session.messageCount) + ' ' + t('messages'))),
-            h('div', { className: 'dsh-pi-sess-line' }, session.lastMessage === '' ? t('untitled') : session.lastMessage),
-            h('div', { className: 'dsh-pi-mono' }, fmtTime(session.modified) + ' · ' + session.path))
+              pinned ? h('span', { className: 'dsh-pi-pin', title: t('pinSession') }, h(PinIcon, { size: 12 })) : null,
+              capsule === null ? null : h('span', { className: 'dsh-pi-sess-sum', title: capsule }, capsule),
+              h('span', null, String(session.messageCount) + ' ' + t('messages')),
+              rowMore(key, [
+                { key: 'rename', label: t('renameSession'), icon: PencilIcon, run: function () { onRowMenu(null); props.onRenameSession(session.path, title) } },
+                pinned
+                  ? { key: 'pin', label: t('unpinSession'), icon: PinIcon, run: function () { onRowMenu(null); props.onTogglePin(session.path, false) } }
+                  : { key: 'pin', label: t('pinSession'), icon: PinIcon, run: function () { onRowMenu(null); props.onTogglePin(session.path, true) } },
+              ])),
+            h('div', { className: 'dsh-pi-sess-line' }, session.lastMessage === '' || session.lastMessage === undefined ? t('sessionFallbackTitle') : String(session.lastMessage)),
+            h('div', { className: 'dsh-pi-mono', title: fmtTime(session.modified) + ' · ' + session.path }, fmtTime(session.modified) + ' · ' + session.path))
         })
       }
 
-      var title = isProjects ? t('sessions') : String(project === null ? '' : (project.displayPath === '' ? project.cwd : project.displayPath))
+      var projectTitle = project === null ? '' : (project.displayPath === '' ? String(project.cwd) : String(project.displayPath))
+      if (project !== null) {
+        var renamedProject = prefName(prefs.projects, project.key)
+        if (renamedProject !== '') projectTitle = renamedProject
+      }
+      var title = isProjects ? t('projectList') : projectTitle
       var actions = []
+      if (isProjects) {
+        actions.push(h('button', {
+          key: 'newp',
+          type: 'button',
+          className: 'dsh-pi-btn dsh-pi-side-new',
+          title: t('newProjectHint'),
+          onClick: function () { props.onNewProject() },
+        }, h(PlusIcon, { size: 14 }), t('newProject')))
+      }
       actions.push(h('input', {
         key: 'q',
         className: 'dsh-pi-search',
         value: query,
-        placeholder: t('filter'),
+        placeholder: isProjects ? t('searchProjects') : t('searchSessions'),
+        'aria-label': isProjects ? t('searchProjects') : t('searchSessions'),
         onChange: function (event) { props.onQuery(event.target.value) },
       }))
-      if (isProjects === false) {
-        actions.push(h('button', {
-          key: 'back',
-          type: 'button',
-          className: 'dsh-pi-btn dsh-pi-btn-ghost',
-          onClick: function () { props.onBack() },
-        }, '← ' + t('allProjects')))
-      }
 
       var emptyText = isProjects ? t('projectsEmpty') : t('sessionsEmpty')
       var hintText = isProjects ? t('projectsHint') : t('sessionsHint')
       var loadingText = isProjects ? t('projectsLoading') : t('sessionsLoading')
 
-      return h(Sheet, { t: t, title: title, onClose: props.onClose, actions: actions },
+      return h(SidePanel, {
+        t: t,
+        title: title,
+        onClose: props.onClose,
+        actions: actions,
+        onBack: isProjects ? undefined : props.onBack,
+        backTitle: t('allProjects'),
+      },
         info.loading ? h('div', { className: 'dsh-pi-empty-row' }, loadingText) : null,
         info.error === null ? null : h('div', { className: 'dsh-pi-alert' }, info.error),
         info.loading === false && info.error === null && rows.length === 0 ? h('div', { className: 'dsh-pi-empty-row' }, emptyText) : null,
@@ -3089,10 +3533,43 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * 重命名弹窗（项目 / 会话共用）。
+     * 不复用 NameSheet 的原因：NameSheet 挂在 PiPanel 的 drawer 状态上，而 drawer 是单值 ——
+     * 改名会把左侧栏自己顶掉。这个弹窗归 SessionsSheet 所属，侧栏与弹窗可以并存。
+     */
+    function RenameDialog(props) {
+      var t = props.t
+      var stateValue = useState(props.value === undefined ? '' : String(props.value))
+      var value = stateValue[0]
+      var setValue = stateValue[1]
+      var submit = function () { props.onSubmit(String(value).trim()) }
+      return h(Dialog, { t: t, title: props.title, onClose: props.onClose },
+        h('input', {
+          key: 'v',
+          className: 'dsh-pi-search',
+          value: value,
+          placeholder: t('renamePrompt'),
+          'aria-label': t('renamePrompt'),
+          autoFocus: true,
+          onChange: function (event) { setValue(event.target.value) },
+          onKeyDown: function (event) {
+            if (event.key === 'Enter') { event.preventDefault(); submit(); return }
+            if (event.key === 'Escape') { event.preventDefault(); props.onClose() }
+          },
+        }),
+        h('div', { className: 'dsh-pi-dialog-actions' },
+          h('button', { key: 'c', type: 'button', className: 'dsh-pi-btn', onClick: props.onClose }, t('cancel')),
+          h('button', { key: 'o', type: 'button', className: 'dsh-pi-btn dsh-pi-btn-primary', onClick: submit }, t('extSubmit'))))
+    }
+
+    /**
      * 抽屉的**容器**：只管「现在在哪一层、要哪个 cwd 的数据」，把取数结果交给无状态视图。
      * 之所以拆成 SessionsSheet（容器）+ SessionsList（纯渲染），是因为两级抽屉的渲染分支
      * 全靠 host 返回的数据决定，把取数写在渲染里就只能靠真浏览器验证；拆开之后
      * client-render 可以直接喂假数据断言项目层／会话层两套 DOM，倒计时类断言仍归真浏览器。
+     *
+     * 0.8.0 起这里还持有 ui-prefs（项目名 / 会话名 / 置顶）与行内菜单的开关状态：
+     * 偏好是「面板自己的账」，不归 pi 的 RPC 面管，读写都走 /api/dsh-pi/ui-prefs。
      */
     function SessionsSheet(props) {
       var t = props.t
@@ -3108,8 +3585,44 @@ window.__ModuleLoader__.load({
       var stateQuery = useState('')
       var query = stateQuery[0]
       var setQuery = stateQuery[1]
+      var statePrefs = useState({ projects: {}, sessions: {} })
+      var prefs = statePrefs[0]
+      var setPrefs = statePrefs[1]
+      var stateMenuKey = useState(null)
+      var menuKey = stateMenuKey[0]
+      var setMenuKey = stateMenuKey[1]
+      var stateRename = useState(null)
+      var rename = stateRename[0]
+      var setRename = stateRename[1]
+      var aliveRef = useRef(true)
+      var onNotice = props.onNotice === undefined ? function () {} : props.onNotice
+
+      var errorText = function (error) {
+        return String(error !== null && error !== undefined && error.message !== undefined ? error.message : error)
+      }
+
+      /** 只保留 store 真给出的两棵表；缺字段一律当空表，渲染层就不用到处 undefined 判断。 */
+      var applyPrefs = function (body) {
+        if (aliveRef.current === false) return
+        var next = { projects: {}, sessions: {} }
+        if (body !== null && body !== undefined) {
+          if (body.projects !== undefined && body.projects !== null) next.projects = body.projects
+          if (body.sessions !== undefined && body.sessions !== null) next.sessions = body.sessions
+        }
+        setPrefs(next)
+      }
+      var loadPrefs = function () {
+        // 读不到偏好不该让整个列表变红：重命名与置顶是增强项，缺了只是回到默认排序。
+        api.uiPrefs().then(applyPrefs).catch(function () {})
+      }
 
       var openCwd = level === 'sessions' && project !== null ? String(project.cwd) : ''
+
+      useEffect(function () {
+        aliveRef.current = true
+        loadPrefs()
+        return function () { aliveRef.current = false }
+      }, [])
 
       useEffect(function () {
         var stopped = false
@@ -3128,24 +3641,58 @@ window.__ModuleLoader__.load({
           })
         }).catch(function (error) {
           if (stopped) return
-          setInfo({ loading: false, error: String(error !== null && error !== undefined && error.message !== undefined ? error.message : error), projects: [], sessions: [], total: 0 })
+          setInfo({ loading: false, error: errorText(error), projects: [], sessions: [], total: 0 })
         })
         return function () { stopped = true }
       }, [openCwd])
 
-      return h(SessionsList, {
+      /** 写一条偏好：成功就把 host 回的**全量**结构吃进来（host 是唯一真相，不在本地猜合并）。 */
+      var pushPref = function (request, failText) {
+        request.then(applyPrefs).catch(function (error) { onNotice(failText + ' · ' + errorText(error), 'err') })
+      }
+
+      var submitRename = function (name) {
+        var pending = rename
+        if (pending === null) return
+        setRename(null)
+        if (pending.kind === 'project') {
+          pushPref(api.setProjectPref(pending.target, name), t('renameProject'))
+          return
+        }
+        pushPref(api.setSessionPref(pending.target, { name: name }), t('renameSession'))
+      }
+
+      var dialog = rename === null ? null : h(RenameDialog, {
         t: t,
-        level: level,
-        project: project,
-        info: info,
-        query: query,
-        currentPath: props.currentPath,
-        onQuery: function (next) { setQuery(next) },
-        onOpenProject: function (entry) { setProject(entry); setQuery(''); setLevel('sessions') },
-        onBack: function () { setQuery(''); setProject(null); setLevel('projects') },
-        onPick: props.onPick,
-        onClose: props.onClose,
+        title: rename.kind === 'project' ? t('renameProject') : t('renameSession'),
+        value: rename.value,
+        onSubmit: submitRename,
+        onClose: function () { setRename(null) },
       })
+
+      return h('div', { className: 'dsh-pi-side-host' },
+        h(SessionsList, {
+          t: t,
+          level: level,
+          project: project,
+          info: info,
+          query: query,
+          currentPath: props.currentPath,
+          prefs: prefs,
+          menuKey: menuKey,
+          onQuery: function (next) { setQuery(next) },
+          onRowMenu: function (next) { setMenuKey(next) },
+          onOpenProject: function (entry) { setMenuKey(null); setProject(entry); setQuery(''); setLevel('sessions') },
+          onBack: function () { setMenuKey(null); setQuery(''); setProject(null); setLevel('projects') },
+          onRenameProject: function (key, current) { setRename({ kind: 'project', target: key, value: current }) },
+          onRenameSession: function (sessionPath, current) { setRename({ kind: 'session', target: sessionPath, value: current }) },
+          onTogglePin: function (sessionPath, pinned) { pushPref(api.setSessionPref(sessionPath, { pinned: pinned }), t('pinSession')) },
+          onNewProject: function () { setMenuKey(null); props.onNewProject() },
+          onNewSessionAt: function (cwd) { setMenuKey(null); props.onNewSessionAt(cwd) },
+          onPick: props.onPick,
+          onClose: props.onClose,
+        }),
+        dialog)
     }
 
     /**
@@ -3590,14 +4137,14 @@ window.__ModuleLoader__.load({
         push('leafId', props.entries.leafId)
       }
       }
-      return h(Sheet, { t: t, title: t('stats'), onClose: props.onClose },
+      return h(Dialog, { t: t, title: t('stats'), onClose: props.onClose, wide: true },
         stats === null ? h('div', { className: 'dsh-pi-empty-row' }, t('loading')) : null,
         stats === null ? null : h('div', { className: 'dsh-pi-kv' }, rows.map(function (row, index) {
           return [h('div', { key: 'k' + String(index), className: 'dsh-pi-kv-k' }, row[0]), h('div', { key: 'v' + String(index), className: 'dsh-pi-kv-v' }, row[1])]
         })))
     }
 
-    /** 设置抽屉 = 面板的 /settings。四个开关全部走 RPC，与 TUI 的 settingsManager 语义一致。 */
+    /** 设置弹窗 = 面板的 /settings（0.7.0 起是居中弹窗 Dialog，不再是抽屉）。四个开关全部走 RPC，与 TUI 的 settingsManager 语义一致。 */
     function SettingsSheet(props) {
       var t = props.t
       var state = props.state
@@ -3615,7 +4162,7 @@ window.__ModuleLoader__.load({
             onClick: function () { onChange(checked !== true) },
           }, h('span', { className: 'dsh-pi-switch-thumb' })))
       }
-      return h(Sheet, { t: t, title: t('settings'), onClose: props.onClose },
+      return h(Dialog, { t: t, title: t('settings'), onClose: props.onClose, wide: true },
         toggle('autoCompaction', t('autoCompact'), state.autoCompactionEnabled, function (next) { props.onAutoCompaction(next) }),
         toggle('autoRetry', t('autoRetry'), state.autoRetryEnabled, function (next) { props.onAutoRetry(next) }),
         h('div', { className: 'dsh-pi-row2' },
@@ -3937,62 +4484,6 @@ window.__ModuleLoader__.load({
               }))))))
     }
 
-    /** 模型抽屉 = 面板的 /model 与 /scoped-models。 */
-    function ModelsSheet(props) {
-      var t = props.t
-      var models = Array.isArray(props.models) ? props.models : []
-      var stateQuery = useState('')
-      var query = stateQuery[0]
-      var setQuery = stateQuery[1]
-      var filtered = models
-      if (query.trim() !== '') {
-        var needle = query.trim().toLowerCase()
-        filtered = models.filter(function (model) {
-          var haystack = String(model.provider === undefined ? '' : model.provider) + ' ' + String(model.id === undefined ? '' : model.id) + ' ' + String(model.name === undefined ? '' : model.name)
-          return haystack.toLowerCase().indexOf(needle) >= 0
-        })
-      }
-      return h(Sheet, { t: t, title: t('models'), onClose: props.onClose, actions: h('input', {
-        className: 'dsh-pi-search',
-        value: query,
-        placeholder: t('filter'),
-        onChange: function (event) { setQuery(event.target.value) },
-      }) },
-        props.loading === true ? h('div', { className: 'dsh-pi-empty-row' }, t('modelsLoading')) : null,
-        props.loading === true ? null : filtered.length === 0 ? h('div', { className: 'dsh-pi-empty-row' }, t('modelsEmpty')) : null,
-        filtered.map(function (model, index) {
-          var current = props.current !== null && props.current !== undefined && props.current.provider === model.provider && props.current.id === model.id
-          return h('div', {
-            key: String(model.provider) + '/' + String(model.id) + ':' + String(index),
-            className: 'dsh-pi-sess',
-            'data-current': current ? '1' : '0',
-            onClick: function () { props.onPick(model) },
-          },
-            h('div', { className: 'dsh-pi-sess-top' },
-              h('div', { className: 'dsh-pi-sess-title' }, String(model.name === undefined || model.name === '' ? model.id : model.name)),
-              current ? h('span', { className: 'dsh-pi-tag', 'data-tone': 'ok' }, t('current')) : null),
-            h('div', { className: 'dsh-pi-mono' }, String(model.provider) + ' · ' + String(model.id) + ' · ' + String(model.contextWindow) + ' ctx'))
-        }))
-    }
-
-    /** 思考档位抽屉 = 面板的 /thinking（无参数时）。 */
-    function ThinkingSheet(props) {
-      var t = props.t
-      var levels = Array.isArray(props.levels) ? props.levels : []
-      return h(Sheet, { t: t, title: t('thinkingHint'), onClose: props.onClose },
-        levels.length === 0 ? h('div', { className: 'dsh-pi-empty-row' }, t('modelsEmpty')) : null,
-        levels.map(function (level, index) {
-          return h('div', {
-            key: String(level) + ':' + String(index),
-            className: 'dsh-pi-sess',
-            'data-current': props.current === level ? '1' : '0',
-            onClick: function () { props.onPick(level) },
-          }, h('div', { className: 'dsh-pi-sess-top' },
-            h('div', { className: 'dsh-pi-sess-title' }, String(level)),
-            props.current === level ? h('span', { className: 'dsh-pi-tag', 'data-tone': 'ok' }, t('current')) : null))
-        }))
-    }
-
     /** 命名抽屉 = 面板的 /name（无参数时）。 */
     function NameSheet(props) {
       var t = props.t
@@ -4098,6 +4589,19 @@ window.__ModuleLoader__.load({
       var drawerState = useState(null)
       var drawer = drawerState[0]
       var setDrawer = drawerState[1]
+      // 模型 / 思考档位共用的向上弹层（用户 30427：点左下角模型名向上弹，思考档位放在同一层）。
+      // 受控：开合在面板上，Composer 只渲染与转发 —— 这样左下角、+ 菜单、/model、
+      // /thinking、以及「按名字找不到模型」的兜底可以共用同一个弹层。
+      var pickerState = useState(false)
+      var pickerOpen = pickerState[0]
+      var setPickerOpen = pickerState[1]
+      var moreState = useState(false)
+      var moreOpen = moreState[0]
+      var setMoreOpen = moreState[1]
+      // null | 'compact' | 'reconnect'：压缩上下文与重新连接都要先过二次确认。
+      var confirmState = useState(null)
+      var confirm = confirmState[0]
+      var setConfirm = confirmState[1]
       var modelsState = useState([])
       var models = modelsState[0]
       var setModels = modelsState[1]
@@ -4145,6 +4649,7 @@ window.__ModuleLoader__.load({
       // 所以先挂一笔待办，等 settled 那一拍再补。
       var hydratePendingRef = useRef(false)
       var metaRef = useRef(null)
+      var moreRef = useRef(null)
       metaRef.current = meta
 
       var repaint = function () { bump(function (value) { return value + 1 }) }
@@ -4509,7 +5014,7 @@ window.__ModuleLoader__.load({
       var pickModel = function (model) {
         var id = sessionRef.current
         if (id === null) return Promise.resolve(null)
-        setDrawer(null)
+        setPickerOpen(false)
         return rpc(id, { type: 'set_model', provider: model.provider, modelId: model.id }).then(function (next) {
           setMeta(function (prev) {
             return Object.assign({}, prev === null ? {} : prev, { model: next === null || next === undefined ? model : next })
@@ -4774,7 +5279,7 @@ window.__ModuleLoader__.load({
         }
         if (match === null) {
           notice(t('thinkingHint') + ': ' + String(term).trim() + ' — ' + t('emptyResult') + ' (' + levels.join(', ') + ')', 'warn')
-          setDrawer('thinking')
+          setPickerOpen(true)
           return
         }
         setLevel(match)
@@ -4796,7 +5301,7 @@ window.__ModuleLoader__.load({
             }
           }
           setModels(list)
-          setDrawer('models')
+          setPickerOpen(true)
           notice(t('modelHint') + ': ' + String(term).trim() + ' — ' + t('emptyResult'), 'warn')
         }, function (failure) {
           notice(String(failure !== null && failure !== undefined && failure.message !== undefined ? failure.message : failure), 'err')
@@ -4805,8 +5310,9 @@ window.__ModuleLoader__.load({
 
       // ── 抽屉数据加载 ───────────────────────────────────────────────────────
 
-      var openModels = function () {
-        setDrawer('models')
+      /** 打开「模型 + 思考档位」弹层；模型列表每次重拉（可用模型随凭据 / provider 变）。 */
+      var openPicker = function () {
+        setPickerOpen(true)
         setModelsLoading(true)
         var id = sessionRef.current
         if (id === null) { setModelsLoading(false); return }
@@ -4814,6 +5320,12 @@ window.__ModuleLoader__.load({
           setModels(data !== null && data !== undefined && Array.isArray(data.models) ? data.models : [])
           setModelsLoading(false)
         }, function () { setModelsLoading(false) })
+      }
+
+      /** 左下角模型名的点击：已开就收起（弹层是同一颗按钮开的，再点一下应当关）。 */
+      var togglePicker = function () {
+        if (pickerOpen === true) { setPickerOpen(false); return }
+        openPicker()
       }
 
       var openTree = function () {
@@ -5037,7 +5549,7 @@ window.__ModuleLoader__.load({
 
       var handleClientCommand = function (parsed) {
         if (parsed.name === '/settings') { openSettings(); return }
-        if (parsed.name === '/scoped-models') { openModels(); return }
+        if (parsed.name === '/scoped-models') { openPicker(); return }
         if (parsed.name === '/session') { openStats(); return }
         if (parsed.name === '/hotkeys') { setDrawer('hotkeys'); return }
         if (parsed.name === '/fork') { openFork(); return }
@@ -5048,8 +5560,8 @@ window.__ModuleLoader__.load({
       }
 
       var handleRpcCommand = function (parsed) {
-        if (parsed.name === '/model') { if (parsed.args === '') openModels(); else applyModelBySearch(parsed.args); return }
-        if (parsed.name === '/thinking') { if (parsed.args === '') setDrawer('thinking'); else applyThinkingByName(parsed.args); return }
+        if (parsed.name === '/model') { if (parsed.args === '') openPicker(); else applyModelBySearch(parsed.args); return }
+        if (parsed.name === '/thinking') { if (parsed.args === '') openPicker(); else applyThinkingByName(parsed.args); return }
         if (parsed.name === '/compact') { runCompact(parsed.args); return }
         if (parsed.name === '/export') { runExport(parsed.args); return }
         if (parsed.name === '/copy') { runCopy(); return }
@@ -5092,6 +5604,37 @@ window.__ModuleLoader__.load({
         widgets.push({ key: widgetKey, lines: Array.isArray(widget.lines) ? widget.lines : [], placement: widget.placement })
       }
 
+      // 顶栏「更多」的两项：压缩上下文、重新连接。两者都是「会打断当前一轮」的动作，
+      // 所以菜单只负责选，真正的执行还要过 ConfirmDialog。
+      var moreItems = [
+        { key: 'compact', label: t('compactNow'), icon: ArchiveIcon, run: function () { setConfirm('compact') } },
+        { key: 'reconnect', label: t('reconnect'), icon: RefreshIcon, title: t('reconnectHint'), run: function () { setConfirm('reconnect') } },
+      ]
+      var pickMore = function (item) {
+        setMoreOpen(false)
+        item.run()
+      }
+
+      // 二次确认的收口：确认之后才真的动手。重新连接会换掉 pi 子进程，压缩会改写会话文件，
+      // 两者都不该指望用户「点错了再点回来」。
+      var confirmNode = null
+      if (confirm === 'compact') {
+        confirmNode = h(ConfirmDialog, {
+          t: t,
+          title: t('confirmCompact'),
+          body: t('confirmCompactBody'),
+          onCancel: function () { setConfirm(null) },
+          onConfirm: function () { setConfirm(null); runCompact('') },
+        })
+      } else if (confirm === 'reconnect') {
+        confirmNode = h(ConfirmDialog, {
+          t: t,
+          title: t('confirmReconnect'),
+          body: t('confirmReconnectBody'),
+          onCancel: function () { setConfirm(null) },
+          onConfirm: function () { setConfirm(null); endSession() },
+        })
+      }
       var head = h('div', { className: 'dsh-pi-head' },
         h('div', { className: 'dsh-pi-head-main' },
           h(PiIcon, null),
@@ -5101,18 +5644,28 @@ window.__ModuleLoader__.load({
         // 模型与推理等级不在这里：它们跟宿主一样落在输入框下沿（见 Composer 的 picker）。
         // 头部的职责是「这是哪个 pi 进程、什么状态」，混进发送相关的开关会让两个区域语义打架。
         h(SelfCheckChip, { t: t, report: verify, onClick: runSelfCheck }),
-        h('button', { type: 'button', className: 'dsh-pi-btn dsh-pi-btn-ghost', title: t('nextModel') + ' (Ctrl+P)', onClick: cycleModel }, t('nextModel')),
-        h('button', { type: 'button', className: 'dsh-pi-btn dsh-pi-btn-ghost', title: t('nextThinking') + ' (Shift+Tab)', onClick: cycleThinking }, t('nextThinking')),
         h('button', { type: 'button', className: 'dsh-pi-btn dsh-pi-btn-ghost', title: t('stats'), onClick: openStats }, t('stats')),
         h('button', { type: 'button', className: 'dsh-pi-btn dsh-pi-btn-ghost', title: t('sessions'), onClick: function () { setDrawer('sessions') } }, t('sessions')),
         h('button', { type: 'button', className: 'dsh-pi-btn dsh-pi-btn-ghost', title: t('settings'), onClick: openSettings }, t('settings')),
-        h('button', { type: 'button', className: 'dsh-pi-btn dsh-pi-btn-ghost', title: t('compactNow'), onClick: function () { runCompact('') } }, t('compactNow')),
+        // 「下一个模型 / 下一个思考档位」两个按钮已删（用户 30427）：顶栏放的是「这是哪个进程、
+        // 什么状态」以及不常用的全局动作，切换档位属于 composer 的语义，Ctrl+P / Shift+Tab
+        // 两个快捷键照旧保留（见 hotkeyText），按钮只是同一件事的第二种入口，占地方且与
+        // 左下角的模型名重复。压缩上下文与重新连接收进「更多」，两者都要二次确认。
+        h('span', { className: 'dsh-pi-more-wrap', ref: moreRef },
+          h('button', {
+            type: 'button',
+            className: 'dsh-pi-btn dsh-pi-btn-ghost',
+            title: t('moreActions'),
+            'aria-haspopup': 'menu',
+            'aria-expanded': moreOpen === true ? 'true' : 'false',
+            onClick: function () { setMoreOpen(moreOpen !== true) },
+          }, h(EllipsisIcon, { size: 16 })),
+          moreOpen === true ? h(MoreMenu, { t: t, items: moreItems, onPick: pickMore, onClose: function () { setMoreOpen(false) } }) : null),
         // 「新会话」= 命令行 pi 的 /new：同一个 pi 子进程内换一棵新会话树（保留模型、思考档位、
         // 扩展加载状态），树换完后 reload 重挂数据流。0.3.0 之前这个按钮走 endSession（关掉
         // 子进程再起一个），代价是丢掉进程内一切状态，并且与 /new 的行为不一致 —— 同一件事
         // 有两个入口、两种结果，是 D-03 的实质。换进程的能力单独留成「重连」，它才该被当成
-        // 恢复手段（进程卡死、host 侧残留时用）。
-        h('button', { type: 'button', className: 'dsh-pi-btn dsh-pi-btn-ghost', title: t('reconnectHint'), onClick: endSession }, t('reconnect')),
+        // 恢复手段（进程卡死、host 侧残留时用）—— 它已收进上方的「更多」，并要过二次确认。
         h('button', { type: 'button', className: 'dsh-pi-btn', title: t('newSessionHint'), onClick: runNewSession }, t('newSession')))
 
       if (phase === 'loading') {
@@ -5310,23 +5863,9 @@ window.__ModuleLoader__.load({
           t: t,
           currentPath: meta === null || meta.sessionFile === undefined ? null : meta.sessionFile,
           onPick: pickSession,
-          onClose: function () { setDrawer(null) },
-        })
-      } else if (drawer === 'models') {
-        drawerNode = h(ModelsSheet, {
-          t: t,
-          models: models,
-          current: currentModel,
-          loading: modelsLoading,
-          onPick: pickModel,
-          onClose: function () { setDrawer(null) },
-        })
-      } else if (drawer === 'thinking') {
-        drawerNode = h(ThinkingSheet, {
-          t: t,
-          levels: levels,
-          current: thinking,
-          onPick: function (level) { setDrawer(null); setLevel(level) },
+          onNotice: notice,
+          onNewProject: function () { setDrawer('dir') },
+          onNewSessionAt: switchDir,
           onClose: function () { setDrawer(null) },
         })
       } else if (drawer === 'tree') {
@@ -5409,17 +5948,27 @@ window.__ModuleLoader__.load({
           thinking: thinking,
           thinkingLevels: levels,
           onSetThinking: setLevel,
-          onOpenModels: openModels,
-          onOpenThinking: function () { setDrawer('thinking') },
+          onOpenModels: togglePicker,
+          onOpenThinking: togglePicker,
+          // 模型 / 思考档位共用同一个向上弹层：开合状态在面板上（受控），Composer 只当锚点。
+          pickerOpen: pickerOpen,
+          onOpenPicker: togglePicker,
+          onClosePicker: function () { setPickerOpen(false) },
+          models: models,
+          modelsLoading: modelsLoading,
+          onPickModel: pickModel,
+          onPickThinking: function (level) { setPickerOpen(false); setLevel(level) },
           onOpenSessions: function () { setDrawer('sessions') },
           onOpenStats: openStats,
           onOpenSettings: openSettings,
           onOpenHotkeys: function () { setDrawer('hotkeys') },
-          onCompact: function () { runCompact('') },
+          onCompact: function () { setConfirm('compact') },
           onNewSession: runNewSession,
           footer: footerNode,
         }),
         drawerNode,
+        // 弹层与确认框都挂在根节点上，盖住面板但不动对话区（不是抽屉，不参与 drawer 状态机）。
+        confirmNode,
         pending,
         fileView === null ? null : h(FileSheet, { t: t, view: fileView, onClose: function () { setFileView(null) } }),
         overlay === null ? null : h(ImageOverlay, { image: overlay, onClose: function () { setOverlay(null) } }))
@@ -5578,6 +6127,7 @@ window.__ModuleLoader__.load({
       SettingsSheet: SettingsSheet,
       SessionsList: SessionsList,
       SessionsSheet: SessionsSheet,
+      RenameDialog: RenameDialog,
       pathCrumbs: pathCrumbs,
       buildContract: buildContract,
       messagesFromHistory: messagesFromHistory,
@@ -5599,7 +6149,16 @@ window.__ModuleLoader__.load({
       ArrowUpIcon: ArrowUpIcon,
       StopSquareIcon: StopSquareIcon,
       ChevronDownIcon: ChevronDownIcon,
+      EllipsisIcon: EllipsisIcon,
+      ChevronLeftIcon: ChevronLeftIcon,
+      PinIcon: PinIcon,
       AddMenu: AddMenu,
+      Sheet: Sheet,
+      Dialog: Dialog,
+      SidePanel: SidePanel,
+      ConfirmDialog: ConfirmDialog,
+      MoreMenu: MoreMenu,
+      ModelPicker: ModelPicker,
       fmtCount: fmtCount,
       numOr0: numOr0,
       strings: { zh: ZH, en: EN },

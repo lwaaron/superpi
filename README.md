@@ -168,10 +168,10 @@ New-Item -ItemType Junction `
 ### 方式三：手工 pnpm add（不想跑脚本时）
 
 ```powershell
-npm pack                                        # 得到 dsh-pi-0.6.4.tgz
+npm pack                                        # 得到 dsh-pi-0.8.0.tgz
 cd "$env:USERPROFILE\.dsh\profiles\desktop"
 node "$env:USERPROFILE\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\pnpm\bin\pnpm.cjs" `
-  add "file:C:\path\to\dsh-pi-0.6.4.tgz" --ignore-scripts
+  add "file:C:\path\to\dsh-pi-0.8.0.tgz" --ignore-scripts
 ```
 
 不要在 profile 里用 `npm install`：npm 会另写一份 `package-lock.json`，而宿主插件管理器用的是 pnpm，两套锁文件互相看不见，下次插件安装就会把 node_modules 重建成 pnpm 理解的样子。
@@ -298,6 +298,9 @@ npm install --prefix <插件>/.runtime --save-exact --no-audit --no-fund --logle
 | POST | `/api/dsh-pi/sessions/:id/command` | 转发一条 pi RPC 命令，body 必须是带 `type` 的 JSON 对象；`new_session` / `switch_session` / `fork` / `clone` 成功后清空事件缓冲并回填会话身份 |
 | POST | `/api/dsh-pi/sessions/:id/respond` | 应答扩展 UI 请求（`{id, value}` / `{id, confirmed}` / `{id, cancelled}` 三选一） |
 | POST | `/api/dsh-pi/sessions/:id/reset` | 清空该会话的事件缓冲，返回新的 `eventSeq` |
+| GET | `/api/dsh-pi/ui-prefs` | 面板偏好（项目显示名 / 会话显示名 / 置顶）的只读快照 `{version, updatedAt, projects, sessions}`；文件还不存在也照常回 200 与空结构；宿主没注入时回 501 |
+| POST | `/api/dsh-pi/ui-prefs/project` | body `{key, name}`：`key` 是项目路径、`name` 是显示名（自动 trim，空串 = 删除覆盖，上限 120 字）。未知键一个都不落盘（白名单），非法值回 400 |
+| POST | `/api/dsh-pi/ui-prefs/session` | body `{path, name?, pinned?}`：**合并式补丁** —— 只给 `name` 不会凭空置顶，只给 `pinned` 不会清掉已有名字；`pinned:false` 删除该条。`path` 上限 4096，非法值回 400 |
 
 `/sessions/history` 必须排在会话 id 正则 `^/sessions/([^/]+)` **之前**处理，否则 `history` 会被当成会话 id 走进 `requireSession` 拿 404。
 
@@ -306,24 +309,25 @@ npm install --prefix <插件>/.runtime --save-exact --no-audit --no-fund --logle
 ## 面板行为
 
 - 打开时先 `GET /state`：`runtime.ok === false` 直接切整页引导（不建会话）；否则已有会话就 `attach` 第一个，没有才 `POST /sessions`。挂载时还取一次 `GET /contract`，斜杠菜单与命令分发都读它，不在前端硬编码。
-- **顶栏的「新会话」与「重连」是两件不同的事**：新会话走 RPC `new_session`（同一个 `pi` 子进程里换会话树，与命令行 `/new` 同一条路径，快）；重连走 `endSession`（`DELETE` 旧会话 + 重建面板 + 新建，等于换一个子进程，旧事件缓冲一并丢掉）。0.2.5 把「换进程」当成了新会话，导致顶栏按钮与 `/new` 同名不同义（D-03），0.3.0 起两者分开。
+- **「新会话」与「重连」是两件不同的事**：新会话在顶栏，走 RPC `new_session`（同一个 `pi` 子进程里换会话树，与命令行 `/new` 同一条路径，快），新树建在**当前工作区**里；重连走 `endSession`（`DELETE` 旧会话 + 重建面板 + 新建，等于换一个子进程，旧事件缓冲一并丢掉），0.7.0 起它收进顶栏的「更多」菜单并且要过二次确认——换进程是恢复手段，不是日常动作。0.2.5 把「换进程」当成了新会话，导致顶栏按钮与 `/new` 同名不同义（D-03），0.3.0 起两者分开，0.7.0 起一个在明面一个进菜单。
 - 对话区把 `turn_start / text_delta / thinking_delta / toolcall_* / turn_end` 归并成消息气泡，**过程流按 DSH 会话过程流的形状渲染**（0.6.4，见下方「过程行」条）：思考是父行、工具调用是它下面的缩进子行组，一次调用只占一行，展开即「参数 + 输出」（流式期间边跑边长，单条 partial 截 2000 字符），消息底部给 in/out/total token 数。
 - composer 键位与 TUI 的 `keybindings.ts` 对齐：`Enter` 发送、`Shift+Enter` 换行、`Esc` 打断、`Ctrl+P` 下一个模型（`cycle_model`，只正循环）、`Shift+Tab` 切思考档位（`cycle_thinking_level`）、`Alt+Enter` 追加一条 follow-up（`follow_up`）、`Alt+Q` 取回排队中的消息（`clear_queue`）。输入 `/` 弹命令菜单、输入 `@` 弹文件补全（`GET /files`，选中只插入路径文本）。
 - 发送语义随状态变：**空闲时**发 `prompt`；**正在跑时**再发，走 `prompt` + `streamingBehavior: "steer"`（插到当前回合里，不停机）；`Alt+Enter` 才是 `follow_up`（等本轮结束再发）。`/` 开头的 follow-up 仍走 `prompt` + `streamingBehavior: "followUp"` —— 因为 `follow_up` 会按扩展命令规则打回，和 TUI 里 `prompt()` 的行为不一致。
 - `Esc` 按当前状态分四路：重试倒计时中 → `abort_retry`；bash 在跑 → `abort_bash`；空闲 → `abort`；正在跑 → **先 `clear_queue` 把排队文本取回来填进编辑器**，再 `abort`（直接 abort 会让仍留在队列里的消息继续执行，等于没停）。
-- 思考档位下拉（`get_available_thinking_levels` → `set_thinking_level`）与模型 picker（`get_available_models` 抽屉 → `set_model`）都在**输入卡的行内左侧**，与宿主主对话区同位置 —— 它们决定「下一条怎么发」，属 composer 语义，不在顶栏；连接状态用圆点表示（ready / busy / dead）。
+- 思考档位（`get_available_thinking_levels` → `set_thinking_level`）与模型（`get_available_models` → `set_model`）共用一个**向上弹层**（`ModelPicker`，`.dsh-pi-picker-menu` 定位在按钮上沿），都在**输入卡的行内左侧**，与宿主主对话区同位置 —— 它们决定「下一条怎么发」，属 composer 语义，不在顶栏；弹层分「切换模型」「思考档位」两段，当前项 `role=menuitemradio` + `aria-checked` 标记，Esc 或点外面关闭。连接状态用圆点表示（ready / busy / dead）。
 - **输入区按宿主主对话区重做（0.6.2 / 0.6.3 补首次填充）**：卡面 `--dsw-radius-panel` 28px + `--dsw-specific-input-major` + `--dsw-elevation-soft`，行内左侧「28px 圆形 `+` + 模型 picker + 推理档位 picker」，右侧「34px 圆形发送键（空闲 `ArrowUpIcon` / 运行中同位 `StopSquareIcon`）」。`+` 弹分组菜单（添加 / 指令），条目只映射面板真实能力。卡下方是统计行：`N 轮 · N 步 · N tok · 缓存命中 N% · 上下文 N%`，数据来自 `get_session_stats`（缓存命中 = `cacheRead/(input+cacheRead+cacheWrite)`，与 pi TUI footer 同公式；tok/s 无可靠来源故不显示），在 `attach` / `reload` / `agent_settled` 三处刷新。
-- **过程行按 DSH 会话过程流重做（0.6.4）**：思考 = 父行 `details.dsh-pi-proc` > `summary.dsh-pi-proc-head`（16px 图标 + 灰标签 + 2×2 中点 + 首行省略摘要，全文在展开区）；工具调用 = 父行下面的子行组 `div.dsh-pi-sub`（`margin-left:22px`，左侧 1px 竖线正好落在父行图标框左缘），正文与图片把过程流切段、之后重新起组。**一次调用 = 一行**：`toolResult` 消息按 `toolCallId` 归并进对应调用行的展开区（`── output ──`），孤儿结果仍单独渲染；`── live ──` 段只在 `status === 'running'` 时出现（跑完后它与 output 是同一件事，两段都印等于写两遍 —— 首次实拍就撞上了）。行内词汇全部取自 DSH 官方标题表（思考 / 运行命令 / 读取 / 读取图片 / 写入 / 编辑 / 搜索文件内容 / 查找文件 / 浏览目录 / 工具调用），未知工具兜底「工具调用 · <工具名>」，`read` 命中图片扩展名自动切「读取图片」；图标按工具名静态映射，不按参数猜。整段文字色取 `label-tertiary`（目标图逐像素实测 `rgb(129,133,140)`，`label-secondary` 明显偏深）。末尾工作状态行照抄 DSH `RunningStatus`：`.5px` 上 hairline + 16 网格鲸鱼尾 + `--dsw-alias-label-deep-diving` 蓝字（#345EBA，目标是「正在深度求索」而不是一条灰注释）+ 「深度求索中，用时 X分Y秒 ···」（单位之间无空格）（三个中点，与 DSH `chat.deepDivingFor` 同字），字号 `calc(var(--dsh-content-font-size,14px) - 2px)`、行高 22px 也照 DSH `.running`；时长按 `formatRunDuration` 三段拆（小时 / 分 / 秒，只有 hours>0 才出小时），计时器挂在节点自身（1Hz，不放面板级 repaint，否则每帧只为刷一行字就重算上百行流式 markdown），另配 `role=status` + `aria-live=polite` 只播报不带秒数的「深度求索中」。
-- 斜杠命令统一按契约里的 `disposition` 分流：`rpc` 8 条转成 RPC 命令；`client` 8 条在面板内开抽屉（`/settings` `/session` `/tree` `/fork` `/resume` `/hotkeys` 等）；`local` 1 条（`/changelog`）由 host 代读文件；`cli-only` 9 条与 `unsupported` 1 条各给一条明确提示，**绝不把 `/compact` 之类当普通消息发给模型**（0.2.5 的缺陷）。无法识别的 `/xxx` 保留 pi 的语义：提示一条「没这条命令」，然后原样当 prompt 发出去。
+- **过程行按 DSH 会话过程流重做（0.6.4）**：思考 = 父行 `details.dsh-pi-proc` > `summary.dsh-pi-proc-head`（16px 图标 + 灰标签 + 2×2 中点 + 首行省略摘要，全文在展开区）；工具调用 = 父行下面的子行组 `div.dsh-pi-sub`（`margin-left:26px` 让左侧 1px 竖线落在父行 label 左缘、`padding-left:12px` 让子行图标距竖线 12；0.8.0 起子行行盒与父行同为 24px、组内 `gap:8px`，子行步长 32 与父行同节奏 —— 中途曾把子行压到 16px 行盒 + gap 0，行距只剩父行一半，看着像被挤扁，已被推翻），正文与图片把过程流切段、之后重新起组。**一次调用 = 一行**：`toolResult` 消息按 `toolCallId` 归并进对应调用行的展开区（`── output ──`），孤儿结果仍单独渲染；`── live ──` 段只在 `status === 'running'` 时出现（跑完后它与 output 是同一件事，两段都印等于写两遍 —— 首次实拍就撞上了）。行内词汇全部取自 DSH 官方标题表（思考 / 运行命令 / 读取 / 读取图片 / 写入 / 编辑 / 搜索文件内容 / 查找文件 / 浏览目录 / 工具调用），未知工具兜底「工具调用 · <工具名>」，`read` 命中图片扩展名自动切「读取图片」；图标按工具名静态映射，不按参数猜。整段文字色取 `label-tertiary`（目标图逐像素实测 `rgb(129,133,140)`，`label-secondary` 明显偏深）。末尾工作状态行照抄 DSH `RunningStatus`：`.5px` 上 hairline + 16 网格鲸鱼尾 + `--dsw-alias-label-deep-diving` 蓝字（#345EBA，目标是「正在深度求索」而不是一条灰注释）+ 「深度求索中，用时 X分Y秒 ···」（单位之间无空格）（三个中点，与 DSH `chat.deepDivingFor` 同字），字号 `calc(var(--dsh-content-font-size,14px) - 2px)`、行高 22px 也照 DSH `.running`；时长按 `formatRunDuration` 三段拆（小时 / 分 / 秒，只有 hours>0 才出小时），计时器挂在节点自身（1Hz，不放面板级 repaint，否则每帧只为刷一行字就重算上百行流式 markdown），另配 `role=status` + `aria-live=polite` 只播报不带秒数的「深度求索中」。
+- 斜杠命令统一按契约里的 `disposition` 分流：`rpc` 8 条转成 RPC 命令；`client` 8 条在面板内开界面（`/settings` `/session` 是居中弹窗、`/resume` 是左侧栏、`/tree` `/fork` `/hotkeys` 仍是抽屉、`/model` `/thinking` 打开同一个向上弹层）；`local` 1 条（`/changelog`）由 host 代读文件；`cli-only` 9 条与 `unsupported` 1 条各给一条明确提示，**绝不把 `/compact` 之类当普通消息发给模型**（0.2.5 的缺陷）。无法识别的 `/xxx` 保留 pi 的语义：提示一条「没这条命令」，然后原样当 prompt 发出去。
 - 扩展 UI：`select` / `confirm` / `input` / `editor` 四种请求弹窗渲染（一次只显示一个，队列上限 12），应答走 `POST /respond`，`409` 静默吞掉（多半是 pi 已在 `agent_settled` 时丢弃）；`notify` / `setStatus` / `setWidget` / `setTitle` / `set_editor_text` 五种单向请求就地生效。倒计时按 pi 的声明走：扩展给了 `timeout` 就对齐它（`min(声明值, 5 分钟)`），没给就用 5 分钟兜底（`editor` 连 `timeout` 字段都没有），到点自动回 `cancelled: true`，否则那次 prompt 永远等不到 response。**host 侧同时让位**：命令的超时计时器看到还有弹窗挂着就续期，用户答完再重开一整轮窗口 —— 0.2.5 的「`pi command timed out` 红条与对话框并存」就是这两侧各自先超时造成的。
 - 图片：粘贴或选择图片都进 `prompt.images`，composer 里给缩略图、可逐张删除，消息区按图片块渲染并可点开原图 —— 不降级成 `[image png]` 文字。
 - 顶部还有一枚自检胶囊：绿「代码已同步」/ 黄「代码已更新 · 待重启」/ 黄「pi 需重新构建」，鼠标悬停给出结论、git 分支@短 sha 与缺失文件，点一下重新检查。请求失败就直接不渲染 —— 宁可少一个胶囊，也不要误报绿点。
 - pi 运行时缺失时整页切到引导（见上文），不创建会话、不产生半死不活的状态。
 - pi 进程退出时面板转红点并提供「重试」与「重新检查」，不会静默空白。
-- **历史会话抽屉是两级的，与命令行 pi 的 `/resume` 同构**：第一层列**全部项目**（`scope=all`，聚合规则逐条照抄 pi 的 `groupSessionsByProject`：当前项目置顶 → 非临时项目优先 → 最近活动降序；临时目录判定沿用 pi 的 `TEMPORARY_PATH_PATTERNS` 三条正则），点进项目后第二层只列该 cwd 的会话（`scope=project&cwd=…`）。pi 的 scope 开关在进项目后就失效（`session-selector.ts:1663`），所以这里做成两级导航而不是切换按钮，语义等价、点击更少。选中走 `switch_session`。
-  跨项目切换后 `meta.sessionCwd` 用会话文件 header 的 `cwd` 校正（`get_state` 不回报 cwd，见 `rpc-types.ts:96-109`），面板里所有「当前工作区」显示点（空态 cwd、统计抽屉、目录抽屉起点）一律读 `sessionCwd` 而不是子进程的 spawn 目录。目标目录已被删除时 `MissingSessionCwdError` 翻成一条中文提示 —— pi 的 RPC 面没有 `cwdOverride` 分支（`rpc-mode.ts:624-630` 只转调 `switchSession`），面板替不了用户选「换目录继续」，只能指路命令行。
+- **历史会话是两级的，与命令行 pi 的 `/resume` 同构**（0.7.0 起这块界面是左侧滑出的 `SidePanel`，不是抽屉；0.8.0 的增强见本节末条）：第一层列**全部项目**（`scope=all`，聚合规则逐条照抄 pi 的 `groupSessionsByProject`：当前项目置顶 → 非临时项目优先 → 最近活动降序；临时目录判定沿用 pi 的 `TEMPORARY_PATH_PATTERNS` 三条正则），点进项目后第二层只列该 cwd 的会话（`scope=project&cwd=…`）。pi 的 scope 开关在进项目后就失效（`session-selector.ts:1663`），所以这里做成两级导航而不是切换按钮，语义等价、点击更少。选中走 `switch_session`。
+  跨项目切换后 `meta.sessionCwd` 用会话文件 header 的 `cwd` 校正（`get_state` 不回报 cwd，见 `rpc-types.ts:96-109`），面板里所有「当前工作区」显示点（空态 cwd、统计弹窗、目录弹窗起点）一律读 `sessionCwd` 而不是子进程的 spawn 目录。目标目录已被删除时 `MissingSessionCwdError` 翻成一条中文提示 —— pi 的 RPC 面没有 `cwdOverride` 分支（`rpc-mode.ts:624-630` 只转调 `switchSession`），面板替不了用户选「换目录继续」，只能指路命令行。
   `/fork` 抽屉读 `get_fork_messages`，选中走 `fork` 并把那条用户消息回填进编辑器。
 - **挂载即对账**：`attach` 之后补一次 `get_messages` 整表重建消息列表（`messagesFromHistory`）。原因是 `new_session` / `switch_session` / `fork` / `clone` 成功后 host 会 `resetEvents()` 把事件缓冲清空，历史消息不会再以事件形式重放 —— 只靠 `snapshot` 重放的话，切过去必然是空白（0.4.0 及之前「点开历史会话没有内容」就是这个根因；命令行 pi 从 jsonl 恢复所以不受影响）。两道防线：会话已切走则丢弃响应；`busy` 期间不覆盖列表，改记待办，等 `agent_settled` 那一拍由 `drainHydrate` 补上。
+- **历史会话两级列表、过程流行距与面板偏好（0.8.0）**：三件事都长在既有结构上，没有新开界面。①历史会话（顶栏入口与 `/resume` 共用 `SessionsSheet`）补齐「面板自己的账」：项目层标题固定「项目列表」且只在这一层给「新建项目」按钮，会话层标题换成项目名、返回箭头由 `SidePanel` 的 `onBack` 提供（原「← 全部项目」文字按钮已删）；搜索框占整行，placeholder 分「搜索项目」/「搜索会话」；项目行与会话行各带一个行内 `⋯` 菜单（重命名项目 / 在此新建会话 / 重命名会话 / 置顶或取消置顶）；会话标题按「用户改的名字 → pi 的会话名 → 首条用户消息摘要 → 末条消息 → 占位」取值（`sessionHeadline()` 取 `firstMessage` 首行、超 60 字符截断加 `…`）；置顶用两遍 partition 而不是 `sort`（host 给的顺序本身有意义，是最近活动降序）；改名走独立的 `RenameDialog` 而不是复用 `NameSheet`（`drawer` 是单值，改名会把左侧栏自己顶掉）。偏好不归 pi 的 RPC 面管，读写走 host 新增的 `/ui-prefs` 三条路由（见上方 HTTP 接口），落盘在 `<home>/.dsh-pi/ui-prefs.json`（`DSH_PI_UI_PREFS` 可覆盖路径），文件不存在时按空偏好处理、不报错。②过程流行距按参考图重算：父行与子行同为 24px 行盒，`.dsh-pi-sub` 组内 `gap:8px`、`margin-left:26px`、`padding-left:12px`，子行步长与父行一致；0.6.4 那版把子行压到 16px 行盒 + gap 0，行距只剩父行一半，是被推翻的中间态。③版本 0.8.0：tarball 名 `dsh-pi-0.8.0.tgz`，`CONTRACT_VERSION` 同步 0.8.0。
 
 ## 自检：现在跑的是不是磁盘上那份代码
 
@@ -370,13 +374,13 @@ pwsh -NoProfile -File .\tools\standalone-verify.ps1   # 全新 DSH_HOME 里只�
 | `test/timeout.mjs` | 28 条超时语义门禁：`timeoutLimitMs` 的三态（正数=毫秒上限 / `0``负数``Infinity`=不设上限 / `NaN``乱码``对象`=TypeError 绝不静默降级）、到期即 reject 且不留孤儿 pending、不设上限时进程关闭由 `handleExit` 兜底、**弹窗未答则计时期续期**、**应答后重开一整轮窗口**、续期上限耗尽时报「dialog(s) never answered」。用 `test/fixtures/fake-pi-rpc.mjs` 做协议替身，把 5 分钟的真实等待压到毫秒级 —— 这是 0.3.0 之前「红条与对话框并存」那个缺陷唯一可靠的门禁 |
 | `test/fixtures/fake-pi-rpc.mjs` | 假 pi RPC 子进程（`FAKE_PI_MODE=dialog/silent`）：只为复现「命令永不回答」与「命令在等弹窗」两种时序，不模拟其他行为 |
 | `test/fixtures/pi-ext-ui-probe.ts` | 扩展 UI 探针（人工验证用，不参与 `npm test`）：复制到 `%USERPROFILE%\.pi\agent\extensions\` 并重启 pi 会话后，`/dsh-ui-probe` 依次弹 select→confirm→input→editor，`/dsh-ui-notify` 验五个单向方法。**扩展对话框必须真人点，自动化只能测到 host 侧的时序**，所以探针留在仓库里当复现手段 |
-| `test/client-render.mjs` | `react-dom/server` 把面板渲染成字符串（含键集与循环展开共执行 738 次，条数由脚本自报 `PASS (738 assertions)`）：挡组件异常、文案缺键、中英键集不一致、引导页结构、以及扩展 UI 四种弹窗（confirm 的「否/确认」按钮集、select 的选项数、input 的 prefill/placeholder、editor 的多行回填、空 title 回落、`dialogBudgetMs` 的「声明值与 5 分钟上限取小」四类非法值回落）。**倒计时的「还剩 Ns」文案断言不到**——那行由 `useEffect` 驱动，SSR 阶段 `left` 为 `null` 不渲染，只能在真浏览器里验 |
+| `test/client-render.mjs` | `react-dom/server` 把面板渲染成字符串（含键集与循环展开共执行 797 次，条数由脚本自报 `PASS (797 assertions)`）：挡组件异常、文案缺键、中英键集不一致、引导页结构、以及扩展 UI 四种弹窗（confirm 的「否/确认」按钮集、select 的选项数、input 的 prefill/placeholder、editor 的多行回填、空 title 回落、`dialogBudgetMs` 的「声明值与 5 分钟上限取小」四类非法值回落）。**倒计时的「还剩 Ns」文案断言不到**——那行由 `useEffect` 驱动，SSR 阶段 `left` 为 `null` 不渲染，只能在真浏览器里验 |
 | `test/css-tokens.mjs` | CSS 门禁 98 条：禁硬色值（只准 `--dsw-*`）、令牌白名单、字体栈、`:focus-visible` 可见性、`prefers-reduced-motion` 兜底，另有 0 号自检确认门禁本身不是空跑 |
 | `test/restart-lib.mjs` | 重启脚本门禁：22 条 node 断言（文件层：UTF-8 BOM、无游离 CR、库模式开关、去注释后无裸 `Start-Process -FilePath $exe`、走 `ProcessStartInfo`、有自保护）+ `test/fixtures/restart-lib-checks.ps1` 的 31 条 PS 断言（`Get-LaunchSpec` 四种输入、`Get-DshHomeFromRoot` 五种、`Get-EnvPatch` 六种、`Get-LaunchRootPid`/`Test-SelfAncestorOf` 对活进程、`Test-DshPiHealth` 对五种假响应与死端口）。**pwsh 7 与 PowerShell 5.1 各跑一遍**，是「5.1 能不能读这个脚本」的唯一机器保障 |
 | `test/version.mjs` | 版本号单一真相：`/health`、`/state`、`/diagnostics` 报的版本必须等于 `package.json` 的 `version`；换版本重新加载要跟着变（防写死常量）；`package.json` 缺失时降级 `0.0.0` 而不是崩；README 里的 tarball 名必须跟版本对齐 |
 | `test/session-projects.mjs` | 两级历史列表 55 条：`pathComparisonKey` 大小写归一、`isTemporaryPath` 三条正则逐条对齐 pi（`/tmp`、`appdata/local/temp`、`pi-runtime-*`）、`shortenHomePath` 的 `~` 缩写边界、`groupSessionsByProject` 的「当前项目 → 非临时 → 最近活动降序」与大小写合并、`listAllSessions`/`listSessions` 的「全部项目 vs 单项目」两种语义、`readSessionCwd` 只读 64KB 头行且首行非杂项时返回空、`firstRunningSessionFile` 的「跨项目也算当前会话」与活/死优先级。造一棵符合 pi 目录约定的假 `sessions/` 树来跑，不碰真会话 |
-| `test/host-parity.mjs` | host 侧离线一致性 204 条：`buildSpawnArgs` 19 条（`persist=false` 不吃 `--continue`、用户自带 `--fork`/`--no-session` 不重复生成、空 `--name` 不传）、`pickCurrentSessionFile` 8 条、以及 `/respond` 的 409/400/415/200、`/reset`、四条替换命令的 reset+refresh、`/files` 排序与 404、`/file` 预览 28 条（文本截断 / 二进制探测 / 目录 400 / ENOENT 404 / MIME 映射 / `~` 与 `%VAR%` 展开）、`/pi/changelog` 三情形、未知路由 404。**路由与参数拼错了只会静默跑偏，所以单独立门禁** |
-| `test/parity.mjs` | 与 pi 的三向对账 77 条：以 pi 的 `RpcCommand` 联合类型、`RpcSessionState` 接口、`docs/json.md` 事件表为事实来源，双向比对（我们缺的 = 缺口，我们编的 = 幻觉），再断言契约里 33 条命令 / 25 类事件 / 12 种 assistant 事件 / 27 条斜杠 / 9 个扩展 UI method 在面板里都有落地字面量，且 `CONTRACT_VERSION` 与 `package.json` 同步。0.2.5 时「只发 5/33 命令、只处理 12/25 事件、27 条斜杠一条没接而 `npm test` 全绿」正是这个门禁要拦的事 |
+| `test/host-parity.mjs` | host 侧离线一致性 276 条：`buildSpawnArgs` 19 条（`persist=false` 不吃 `--continue`、用户自带 `--fork`/`--no-session` 不重复生成、空 `--name` 不传）、`pickCurrentSessionFile` 8 条、以及 `/respond` 的 409/400/415/200、`/reset`、四条替换命令的 reset+refresh、`/files` 排序与 404、`/file` 预览 28 条（文本截断 / 二进制探测 / 目录 400 / ENOENT 404 / MIME 映射 / `~` 与 `%VAR%` 展开）、`/pi/changelog` 三情形、未知路由 404、`/ui-prefs` 三条路由 33 条（GET 空文件回落、项目改名 trim 与键白名单、会话置顶与「只给 name 不许凭空置顶」的合并语义、四类 400）。**路由与参数拼错了只会静默跑偏，所以单独立门禁** |
+| `test/parity.mjs` | 与 pi 的三向对账 78 条：以 pi 的 `RpcCommand` 联合类型、`RpcSessionState` 接口、`docs/json.md` 事件表为事实来源，双向比对（我们缺的 = 缺口，我们编的 = 幻觉），再断言契约里 33 条命令 / 25 类事件 / 12 种 assistant 事件 / 27 条斜杠 / 9 个扩展 UI method 在面板里都有落地字面量，且 `CONTRACT_VERSION` 与 `package.json` 同步。0.2.5 时「只发 5/33 命令、只处理 12/25 事件、27 条斜杠一条没接而 `npm test` 全绿」正是这个门禁要拦的事 |
 | `tools/standalone-verify.ps1` | 全新 DSH_HOME 自证：建临时 profile → pnpm 装 tarball → 起独立实例 → 真实 LLM 往返 → 清理（端到端演练，不是单测） |
 
 `client-render.mjs` 需要 `react` / `react-dom` —— 本插件刻意不带 `node_modules`，所以它从同级 `pi-main/node_modules` 借（找不到就 SKIP 并退出 0，不算失败）。
@@ -404,7 +408,7 @@ DSH 的插件管理器（dshmarket / 插件详情页）在安装、卸载、升�
 
 - 只支持单实例面板：多开同一 keyed slot 会互相覆盖状态。
 - 会话默认落盘（`persist=true`，pi 写 `~/.pi/agent/sessions`），DSH 重启后能靠 `startup=continue` 接回该目录最近的会话；把 `persist` 设为 `false` 才会「退出即丢」。
-- `cycle_model` 在 RPC 面上没有方向参数（pi 只给 `cycleModel()` 正循环），所以 `Ctrl+P` 只能往前走，反向切换得到会话内用 `/model` 抽屉选（见 `docs/parity.md` D-08）。
-- `get_state` 不返回 `autoRetryEnabled`（pi 的 `RpcSessionState` 12 个字段里没有它，`client.js:1672` 读到的永远是 `undefined`）。开关点下去确实发 `set_auto_retry` 并生效，但重开抽屉仍显示 off —— 面板侧没有任何回填来源，只能等上游补字段（见 `docs/parity.md` D-07，`test/parity.mjs:290` 用断言把这个缺口锁住）。
+- `cycle_model` 在 RPC 面上没有方向参数（pi 只给 `cycleModel()` 正循环），所以 `Ctrl+P` 只能往前走，反向切换得到会话内用 `/model` 打开向上弹层选（见 `docs/parity.md` D-08）。
+- `get_state` 不返回 `autoRetryEnabled`（pi 的 `RpcSessionState` 12 个字段里没有它，`client.js:4167` 读到的永远是 `undefined`）。开关点下去确实发 `set_auto_retry` 并生效，但重开设置弹窗仍显示 off —— 面板侧没有任何回填来源，只能等上游补字段（见 `docs/parity.md` D-07，`test/parity.mjs:290` 用断言把这个缺口锁住）。
 - `/selfcheck` 只能回答「进程加载的 vs 磁盘的」。插件被别处改过又被指回来时，需要重启一次让快照刷新。
 - 一键安装需要能访问 npm registry；离线环境请把 `cliPath` 指到已有 pi，或先手工把依赖装到 `.runtime`。

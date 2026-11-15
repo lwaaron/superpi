@@ -311,7 +311,7 @@ assert(emptyNoAction.includes('dsh-pi-empty-actions') === false, '没传 onPickD
 const emptyEn = renderToStaticMarkup(React.createElement(EmptyState, { t: en, meta: 'C:\\x', onPickDir() {} }))
 assert(emptyEn.includes(en('pickDir')), '英文空态该显示 ' + en('pickDir'))
 
-// ── 9.11 设置抽屉：开关必须是 DSH 的 aria switch，不是文字按钮 ──────────────
+// ── 9.11 设置弹窗（0.7.0 起由抽屉改为居中弹窗）：开关必须是 DSH 的 aria switch ──
 const SettingsSheet = internals.SettingsSheet
 assert(typeof SettingsSheet === 'function', 'client.js 应导出 SettingsSheet 以便测试')
 const settingsHtml = renderToStaticMarkup(React.createElement(SettingsSheet, {
@@ -581,7 +581,11 @@ assert(projectLevel.includes('data-temporary="1"'), '临时项目该打 data-tem
 assert(projectLevel.includes(zh('tempTag')), '临时项目该显示「' + zh('tempTag') + '」标签')
 assert(projectLevel.includes('~\\pi-workspace'), '项目行标题该用 displayPath（~ 缩写），而不是绝对路径')
 assert(projectLevel.includes(zh('projectSessions').replace('{n}', '3')), '项目行该显示会话数：' + zh('projectSessions').replace('{n}', '3'))
-assert(projectLevel.includes('← ' + zh('allProjects')) === false, '项目层不该出现返回按钮')
+assert(projectLevel.includes(zh('projectList')), '项目层标题该是「' + zh('projectList') + '」')
+assert(projectLevel.includes(zh('searchProjects')), '项目层搜索框 placeholder 该是「' + zh('searchProjects') + '」')
+assert(projectLevel.includes('dsh-pi-side-new') && projectLevel.includes(zh('newProject')), '项目层该有「' + zh('newProject') + '」按钮')
+assert(projectLevel.includes('dsh-pi-side-back') === false, '项目层不该有返回键')
+assert(projectLevel.includes('dsh-pi-row-more'), '每行右侧该有 ⋯ 入口（项目层）')
 const sessionLevel = renderToStaticMarkup(React.createElement(internals.SessionsList, {
   t: zh, level: 'sessions', project: projEntries[1], query: '', currentPath: 'D:\\proj\\b.jsonl',
   info: { loading: false, error: null, projects: [], sessions: sessEntries, total: 2 },
@@ -589,10 +593,54 @@ const sessionLevel = renderToStaticMarkup(React.createElement(internals.Sessions
 }))
 assert(sessionLevel.includes('class="dsh-pi-sess"'), '会话层该渲染 .dsh-pi-sess 行')
 assert(sessionLevel.includes('class="dsh-pi-proj"') === false, '会话层不该混入项目行')
-assert(sessionLevel.includes('← ' + zh('allProjects')), '会话层该有回到项目层的按钮')
+assert(sessionLevel.includes(zh('searchSessions')), '会话层搜索框 placeholder 该是「' + zh('searchSessions') + '」')
+assert(sessionLevel.includes('dsh-pi-side-back'), '会话层该有回项目层的图标返回键')
+assert(sessionLevel.includes('← ' + zh('allProjects')) === false, '返回键是图标按钮，不该再渲染「← 全部项目」文字')
+assert(sessionLevel.includes('>q1<'), '没名字的会话该把 firstMessage 当标题')
+assert(sessionLevel.includes('>NAMED<') && sessionLevel.includes('>q2<'), '有会话名的行该显示名字，并把 firstMessage 收进摘要格')
 assert(sessionLevel.includes('D:\\proj'), '会话层标题该是项目路径')
 assert(sessionLevel.includes('dsh-pi-tag'), '会话层该给当前会话打「' + zh('current') + '」标签')
 assert(sessionLevel.includes(zh('sessionsHint')), '会话层该显示会话提示文案')
+// 0.8.0：ui-prefs 的两棵表（项目名 / 会话名 / 置顶）与行内 ⋯ 菜单。
+// 这些是「面板自己的账」——pi 的 RPC 面没有别名与置顶概念，所以只能靠纯渲染层断言锁住。
+const pinnedLevel = renderToStaticMarkup(React.createElement(internals.SessionsList, {
+  t: zh, level: 'sessions', project: projEntries[1], query: '', currentPath: null,
+  info: { loading: false, error: null, projects: [], sessions: sessEntries, total: 2 },
+  prefs: { projects: {}, sessions: { 'D:\\proj\\a.jsonl': { pinned: true } } },
+  menuKey: null, onRowMenu() {}, onRenameProject() {}, onRenameSession() {}, onTogglePin() {},
+  onNewProject() {}, onNewSessionAt() {}, onQuery() {}, onOpenProject() {}, onBack() {}, onPick() {}, onClose() {},
+}))
+assert(pinnedLevel.split('class="dsh-pi-sess"').length - 1 === 2, '置顶不该增删行')
+assert(pinnedLevel.indexOf('>q1<') < pinnedLevel.indexOf('>NAMED<'), '置顶的会话该排到最前，其余保持 host 给的顺序')
+assert(pinnedLevel.includes('data-pinned="1"'), '置顶行该打 data-pinned=1')
+const prefsLevel = renderToStaticMarkup(React.createElement(internals.SessionsList, {
+  t: zh, level: 'sessions', project: projEntries[1], query: '', currentPath: null,
+  info: { loading: false, error: null, projects: [], sessions: sessEntries, total: 2 },
+  prefs: { projects: {}, sessions: { 'D:\\proj\\b.jsonl': { name: '我自己起的名字' } } },
+  onQuery() {}, onOpenProject() {}, onBack() {}, onPick() {}, onClose() {},
+}))
+assert(prefsLevel.includes('我自己起的名字'), 'ui-prefs 里的会话名该盖过 pi 的会话名')
+const renamedProjectLevel = renderToStaticMarkup(React.createElement(internals.SessionsList, {
+  t: zh, level: 'projects', project: null, query: '', currentPath: null,
+  info: { loading: false, error: null, projects: projEntries, sessions: [], total: 6 },
+  prefs: { projects: { 'd:\\proj': { name: '我的工程' } }, sessions: {} },
+  onQuery() {}, onOpenProject() {}, onBack() {}, onPick() {}, onClose() {},
+}))
+assert(renamedProjectLevel.includes('我的工程') && renamedProjectLevel.includes('data-renamed="1"'), '项目别名该盖过 displayPath 并打 data-renamed=1')
+const menuLevel = renderToStaticMarkup(React.createElement(internals.SessionsList, {
+  t: zh, level: 'sessions', project: projEntries[1], query: '', currentPath: null,
+  info: { loading: false, error: null, projects: [], sessions: sessEntries, total: 2 },
+  menuKey: 'sess:D:\\proj\\b.jsonl',
+  onQuery() {}, onOpenProject() {}, onBack() {}, onPick() {}, onClose() {},
+}))
+assert(menuLevel.includes('dsh-pi-more-menu'), '点开 ⋯ 该渲染菜单')
+assert(menuLevel.includes(zh('renameSession')) && menuLevel.includes(zh('pinSession')), '会话行菜单该有重命名与置顶')
+assert(menuLevel.includes('aria-expanded="true"'), '展开的 ⋯ 该 aria-expanded=true')
+const renameDlg = renderToStaticMarkup(React.createElement(internals.RenameDialog, {
+  t: zh, title: zh('renameSession'), value: '旧名字', onSubmit() {}, onClose() {},
+}))
+assert(renameDlg.includes('class="dsh-pi-dialog"') && renameDlg.includes('dsh-pi-search'), '重命名弹窗该是居中 Dialog + 输入框')
+assert(renameDlg.includes(zh('cancel')) && renameDlg.includes(zh('extSubmit')), '重命名弹窗该有取消与提交')
 const filteredLevel = renderToStaticMarkup(React.createElement(internals.SessionsList, {
   t: zh, level: 'projects', project: null, query: 'd:\\proj', currentPath: null,
   info: { loading: false, error: null, projects: projEntries, sessions: [], total: 6 },
@@ -686,8 +734,8 @@ assert(closeHtml.includes('dsh-pi-btn-icon'), '关闭按钮该带 dsh-pi-btn-ico
 assert(closeHtml.includes('<svg'), '关闭按钮该用描边图标，不是纯文本 ×')
 assert(closeHtml.includes('aria-label="' + zh('close') + '"'), '关闭按钮要有 aria-label，读屏用户才认得')
 assert(closeHtml.includes('>×<') === false, '关闭按钮不该再输出文本 ×')
-assert(settingsHtml.includes('dsh-pi-btn-icon'), '设置抽屉的关闭按钮该是图标按钮（跟 Sheet 同款）')
-assert(settingsHtml.includes('>×<') === false, '设置抽屉不该再输出文本 ×')
+assert(settingsHtml.includes('dsh-pi-btn-icon'), '设置弹窗的关闭按钮该是图标按钮（跟 Dialog 同款）')
+assert(settingsHtml.includes('>×<') === false, '设置弹窗不该再输出文本 ×')
 assert(dirHtml.includes('dsh-pi-btn-icon'), '目录弹窗的关闭按钮该是图标按钮（以前这里连 type=button 都没有）')
 assert(dirHtml.includes('>×<') === false, '目录弹窗不该再输出文本 ×')
 assert(dialogHtml({ method: 'confirm', title: 'T', message: 'M' }).includes('dsh-pi-dialog-head'), '扩展弹窗该有带关闭按钮的头部')
@@ -741,6 +789,14 @@ const composerProps = {
   model: { id: 'deepseek-v4', provider: 'deepseek' },
   thinking: 'medium',
   thinkingLevels: ['low', 'medium', 'high'],
+  // 模型与思考档位合成同一个向上弹层（0.7.0），开合状态在面板上，Composer 只当锚点。
+  pickerOpen: false,
+  onOpenPicker() {},
+  onClosePicker() {},
+  models: [{ id: 'deepseek-v4', provider: 'deepseek', name: 'DeepSeek V4' }],
+  modelsLoading: false,
+  onPickModel() {},
+  onPickThinking() {},
 }
 const composerHtml = renderToStaticMarkup(React.createElement(Composer, composerProps))
 assert(composerHtml.includes('dsh-pi-box'), '输入区该有卡面 dsh-pi-box')
@@ -752,8 +808,19 @@ assert(composerHtml.includes('disabled=""'), '空输入时发送键该禁用')
 assert(composerHtml.includes('dsh-pi-bar-hint'), '快捷键提示仍在 bar 里固定位置')
 assert(composerHtml.includes('dsh-pi-picker'), '有模型时该渲染模型下拉')
 assert(composerHtml.includes('deepseek-v4'), '模型下拉显示模型 id')
-assert(composerHtml.includes('dsh-pi-picker-native'), '推理等级用原生 select 叠在自绘外壳里（可点、可键盘）')
-assert(composerHtml.includes('>medium<'), '推理等级下拉该选中当前档位')
+assert(composerHtml.includes('dsh-pi-picker-box'), '模型名与思考档位共用一个锚点 dsh-pi-picker-box')
+assert(composerHtml.includes('dsh-pi-picker-native') === false, '不再用原生 select 叠层：档位也是弹层里的一行')
+assert(composerHtml.includes('>medium<'), '档位按钮该显示当前档位')
+assert(composerHtml.includes('aria-haspopup="menu"'), '两个 picker 都该声明弹出菜单')
+// 弹层没开时不该渲染任何菜单项，避免 SSR 里多出一层盖住输入区。
+assert(composerHtml.includes('dsh-pi-picker-menu') === false, '未打开时不该渲染模型弹层')
+const pickerHtml = renderToStaticMarkup(React.createElement(Composer, Object.assign({}, composerProps, { pickerOpen: true })))
+assert(pickerHtml.includes('dsh-pi-picker-menu'), '打开后该渲染向上弹层 dsh-pi-picker-menu')
+assert(pickerHtml.includes(zh('pickModel')) && pickerHtml.includes(zh('pickThinking')), '弹层里模型与思考档位两段标题都要有')
+assert(pickerHtml.includes('role="menu"'), '弹层该是 role=menu')
+assert(pickerHtml.includes('role="menuitemradio"'), '每行都是 menuitemradio（两段都是单选）')
+assert(pickerHtml.includes('aria-checked="true"'), '当前模型 / 档位该是 aria-checked=true')
+assert(pickerHtml.includes('aria-expanded="true"'), '打开后锚点该同步 aria-expanded')
 assert(composerHtml.includes('dsh-pi-btn-icon') === false, 'bar 里不该再有旧的图标文字按钮（都并进 + 菜单了）')
 // 附件与目录收进 + 菜单后，bar 左侧只剩 + / 模型 / 推理等级三个控件。
 assert(composerHtml.includes(zh('attachFile')) === false, '回形针按钮该收进 + 菜单，不再占 bar')

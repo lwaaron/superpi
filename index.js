@@ -52,6 +52,7 @@ import {
   resolveNodeRuntime,
   resolvePiRuntime,
 } from './src/pi-runtime.mjs'
+import { createUiPrefsStore } from './src/ui-prefs.mjs'
 
 export const name = 'dsh-pi'
 export const inject = []
@@ -62,7 +63,7 @@ const API_PREFIX = '/api/' + PLUGIN_ID
 const MAX_SESSIONS = 8
 const MAX_BODY_BYTES = 4 * 1024 * 1024
 /** GET /contract 里 version 字段的取值：本插件对外的契约版本，与 package.json 解耦。 */
-const CONTRACT_VERSION = '0.6.4'
+const CONTRACT_VERSION = '0.8.0'
 /** 历史会话列表的条数窗口（与 src/session-store.mjs 的 DEFAULT_LIMIT/MAX_LIMIT 一致）。 */
 const HISTORY_DEFAULT_LIMIT = 20
 const HISTORY_MAX_LIMIT = 200
@@ -136,6 +137,9 @@ const SELF_FILES = [
   { rel: 'src/pi-runtime.mjs', runtime: true },
   { rel: 'src/session-store.mjs', runtime: true },
   { rel: 'src/rpc-contract.mjs', runtime: true },
+  // 面板偏好的落盘层。runtime:true 是因为它参与 /ui-prefs 三条路由的判断逻辑，
+  // 改了磁盘上的它而进程里还是旧的那份，就会出现「读到的结构与代码对不上」。
+  { rel: 'src/ui-prefs.mjs', runtime: true },
   { rel: 'package.json', runtime: false },
   { rel: 'cordis.patch.yml', runtime: false },
 ]
@@ -726,6 +730,15 @@ export function apply(ctx, config = {}) {
     return installing
   }
 
+  /**
+   * 面板偏好的存储（项目重命名 / 会话置顶）。
+   *
+   * 放在 apply 作用域里只建一次：store 内部有一条写队列，必须被所有请求共享，
+   * 每次请求新建实例就等于没有串行化（并发 read-modify-write 会互相覆盖）。
+   * 落盘路径由 src/ui-prefs.mjs 解析（DSH_PI_UI_PREFS 或 ~/.dsh-pi/ui-prefs.json）。
+   */
+  const uiPrefs = createUiPrefsStore()
+
   const handler = createHandler({
     log,
     spawnSession,
@@ -739,6 +752,7 @@ export function apply(ctx, config = {}) {
     installRuntime,
     listHistory,
     listRunningSessions,
+    uiPrefs,
     // /files 的 dir 缺省值：走一次指纹比对（没改配置就是常数时间），保证刚改的 workspace 立刻生效。
     workspacePath: () => { refreshRuntime(); return detected.workspace },
   })
@@ -928,6 +942,37 @@ export function createHandler(deps) {
       /** /changelog（契约 disposition:'local'）：读 pi 包内的 CHANGELOG.md。找不到也回 200，客户端据此显示「无 changelog」。 */
       if (method === 'GET' && routePath === '/pi/changelog') {
         return send(200, readChangelog(deps.detected === undefined || deps.detected === null ? '' : deps.detected.packageDir))
+      }
+
+      /**
+       * 面板偏好（项目重命名 / 会话置顶）。
+       *
+       * 为什么由 host 存：这两件事都没有 pi 通道 —— set_session_name 改的是单个会话的
+       * session_info，改不了项目层；置顶纯属面板概念，SessionInfo 里没有这个字段。
+       * 浏览器半区也没有写盘能力，所以只能落在这台机器的用户主目录下。
+       *
+       * 三条路由都返回**全量结构**（不是增量）：偏好是一份小字典，让客户端每次拿全量
+       * 就不必维护两端合并逻辑。
+       *
+       * 校验（key/name/path/pinned 的类型与长度）在 src/ui-prefs.mjs 里，那里抛的错
+       * 带 statusCode:400，由下面的 catch 原样回给客户端——路由层不再重复一遍规则。
+       */
+      if (method === 'GET' && routePath === '/ui-prefs') {
+        if (deps.uiPrefs === undefined || deps.uiPrefs === null) return send(501, { error: 'ui prefs unavailable' })
+        return send(200, await deps.uiPrefs.read())
+      }
+      if (method === 'POST' && routePath === '/ui-prefs/project') {
+        if (deps.uiPrefs === undefined || deps.uiPrefs === null) return send(501, { error: 'ui prefs unavailable' })
+        const body = (await readJsonBody(req)) ?? {}
+        return send(200, await deps.uiPrefs.setProject(body.key, body.name))
+      }
+      if (method === 'POST' && routePath === '/ui-prefs/session') {
+        if (deps.uiPrefs === undefined || deps.uiPrefs === null) return send(501, { error: 'ui prefs unavailable' })
+        const body = (await readJsonBody(req)) ?? {}
+        // 合并式补丁：只把请求里出现过的字段交给 store（undefined = 别动它）。
+        // 面板的两个动作是独立的（行内 ⋯ 的「重命名」与「置顶」），谁改谁提交一个字段就够，
+        // 读-改-写留在 store 里做，客户端不必先把现值读回来再整体回传。
+        return send(200, await deps.uiPrefs.setSession(body.path, { pinned: body.pinned, name: body.name }))
       }
 
       if (method === 'POST' && routePath === '/sessions') {

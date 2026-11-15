@@ -17,7 +17,7 @@ const root = path.dirname(here)
 const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-pi-fresh-'))
 
 // 只拷运行期需要的文件，刻意不带 node_modules / .runtime —— 就是「刚下载下来的插件包」。
-const COPY = ['index.js', 'client.js', 'package.json', 'cordis.patch.yml', 'src/pi-rpc.mjs', 'src/pi-runtime.mjs', 'src/session-store.mjs', 'src/rpc-contract.mjs']
+const COPY = ['index.js', 'client.js', 'package.json', 'cordis.patch.yml', 'src/pi-rpc.mjs', 'src/pi-runtime.mjs', 'src/session-store.mjs', 'src/rpc-contract.mjs', 'src/ui-prefs.mjs']
 const pluginRoot = path.join(tempRoot, 'dsh-pi')
 fs.mkdirSync(pluginRoot, { recursive: true })
 for (const rel of COPY) {
