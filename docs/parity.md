@@ -1,6 +1,6 @@
 # dsh-pi 两端能力对齐账本（parity）
 
-> 基线：pi `1.5.2` / dsh-pi `0.8.0` · 唯一权威 = `packages/coding-agent/src/modes/rpc/rpc-types.ts`（303 行）、`src/modes/rpc/rpc-mode.ts`（846 行，`switch` 在 `:404-737`）、`src/core/agent-session.ts`（4714 行，`AgentSessionEvent` 在 `:220-261`）
+> 基线：pi `1.5.2` / dsh-pi `0.8.1` · 唯一权威 = `packages/coding-agent/src/modes/rpc/rpc-types.ts`（303 行）、`src/modes/rpc/rpc-mode.ts`（846 行，`switch` 在 `:404-737`）、`src/core/agent-session.ts`（4714 行，`AgentSessionEvent` 在 `:220-261`）
 > 本文档是 `AGENTS.md` §3「100% 对齐」的账本。任何一行状态变化必须同步改这里，否则视为未完成。**本账本由 `test/parity.mjs` 与 `test/host-parity.mjs` 机器兜底**，人肉维护只是第一道。
 
 ## 0. 怎么读这张表
@@ -26,11 +26,11 @@
 | 显式忽略 | 面板端**决定**不消费，且写明理由（不是漏了）。 |
 | 仅命令行 | RPC 面没有等价能力，面板必须**明示**「仅命令行可用」，绝不能静默当 prompt 发出去。 |
 
-**门禁已经是事实，不是目标态。** `test/parity.mjs`（78 checks）、`test/host-parity.mjs`（276 checks）与 `test/session-projects.mjs`（55 checks，0.5.0 起）都已落地，且都在 `npm test` 的 11 项流水线里：
+**门禁已经是事实，不是目标态。** `test/parity.mjs`（78 checks）、`test/host-parity.mjs`（291 checks）与 `test/session-projects.mjs`（55 checks，0.5.0 起）都已落地，且都在 `npm test` 的 11 项流水线里：
 
 ```
-selfcheck → client-render(797) → css-tokens(98) → runtime-resolve → config-hot
-→ host-parity(276) → session-projects(55) → timeout(28) → parity(78) → restart-lib(31×2 引擎) → version
+selfcheck → client-render(831) → css-tokens(98) → runtime-resolve → config-hot
+→ host-parity(291) → session-projects(55) → timeout(28) → parity(78) → restart-lib(31×2 引擎) → version
 ```
 
 三套核心门禁都离线跑（不起 pi、不打 LLM）。`npm test` 2026-11-13 实测：加 `restart-lib` 之前 ~5.2 s，加上之后 ~14.3 s —— **`test/restart-lib.mjs` 独占约 9.1 s**（它要起 pwsh 7 与 PowerShell 5.1 两个引擎各跑一遍 fixture，进程启动开销占大头），`test/timeout.mjs` 约 3.1 s（真等若干超时周期），其余各项合计 <1.5 s。`test/parity.mjs` 做的是**三向对账**：`src/rpc-contract.mjs` ↔ pi 的类型声明与官方文档 ↔ `client.js`/`index.js` 的实际覆盖面。任一方向对不上即红：
@@ -41,7 +41,7 @@ selfcheck → client-render(797) → css-tokens(98) → runtime-resolve → conf
 
 `test/parity.mjs` 找不到 pi 包时（`findPiPackage()` 返回 `null`，`test/parity.mjs:245-251`）会 SKIP 掉 §3/§4 的类型对账，只跑契约自洽 + 面板覆盖；此时是「降级通过」而不是「全绿」，CI 上必须让 pi 在场。
 
-**本文档里的行号有两种口径，先看清在哪一节：** `## 0`–`## 5`（当前态能力矩阵）的 `client.js:NNN` / `index.js:NNN` 是 **0.8.0 的实时坐标**（基线见第 3 行），逐条对过源码，指向的是该符号的定义行；`## 6` 变更记录是历史账本，行号是**各版本落地当时**的坐标（行末已注明版本）。**唯一例外是 `## 5` 缺陷表的位置列里那些带「原」字的引用** —— 它们指的是缺陷发生时（已废弃）的坐标，只作历史对照，不承诺对得上任何一版源码。已抽查：`D-02` 对得上 v0.3.0、`D-09` 对得上 v0.4.0，`D-01` / `D-03` 对不上任何一版（已在对应行注明）。跨版本定位一律以函数/组件名（`runCompact`、`openStats`、`SessionsList` …）为准。
+**本文档里的行号有两种口径，先看清在哪一节：** `## 0`–`## 5`（当前态能力矩阵）的 `client.js:NNN` / `index.js:NNN` 是 **0.8.1 的实时坐标**（基线见第 3 行），逐条对过源码，指向的是该符号的定义行；`## 6` 变更记录是历史账本，行号是**各版本落地当时**的坐标（行末已注明版本）。**唯一例外是 `## 5` 缺陷表的位置列里那些带「原」字的引用** —— 它们指的是缺陷发生时（已废弃）的坐标，只作历史对照，不承诺对得上任何一版源码。已抽查：`D-02` 对得上 v0.3.0、`D-09` 对得上 v0.4.0，`D-01` / `D-03` 对不上任何一版（已在对应行注明）。跨版本定位一律以函数/组件名（`runCompact`、`openStats`、`SessionsList` …）为准。
 
 ---
 
@@ -51,39 +51,39 @@ selfcheck → client-render(797) → css-tokens(98) → runtime-resolve → conf
 
 | 能力 | RPC 命令 | 命令行 pi 的行为 | 面板端状态 | 门禁用例 |
 | --- | --- | --- | --- | --- |
-| 发送消息 | `prompt` | 提交框 `session.prompt(text)`（`interactive-mode.ts:3513-3521`）；流式中改走 `prompt(text,{streamingBehavior:'steer'})`（`:3502-3511`） | 已实现（`client.js:5519` 正常提交、`:5080` 斜杠开头走 followUp） | `RPC-01` |
-| 打断并插话 | `steer` | 流式中提交即 steer（`:3507`）；压缩队列重放 `session.steer()`（`:4999`、`:5039`） | **部分**：面板不发 `steer` 命令字面量，走 `prompt` + `streamingBehavior:'steer'`（`client.js:4975`）。语义等价——两条路径在 `agent-session.ts:2375-2380` 汇进同一个 `_queueSteer()` | `RPC-02` |
-| 排队下一轮 | `follow_up` | Alt+Enter（`:4676-4683`）→ `prompt(text,{streamingBehavior:'followUp'})`；重放 `session.followUp()`（`agent-session.ts:2521`） | 已实现（`client.js:5081` 纯文本；`:5080` 斜杠开头改走 prompt+followUp，因为 `follow_up` 会被 `_throwIfExtensionCommand` 打回，见 `agent-session.ts:2473-2475`） | `RPC-03` |
-| 中断当前轮 | `abort` | Esc → `session.abort()`（`:4937`、`:4947`） | 已实现（`client.js:5038` 空闲态、`:5060` 清队列后） | `RPC-04` |
-| 清空排队 | `clear_queue` | Esc 连击 → `clearAllQueues()`（`:4894`）→ `restoreQueuedMessagesToEditor()`（`:4931-4950`） | 已实现（`client.js:5048` Esc、`:2846` Alt+Q；取回的文本还给编辑器） | `RPC-05` |
-| 新会话 | `new_session` | `/new` → `handleClearCommand`（`:7118`）→ `runtimeHost.newSession()` | 已实现（`runNewSession` `client.js:5147`，发 `new_session`；顶栏「新会话」主按钮 `client.js:5669` 与 `AddMenu` 的 `new` 项（`client.js:2970`）都走它。**0.7.0 起「重连」（换子进程 `endSession` `client.js:5159`）退进 `⋯` 更多菜单并过二次确认**，同一件事不再有两个入口，见 `D-03`） | `RPC-06` |
-| 读取会话状态 | `get_state` | TUI 无此命令，直接读 `session` | 已实现（`client.js:4891` `loadState`；host 侧 `src/pi-rpc.mjs` 的 `noteCommand` 另外缓存了一份 `lastState`） | `RPC-07` |
-| 选模型 | `set_model` | `/model <provider/model>` → `session.setModel(model,{persist:false})`（`:5396`）；选择器 `:5539` | 已实现（`applyModelBySearch` `client.js:5288`；无参 `/model` 开输入框上方弹层 `ModelPicker` `client.js:3204`，受控开合 `togglePicker` `client.js:5326`） | `RPC-08` |
-| 轮换模型 | `cycle_model` | Ctrl+P → `session.cycleModel(direction)`（`:4725`，键位 `:3229-3230`） | 已实现（`client.js:5114`）。**RPC 面没有 `direction` 参数**，见 `D-08` | `RPC-09` |
-| 列出可用模型 | `get_available_models` | `/scoped-models` 选择器读 `modelRuntime.getAvailableSnapshot()`（`:5109`、`:5571`） | 已实现（`ModelPicker` `client.js:3204` 向上弹层；名称解析 `applyModelBySearch` `client.js:5288`） | `RPC-10` |
-| 设思考档位 | `set_thinking_level` | `/thinking <level>` → `session.setThinkingLevel(level)`（`:5207`、`:5357`） | 已实现（`client.js:5002`） | `RPC-11` |
-| 轮换思考档位 | `cycle_thinking_level` | 键位 `app.thinking.cycle` → `session.cycleThinkingLevel()`（`:4712-4713`） | 已实现（`client.js:5133`，Shift+Tab） | `RPC-12` |
-| 列出思考档位 | `get_available_thinking_levels` | `/thinking` 选择器用 `THINKING_LEVEL_OPTIONS`（`:5122`） | 已实现（`client.js:4844` `loadLevels`） | `RPC-13` |
-| 设 steering 模式 | `set_steering_mode` | `/settings` → `session.setSteeringMode(mode)`（`:5181`） | 已实现（`client.js:5895`） | `RPC-14` |
-| 设 follow-up 模式 | `set_follow_up_mode` | `/settings` → `session.setFollowUpMode(mode)`（`:5184`） | 已实现（`client.js:5896`） | `RPC-15` |
-| 手动压缩 | `compact` | `/compact [指令]` → `handleCompactCommand`（`:7276`）→ `session.compact(customInstructions)`（`:7280`） | 已实现（`runCompact` `client.js:5198`，0.7.0 起入口在 `⋯` 更多菜单（`moreItems` `client.js:5609-5612`）+ `ConfirmDialog` 二次确认（`client.js:3161`）；**曾经把 `/compact` 当 prompt 发的缺陷已修**，见 `handleSlash` `client.js:5578-5584`） | `RPC-16` |
-| 自动压缩开关 | `set_auto_compaction` | `/settings` → `session.setAutoCompactionEnabled(enabled)`（`:5151`） | 已实现（`client.js:5893`） | `RPC-17` |
-| 自动重试开关 | `set_auto_retry` | **TUI 无对应 UI**；仅 `auto_retry_start` 时 Esc 临时改绑 `abortRetry()`（`:3873-3877`） | 已实现（`client.js:5894`）。**这是面板领先 TUI 的能力**；但 `get_state` 不返回该字段，开关无法回读，见 `D-07` | `RPC-18` |
-| 中止重试 | `abort_retry` | `:3877`（Esc 改绑） | 已实现（`client.js:5045`，Esc 第一分支） | `RPC-19` |
-| 跑 bash | `bash` | `!` / `!!` 前缀（`:3473-3474`，`!!` = `excludeFromContext:true`） | 已实现（`client.js:4988` `handleBash`，`BASH_SHORTCUTS` 在 `src/rpc-contract.mjs:181-184`） | `RPC-20` |
-| 中止 bash | `abort_bash` | `isBashRunning` 时 Esc → `session.abortBash()`（`:3199-3200`） | 已实现（`client.js:5046`） | `RPC-21` |
-| 会话统计 | `get_session_stats` | `/session` → `session.getSessionStats()`（`:6886`） | 已实现（`client.js:5351`） | `RPC-22` |
-| 导出会话 | `export_html` | `/export` → `handleExportCommand`（`:6709`）→ `exportToHtml`；`.jsonl` 后缀改走 `exportToJsonl` | 已实现（`client.js:5213`）。`.jsonl` 面板**显式拒绝**并提示（`:5218-5221`），不静默降级 | `RPC-23` |
-| 切换会话 | `switch_session` | `/resume` → `showSessionSelector()`（`:5901`） | 已实现（`pickSession` `client.js:5399` → `reload` → `attach` → `hydrate`；切换成功后用会话文件 header 的 `cwd` 回填 `proc.sessionCwd`（`index.js:1034-1038` → `src/session-store.mjs:511` `readSessionCwd`），因为 `get_state` 不回报 cwd；数据源 `GET /sessions/history?scope=` `index.js:839` → `src/session-store.mjs:400` `listAllSessions`） | `RPC-24` |
-| 从某条消息分叉 | `fork` | `/fork` → `showUserMessageSelector()`（`:5693`）→ `runtimeHost.fork(entryId)`（`:5709`） | 已实现（`client.js:5432` `pickFork`） | `RPC-25` |
-| 克隆当前位置 | `clone` | `/clone`（`:5731`）→ `runtimeHost.fork(leafId,{position:'at'})` | 已实现（`client.js:5262` `runClone`） | `RPC-26` |
-| 列出可分叉消息 | `get_fork_messages` | `/fork` 选择器数据源 `session.getUserMessagesForForking()`（`:5694`） | 已实现（`client.js:5341` `openFork`） | `RPC-27` |
-| 列出会话条目 | `get_entries` | `/session` 读 `sessionManager.getEntries()`（`:6888`） | 已实现（`openStats` `client.js:5351` → 统计弹窗 `StatsSheet` `client.js:4103`（0.7.0 起居中 `Dialog`），读 `get_session_stats` + `get_entries` + `loadState`） | `RPC-28` |
-| 读取会话树 | `get_tree` | `/tree` → `getTree()` + `getLeafId()`（`:5752`） | 已实现（`client.js:5331`）。**只读不导航**：RPC 无 `navigate_tree`，见 `client.js:4045-4051` 的注释 | `RPC-29` |
-| 取最后一条回复 | `get_last_assistant_text` | `/copy` → `session.getLastAssistantText()`（`:6829`、`:6842`） | 已实现（`client.js:5232` `runCopy`） | `RPC-30` |
-| 设会话名 | `set_session_name` | `/name <name>` → `session.setSessionName(name)`（`:6860`、`:6874`） | 已实现（`client.js:5246`）。上游 `slice` 缺陷仍在，见 `AGENTS.md` §6 | `RPC-31` |
+| 发送消息 | `prompt` | 提交框 `session.prompt(text)`（`interactive-mode.ts:3513-3521`）；流式中改走 `prompt(text,{streamingBehavior:'steer'})`（`:3502-3511`） | 已实现（`client.js:5608` 正常提交、`:5080` 斜杠开头走 followUp） | `RPC-01` |
+| 打断并插话 | `steer` | 流式中提交即 steer（`:3507`）；压缩队列重放 `session.steer()`（`:4999`、`:5039`） | **部分**：面板不发 `steer` 命令字面量，走 `prompt` + `streamingBehavior:'steer'`（`client.js:5064`）。语义等价——两条路径在 `agent-session.ts:2375-2380` 汇进同一个 `_queueSteer()` | `RPC-02` |
+| 排队下一轮 | `follow_up` | Alt+Enter（`:4676-4683`）→ `prompt(text,{streamingBehavior:'followUp'})`；重放 `session.followUp()`（`agent-session.ts:2521`） | 已实现（`client.js:5170` 纯文本；`:5080` 斜杠开头改走 prompt+followUp，因为 `follow_up` 会被 `_throwIfExtensionCommand` 打回，见 `agent-session.ts:2473-2475`） | `RPC-03` |
+| 中断当前轮 | `abort` | Esc → `session.abort()`（`:4937`、`:4947`） | 已实现（`client.js:5127` 空闲态、`:5060` 清队列后） | `RPC-04` |
+| 清空排队 | `clear_queue` | Esc 连击 → `clearAllQueues()`（`:4894`）→ `restoreQueuedMessagesToEditor()`（`:4931-4950`） | 已实现（`client.js:5137` Esc、`:2846` Alt+Q；取回的文本还给编辑器） | `RPC-05` |
+| 新会话 | `new_session` | `/new` → `handleClearCommand`（`:7118`）→ `runtimeHost.newSession()` | 已实现（`runNewSession` `client.js:5236`，发 `new_session`；顶栏「新会话」主按钮 `client.js:5761` 与 `AddMenu` 的 `new` 项（`client.js:2970`）都走它。**0.7.0 起「重连」（换子进程 `endSession` `client.js:5248`）退进 `⋯` 更多菜单并过二次确认**，同一件事不再有两个入口，见 `D-03`） | `RPC-06` |
+| 读取会话状态 | `get_state` | TUI 无此命令，直接读 `session` | 已实现（`client.js:4974` `loadState`；host 侧 `src/pi-rpc.mjs` 的 `noteCommand` 另外缓存了一份 `lastState`） | `RPC-07` |
+| 选模型 | `set_model` | `/model <provider/model>` → `session.setModel(model,{persist:false})`（`:5396`）；选择器 `:5539` | 已实现（`applyModelBySearch` `client.js:5377`；无参 `/model` 开输入框上方弹层 `ModelPicker` `client.js:3258`，受控开合 `togglePicker` `client.js:5415`） | `RPC-08` |
+| 轮换模型 | `cycle_model` | Ctrl+P → `session.cycleModel(direction)`（`:4725`，键位 `:3229-3230`） | 已实现（`client.js:5203`）。**RPC 面没有 `direction` 参数**，见 `D-08` | `RPC-09` |
+| 列出可用模型 | `get_available_models` | `/scoped-models` 选择器读 `modelRuntime.getAvailableSnapshot()`（`:5109`、`:5571`） | 已实现（`ModelPicker` `client.js:3258` 向上弹层；名称解析 `applyModelBySearch` `client.js:5377`） | `RPC-10` |
+| 设思考档位 | `set_thinking_level` | `/thinking <level>` → `session.setThinkingLevel(level)`（`:5207`、`:5357`） | 已实现（`client.js:5091`） | `RPC-11` |
+| 轮换思考档位 | `cycle_thinking_level` | 键位 `app.thinking.cycle` → `session.cycleThinkingLevel()`（`:4712-4713`） | 已实现（`client.js:5222`，Shift+Tab） | `RPC-12` |
+| 列出思考档位 | `get_available_thinking_levels` | `/thinking` 选择器用 `THINKING_LEVEL_OPTIONS`（`:5122`） | 已实现（`client.js:4927` `loadLevels`） | `RPC-13` |
+| 设 steering 模式 | `set_steering_mode` | `/settings` → `session.setSteeringMode(mode)`（`:5181`） | 已实现（`client.js:5989`） | `RPC-14` |
+| 设 follow-up 模式 | `set_follow_up_mode` | `/settings` → `session.setFollowUpMode(mode)`（`:5184`） | 已实现（`client.js:5990`） | `RPC-15` |
+| 手动压缩 | `compact` | `/compact [指令]` → `handleCompactCommand`（`:7276`）→ `session.compact(customInstructions)`（`:7280`） | 已实现（`runCompact` `client.js:5287`，0.7.0 起入口在 `⋯` 更多菜单（`moreItems` `client.js:5700-5703`）+ `ConfirmDialog` 二次确认（`client.js:3190`）；**曾经把 `/compact` 当 prompt 发的缺陷已修**，见 `handleSlash` `client.js:5667-5673`） | `RPC-16` |
+| 自动压缩开关 | `set_auto_compaction` | `/settings` → `session.setAutoCompactionEnabled(enabled)`（`:5151`） | 已实现（`client.js:5987`） | `RPC-17` |
+| 自动重试开关 | `set_auto_retry` | **TUI 无对应 UI**；仅 `auto_retry_start` 时 Esc 临时改绑 `abortRetry()`（`:3873-3877`） | 已实现（`client.js:5988`）。**这是面板领先 TUI 的能力**；但 `get_state` 不返回该字段，开关无法回读，见 `D-07` | `RPC-18` |
+| 中止重试 | `abort_retry` | `:3877`（Esc 改绑） | 已实现（`client.js:5134`，Esc 第一分支） | `RPC-19` |
+| 跑 bash | `bash` | `!` / `!!` 前缀（`:3473-3474`，`!!` = `excludeFromContext:true`） | 已实现（`client.js:5077` `handleBash`，`BASH_SHORTCUTS` 在 `src/rpc-contract.mjs:181-184`） | `RPC-20` |
+| 中止 bash | `abort_bash` | `isBashRunning` 时 Esc → `session.abortBash()`（`:3199-3200`） | 已实现（`client.js:5135`） | `RPC-21` |
+| 会话统计 | `get_session_stats` | `/session` → `session.getSessionStats()`（`:6886`） | 已实现（`client.js:5440`） | `RPC-22` |
+| 导出会话 | `export_html` | `/export` → `handleExportCommand`（`:6709`）→ `exportToHtml`；`.jsonl` 后缀改走 `exportToJsonl` | 已实现（`client.js:5302`）。`.jsonl` 面板**显式拒绝**并提示（`:5218-5221`），不静默降级 | `RPC-23` |
+| 切换会话 | `switch_session` | `/resume` → `showSessionSelector()`（`:5901`） | 已实现（`pickSession` `client.js:5488` → `reload` → `attach` → `hydrate`；切换成功后用会话文件 header 的 `cwd` 回填 `proc.sessionCwd`（`index.js:1065-1069` → `src/session-store.mjs:511` `readSessionCwd`），因为 `get_state` 不回报 cwd；数据源 `GET /sessions/history?scope=` `index.js:870` → `src/session-store.mjs:400` `listAllSessions`） | `RPC-24` |
+| 从某条消息分叉 | `fork` | `/fork` → `showUserMessageSelector()`（`:5693`）→ `runtimeHost.fork(entryId)`（`:5709`） | 已实现（`client.js:5521` `pickFork`） | `RPC-25` |
+| 克隆当前位置 | `clone` | `/clone`（`:5731`）→ `runtimeHost.fork(leafId,{position:'at'})` | 已实现（`client.js:5351` `runClone`） | `RPC-26` |
+| 列出可分叉消息 | `get_fork_messages` | `/fork` 选择器数据源 `session.getUserMessagesForForking()`（`:5694`） | 已实现（`client.js:5430` `openFork`） | `RPC-27` |
+| 列出会话条目 | `get_entries` | `/session` 读 `sessionManager.getEntries()`（`:6888`） | 已实现（`openStats` `client.js:5440` → 统计弹窗 `StatsSheet` `client.js:4168`（0.7.0 起居中 `Dialog`），读 `get_session_stats` + `get_entries` + `loadState`） | `RPC-28` |
+| 读取会话树 | `get_tree` | `/tree` → `getTree()` + `getLeafId()`（`:5752`） | 已实现（`client.js:5420`）。**只读不导航**：RPC 无 `navigate_tree`，见 `client.js:4110-4116` 的注释 | `RPC-29` |
+| 取最后一条回复 | `get_last_assistant_text` | `/copy` → `session.getLastAssistantText()`（`:6829`、`:6842`） | 已实现（`client.js:5321` `runCopy`） | `RPC-30` |
+| 设会话名 | `set_session_name` | `/name <name>` → `session.setSessionName(name)`（`:6860`、`:6874`） | 已实现（`client.js:5335`）。上游 `slice` 缺陷仍在，见 `AGENTS.md` §6 | `RPC-31` |
 | 读消息列表 | `get_messages` | TUI 无此命令（直接读内部状态） | 已实现（`refreshMessages`；**挂载即对账**：`attach` 末尾接 `hydrate(id)`，切会话 / fork / clone / 新建之后一律用它整表重建，见 §5 `D-09`）。也是 bash 气泡的补拉通道，见 `EVT-02` | `RPC-32` |
-| 列出可调用命令 | `get_commands` | 斜杠菜单由 `BUILTIN_SLASH_COMMANDS`（`core/slash-commands.ts:19-44`，24 条）+ 扩展 / 技能 / prompt 模板动态构建 | 已实现（`client.js:4865` `loadCommands`；面板菜单另由 `src/rpc-contract.mjs:263-280` `slashMenuEntries` 合成） | `RPC-33` |
+| 列出可调用命令 | `get_commands` | 斜杠菜单由 `BUILTIN_SLASH_COMMANDS`（`core/slash-commands.ts:19-44`，24 条）+ 扩展 / 技能 / prompt 模板动态构建 | 已实现（`client.js:4948` `loadCommands`；面板菜单另由 `src/rpc-contract.mjs:263-280` `slashMenuEntries` 合成） | `RPC-33` |
 
 **统计（v0.3.0 实测）：33 条 = 已实现 32 + 部分 1（`steer`）+ 缺口 0。**
 
@@ -101,7 +101,7 @@ pi 侧构造器：`rpc-mode.ts:95-135`（`createDialogPromise`，dialog 类共�
 
 | 能力 | method | 命令行 pi 的行为 | 面板端状态 | 门禁用例 |
 | --- | --- | --- | --- | --- |
-| 单选 | `select` | 绑定 `interactive-mode.ts:2776` → 定义 `showExtensionSelector` `:2861`；RPC `rpc-mode.ts:141-144` | 已实现（`client.js:1663-1666` → `addPendingUi` `:1625` → `ExtensionDialog` `:4221`） | `EXT-01` |
+| 单选 | `select` | 绑定 `interactive-mode.ts:2776` → 定义 `showExtensionSelector` `:2861`；RPC `rpc-mode.ts:141-144` | 已实现（`client.js:1663-1666` → `addPendingUi` `:1625` → `ExtensionDialog` `:4286`） | `EXT-01` |
 | 是/否确认 | `confirm` | 绑定 `:2777` → `showExtensionConfirm` `:2896`（内部复用 select 传 `["Yes","No"]`，`:2901`）；RPC `:146-149` | 已实现（同上分支；应答走 `confirmed`） | `EXT-02` |
 | 单行输入 | `input` | 绑定 `:2778` → `showExtensionInput` `:2922`；RPC `:151-154` | 已实现（同上分支；`placeholder`/`prefill` 透传） | `EXT-03` |
 | 多行编辑器 | `editor` | 绑定 `:2799` → `showExtensionEditor` `:2956`；RPC `:258-275`（**裸 `Promise`，未走 `createDialogPromise`，所以连 `opts.timeout` 都不存在**） | 已实现（同上分支）。**`editor` 在 pi 侧连 `timeout` 字段都没有**，面板必须无条件兜底 | `EXT-04` |
@@ -119,7 +119,7 @@ pi 侧构造器：`rpc-mode.ts:95-135`（`createDialogPromise`，dialog 类共�
 | --- | --- | --- | --- | --- |
 | 返回选中值 | `{type:'extension_ui_response', id, value}` | 对应 `select`/`input`/`editor`；`parseResponse` 回调在 `rpc-mode.ts:99` 声明、`:129` 消费 | 已实现（`client.js:947` `api.respond` timeout 20s → `respondUi` `:5448-5455`） | `EXT-R1` |
 | 返回确认位 | `{..., id, confirmed}` | 对应 `confirm` | 已实现（同路径；`confirmed:false` 与「没点」区分得开） | `EXT-R2` |
-| 取消 | `{..., id, cancelled:true}` | dialog 类在 `opts.signal` 已 abort 时直接返回默认值（`rpc-mode.ts:101`），abort 事件 `:113-117`，`opts.timeout` 到期 `:119-124`；**`editor` 不走这条路径**（`:258-275`），永远等应答 | 已实现（同路径；面板侧 5 分钟到期自动 `cancelled:true`，`client.js:4238`） | `EXT-R3` |
+| 取消 | `{..., id, cancelled:true}` | dialog 类在 `opts.signal` 已 abort 时直接返回默认值（`rpc-mode.ts:101`），abort 事件 `:113-117`，`opts.timeout` 到期 `:119-124`；**`editor` 不走这条路径**（`:258-275`），永远等应答 | 已实现（同路径；面板侧 5 分钟到期自动 `cancelled:true`，`client.js:4303`） | `EXT-R3` |
 
 ### 2.3 host 与面板各自做了什么（0.3.0 现状）
 
@@ -151,12 +151,12 @@ pi 侧构造器：`rpc-mode.ts:95-135`（`createDialogPromise`，dialog 类共�
 | 码 | 触发条件 |
 | --- | --- |
 | 415 | `content-type` 不是 `application/json` |
-| 400 | body 不是对象 / `id` 不是非空字符串 / 三个二选一字段都没给（`index.js:1068`，**不猜成 cancelled**） |
+| 400 | body 不是对象 / `id` 不是非空字符串 / 三个二选一字段都没给（`index.js:1099`，**不猜成 cancelled**） |
 | 409 | `no such request id`（弹窗早已被 settled 清掉） |
 
-payload 取值优先级 `cancelled` → `confirmed` → `value`（`index.js:1062-1065`）。`id` 一个字符都不能改：pi 侧只按 `response.id` 去 `pendingExtensionRequests` 里取 resolver（`rpc-mode.ts:784-798`），这是 `index.js:1060-1061` 注释明写的约束。
+payload 取值优先级 `cancelled` → `confirmed` → `value`（`index.js:1093-1096`）。`id` 一个字符都不能改：pi 侧只按 `response.id` 去 `pendingExtensionRequests` 里取 resolver（`rpc-mode.ts:784-798`），这是 `index.js:1091-1092` 注释明写的约束。
 
-**面板半区（`client.js`）：** `applyExtensionUi`（`:1661-1706`）分派 9 种 method、`addPendingUi`（`:1625`）同 id 去重并从头部截断到 `MAX_PENDING_UI = 12`（`:1460`）、`dropPendingUi`（`:1633`）、`respondUi`（`:5448-5455`）先本地摘除再 `api.respond` 并把 409 静默吞掉、渲染端只取 `pendingUi[0]`（`:5853-5858`，队列形态，一次弹一个）。`ExtensionDialog`（`:4221`）自带倒计时，到点 `onRespond({id, cancelled:true})`。
+**面板半区（`client.js`）：** `applyExtensionUi`（`:1661-1706`）分派 9 种 method、`addPendingUi`（`:1625`）同 id 去重并从头部截断到 `MAX_PENDING_UI = 12`（`:1460`）、`dropPendingUi`（`:1633`）、`respondUi`（`:5537-5544`）先本地摘除再 `api.respond` 并把 409 静默吞掉、渲染端只取 `pendingUi[0]`（`:5945-5950`，队列形态，一次弹一个）。`ExtensionDialog`（`:4286`）自带倒计时，到点 `onRespond({id, cancelled:true})`。
 
 ---
 
@@ -210,33 +210,33 @@ payload 取值优先级 `cancelled` → `confirmed` → `value`（`index.js:1062
 
 | 能力 | 命令 | 命令行 pi 的行为 | disposition | 面板落点 | 门禁用例 |
 | --- | --- | --- | --- | --- | --- |
-| 设置面板 | `/settings` | 42 字段选择器（`interactive-mode.ts:5098`，字段 `:5106-5147`） | `client` | `openSettings`（`client.js:5373`）→ 设置弹窗 `SettingsSheet` `client.js:4148`（0.7.0 起居中 `Dialog`） | `TUI-01` |
-| 循环模型集 | `/scoped-models` | `showModelsSelector`（`:5571`）→ `setScopedModels`（`:5599`） | `client` | `togglePicker`（`client.js:5326`）→ `ModelPicker` `client.js:3204` | `TUI-02` |
-| 选模型 | `/model` | `handleModelCommand`（`:5387`、`:5396`） | `rpc` | `handleRpcCommand`（`client.js:5562-5572`）：无参开向上弹层 `ModelPicker`，有参 `applyModelBySearch` `client.js:5288` | `TUI-03` |
-| 思考档位 | `/thinking` | `handleThinkingCommand`（`:5338`） | `rpc` | `client.js:5564`：无参开同一弹层的「思考档位」段，有参 `applyThinkingByName` `client.js:5274` | `TUI-04` |
-| 导出 | `/export` | `handleExportCommand`（`:6709`） | `rpc` | `runExport`（`client.js:5213`） | `TUI-05` |
+| 设置面板 | `/settings` | 42 字段选择器（`interactive-mode.ts:5098`，字段 `:5106-5147`） | `client` | `openSettings`（`client.js:5462`）→ 设置弹窗 `SettingsSheet` `client.js:4213`（0.7.0 起居中 `Dialog`） | `TUI-01` |
+| 循环模型集 | `/scoped-models` | `showModelsSelector`（`:5571`）→ `setScopedModels`（`:5599`） | `client` | `togglePicker`（`client.js:5415`）→ `ModelPicker` `client.js:3258` | `TUI-02` |
+| 选模型 | `/model` | `handleModelCommand`（`:5387`、`:5396`） | `rpc` | `handleRpcCommand`（`client.js:5651-5661`）：无参开向上弹层 `ModelPicker`，有参 `applyModelBySearch` `client.js:5377` | `TUI-03` |
+| 思考档位 | `/thinking` | `handleThinkingCommand`（`:5338`） | `rpc` | `client.js:5653`：无参开同一弹层的「思考档位」段，有参 `applyThinkingByName` `client.js:5363` | `TUI-04` |
+| 导出 | `/export` | `handleExportCommand`（`:6709`） | `rpc` | `runExport`（`client.js:5302`） | `TUI-05` |
 | 导入 | `/import` | `handleImportCommand`（`:6756`） | `unsupported` | 提示改用左侧栏会话列表（等价 `switch_session`） | `TUI-06` |
-| 分享 | `/share` | `handleShareCommand`（`:6803`，依赖 TUI editor/ui） | `cli-only` | notice `cliOnlyDetail`（`client.js:5579`） | `TUI-07` |
+| 分享 | `/share` | `handleShareCommand`（`:6803`，依赖 TUI editor/ui） | `cli-only` | notice `cliOnlyDetail`（`client.js:5668`） | `TUI-07` |
 | 报缺陷 | `/bug` | `handleBugCommand`（`:6814`） | `cli-only` | 同上 | `TUI-08` |
-| 复制末条回复 | `/copy` | `handleCopyCommand`（`:6829`、`:6842`） | `rpc` | `runCopy`（`client.js:5232`）+ `navigator.clipboard` | `TUI-09` |
-| 设会话名 | `/name` | `handleNameCommand`（`:6860`、`:6874`） | `rpc` | `runSetName`（`client.js:5246`）/ 抽屉 `setDrawer('name')`（渲染 `client.js:5909-5915`，0.7.0 未改） | `TUI-10` |
-| 会话信息 | `/session` | `handleSessionCommand`（`:6885`、`:6886`、`:6888`） | `client` | `openStats`（`client.js:5351`，统计弹窗；`get_session_stats` + `get_entries` + `loadState`） | `TUI-11` |
-| 更新日志 | `/changelog` | `handleChangelogCommand`（`:6966`） | `local` | `openChangelog`（`client.js:5380`）→ host 代读 `GET /pi/changelog`（`index.js:943`） | `TUI-12` |
-| 快捷键 | `/hotkeys` | `handleHotkeysCommand`（`:7001`） | `client` | 静态表 `hotkeyText()`（`client.js:5978`） | `TUI-13` |
-| 分叉 | `/fork` | `showUserMessageSelector`（`:5693`、`:5709`） | `client` | `openFork`（`client.js:5341`）→ `get_fork_messages` + `fork` | `TUI-14` |
-| 克隆 | `/clone` | `handleCloneCommand`（`:5731`） | `rpc` | `runClone`（`client.js:5262`） | `TUI-15` |
-| 会话树 | `/tree` | `showTreeSelector`（`:5752`） | `client` | `openTree`（`client.js:5331`）→ `TreeSheet` client.js:4052（只读） | `TUI-16` |
+| 复制末条回复 | `/copy` | `handleCopyCommand`（`:6829`、`:6842`） | `rpc` | `runCopy`（`client.js:5321`）+ `navigator.clipboard` | `TUI-09` |
+| 设会话名 | `/name` | `handleNameCommand`（`:6860`、`:6874`） | `rpc` | `runSetName`（`client.js:5335`）/ 抽屉 `setDrawer('name')`（渲染 `client.js:6003-6009`，0.7.0 未改） | `TUI-10` |
+| 会话信息 | `/session` | `handleSessionCommand`（`:6885`、`:6886`、`:6888`） | `client` | `openStats`（`client.js:5440`，统计弹窗；`get_session_stats` + `get_entries` + `loadState`） | `TUI-11` |
+| 更新日志 | `/changelog` | `handleChangelogCommand`（`:6966`） | `local` | `openChangelog`（`client.js:5469`）→ host 代读 `GET /pi/changelog`（`index.js:974`） | `TUI-12` |
+| 快捷键 | `/hotkeys` | `handleHotkeysCommand`（`:7001`） | `client` | 静态表 `hotkeyText()`（`client.js:6072`） | `TUI-13` |
+| 分叉 | `/fork` | `showUserMessageSelector`（`:5693`、`:5709`） | `client` | `openFork`（`client.js:5430`）→ `get_fork_messages` + `fork` | `TUI-14` |
+| 克隆 | `/clone` | `handleCloneCommand`（`:5731`） | `rpc` | `runClone`（`client.js:5351`） | `TUI-15` |
+| 会话树 | `/tree` | `showTreeSelector`（`:5752`） | `client` | `openTree`（`client.js:5420`）→ `TreeSheet` client.js:4117（只读） | `TUI-16` |
 | 项目信任 | `/trust` | `showTrustSelector`（`:5510`） | `cli-only` | notice；安全语义见 pi `docs/security.md` | `TUI-17` |
 | 登录 | `/login` | `handleLoginCommand`（`:6054`） | `cli-only` | notice（OAuth 交互流依赖 TUI editor/ui） | `TUI-18` |
 | 登出 | `/logout` | `showOAuthSelector('logout')`（`:3425`） | `cli-only` | notice | `TUI-19` |
-| 新会话 | `/new` | `handleClearCommand`（`:7118`） | `rpc` | `runNewSession`（`client.js:5147`，发 `new_session` `:5150`）。**顶栏按钮是另一套语义**，见 `D-03` | `TUI-20` |
-| 压缩 | `/compact` | `handleCompactCommand`（`:7276`、`:7280`） | `rpc` | `runCompact`（`client.js:5198`）。`handleSlash` 注释 client.js:5574-5576 明写「面板绝不把 /compact 之类当普通消息发给模型」 | `TUI-21` |
+| 新会话 | `/new` | `handleClearCommand`（`:7118`） | `rpc` | `runNewSession`（`client.js:5236`，发 `new_session` `:5150`）。**顶栏按钮是另一套语义**，见 `D-03` | `TUI-20` |
+| 压缩 | `/compact` | `handleCompactCommand`（`:7276`、`:7280`） | `rpc` | `runCompact`（`client.js:5287`）。`handleSlash` 注释 client.js:5663-5665 明写「面板绝不把 /compact 之类当普通消息发给模型」 | `TUI-21` |
 | 重载 | `/reload` | `handleReloadCommand`（`:6619`） | `cli-only` | notice（RPC 无 reload；面板的等价物是重建会话） | `TUI-22` |
 | 调试转储 | `/debug` | `:3446`（未登记进 `BUILTIN_SLASH_COMMANDS`） | `cli-only` | notice | `TUI-23` |
 | 彩蛋 | `/arminsayshi` | `:3451` | `cli-only` | notice | `TUI-24` |
 | 彩蛋 | `/dementedelves` | `:3456` | `cli-only` | notice | `TUI-25` |
-| 恢复会话 | `/resume` | `showSessionSelector`（`:5901`） | `client` | `SessionsSheet`（`client.js:3574`，0.7.0 起套在左侧滑出的 `SidePanel` `client.js:3135` 里）/ `SessionsList`（`client.js:3355` 纯渲染）**两级**：项目层 `scope=all` + `groupSessionsByProject`（`src/session-store.mjs:461`，当前置顶 → 非临时优先 → 最近活动降序，临时判定沿用 `TEMPORARY_PATH_PATTERNS`）→ 点进项目 `scope=project&cwd=` → `switch_session` `client.js:5404`。0.8.0 起 host 侧补齐面板偏好的落盘层（`src/ui-prefs.mjs`，`~/.dsh-pi/ui-prefs.json`）与 `/ui-prefs` 三条路由（`index.js:960` / `:964` / `:969`，都回全量结构）并配了用例（`test/host-parity.mjs` 3.12 / 3.13）——**且面板侧 0.8.0 已接线**：`SessionsSheet`（`client.js:3574`）自己持有 ui-prefs 与行内菜单，`api.uiPrefs()` 读盘（定义 `client.js:1000`，调用 `:3616`），项目行重命名 `:3426`、新建会话于此项目 `:3427`，会话行重命名 `:3481`、置顶/取消置顶 `:3482-3484`，写回走 `api.setProjectPref` / `api.setSessionPref`（`:3659` / `:3662` / `:3689`）；置顶用两遍 partition（`:3445-3453`，不 sort，保留 host 给的顺序），标题优先级 `renamed → piName → headline → lastMessage → sessionFallbackTitle`（`:3459-3460`），重命名弹窗 `RenameDialog`（`:3540`）不复用 `NameSheet`（drawer 是单值）。pi 的 scope 开关进项目即失效（`session-selector.ts:1663`），故两级导航语义等价 | `TUI-26` |
-| 退出 | `/quit` | `shutdown()`（`:3466`、`:3468`） | `client` | `endSession`（`client.js:5159`，断面板 + 关子进程，不退出宿主） | `TUI-27` |
+| 恢复会话 | `/resume` | `showSessionSelector`（`:5901`） | `client` | `SessionsSheet`（`client.js:3659`，0.7.0 起套在左侧滑出的 `SidePanel` `client.js:3164` 里）/ `SessionsList`（`client.js:3432` 纯渲染）**两级**：项目层 `scope=all` + `groupSessionsByProject`（`src/session-store.mjs:461`，当前置顶 → 非临时优先 → 最近活动降序，临时判定沿用 `TEMPORARY_PATH_PATTERNS`）→ 点进项目 `scope=project&cwd=` → `switch_session` `client.js:5493`。0.8.0 起 host 侧补齐面板偏好的落盘层（`src/ui-prefs.mjs`，`~/.dsh-pi/ui-prefs.json`）与 `/ui-prefs` 三条路由（`index.js:991` / `:995` / `:1000`，都回全量结构）并配了用例（`test/host-parity.mjs` 3.12 / 3.13）——**且面板侧 0.8.0 已接线、0.8.1 起偏好上提到 `PiPanel`**（`prefsState` `client.js:4676`；`SessionsSheet` `client.js:3659` 只留行内菜单，写入结果经 `onPrefs` 回传）：`api.uiPrefs()` 读盘（定义 `client.js:1000`，挂载时调用 `:5047`），项目行重命名 `:3507`、新建会话于此项目 `:3508`，会话行重命名 `:3562`、置顶/取消置顶 `:3563-3565`，写回走 `api.setProjectPref` / `api.setSessionPref`（`:3724` / `:3727` / `:3754`）；置顶用两遍 partition（`:3526-3534`，不 sort，保留 host 给的顺序），标题优先级 `renamed → piName → headline → lastMessage → sessionFallbackTitle`（`:3540-3541`），重命名弹窗 `RenameDialog`（`:3621`）不复用 `NameSheet`（drawer 是单值）。pi 的 scope 开关进项目即失效（`session-selector.ts:1663`），故两级导航语义等价 | `TUI-26` |
+| 退出 | `/quit` | `shutdown()`（`:3466`、`:3468`） | `client` | `endSession`（`client.js:5248`，断面板 + 关子进程，不退出宿主） | `TUI-27` |
 
 **统计：27 条 = 已实现 17（rpc 8 + client 8 + local 1）+ 仅命令行 9 + unsupported 1 + 缺口 0。**
 
@@ -246,17 +246,17 @@ payload 取值优先级 `cancelled` → `confirmed` → `value`（`index.js:1062
 
 ## 5. 已知契约缺陷清单
 
-| 编号 | 缺陷 | 位置 | 0.8.0 状态 |
+| 编号 | 缺陷 | 位置 | 0.8.1 状态 |
 | --- | --- | --- | --- |
 | `D-01` | `RPC_EVENTS` 混进 5 条伪事件（`extension_ui_notify/status/widget/title/editor_text`） | 原 `src/rpc-contract.mjs:99-103`（**注**：这两个坐标是本行登记时的写法，`99-103` 实际落在 `RPC_EVENTS` 中段的真实事件上 —— 伪事件名只出现在同文件 `:78-80` 的注释里，该文件的唯一提交 `91270e0`（0.3.0）起契约数组就从未真的包含它们。数字保留作历史记录，别当坐标） | **已闭环**。契约现 25 条真实事件（`src/rpc-contract.mjs:82-108`），`test/parity.mjs:318-319` 用 `contractOnly === []` 防回归 |
 | `D-02` | `disposition` 出现未文档化的第 6 种取值 `unsupported` | 原 `src/rpc-contract.mjs:147` vs 注释 `:128-139` | **已闭环**。`DISPOSITIONS`（`:283`）声明 6 种，注释 `:128-146` 已枚举 6 种，`validateContract()`（`:286-323`）校验取值合法性 |
-| `D-03` | 顶栏「新会话」按钮走 `close`+`create` 换子进程，而非 `new_session` | 原 `client.js:2958`（onClick）→ `endSession`（现 `client.js:5159`）（**注**：`2958` 在任何已发布版本里都不是顶栏「新会话」的 onClick —— v0.3.0 顶栏是两个按钮：「重连」`onClick: endSession` 在 `client.js:3036`、「新会话」`onClick: runNewSession` 在 `client.js:3037`；v0.2.5 的 `client.js` 只有 1128 行、根本没有这个按钮。数字保留作历史记录，别当坐标） | **已闭环（0.3.0，0.7.0 收口）**。「新会话」→ `runNewSession`（`client.js:5147`，`new_session`，与命令行 `/new` 同一条路径）；**「重连」不再占顶栏明面** —— 它退进 `⋯` 更多菜单 `moreItems`（`client.js:5609-5612`）并要过 `ConfirmDialog` 二次确认（`client.js:3161`），因为换子进程是恢复手段而不是日常动作。同一件事不再有两个入口两种结果 |
-| `D-04` | `src/session-store.mjs`（只读会话枚举）零引用 | 原全仓 grep 无 import | **已闭环**。`index.js:34-43` import 八个函数（`listAllSessions` / `groupSessionsByProject` / `readSessionCwd` 于 0.5.0 追加），`GET /sessions/history?scope=`（`index.js:839`）暴露，面板 `SessionsSheet`（`client.js:3574`）消费 |
-| `D-05` | `index.js` 未暴露 `pendingUi`，无扩展 UI 专用应答面 | 原 `index.js:484-567` | **已闭环**。`POST /sessions/:id/respond`（`index.js:1052-1071`，409/400/415）、`POST /sessions/:id/reset`（`index.js:1072`）；`pendingUi` 随 `snapshot()` 下发（`src/pi-rpc.mjs:561`） |
-| `D-06` | `test/parity.mjs` 不存在，`npm test` 不含门禁 | 原 `package.json` `scripts.test` | **已闭环**。`test/parity.mjs` 78 checks + `test/host-parity.mjs` 276 checks + `test/session-projects.mjs` 55 checks（0.5.0 起）+ `test/timeout.mjs` 28 checks + `test/restart-lib.mjs`（0.4.2 起），都在 `npm test` 的 11 项里 |
-| `D-07` | `RpcSessionState` 无 `autoRetryEnabled`，设置弹窗的自动重试开关无法回读 | pi `dist/modes/rpc/rpc-types.d.ts:148`（12 字段，实测无该字段）；`agent-session.ts:4122` 有 getter 但 RPC 面未暴露 | **开放（上游）**。后果：`client.js:4167` 读 `state.autoRetryEnabled` 恒为 `undefined`，开关永远显示 off —— 点一下会发 `set_auto_retry`（`client.js:5894`）确实生效，但刷新后仍显示 off。面板侧今天连乐观本地态都没有（`loadState` `client.js:4891-4903` 只回填 model / thinkingLevel / sessionName / sessionFile 四个字段），所以唯一出路是上游补字段 + 面板加一份乐观态。`test/parity.mjs:290` 用断言把这个缺口**锁住**：pi 哪天补了字段，这条会红，届时可闭环 |
-| `D-09` | 点开历史会话后对话区空白：`switch_session` 成功后 host 清空事件缓冲，面板只重放缓冲 | 原 `client.js:2881-2884` `reload`（只 `attach`，无 `get_messages`）；根因在 `index.js:98` `SESSION_REPLACING_COMMANDS` → `proc.resetEvents()`（`index.js:1042`） | **已闭环（0.4.1）**。`attach` 末尾接 `hydrate(id)`（≈ `get_messages` 整表重建，剔除 `system`），覆盖首次进入 / `switch_session` / `fork` / `clone` / `new_session` 五个入口；两道防线：响应回来时会话已切走则丢弃（`sessionRef.current !== id`）、`busy` 期间不覆盖流式气泡（挂 `hydratePendingRef`，`agent_settled` 后由 `drainHydrate()` 补）。命令行 pi 不受影响：它从 jsonl 恢复 `messages`。`test/parity.mjs` §7 用 12 条断言钉死接线，`test/client-render.mjs` §9.16 用 14 条断言钉死数据整形 |
-| `D-08` | `cycle_model` 在 RPC 面无方向参数 | pi `rpc-types.ts:34` 是 `{ type: "cycle_model" }`；`rpc-mode.ts:501` 调 `session.cycleModel()` 单参；TUI `interactive-mode.ts:4723-4725` 的 `cycleModel(direction)` 有 `forward`/`backward`，键位 `:3229-3230` | **开放（上游）**。后果：`Ctrl+P` 只能正循环（`client.js:5114` 注释处已标注），反向要开模型弹层手动选。面板侧不改协议无解 |
+| `D-03` | 顶栏「新会话」按钮走 `close`+`create` 换子进程，而非 `new_session` | 原 `client.js:2958`（onClick）→ `endSession`（现 `client.js:5248`）（**注**：`2958` 在任何已发布版本里都不是顶栏「新会话」的 onClick —— v0.3.0 顶栏是两个按钮：「重连」`onClick: endSession` 在 `client.js:3036`、「新会话」`onClick: runNewSession` 在 `client.js:3037`；v0.2.5 的 `client.js` 只有 1128 行、根本没有这个按钮。数字保留作历史记录，别当坐标） | **已闭环（0.3.0，0.7.0 收口）**。「新会话」→ `runNewSession`（`client.js:5236`，`new_session`，与命令行 `/new` 同一条路径）；**「重连」不再占顶栏明面** —— 它退进 `⋯` 更多菜单 `moreItems`（`client.js:5700-5703`）并要过 `ConfirmDialog` 二次确认（`client.js:3190`），因为换子进程是恢复手段而不是日常动作。同一件事不再有两个入口两种结果 |
+| `D-04` | `src/session-store.mjs`（只读会话枚举）零引用 | 原全仓 grep 无 import | **已闭环**。`index.js:34-45` import 八个函数（`listAllSessions` / `groupSessionsByProject` / `readSessionCwd` 于 0.5.0 追加），`GET /sessions/history?scope=`（`index.js:870`）暴露，面板 `SessionsSheet`（`client.js:3659`）消费 |
+| `D-05` | `index.js` 未暴露 `pendingUi`，无扩展 UI 专用应答面 | 原 `index.js:484-567` | **已闭环**。`POST /sessions/:id/respond`（`index.js:1083-1102`，409/400/415）、`POST /sessions/:id/reset`（`index.js:1103`）；`pendingUi` 随 `snapshot()` 下发（`src/pi-rpc.mjs:561`） |
+| `D-06` | `test/parity.mjs` 不存在，`npm test` 不含门禁 | 原 `package.json` `scripts.test` | **已闭环**。`test/parity.mjs` 78 checks + `test/host-parity.mjs` 291 checks + `test/session-projects.mjs` 55 checks（0.5.0 起）+ `test/timeout.mjs` 28 checks + `test/restart-lib.mjs`（0.4.2 起），都在 `npm test` 的 11 项里 |
+| `D-07` | `RpcSessionState` 无 `autoRetryEnabled`，设置弹窗的自动重试开关无法回读 | pi `dist/modes/rpc/rpc-types.d.ts:148`（12 字段，实测无该字段）；`agent-session.ts:4122` 有 getter 但 RPC 面未暴露 | **开放（上游）**。后果：`client.js:4232` 读 `state.autoRetryEnabled` 恒为 `undefined`，开关永远显示 off —— 点一下会发 `set_auto_retry`（`client.js:5988`）确实生效，但刷新后仍显示 off。面板侧今天连乐观本地态都没有（`loadState` `client.js:4974-4986` 只回填 model / thinkingLevel / sessionName / sessionFile 四个字段），所以唯一出路是上游补字段 + 面板加一份乐观态。`test/parity.mjs:290` 用断言把这个缺口**锁住**：pi 哪天补了字段，这条会红，届时可闭环 |
+| `D-09` | 点开历史会话后对话区空白：`switch_session` 成功后 host 清空事件缓冲，面板只重放缓冲 | 原 `client.js:2881-2884` `reload`（只 `attach`，无 `get_messages`）；根因在 `index.js:100` `SESSION_REPLACING_COMMANDS` → `proc.resetEvents()`（`index.js:1074`） | **已闭环（0.4.1）**。`attach` 末尾接 `hydrate(id)`（≈ `get_messages` 整表重建，剔除 `system`），覆盖首次进入 / `switch_session` / `fork` / `clone` / `new_session` 五个入口；两道防线：响应回来时会话已切走则丢弃（`sessionRef.current !== id`）、`busy` 期间不覆盖流式气泡（挂 `hydratePendingRef`，`agent_settled` 后由 `drainHydrate()` 补）。命令行 pi 不受影响：它从 jsonl 恢复 `messages`。`test/parity.mjs` §7 用 12 条断言钉死接线，`test/client-render.mjs` §9.16 用 14 条断言钉死数据整形 |
+| `D-08` | `cycle_model` 在 RPC 面无方向参数 | pi `rpc-types.ts:34` 是 `{ type: "cycle_model" }`；`rpc-mode.ts:501` 调 `session.cycleModel()` 单参；TUI `interactive-mode.ts:4723-4725` 的 `cycleModel(direction)` 有 `forward`/`backward`，键位 `:3229-3230` | **开放（上游）**。后果：`Ctrl+P` 只能正循环（`client.js:5203` 注释处已标注），反向要开模型弹层手动选。面板侧不改协议无解 |
 
 ---
 
@@ -281,4 +281,5 @@ payload 取值优先级 `cancelled` → `confirmed` → `value`（`index.js:1062
 | 2026-11-14 | 0.6.4 | **过程流按 DSH 会话过程流重做**（用户直指「DSH 侧边栏的过程行长得跟宿主不一样」，目标截图逐像素实测 1467×802 / dpr≈2：父行图标 16px 框 + 13px 标签 + 2×2 圆点 + 单行省略摘要，行高 24px；子行左 1px 竖线在父行图标框左缘、箭头 + 标签 + 圆点 + 内容整路径点线下划线）。①**层级同构**：模型的「思考」= 父行（`details.dsh-pi-proc` + `summary.dsh-pi-proc-head`，展开区 `div.dsh-pi-proc-body` 只取首行作摘要、全文在展开区）；紧随其后的工具调用 = 子行组（`div.dsh-pi-sub` 左竖线 `border-left:1px solid var(--dsw-alias-border-l3)` + `margin-left:22px`/`padding-left:8px`）；纯文本 / 图片把过程流切段，文本之后的调用重新起一组。②**一次调用 = 一行**：工具结果不再单独占一行 —— pi 把结果作为独立 `toolResult` 消息送达，面板在 PiPanel 里按 `toolCallId` 建 `results` 派生表（`{text,isError}`）传进 MessageRow，命中就折叠、未命中的孤儿结果仍按行渲染（不吞内容），输出收在同一行的展开区 `── output ──`。③**行内词汇取自 DSH 官方标题表**（`research/layout/dsh-client-ui-conversation__lib__client.js:16731-16748`）：思考 / 运行命令 / 读取 / 读取图片 / 写入 / 编辑 / 搜索文件内容 / 查找文件 / 浏览目录 / 工具调用，未知工具兜底「工具调用 · <工具名>」；`read` 命中图片扩展名时自动切成「读取图片」。④**图标**：新增 7 个 24 网格 1.7 描边图标 `ThinkIcon`(⊗) / `HashIcon`(#) / `TerminalIcon`(>_) / `FrameIcon`(▤) / `SearchIcon` / `PencilIcon` / `SparkIcon`，按工具名在 `TOOL_VIEWS` 里静态映射（不按参数猜）。⑤**状态**：运行中圆点用品牌色 + `dsh-pi-pulse`；失败行 `data-state="error"` + 行尾 note「失败」；`!` bash 非 0 退出 note「exit N」、取消 note「已取消」、截断 note「truncated」。⑥**工作状态行**：`WorkingRow`（`div.dsh-pi-working`，`view.busy` 时挂在过程流末尾），最终形态见 ⑩；计时器挂节点自己（1Hz `setInterval` + cleanup），不放面板级 —— 面板级每帧重算上百行流式 markdown 只为刷一行文字。`busySince` 由幂等 `markBusy`/`markIdle` 维护（busy 有 5 处赋值点：`agent_start`/`turn_start`/`agent_settled`/`resync`/`attach` + EventSource `exit`，散写必漏必残留；已在忙不重置起点，否则一轮任务里每重连一次计时归零）。⑦**删掉被取代的旧词汇**：`tool` / `result` / `busy` / `thinkingLabel` 四键在旧 ToolBlock/ThinkingBlock 删除后已无消费者，留两套词表会让下一任分不清行标签的真相源。⑧**实拍后三处修正**（装进独立实例、真跑一轮后逐像素对目标图）：行文字色从 `label-secondary`（`rgb(97,102,107)`）改成 `label-tertiary`（`rgb(129,133,140)`，与目标摘要实心色一致），`── live ──` 段加 `status === 'running'` 护栏 —— 跑完后 `partialResult` 与最终输出是同一件事，两段都印等于把结果写两遍。⑨门禁：`test/client-render.mjs` 669→697（去掉四个死键的 8 条非空断言，过程行结构由 SSR 三件套 `class="dsh-pi-tool"` 断言继续锁；新增 9.11c 颜色两条 + 9.11d live 段四条），`test/css-tokens.mjs` 96→97（白名单新增 `--dsh-content-font-size-secondary`：过程行取 DSH 会话流次级正文档，用主档会让「过程」比「正文」更重）。⑩**工作状态行按 DSH `RunningStatus` 收尾**（第三次修订，同属实拍驱动）：目标图底部那行是品牌蓝 `rgb(52,94,186)` = `--dsw-alias-label-deep-diving`（`color-mix(in srgb, #4176e6 70%, #172554)`），图标是鲸鱼尾而非四角星 —— 我们原先的 `--dsw-alias-state-business-primary`（`rgb(65,118,230)`）是另一个蓝。改成照抄 DSH `dsh-client-ui-chat/lib/client.js:6386-6429`：新增 `WhaleTailIcon`（`:2004`，16 网格 / `stroke-width:1` / `fill:none` / `stroke:currentColor`，路径即 DSH `RunningWhaleTail` 的 `REST_PATH` 原文，未引入它的 APNG 蒙版资产），`.dsh-pi-working` 文字色改 `--dsw-alias-label-deep-diving`、字号 `calc(var(--dsh-content-font-size,14px) - 2px)`（实测 12px）、行高 `calc(22px + var(--dsh-content-font-delta,0px))`（22px），图标随 `currentColor`；文案 `deepDiving`=「深度求索中」、`working`=「深度求索中，用时 {duration} ···」（三个 `U+00B7`，与 DSH `chat.deepDivingFor` 同字），`fmtDuration`（`client.js:3222`）按 DSH `formatRunDuration`（`:5847-5880`）补小时档 —— 新增 `durHour` 词条，`durHour` 仅 hours>0、`durMin` 仅 total≥60、`durSec` 恒有，拼接用 `parts.join('')` —— 单位间距由词条自带（中文 `durMin`=「{n}分」不带空格，目标图就是「43分54秒」；EN 为「{n}m 」带尾空格），与 DSH `formatRunDuration(...).map((part) => part.text).join('')` 同一拼法；另加 `span.dsh-pi-sr[role=status][aria-live=polite]` 只播报不带秒数的 `deepDiving`，否则读屏每秒被刷一次。门禁随之 `test/client-render.mjs` 697→**738**（新增 9.11e：三条 working CSS 的颜色与字号、`WhaleTailIcon` 的 `viewBox 0 0 16 16` 与 `stroke-width="1"`、`fmtDuration` 五条定值含小时与 90 秒进位、`WorkingRow` 的 aria 结构与无起点时的退化文案），`test/css-tokens.mjs` 97→**98**。`docs/dsh-ui-spec.md` 的代码基线刷新到 `client.js` 5619 行 / 307602 B / sha256 前 12 位 `ACDCFE28FDFB`。（行号为 0.6.4 落地当时的坐标，非当前坐标。**已知笔误**：本行的 `WhaleTailIcon`（`:2004`）与 `fmtDuration`（`client.js:3222`）连 0.6.4 都对不上 —— 复核 v0.6.4 源码真值为 `client.js:1941` / `client.js:2975`，0.8.0 实测为 `client.js:2055` / `client.js:3296`，故 **2004 / 3222 这两个数不要当坐标用**（既非历史真值也非当前真值），跨版本定位请用符号名。另：本行的 `dsh-client-ui-chat/lib/client.js:6386-6429`、`:5847-5880` 与 `research/layout/dsh-client-ui-conversation__lib__client.js:16731-16748` 是**上游 DSH 源码坐标、非本仓库 `client.js`**，原样保留不动。） |
 | 2026-11-15 | 0.7.0 | **弹层化重构与改名 SuperPi**（0.7.0）。①模型与思考档位从顶栏搬进输入框上方的向上弹层：新增 `ModelPicker`（`client.js:3130`），两段标题（`pickModel` `:237` / `pickThinking` `:238`），选项用 `role=menuitemradio` + `aria-checked`（`:3147` / `:3166`），开合状态在面板上受控（`pickerOpen` `:4295`、`togglePicker` `:5026`）；原生 `select` 整族（`.dsh-pi-picker-wrap` / `.dsh-pi-picker-native`）已删，`test/client-render.mjs` 专门断言 `dsh-pi-picker-native === false`。②统计与设置从抽屉换成居中 `Dialog`：`openStats`（`:5051`）→ `StatsSheet`（`:3803`）、`openSettings`（`:5073`）→ `SettingsSheet`（`:3848`），`wide:true` 走 `.dsh-pi-dialog-wide`（`:827`）。③历史会话换成左侧滑出的 `SidePanel`（`:3070`，宽 `min(360px,86%)`），`SessionsSheet` 套进去（挂载 `:3330`）。④顶栏删掉「下一个模型 / 下一个思考档位」两个循环按钮（注释 `:5350-5353`），压缩与重连收进 `⋯` 更多菜单（`moreItems` `:5309-5312`，两项只唤起 `setConfirm`），必须过 `ConfirmDialog`（`:5322` / `:5330`）——真正的动作在 `confirm === compact`（`:5321` → `runCompact('')` `:5327`）与 `confirm === reconnect`（`:5329` → `endSession()` `:5335`）分支里。⑤顶栏「新会话」仍是主按钮（`:5369` → `runNewSession` `:4847`），语义是同一 pi 子进程内换一棵会话树，D-03 收口。⑥显示名改 `SuperPi`（`panelTitle` `:37` / `:245`），`package.json` 的 `name` 仍是 `dsh-pi`。⑦实拍补两处 CSS：`.dsh-pi-dialog-content` 下内边距 22px（`:831`）、会话数徽标不折行（`:715`）与 mono 路径 ellipsis（`:720`）。门禁：`client-render` 738→755、`parity` 77→78（新增「重连收进更多菜单」与「二次确认之后才走 endSession」两条）。（行号为 0.7.0 落地当时的坐标，非当前坐标） |
 | 2026-11-15 | 0.8.0 | **面板偏好落盘层（host 侧）+ 过程流排版收口**（0.8.0）。①新增 `src/ui-prefs.mjs`（403 行）：落盘在 `~/.dsh-pi/ui-prefs.json`（可用 `DSH_PI_UI_PREFS` 覆盖），原子写（同目录 `.tmp-*` + rename，`renameWithRetry` `:228` 只对 EPERM/EBUSY/EACCES 退避）、写入串行化（队列 `:263`，一次 400 不把后续请求卡死）、读盘坏 JSON 回空结构（`:272-287`）、`setSession` 是**合并语义**（`:321`，`pinned` 与 `name` 是两个独立偏好，`undefined` 表示别动）；校验上限：项目名/会话名 120 字、会话路径 4096 字。②host 三条路由 `GET /ui-prefs`（`index.js:960`）、`POST /ui-prefs/project`（`:964`）、`POST /ui-prefs/session`（`:969`），都返回**全量结构**；store 未注入时回 501 而非静默 200。③过程流排版按参考图收口：父行是 24px 行盒（`.dsh-pi-proc-head` / `.dsh-pi-tool-head`，`client.js:564`），子行容器 `.dsh-pi-sub` 用 `gap:8px`（`client.js:592`）⇒ 子行步长 **32 = 24 + 8**，父子同节奏；注释 `client.js:589` 逐字「组内 gap 与 body 一样是 8、行盒沿用父行的 24 ⇒ 子行步长 32，与父行完全同节奏」。「子行 16px 行盒 + gap 0 / 32:16」是被推翻的中间态（注释 `client.js:591` 逐字「早先子行压到 16px 行盒 + gap 0，行距只剩父行一半，看着像被挤扁」）；注释 `:555-561` 另有「父→父 40、父→首个子行 40、子→子 40、子行组→下一父行 44」的实测节奏。圆点是 `.dsh-pi-sep`（`client.js:575`，`width:2px;height:2px;margin:0 11px`，行内三段间距统一 11）。④项目行与会话行补 `title=`（时间 + cwd/path，`client.js:3429` / `:3487`）；会话标题优先级 `renamed → piName → headline → lastMessage → sessionFallbackTitle`（`:3459-3460`），仍回落 `lastMessage`（`:3486`）。⑤门禁 `host-parity` 204→263：3.12 面板偏好十条（`test/host-parity.mjs:605`）+ 3.13 会话条目合并语义八条（`:727`）。**计数口径提示**：`263` 是本行写入时的值，定稿前该文件又有追加，当前 `node test/host-parity.mjs` 实测 `PASS (276 checks)` —— 当前态一律以第 29 / 33 行的 276 为准。**面板侧本轮已接线，与 host 能力面对齐** —— `api.uiPrefs` / `api.setProjectPref` / `api.setSessionPref`（`client.js:1000` / `:1001-1003` / `:1005-1007`）由 `SessionsSheet` 消费，i18n 词条 `renameProject` `ZH:249` / `renameSession` `:250` / `pinSession` `:251` / `unpinSession` `:252`。（行号为 0.8.0 落地当时的坐标，非当前坐标） |
+| 2026-11-16 | 0.8.1 | **弹层交互与顶栏标题**（0.8.1）。三处一起改，都不新增界面。①四个居中弹窗统一成**真模态** —— 点遮罩即关闭，判定式只留一份 `maskHandler(onClose)`（`client.js:3121-3125`，判 `event.target === event.currentTarget`，内层不吞事件、不 `stopPropagation`）：`Dialog`（`:3148-3156`）、`ConfirmDialog`（`:3190-3202`，点遮罩 = **取消**而不是确认）、选择工作区 `DirSheet`（`:3810-4108`，遮罩用法在 `:4097`）、扩展 UI `ExtensionDialog`（`:4286-4366`，遮罩在 `:4357` 回 `{id, cancelled:true}`，与右上角关闭键同一条路径），并补上原先缺的 `aria-modal`。②`MoreMenu`（`:3205-3249`；顶栏 `⋯` 与历史会话行内 `⋯` 共用）补「点外部关闭」：`isOutsideMenu(node, anchor, target)`（`:3133-3138`）**同时放行菜单自身与触发按钮** —— 少了后半条，同一次点击里 `mousedown` 先关、`click` 又开，表现为「怎么点都关不掉」；顶栏传 `moreRef`（`:4735`）、行内传 `rowMenuAnchor`（`SessionsList` 内 `:3442`，同一时刻只允许一个行内菜单）。③顶栏左上的 `SuperPi` 换成**当前项目标题**（`:5733`）：host 侧新增 `withProjectIdentity(snapshot, projectCwd)`（`index.js:448-455`，`displayPath` `:452` = `shortenHomePath` 把家目录缩成 `~`、`projectKey` `:453` = `pathComparisonKey`）与 `snapshotOf(proc, options)`（`index.js:461-463`），在每份会话快照上补这两个字段，四处调用点 `index.js:672` / `1016` / `1031` / `1035`；客户端 `projectTitleOf(prefs, meta)`（`client.js:3391-3400`）按「面板里改过的项目名 → `displayPath` → 原始路径」取值，全空才回落 `t('panelTitle')`。路径缩短与大小写归一的唯一真相留在 host，浏览器侧不复制这套逻辑。`RuntimeGate`（`:4508-4553`，启动期没有会话）保留品牌名。面板偏好同时从 `SessionsSheet` 上提到 `PiPanel`（`prefsState` `:4676`、`applyPrefs` `:4680`、挂载时 `api.uiPrefs()` `:5047`），顶栏与历史会话列表读同一份 `prefs`。门禁：`client-render` 797→**831**（弹窗遮罩与菜单外部点击的纯函数断言、四个弹窗的 SSR 两层结构、`projectTitleOf` 八条）、`host-parity` 276→**291**（`withProjectIdentity` 9 条 + 会话快照带 `displayPath`/`projectKey` 6 条），`css-tokens` 98 不变。基线：`client.js` 6275 行 / 347871 B / sha256 前 12 位 `570B9EF4B9B0`，`index.js` 1624 行 / 76621 B / sha256 前 12 位 `DDD7C5CD828C`。（行号为 0.8.1 落地当时的坐标，非当前坐标） |
 | — | — | 修改本文档时必须同时改：受影响行的「面板端状态」、`## 1/3/4` 末尾的统计数字、以及 `## 6` 的一行。统计数字算错会让「零缺口」变成一句空话。 |

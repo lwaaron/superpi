@@ -873,6 +873,79 @@ assert(internals.fmtCount(undefined) === '0', '缺字段按 0 算，不能出 Na
 assert(internals.fmtCount('abc') === '0', '非数字按 0 算')
 assert(internals.numOr0(null) === 0 && internals.numOr0(2) === 2, 'numOr0 兜底')
 
+// ── 9.18 模态弹窗 + 菜单点外部关闭 + 顶栏项目标题（0.8.1，用户 35984） ──────
+// 三条需求都属「点了别处该消失 / 标题该是当前项目」，SSR 渲染不出事件处理器，
+// 所以把判定抽成纯函数 maskHandler / isOutsideMenu / projectTitleOf 单独锁死，
+// 再用 SSR 结构断言确认四个弹窗外壳都是「遮罩包卡片」而不是把 onClick 挂在卡片上。
+const maskHandler = internals.maskHandler
+assert(typeof maskHandler === 'function', 'client.js 应导出 maskHandler 以便测试')
+const maskCalls = []
+const onMask = maskHandler(function () { maskCalls.push('closed') })
+const maskNode = { id: 'mask' }
+onMask({ target: maskNode, currentTarget: maskNode })
+assert(maskCalls.length === 1, '点遮罩本身该关闭弹窗，实际调用 ' + String(maskCalls.length) + ' 次')
+onMask({ target: { id: 'card-child' }, currentTarget: maskNode })
+assert(maskCalls.length === 1, '点卡片内部（冒泡到遮罩时 target 不是遮罩）不该关闭，实际 ' + String(maskCalls.length) + ' 次')
+assert(typeof maskHandler(function () {}) === 'function', 'maskHandler 每次调用都该返回一个新的处理函数')
+
+const isOutsideMenu = internals.isOutsideMenu
+assert(typeof isOutsideMenu === 'function', 'client.js 应导出 isOutsideMenu 以便测试')
+const menuNode = { contains: node => node !== null && node !== undefined && node.id === 'menu-child' }
+const anchorRef = { current: { contains: node => node !== null && node !== undefined && node.id === 'trigger' } }
+assert(isOutsideMenu(menuNode, anchorRef, { id: 'menu-child' }) === false, '点菜单自身不算外部')
+assert(isOutsideMenu(menuNode, anchorRef, { id: 'trigger' }) === false, '点触发按钮不算外部（否则 mousedown 关了 click 又开，表现为关不掉）')
+assert(isOutsideMenu(menuNode, anchorRef, { id: 'elsewhere' }) === true, '点面板别处该算外部并收起菜单')
+assert(isOutsideMenu(menuNode, null, { id: 'menu-child' }) === false, '没有 anchor 时菜单自身仍不算外部')
+assert(isOutsideMenu(menuNode, undefined, { id: 'elsewhere' }) === true, 'anchor 为 undefined 时不该抛异常')
+assert(isOutsideMenu(null, null, { id: 'elsewhere' }) === true, '菜单还没挂载（node 为 null）时一律算外部，不抛')
+
+// 四条文案在早期版本里都出现过，现在是同一份 <div class="dsh-pi-dialog-wrap"><div class="dsh-pi-dialog"
+// 结构；断言直接锁这个父子顺序，防止有人把 onClick 挪到卡片上（那样点卡片也会关）。
+const centerDialog = internals.Dialog
+assert(typeof centerDialog === 'function', 'client.js 应导出 Dialog 以便测试')
+const centerHtml = renderToStaticMarkup(React.createElement(centerDialog, { t: zh, title: '统计', onClose() {} }, 'body'))
+console.log('dialog =', centerHtml)
+assert(centerHtml.includes('<div class="dsh-pi-dialog-wrap"><div class="dsh-pi-dialog"'), '居中弹窗该是「遮罩 > 卡片」两层，实际 ' + centerHtml)
+assert((centerHtml.match(/aria-modal="true"/g) ?? []).length === 1, '居中弹窗的卡片该声明一次 aria-modal=true')
+assert(centerHtml.includes(zh('cancel')) === false && centerHtml.includes('role="alertdialog"') === false, '普通弹窗不该带确认语义')
+
+const confirmCenter = internals.ConfirmDialog
+assert(typeof confirmCenter === 'function', 'client.js 应导出 ConfirmDialog 以便测试')
+const confirmCenterHtml = renderToStaticMarkup(React.createElement(confirmCenter, { t: zh, title: '重连', body: '会断开', onCancel() {}, onConfirm() {} }))
+console.log('confirmDialog =', confirmCenterHtml)
+assert(confirmCenterHtml.includes('<div class="dsh-pi-dialog-wrap"><div class="dsh-pi-dialog"'), '二次确认该是「遮罩 > 卡片」两层')
+assert(confirmCenterHtml.includes('role="alertdialog"'), '二次确认该是 alertdialog')
+assert(confirmCenterHtml.includes('aria-modal="true"'), '二次确认该声明 aria-modal=true')
+
+// 扩展 UI 弹窗（四种 method 共用一个壳）：0.8.1 补上 aria-modal —— 它会阻塞 pi 整轮等待。
+assert(confirmHtml.includes('aria-modal="true"'), '扩展 UI 弹窗该声明 aria-modal=true（0.8.1 补齐）')
+assert(confirmHtml.includes('<div class="dsh-pi-dialog-wrap"><div class="dsh-pi-dialog"'), '扩展 UI 弹窗该是「遮罩 > 卡片」两层')
+
+const MoreMenuExport = internals.MoreMenu
+assert(typeof MoreMenuExport === 'function', 'client.js 应导出 MoreMenu 以便测试')
+const menuHtml = renderToStaticMarkup(React.createElement(MoreMenuExport, {
+  t: zh,
+  anchor: null,
+  items: [{ key: 'compact', label: zh('compactNow'), icon: internals.SparkIcon, run() {} }],
+  onPick() {},
+  onClose() {},
+}))
+console.log('moreMenu =', menuHtml)
+assert(menuHtml.includes('role="menu"'), '更多菜单该声明 role=menu')
+assert(menuHtml.includes('role="menuitem"'), '更多菜单项该声明 role=menuitem')
+assert(menuHtml.includes(zh('compactNow')), '更多菜单该渲染传入的条目文案')
+
+const projectTitleOf = internals.projectTitleOf
+assert(typeof projectTitleOf === 'function', 'client.js 应导出 projectTitleOf 以便测试')
+const prefsFixture = { projects: { 'c:\\users\\pc\\pi-workspace': { name: '我的工作区' } }, sessions: {} }
+assert(projectTitleOf(prefsFixture, { projectKey: 'c:\\users\\pc\\pi-workspace', displayPath: '~\\pi-workspace', sessionCwd: 'C:\\Users\\PC\\pi-workspace' }) === '我的工作区', '重命名过的项目该显示改名后的名字')
+assert(projectTitleOf(prefsFixture, { projectKey: 'c:\\other', displayPath: '~\\other', sessionCwd: 'C:\\other' }) === '~\\other', '没改名时该用 host 下发的 displayPath（~ 缩写）')
+assert(projectTitleOf(prefsFixture, { sessionCwd: 'D:\\work' }) === 'D:\\work', '既没 prefs 也没 displayPath 时回落到 cwd')
+assert(projectTitleOf(prefsFixture, { cwd: 'D:\\work' }) === 'D:\\work', '只有 cwd 时同样回落')
+assert(projectTitleOf(prefsFixture, { sessionCwd: 'E:\\w', cwd: 'D:\\work' }) === 'E:\\w', 'sessionCwd 优先于 cwd（跨项目切换后 cwd 仍是 spawn 目录）')
+assert(projectTitleOf(prefsFixture, null) === '', '没有会话时返回空串，由调用方回落品牌名')
+assert(projectTitleOf(null, { projectKey: 'x', displayPath: '~\\x' }) === '~\\x', 'prefs 还没拉回来时不该抛异常')
+assert(projectTitleOf(prefsFixture, {}) === '', '元数据里一个路径都没有时返回空串，不编造标题')
 // ── 10. 整棵面板在 loading 阶段能渲染，不抛异常 ────────────────────────────
 const panelHtml = renderToStaticMarkup(React.createElement(internals.PiPanel, { t: zh }))
 assert(panelHtml.includes('dsh-pi-root'), 'PiPanel 应渲染出 dsh-pi-root')

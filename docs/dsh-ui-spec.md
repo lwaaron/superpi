@@ -2,14 +2,14 @@
 
 | 项 | 值 |
 | --- | --- |
-| 文档版本 | 1.4 |
-| 代码基线 | `client.js` 6178 行 / 340965 B / sha256 前 12 位 `58D4415C014F` |
-| 版本号 | `package.json` version = **0.8.0**（`index.js` 的 `CONTRACT_VERSION` 同为 `0.8.0`；0.6.0 新增助手文本里的文件路径标签与 Composer 任意文件插入，0.6.1 新增类型图标文件标签、右键资源管理器定位与统一的 `CloseButton`，0.6.2 把 composer 换成宿主主对话区的卡面 + 圆形按钮 + `+` 菜单 + 底部统计行，0.6.3 修 composer 首次进入统计行无数字与统计行混入会话路径，0.6.4 把「思考块 + 工具行」重做成 DSH 会话流的过程行：思考 = 父行、工具调用 = 缩进子行组、工具结果并入调用行、末尾工作状态行（该行按 DSH `RunningStatus` 收尾：`--dsw-alias-label-deep-diving` 蓝字 + 16 网格鲸鱼尾 + `···`），0.7.0 把模型名与思考档位合成同一个 `.dsh-pi-picker-box` 锚点并换成自绘 `-picker-menu` 弹层（删掉原生 `<select>` 叠层与 `picker-wrap` / `picker-native` 两个类），新增顶栏 `more` 菜单（`MoreMenu`）、历史会话 `side` 左滑侧栏（`SidePanel`）、`dialog-wide` / `dialog-grow` / `dialog-content` 三个对话框变体与 `role=alertdialog` 的 `ConfirmDialog`，并给 `sess-top` 的子段加 `nowrap` 修「1 个会话」折行，0.8.0 把历史会话抽屉重做成**两级列表**（项目层 → 会话层，`SessionsList` / `SessionsSheet`）、给项目行与会话行加行内「更多」菜单（`row-more`，两项：重命名 / 在此新建会话、重命名 / 置顶），新增项目与会话的重命名弹窗（`RenameDialog`）、会话置顶（`pin` 图标 + 置顶优先的两遍分区排序）、宿主侧三条 `ui-prefs` 路由（`GET /ui-prefs`、`POST /ui-prefs/project`、`POST /ui-prefs/session`）与 `~/.dsh-pi/ui-prefs.json` 原子写偏好文件，修正会话标题胶囊的显示条件（由「既有偏好名又有 pi 会话名才显示」改为「只在标题位置已被名字占据时才把原始摘要放进胶囊」，只有 `firstMessage` 的会话也能看到摘要），并把过程流子行组的 18px 行盒改成与父行一致的 32px 步长（删掉子行 `line-height` 覆盖、组内 `gap` 0→8、子行缩进 22px→26px、行内三段间距统一 11px），附录 A 的行号已整体刷新到 0.8.0 实测值） |
+| 文档版本 | 1.5 |
+| 代码基线 | `client.js` 6275 行 / 347871 B / sha256 前 12 位 `570B9EF4B9B0` |
+| 版本号 | `package.json` version = **0.8.1**（`index.js` 的 `CONTRACT_VERSION` 同为 `0.8.1`；0.6.0 新增助手文本里的文件路径标签与 Composer 任意文件插入，0.6.1 新增类型图标文件标签、右键资源管理器定位与统一的 `CloseButton`，0.6.2 把 composer 换成宿主主对话区的卡面 + 圆形按钮 + `+` 菜单 + 底部统计行，0.6.3 修 composer 首次进入统计行无数字与统计行混入会话路径，0.6.4 把「思考块 + 工具行」重做成 DSH 会话流的过程行：思考 = 父行、工具调用 = 缩进子行组、工具结果并入调用行、末尾工作状态行（该行按 DSH `RunningStatus` 收尾：`--dsw-alias-label-deep-diving` 蓝字 + 16 网格鲸鱼尾 + `···`），0.7.0 把模型名与思考档位合成同一个 `.dsh-pi-picker-box` 锚点并换成自绘 `-picker-menu` 弹层（删掉原生 `<select>` 叠层与 `picker-wrap` / `picker-native` 两个类），新增顶栏 `more` 菜单（`MoreMenu`）、历史会话 `side` 左滑侧栏（`SidePanel`）、`dialog-wide` / `dialog-grow` / `dialog-content` 三个对话框变体与 `role=alertdialog` 的 `ConfirmDialog`，并给 `sess-top` 的子段加 `nowrap` 修「1 个会话」折行，0.8.0 把历史会话抽屉重做成**两级列表**（项目层 → 会话层，`SessionsList` / `SessionsSheet`）、给项目行与会话行加行内「更多」菜单（`row-more`，两项：重命名 / 在此新建会话、重命名 / 置顶），新增项目与会话的重命名弹窗（`RenameDialog`）、会话置顶（`pin` 图标 + 置顶优先的两遍分区排序）、宿主侧三条 `ui-prefs` 路由（`GET /ui-prefs`、`POST /ui-prefs/project`、`POST /ui-prefs/session`）与 `~/.dsh-pi/ui-prefs.json` 原子写偏好文件，修正会话标题胶囊的显示条件（由「既有偏好名又有 pi 会话名才显示」改为「只在标题位置已被名字占据时才把原始摘要放进胶囊」，只有 `firstMessage` 的会话也能看到摘要），并把过程流子行组的 18px 行盒改成与父行一致的 32px 步长（删掉子行 `line-height` 覆盖、组内 `gap` 0→8、子行缩进 22px→26px、行内三段间距统一 11px），附录 A 的行号已整体刷新到 0.8.0 实测值，0.8.1 把四个居中弹窗统一成真模态（遮罩点击即关闭，判定式抽成 `maskHandler`）、给 `MoreMenu` 补「点外部关闭」（`isOutsideMenu` 同时放行菜单自身与触发按钮）、并把顶栏标题从品牌名换成当前项目标题（`projectTitleOf` + host 侧 `withProjectIdentity` / `snapshotOf` 下发 `displayPath` 与 `projectKey`），附录 A 的行号已整体刷新到 0.8.1 实测值） |
 | 设计系统基线 | DSH 客户端样式包 `index-lh_YM6sT.css`（87124 字符 / 748 条规则 / 17 个 `@keyframes`）与 `tokens.txt`（414 个 `--dsw-*` 令牌，浅深两套值） |
 | 采集口径 | 全部数值由脚本从仓库文件与探针文件读出；两种字符口径（源文本 / 门禁还原文本）分别标注 |
 | 适用范围 | 只描述样式令牌、组件规格与目录选择器交互。不改任何源码，本文件是**规格**而非实现 |
 
-> **行号会漂移。** `client.js` 在取证期间被并发改写多次：0.5.0 因历史会话抽屉拆成容器 + 视图涨到 4130 行，0.6.0 又因文件标签与任意文件插入涨到 4556 行，0.6.1 因类型图标、`CloseButton` 与资源管理器定位涨到 4789 行，0.6.2 因 composer 重做涨到 4873 行，0.6.3 又因 composer 首帧统计与 dock 归位涨到 5170 行，0.6.4 因过程流按 DSH 会话过程流重做涨到 5572 行，同日又把末尾工作状态行按 DSH `RunningStatus` 收尾涨到 5614 行、把中文用时单位之间的半角空格去掉后涨到 5619 行，同日又给工作状态行的首帧加了 `Math.max(1000, …)` 钳位（不钳位首帧会闪「0秒」，与 DSH `RunningStatus` 的 `formatRunDuration(Math.max(1e3, now - startTime), t)` 同一处理）涨到 5619 行，0.7.0 再因 picker 合一弹层、`more` 顶栏菜单、`side` 左滑侧栏、三个对话框变体与过程流子行行盒涨到 5872 行，0.8.0 又因历史会话两级列表、项目与会话重命名、会话置顶、会话行内「更多」菜单与 `ui-prefs` 三条宿主路由涨到 6178 行。**附录 A 的行号已整体刷新到 0.8.0 实测值**；正文其余段落的行号本轮也已逐条重新实测到 0.8.0，但它仍会随下一次改动漂移，读者若在当前版本上找不到对应行，请用类名 grep 定位（例如搜 `dsh-pi-dir-cols`），类名是稳定锚点，行号不是。样式令牌与尺寸规格不受行号漂移影响。
+> **行号会漂移。** `client.js` 在取证期间被并发改写多次：0.5.0 因历史会话抽屉拆成容器 + 视图涨到 4130 行，0.6.0 又因文件标签与任意文件插入涨到 4556 行，0.6.1 因类型图标、`CloseButton` 与资源管理器定位涨到 4789 行，0.6.2 因 composer 重做涨到 4873 行，0.6.3 又因 composer 首帧统计与 dock 归位涨到 5170 行，0.6.4 因过程流按 DSH 会话过程流重做涨到 5572 行，同日又把末尾工作状态行按 DSH `RunningStatus` 收尾涨到 5614 行、把中文用时单位之间的半角空格去掉后涨到 5619 行，同日又给工作状态行的首帧加了 `Math.max(1000, …)` 钳位（不钳位首帧会闪「0秒」，与 DSH `RunningStatus` 的 `formatRunDuration(Math.max(1e3, now - startTime), t)` 同一处理）涨到 5619 行，0.7.0 再因 picker 合一弹层、`more` 顶栏菜单、`side` 左滑侧栏、三个对话框变体与过程流子行行盒涨到 5872 行，0.8.0 又因历史会话两级列表、项目与会话重命名、会话置顶、会话行内「更多」菜单与 `ui-prefs` 三条宿主路由涨到 6178 行，0.8.1 因四个居中弹窗模态化（`maskHandler`）、`MoreMenu` 点外部关闭（`isOutsideMenu`）与顶栏改项目标题（`projectTitleOf`）涨到 6275 行。**附录 A 的行号已整体刷新到 0.8.1 实测值**；正文其余段落的行号本轮也已逐条重新实测到 0.8.1，但它仍会随下一次改动漂移，读者若在当前版本上找不到对应行，请用类名 grep 定位（例如搜 `dsh-pi-dir-cols`），类名是稳定锚点，行号不是。样式令牌与尺寸规格不受行号漂移影响。
 
 ---
 
@@ -44,15 +44,16 @@ dsh-pi 是 DSH 侧栏里的 pi 面板，它的视觉必须与宿主 DSH 属于�
 
 | 文件 | 行数 | 字节 | mtime (UTC) |
 | --- | --- | --- | --- |
-| `client.js` | 6178 | 340965 | 2026-11-15T22:43:42Z |
-| `index.js` | 1593 | 75041 | 2026-11-15T15:03:06Z |
-| `package.json` | 77 | 2650 | 2026-11-15T15:03:06Z |
+| `client.js` | 6275 | 347871 | 2026-11-16T04:58:24Z |
+| `index.js` | 1624 | 76621 | 2026-11-16T07:07:45Z |
+| `package.json` | 77 | 2650 | 2026-11-16T05:03:42Z |
 | `src/ui-prefs.mjs` | 404 | 20748 | 2026-11-15T13:28:41Z |
 | `test/css-tokens.mjs` | 597 | 28485 | 2026-11-14T21:28:10Z |
-| `test/client-render.mjs` | 888 | 70326 | 2026-11-15T22:44:47Z |
+| `test/client-render.mjs` | 961 | 76767 | 2026-11-16T04:58:50Z |
 | `src/rpc-contract.mjs` | 324 | 19692 | 2026-11-15T22:44:15Z |
+| `test/host-parity.mjs` | 844 | 60672 | 2026-11-16T05:01:42Z |
 
-`docs/` 目录在本文件创建前只有 `parity.md`（现 285 行 / 71573 B）。
+`docs/` 目录在本文件创建前只有 `parity.md`（现 286 行 / 74211 B）。
 
 ---
 
@@ -91,7 +92,7 @@ dsh-pi 是 DSH 侧栏里的 pi 面板，它的视觉必须与宿主 DSH 属于�
 ```
 cd C:/Users/PC/Documents/pi-local/dsh-pi
 node test/css-tokens.mjs     # 令牌门禁，期望 PASS (98 checks)
-node test/client-render.mjs  # 渲染门禁，期望 PASS (797 assertions)
+node test/client-render.mjs  # 渲染门禁，期望 PASS (831 assertions)
 ```
 
 两条命令都离线可跑，不打真实 LLM，不进 `npm test` 的耗时大头。`npm test` 共十一项，顺序是 `selfcheck → client-render → css-tokens → runtime-resolve → config-hot → host-parity → session-projects → timeout → parity → restart-lib → version`。
@@ -614,12 +615,12 @@ composer 自 0.6.2 起整体换成宿主主对话区的语言：卡面、圆形 
 
 十一项一致、一项差异。这是全套组件里对齐程度最高的一处。**唯一差异**是 dsh-pi 的胶囊多了 `transition:background-color .16s ease`，DSH 的开关底色是瞬变。加上过渡在观感上更柔和，但也意味着关闭瞬间有一帧中间色。
 
-**状态**：`role="switch"` + `aria-checked` + `aria-labelledby`，React 侧用 `id="dsh-pi-sw-<key>"` 关联标签。`SettingsSheet`（`client.js:4148-4175`）里只有 `autoCompaction` 与 `autoRetry` 两个真开关（`client.js:4166` / `:4167`）；`steeringMode` 与 `followUpMode` 仍是 `.dsh-pi-btn` 文字按钮（`client.js:4168-4173`），与 DSH 的 `._toggle_jrv99_5` 同族但不是开关形态。
+**状态**：`role="switch"` + `aria-checked` + `aria-labelledby`，React 侧用 `id="dsh-pi-sw-<key>"` 关联标签。`SettingsSheet`（`client.js:4213-4240`）里只有 `autoCompaction` 与 `autoRetry` 两个真开关（`client.js:4231` / `:4232`）；`steeringMode` 与 `followUpMode` 仍是 `.dsh-pi-btn` 文字按钮（`client.js:4233-4238`），与 DSH 的 `._toggle_jrv99_5` 同族但不是开关形态。
 
 **差异**：
 
 1. 胶囊过渡（见上）。
-2. **四个设置项只有两个是开关**。注释 `client.js:4151` 说「开关对齐 DSH 的 `._switch_1ik0f_5`（36x20 胶囊 + 16px 滑块），不再是文字按钮」，但实际只改了两个。另外两个是双值枚举（`one-at-a-time` / `all`），做成开关语义不成立（不是布尔），保持文字按钮是对的；但注释的措辞会让人误以为四项都改了。
+2. **四个设置项只有两个是开关**。注释 `client.js:4216` 说「开关对齐 DSH 的 `._switch_1ik0f_5`（36x20 胶囊 + 16px 滑块），不再是文字按钮」，但实际只改了两个。另外两个是双值枚举（`one-at-a-time` / `all`），做成开关语义不成立（不是布尔），保持文字按钮是对的；但注释的措辞会让人误以为四项都改了。
 
 ### 4.12 对话框
 
@@ -671,11 +672,11 @@ composer 自 0.6.2 起整体换成宿主主对话区的语言：卡面、圆形 
 
 | 组件 | 函数 | 角色与语义 | 结构与关键几何 |
 | --- | --- | --- | --- |
-| `Dialog` | `client.js:3119-3127` | `div.dsh-pi-dialog-wrap` → `div.dsh-pi-dialog` + `role="dialog"` + `aria-modal="true"` + `aria-label=<title>` | 根走 `.dsh-pi-dialog-wrap`（`:800`，`bg-mask-1` + `z-index:40` + `padding:20px`）；`.dsh-pi-dialog`（`:801`，`width:min(440px,100%)` + `radius-panel` + `bg-layer-2` + `elevation-prominent` + `dsh-pi-modal-in .16s`）；`props.wide === true` 时类名追加 `dsh-pi-dialog-wide`（`:869`，`min(560px,100%)`）；内部 = `-dialog-head`（`:803`）+ 正文容器 **`-dialog-content`**（`:873`，`padding:14px 24px 22px`，注释 `:872` 说明底部多留 22px 防贴边，依据实拍 p071-04）。**注意是 `-dialog-content` 不是 `-dialog-body`**，两者并存但不是同一条规则 |
-| `SidePanel` | `client.js:3135-3155` | `div.dsh-pi-side-wrap` → `div.dsh-pi-side` + `role="dialog"` + `aria-modal="true"` + `aria-label` | JSDoc `:3129-3134` 记录需求（用户 30427：「从页面左侧向右侧弹出侧边栏」）。`.dsh-pi-side-wrap`（`:842`，`position:absolute;inset:0;z-index:30` + `bg-mask-1`）→ `.dsh-pi-side`（`:843`，`width:min(360px,86%)` + `height:100%` + `bg-base` + `elevation-panel` + `animation:dsh-pi-side-in .18s ease-out`）；`@keyframes dsh-pi-side-in`（`:844`）`translateX(-100%)` → `translateX(0)`，即左滑入场；结构 = `-side-head`（`:845`，含 `-side-title` `:846` 与 `CloseButton`）+ **可选** `-side-actions`（`:850`，仅 `props.actions` 存在时渲染）+ `-side-body`（`:847`，可滚动）。遮罩点击命中自身时关闭 |
-| `ConfirmDialog` | `client.js:3161-3172` | `role="alertdialog"` + `aria-modal="true"`（**不带 `-dialog-wide`**） | JSDoc `:3157-3160` 说明为什么单独做一个：压缩上下文不可撤销、重新连接会打断当前轮，两者都需要二次确认。结构 = `-dialog-head`（h3 + `CloseButton`，`onClick` 直接 `onCancel`）+ `p.dsh-pi-dialog-msg`（`:808`）+ `-dialog-actions`（`:810`，`.dsh-pi-btn` 取消 + `.dsh-pi-btn .dsh-pi-btn-primary` 的 `t('extYes')`）。默认焦点落在取消侧，破坏性动作需要一次显式点击 |
-| `MoreMenu` | `client.js:3175-3195` | `div.dsh-pi-menu dsh-pi-more-menu` + `role="menu"`，Escape → `onClose` | 每项 `button.dsh-pi-more-item` + `role="menuitem"` + `title`；图标 `span.dsh-pi-more-icon`（`h(item.icon,{size:16})`）+ 文本 `span.dsh-pi-more-label`。定位 `-more-menu`（`:836`）`left:auto;right:0;top:calc(100% + 6px);bottom:auto`，从顶栏锚点**向右下**展开，`min-width:184px` |
-| `ModelPicker` | `client.js:3204-3254` | `div.dsh-pi-menu dsh-pi-picker-menu` + `role="menu"`，Escape → `onClose` | 一个弹层两段：先 `-picker-sec`（`t('pickModel')`）+ 模型行，再 `-picker-sec`（`t('pickThinking')`）+ 档位行。每行 `button.dsh-pi-picker-row` + `role="menuitemradio"` + `aria-checked` + `data-current`；模型行 = `-picker-row-name` + `-picker-row-sub`（provider），档位行 = `-picker-row-name`（档位名）。加载中/空列表都渲染 `-picker-empty`（`t('modelsLoading')` / `t('modelsEmpty')`）。`current` 判定：模型走 provider + id 双等，思考档位走 `props.thinking === level`。定位 `-picker-menu`（`:825`）`bottom:calc(100% + 6px)`，**向上弹** |
+| `Dialog` | `client.js:3148-3156` | `div.dsh-pi-dialog-wrap` → `div.dsh-pi-dialog` + `role="dialog"` + `aria-modal="true"` + `aria-label=<title>` | 根走 `.dsh-pi-dialog-wrap`（`:800`，`bg-mask-1` + `z-index:40` + `padding:20px`）；`.dsh-pi-dialog`（`:801`，`width:min(440px,100%)` + `radius-panel` + `bg-layer-2` + `elevation-prominent` + `dsh-pi-modal-in .16s`）；`props.wide === true` 时类名追加 `dsh-pi-dialog-wide`（`:869`，`min(560px,100%)`）；内部 = `-dialog-head`（`:803`）+ 正文容器 **`-dialog-content`**（`:873`，`padding:14px 24px 22px`，注释 `:872` 说明底部多留 22px 防贴边，依据实拍 p071-04）。**注意是 `-dialog-content` 不是 `-dialog-body`**，两者并存但不是同一条规则 |
+| `SidePanel` | `client.js:3164-3184` | `div.dsh-pi-side-wrap` → `div.dsh-pi-side` + `role="dialog"` + `aria-modal="true"` + `aria-label` | JSDoc `:3158-3163` 记录需求（用户 30427：「从页面左侧向右侧弹出侧边栏」）。`.dsh-pi-side-wrap`（`:842`，`position:absolute;inset:0;z-index:30` + `bg-mask-1`）→ `.dsh-pi-side`（`:843`，`width:min(360px,86%)` + `height:100%` + `bg-base` + `elevation-panel` + `animation:dsh-pi-side-in .18s ease-out`）；`@keyframes dsh-pi-side-in`（`:844`）`translateX(-100%)` → `translateX(0)`，即左滑入场；结构 = `-side-head`（`:845`，含 `-side-title` `:846` 与 `CloseButton`）+ **可选** `-side-actions`（`:850`，仅 `props.actions` 存在时渲染）+ `-side-body`（`:847`，可滚动）。遮罩点击命中自身时关闭 |
+| `ConfirmDialog` | `client.js:3190-3202` | `role="alertdialog"` + `aria-modal="true"`（**不带 `-dialog-wide`**） | JSDoc `:3186-3189` 说明为什么单独做一个：压缩上下文不可撤销、重新连接会打断当前轮，两者都需要二次确认。结构 = `-dialog-head`（h3 + `CloseButton`，`onClick` 直接 `onCancel`）+ `p.dsh-pi-dialog-msg`（`:808`）+ `-dialog-actions`（`:810`，`.dsh-pi-btn` 取消 + `.dsh-pi-btn .dsh-pi-btn-primary` 的 `t('extYes')`）。默认焦点落在取消侧，破坏性动作需要一次显式点击 |
+| `MoreMenu` | `client.js:3205-3249` | `div.dsh-pi-menu dsh-pi-more-menu` + `role="menu"`，Escape → `onClose` | 每项 `button.dsh-pi-more-item` + `role="menuitem"` + `title`；图标 `span.dsh-pi-more-icon`（`h(item.icon,{size:16})`）+ 文本 `span.dsh-pi-more-label`。定位 `-more-menu`（`:836`）`left:auto;right:0;top:calc(100% + 6px);bottom:auto`，从顶栏锚点**向右下**展开，`min-width:184px` |
+| `ModelPicker` | `client.js:3258-3308` | `div.dsh-pi-menu dsh-pi-picker-menu` + `role="menu"`，Escape → `onClose` | 一个弹层两段：先 `-picker-sec`（`t('pickModel')`）+ 模型行，再 `-picker-sec`（`t('pickThinking')`）+ 档位行。每行 `button.dsh-pi-picker-row` + `role="menuitemradio"` + `aria-checked` + `data-current`；模型行 = `-picker-row-name` + `-picker-row-sub`（provider），档位行 = `-picker-row-name`（档位名）。加载中/空列表都渲染 `-picker-empty`（`t('modelsLoading')` / `t('modelsEmpty')`）。`current` 判定：模型走 provider + id 双等，思考档位走 `props.thinking === level`。定位 `-picker-menu`（`:825`）`bottom:calc(100% + 6px)`，**向上弹** |
 
 **差异**：
 
@@ -711,30 +712,30 @@ composer 自 0.6.2 起整体换成宿主主对话区的语言：卡面、圆形 
 
 ### 4.15 历史会话两级列表（0.8.0）
 
-`SessionsSheet`（容器，`client.js:3574-3696`）+ `SessionsList`（渲染，`client.js:3355-3533`）+ `RenameDialog`（`client.js:3540-3563`）三者合成面板的历史会话入口，替换 pi TUI 的「项目/会话」单层选择器。
+`SessionsSheet`（容器，`client.js:3659-3761`）+ `SessionsList`（渲染，`client.js:3432-3614`）+ `RenameDialog`（`client.js:3621-3644`）三者合成面板的历史会话入口，替换 pi TUI 的「项目/会话」单层选择器。
 
-**为什么必须是两级**：pi 的 scope 开关进项目后就失效（`session-selector.ts:1663` `if (this.projectPath) return`），且 pi 的 RPC 面根本没有「列会话」命令（`rpc-mode.ts` 的 33 条里没有），列表由 host 扫 `~/.pi/agent/sessions/<slug>/*.jsonl` 得到（`GET /sessions/history?scope=all|project`，`index.js:839-845`），选中后用 `switch_session {sessionPath}` 切过去。面板因此把「切 cwd」与「切会话」拆成两层：第一层项目（当前项目置顶 → 非临时 → 最近活动降序），第二层只列该 cwd 的会话。依据写在 `client.js:3337-3354` 的头注释里。
+**为什么必须是两级**：pi 的 scope 开关进项目后就失效（`session-selector.ts:1663` `if (this.projectPath) return`），且 pi 的 RPC 面根本没有「列会话」命令（`rpc-mode.ts` 的 33 条里没有），列表由 host 扫 `~/.pi/agent/sessions/<slug>/*.jsonl` 得到（`GET /sessions/history?scope=all|project`，`index.js:870-877`），选中后用 `switch_session {sessionPath}` 切过去。面板因此把「切 cwd」与「切会话」拆成两层：第一层项目（当前项目置顶 → 非临时 → 最近活动降序），第二层只列该 cwd 的会话。依据写在 `client.js:3414-3431` 的头注释里。
 
 | 项 | 值 | 出处 |
 | --- | --- | --- |
-| 容器 | `SessionsSheet`：持有 `level`(`projects`/`sessions`)、`project`、`info`、`query`、`prefs`、`menuKey`、`rename` 七个状态 | `client.js:3574-3696` |
-| 渲染 | `SessionsList`：纯渲染，props 全由容器给（`t`/`level`/`project`/`info`/`query`/`prefs`/`menuKey`/`onRowMenu`） | `client.js:3355-3533` |
-| 取数 | 项目层 `api.history({scope:'all',limit:200})`；会话层 `api.history({scope:'project',cwd:openCwd,limit:200})` | `client.js:3627-3647` |
-| 偏好 | `api.uiPrefs()` 读、`api.setProjectPref` / `api.setSessionPref` 写，成功后**吃 host 回的全量结构** | `client.js:3649-3652`，见 §4.16 |
-| 侧栏 | `SidePanel`，项目层标题取 `t('projectList')`、有 `side-new` 新建按钮；会话层标题取项目别名或 `displayPath`、有 `side-back` 返回键 | `client.js:3520-3527` |
-| 项目行 | `title = renamed === '' ? (displayPath === '' ? cwd : displayPath) : renamed`，带 `data-current` / `data-temporary` / `data-renamed` | `client.js:3407-3430` |
-| 会话行 | 标题优先级 `renamed` → pi 的 `name` → `headline`（`firstMessage` 首行，60 字符截断）→ `lastMessage` → `t('sessionFallbackTitle')` | `client.js:3456-3460` |
-| 置顶 | `prefPinned(prefs.sessions, path) === true` 时排前，渲染 `span.dsh-pi-pin` + `PinIcon` 12 | `client.js:3445-3453`、`:3477` |
-| 空/错/载 | 加载 → `empty-row` 文案 `projectsLoading`/`sessionsLoading`；错误 → `alert`；空 → `empty-row` 文案 `projectsEmpty`/`sessionsEmpty`；恒在提示行 `projectsHint`/`sessionsHint` | `client.js:3528-3531` |
-| 行内菜单 | `row-more` 22×22 按钮 + `EllipsisIcon` 14，`aria-haspopup="menu"`、`aria-expanded` | `client.js:3374-3397`，CSS `:860-863` |
+| 容器 | `SessionsSheet`：持有 `level`(`projects`/`sessions`)、`project`、`info`、`query`、`prefs`、`menuKey`、`rename` 七个状态 | `client.js:3659-3761` |
+| 渲染 | `SessionsList`：纯渲染，props 全由容器给（`t`/`level`/`project`/`info`/`query`/`prefs`/`menuKey`/`onRowMenu`） | `client.js:3432-3614` |
+| 取数 | 项目层 `api.history({scope:'all',limit:200})`；会话层 `api.history({scope:'project',cwd:openCwd,limit:200})` | `client.js:3689-3709` |
+| 偏好 | `api.uiPrefs()` 读、`api.setProjectPref` / `api.setSessionPref` 写，成功后**吃 host 回的全量结构** | `client.js:3711-3717`，见 §4.16 |
+| 侧栏 | `SidePanel`，项目层标题取 `t('projectList')`、有 `side-new` 新建按钮；会话层标题取项目别名或 `displayPath`、有 `side-back` 返回键 | `client.js:3572-3595` |
+| 项目行 | `title = renamed === '' ? (displayPath === '' ? cwd : displayPath) : renamed`，带 `data-current` / `data-temporary` / `data-renamed` | `client.js:3488-3511` |
+| 会话行 | 标题优先级 `renamed` → pi 的 `name` → `headline`（`firstMessage` 首行，60 字符截断）→ `lastMessage` → `t('sessionFallbackTitle')` | `client.js:3540-3541`（`sessionHeadline` 见 `:3408-3413`） |
+| 置顶 | `prefPinned(prefs.sessions, path) === true` 时排前，渲染 `span.dsh-pi-pin` + `PinIcon` 12 | `client.js:3526-3534`、`:3558` |
+| 空/错/载 | 加载 → `empty-row` 文案 `projectsLoading`/`sessionsLoading`；错误 → `alert`；空 → `empty-row` 文案 `projectsEmpty`/`sessionsEmpty`；恒在提示行 `projectsHint`/`sessionsHint` | `client.js:3597-3612` |
+| 行内菜单 | `row-more` 22×22 按钮 + `EllipsisIcon` 14，`aria-haspopup="menu"`、`aria-expanded` | `client.js:3453-3478`，CSS `:860-863` |
 
-**0.8.0 的行为改动（会话标题胶囊的显示条件）**：旧式 `var capsule = renamed === '' && headline !== '' && piName !== '' ? headline : null` 要求「既有偏好名、又有 pi 会话名」才显示胶囊，导致只有 `firstMessage` 的会话永远看不到摘要；新式 `var capsule = headline !== '' && title !== headline ? headline : null` 的语义是「只在标题位置已经被名字占据（改过的名或 pi 的 `name`）时，才把原始摘要作为胶囊放到消息数左侧」。胶囊渲染在 `.dsh-pi-sess-top` 内、消息数 `span` 之前（`client.js:3461-3463` 判定、`:3478-3479` 渲染）。
+**0.8.0 的行为改动（会话标题胶囊的显示条件）**：旧式 `var capsule = renamed === '' && headline !== '' && piName !== '' ? headline : null` 要求「既有偏好名、又有 pi 会话名」才显示胶囊，导致只有 `firstMessage` 的会话永远看不到摘要；新式 `var capsule = headline !== '' && title !== headline ? headline : null` 的语义是「只在标题位置已经被名字占据（改过的名或 pi 的 `name`）时，才把原始摘要作为胶囊放到消息数左侧」。胶囊渲染在 `.dsh-pi-sess-top` 内、消息数 `span` 之前（`client.js:3544` 判定、`:3559` 渲染）。
 
-**置顶排序不用 `sort`**：`client.js:3445-3453` 是两遍 partition（`pinnedFirst` / `rest`）再 `concat`。原因写在 `:3445-3446` 的注释里 —— host 给的最近活动降序本身有意义，旧引擎的 `sort` 稳定性没有保证，用 `sort` 等于把「置顶」和「乱序」绑在一起。
+**置顶排序不用 `sort`**：`client.js:3526-3534` 是两遍 partition（`pinnedFirst` / `rest`）再 `concat`。原因写在 `:3526-3527` 的注释里 —— host 给的最近活动降序本身有意义，旧引擎的 `sort` 稳定性没有保证，用 `sort` 等于把「置顶」和「乱序」绑在一起。
 
-**行内菜单必须整容器吞冒泡**：`row-more` 的 `div` 上挂了 `onClick: stopPropagation`（`client.js:3374-3397`）。不吞的话点菜单项等于点整行，重命名弹窗刚打开就被 `onPick` 关掉侧栏 —— 这是实拍抓到过的真缺陷，注释留在 `:3369-3373`。
+**行内菜单必须整容器吞冒泡**：`row-more` 的 `div` 上挂了 `onClick: stopPropagation`（`client.js:3453-3478`）。不吞的话点菜单项等于点整行，重命名弹窗刚打开就被 `onPick` 关掉侧栏 —— 这是实拍抓到过的真缺陷，注释留在 `:3448-3452`。
 
-**`RenameDialog` 不复用 `NameSheet`**：`NameSheet` 挂在 `PiPanel` 的 `drawer` 状态上，而 `drawer` 是单值，改名会把左侧栏自己顶掉；`RenameDialog` 归 `SessionsSheet` 所属，侧栏与弹窗可并存。理由写在 `client.js:3535-3539`。弹窗本体 = `Dialog`（居中、**不带** `dialog-wide`）+ 一个 `dsh-pi-search` 输入框（`autoFocus`、Enter 提交、Escape 关闭）+ 取消 / 提交两键（`client.js:3546-3562`）。
+**`RenameDialog` 不复用 `NameSheet`**：`NameSheet` 挂在 `PiPanel` 的 `drawer` 状态上，而 `drawer` 是单值，改名会把左侧栏自己顶掉；`RenameDialog` 归 `SessionsSheet` 所属，侧栏与弹窗可并存。理由写在 `client.js:3616-3620`。弹窗本体 = `Dialog`（居中、**不带** `dialog-wide`）+ 一个 `dsh-pi-search` 输入框（`autoFocus`、Enter 提交、Escape 关闭）+ 取消 / 提交两键（`client.js:3627-3643`）。
 
 **差异**：
 
@@ -746,9 +747,9 @@ composer 自 0.6.2 起整体换成宿主主对话区的语言：卡面、圆形 
 
 ### 4.16 ui-prefs 三条路由与合并语义（0.8.0）
 
-`src/ui-prefs.mjs`（404 行 / 20748 B，0.8.0 新增）+ `index.js:960-976` 三条路由。这一节不属于 CSS 规格，但它是 0.8.0 唯一新增的宿主契约面，且客户端的三处 UI（项目别名 / 会话名 / 置顶）全靠它，所以紧接 §4.15 收口。
+`src/ui-prefs.mjs`（404 行 / 20748 B，0.8.0 新增）+ `index.js:991-1007` 三条路由。这一节不属于 CSS 规格，但它是 0.8.0 唯一新增的宿主契约面，且客户端的三处 UI（项目别名 / 会话名 / 置顶）全靠它，所以紧接 §4.15 收口。
 
-**为什么只能由 host 存**：这三件事在 pi 的 RPC 面上都没有通道 —— `set_session_name` 改的是单个会话的 `session_info`（JSONL header），改不了项目层；置顶纯属面板概念；浏览器半区没有 `fs`。所以只能落在本机用户主目录下（`index.js:947-959` 的段注释）。
+**为什么只能由 host 存**：这三件事在 pi 的 RPC 面上都没有通道 —— `set_session_name` 改的是单个会话的 `session_info`（JSONL header），改不了项目层；置顶纯属面板概念；浏览器半区没有 `fs`。所以只能落在本机用户主目录下（`index.js:978-990` 的段注释）。
 
 **落盘**：路径由 `resolveUiPrefsPath()`（`src/ui-prefs.mjs:157`）解析 —— 环境变量 `DSH_PI_UI_PREFS`（`:158-159`）优先，否则 `path.join(homedir(), '.dsh-pi', 'ui-prefs.json')`（`:161`）。文件是单个 JSON，结构 `{ version, updatedAt, projects: {}, sessions: {} }`（`emptyUiPrefs()` `:94-96`，`version = UI_PREFS_VERSION = 1` `:32`）。
 
@@ -770,11 +771,11 @@ composer 自 0.6.2 起整体换成宿主主对话区的语言：卡面、圆形 
 
 | 方法 | 路径 | 行号 | 行为 |
 | --- | --- | --- | --- |
-| `GET` | `/ui-prefs` | `index.js:960-963` | `send(200, await deps.uiPrefs.read())`；`deps.uiPrefs` 缺失回 501 `{ error: 'ui prefs unavailable' }`（`:961`） |
-| `POST` | `/ui-prefs/project` | `index.js:964-968` | `deps.uiPrefs.setProject(body.key, body.name)`（`:967`）；`name === ''` 表示删除覆盖、回落到目录名 |
-| `POST` | `/ui-prefs/session` | `index.js:969-976` | `deps.uiPrefs.setSession(body.path, { pinned: body.pinned, name: body.name })`（`:975`） |
+| `GET` | `/ui-prefs` | `index.js:991-994` | `send(200, await deps.uiPrefs.read())`；`deps.uiPrefs` 缺失回 501 `{ error: 'ui prefs unavailable' }`（`:992`） |
+| `POST` | `/ui-prefs/project` | `index.js:995-999` | `deps.uiPrefs.setProject(body.key, body.name)`（`:998`）；`name === ''` 表示删除覆盖、回落到目录名 |
+| `POST` | `/ui-prefs/session` | `index.js:1000-1007` | `deps.uiPrefs.setSession(body.path, { pinned: body.pinned, name: body.name })`（`:1006`） |
 
-全量返回的理由写在 `index.js:954-955`：偏好是一份小字典，客户端每次拿全量就不必维护两端合并逻辑。校验（类型与长度）全部在 `src/ui-prefs.mjs` 内完成，抛 `badRequest()`（`:84-88`，`error.statusCode = 400`），由路由层的 `catch` 原样回给客户端 —— 路由层不再重复一遍规则（`index.js:957-958`）。
+全量返回的理由写在 `index.js:985-986`：偏好是一份小字典，客户端每次拿全量就不必维护两端合并逻辑。校验（类型与长度）全部在 `src/ui-prefs.mjs` 内完成，抛 `badRequest()`（`:84-88`，`error.statusCode = 400`），由路由层的 `catch` 原样回给客户端 —— 路由层不再重复一遍规则（`index.js:988-989`）。
 
 **合并语义（最容易写错的一处）**：会话条目走「补丁合并」，`undefined` 是「别动它」的哨兵，而 `false` / `''` 是「改成 false / 清除」，两者语义相反，绝不能混用同一个哨兵值（`src/ui-prefs.mjs:207-208` 的注释就是为这件事写的）。实现（`:321-350`）：
 
@@ -786,13 +787,13 @@ composer 自 0.6.2 起整体换成宿主主对话区的语言：卡面、圆形 
 
 `setSessionPinned(sessionPath, pinned)`（`:394`）现在是 `setSession` 的薄包装 —— 合并规则只能有一份实现，否则「只改 pinned 时会不会顺手清掉 name」这类问题会在两处各答一次（`:387-393`）。它的错误文案与 0.7.0 完全一致，校验也包在 promise 里：本方法对外契约是「永远返回 Promise」，同步 throw 会让只写了 `.catch()` 的调用方接不住（`:395-399`）。
 
-**客户端侧**：`api.uiPrefs()` / `api.setProjectPref(key, name)` / `api.setSessionPref(sessionPath, patch)` 三个薄包装在 `client.js:1000-1006`，`patch` 只带出现过的字段。`SessionsSheet` 的 `applyPrefs`（`:3604-3613`）只保留 store 真给出的两棵表、缺字段一律当空表；`loadPrefs`（`:3614-3617`）读不到偏好时静默降级，因为重命名与置顶是增强项，缺了只是回到默认排序。
+**客户端侧**：`api.uiPrefs()` / `api.setProjectPref(key, name)` / `api.setSessionPref(sessionPath, patch)` 三个薄包装在 `client.js:1000-1007`（`:1000` / `:1001-1003` / `:1005-1007`），`patch` 只带出现过的字段。0.8.1 起偏好状态提到 `PiPanel`（`var prefsState` `client.js:4676`、`var applyPrefs` `:4680-4687` 只保留 store 真给出的两棵表、缺字段一律当空表），`SessionsSheet` 改成从 `props.prefs` 读（`client.js:3673-3674`）、写成功后经 `props.onPrefs` 回流（`pushPref` `:3715-3717`）—— 重命名项目 `:3724`、重命名会话 `:3727`、切换置顶 `:3754` 三处都走同一条 `pushPref`。首次拉取在 `PiPanel` 的 `useEffect`（`client.js:5044-5048`，`api.uiPrefs().then(applyPrefs).catch(…)`），读不到偏好时静默降级，因为重命名与置顶是增强项，缺了只是回到默认排序。
 
 **差异**：
 
 1. **单 JSON 而不是 sqlite**：数据量是个位数到几百条的小字典、写频率是用户手点级别；原子写 + 全量替换已足够，引入数据库只会多一个依赖与一份需要迁移的 schema（`src/ui-prefs.mjs` 头注释）。
 2. **没有文件锁，只靠 `rename` 的原子性**：并发写各写自己的 `tmp`，`rename` 原子定胜负；一致性由「每次操作都重新读盘」保证。
-3. **这条路由面不在 pi 的 RPC 契约里**，由 `index.js` 自己实现；`CONTRACT_VERSION` 因此升到 `'0.8.0'`（`index.js:66`），`:823` 原样回给客户端。
+3. **这条路由面不在 pi 的 RPC 契约里**，由 `index.js` 自己实现；`CONTRACT_VERSION` 因此升到 `'0.8.0'`、0.8.1 随三项改造再升到 `'0.8.1'`（`index.js:68`），`:854` 原样回给客户端。
 
 ---
 
@@ -1068,7 +1069,7 @@ DSH 自带 `@deepseek-ai/dsh-client-ui-directory-picker-browse`，源码在探�
 
 ### 6.3 dsh-pi 的 DirSheet 交互规格
 
-`DirSheet`（`client.js:3745-4043`）与纯函数 `dirPickModel`（`client.js:3714-3743`）。把数据模型单独抽成纯函数是为了让门禁能直接断言（`test/client-render.mjs` 的 9.13 / 9.14 / 9.15 三节共 40 条：SSR 首帧 15 条、Miller 分栏与采纳目标 14 条、「此电脑」层 11 条）。
+`DirSheet`（`client.js:3810-4108`）与纯函数 `dirPickModel`（`client.js:3779-3808`）。把数据模型单独抽成纯函数是为了让门禁能直接断言（`test/client-render.mjs` 的 9.13 / 9.14 / 9.15 三节共 40 条：SSR 首帧 15 条、Miller 分栏与采纳目标 14 条、「此电脑」层 11 条）。
 
 #### 6.3.1 三个入口
 
@@ -1076,20 +1077,20 @@ DSH 自带 `@deepseek-ai/dsh-client-ui-directory-picker-browse`，源码在探�
 | --- | --- | --- | --- |
 | 空态按钮 | `EmptyState` `client.js:2585-2596`（判据 `typeof props.onPickDir === 'function'` 在 `:2586`） | 有 `onPickDir` 才渲染 | `.dsh-pi-empty-actions` > `.dsh-pi-btn`：`DirIcon(14)` + 文案 `pickDir` |
 | `+` 菜单项 | `Composer` 的 `addItems`（数组起点 `var addItems = [` 在 `client.js:2960`，条目 `:2961-2970`，数组结束 `:2971`），**目录项 = 第 2 项**，在 `:2962` | 恒定 | `{ key: 'dir', group: 'add', groupLabel: t('addGroupAdd'), label: t('pickDir'), keyName: 'workspace', desc: t('addDirDesc'), icon: DirIcon, run: props.onPickDir }`。**0.7.0 起目录选择器的主入口就是这里（`+` 菜单第 2 项）**：`.dsh-pi-bar` 里只有「圆形 `+` + 模型名/思考档位合一锚点」，没有独立目录按钮。`.dsh-pi-bar` 在 `:658`，`-bar-actions` `:659`，`-add-wrap` `:663`，`.dsh-pi-add` `:664-667`，`AddMenu` `:2635-2671`；注释 `:3027-3028` 写明「附件与目录都收进 `+` 菜单」，`:3052-3054` 写明模型名与思考档位合成一个 `.dsh-pi-picker-box` 锚点。`addItems` 其余 9 项：file `:2961`、sessions `:2963`、compact `:2964`、model `:2965`、thinking `:2966`、stats `:2967`、settings `:2968`、hotkeys `:2969`、new `:2970` |
-| 弹窗挂载 | `client.js:5902`（`} else if (drawer === 'dir') {` 分支；`var drawerNode = null` 在 `:5860`） | `drawer === 'dir'` | `DirSheet`，`startDir = activeCwd === '' ? runtime.workspace : activeCwd`，`onPick = switchDir` |
+| 弹窗挂载 | `client.js:5996`（`} else if (drawer === 'dir') {` 分支；`var drawerNode = null` 在 `:5952`） | `drawer === 'dir'` | `DirSheet`，`startDir = activeCwd === '' ? runtime.workspace : activeCwd`，`onPick = switchDir` |
 
-挂载点在 `client.js:5923`（EmptyState）与 `client.js:5939`（Composer），都是 `onPickDir: function () { setDrawer('dir') }`。
+挂载点在 `client.js:6017`（EmptyState）与 `client.js:6033`（Composer），都是 `onPickDir: function () { setDrawer('dir') }`。
 
 #### 6.3.2 初始状态
 
-`listingState` 的初值（`client.js:3747-3749`）：
+`listingState` 的初值（`client.js:3812`）：
 
 ```js
 { loading: true, error: null, dir: props.startDir, parent: null,
   writable: true, entries: [], truncated: false, home: '', roots: [] }
 ```
 
-挂载后立刻 `useEffect(function () { go(props.startDir === undefined ? '' : String(props.startDir)) }, [])`（`client.js:3801`）。`go` 的四步（`client.js:3776-3799`）：
+挂载后立刻 `useEffect(function () { go(props.startDir === undefined ? '' : String(props.startDir)) }, [])`（`client.js:3866`）。`go` 的四步（`client.js:3841-3864`）：
 
 1. `setSelected(null)` + `setRootsView(false)`（回到普通层）；
 2. 把 `loading` 置真、保留其余字段（不闪白）；
@@ -1128,9 +1129,9 @@ div.dsh-pi-dialog-wrap
 | **S5 此电脑层** | 点「此电脑」入口 | 面包屑只剩一段「此电脑」；`col0` 列盘符（`data-drive=1`）+ 一条「上一级」 | **禁用**（`rootsView` 且无选中时 `target` 为 `null`） |
 | **S6 失败** | `api.directories` 抛错 | `col0`（或 `col1`）内 `.dsh-pi-alert` 显示 message；旧内容不消失 | 沿用 prev 的 `target` |
 
-S5 是 0.4.x 新增的、DSH picker 没有的层。存在的理由写在两处注释（`client.js:3720-3721` 与 `:3770-3771`）：Windows 上从工作目录一路往上只能走到当前盘的根，**别的盘的工程永远进不去**。所以 `index.js` 的 `/directories` 多返回一个 `roots` 数组，面板在「上一级 / 主目录」之后插一个「此电脑」入口。
+S5 是 0.4.x 新增的、DSH picker 没有的层。存在的理由写在两处注释（`client.js:3785-3786` 与 `:3835-3836`）：Windows 上从工作目录一路往上只能走到当前盘的根，**别的盘的工程永远进不去**。所以 `index.js` 的 `/directories` 多返回一个 `roots` 数组，面板在「上一级 / 主目录」之后插一个「此电脑」入口。
 
-`dirPickModel` 里专门为 S5 写了一条约束（`client.js:3731-3733`，判定在 `:3733`）：**此电脑层什么都没选时 `target` 必须是 `null`，不能回落到 `current`**，否则「用这个工作区」会把上一浏览层级当成目标。
+`dirPickModel` 里专门为 S5 写了一条约束（`client.js:3796-3798`，判定在 `:3798`）：**此电脑层什么都没选时 `target` 必须是 `null`，不能回落到 `current`**，否则「用这个工作区」会把上一浏览层级当成目标。
 
 #### 6.3.4 鼠标动作
 
@@ -1145,7 +1146,7 @@ S5 是 0.4.x 新增的、DSH picker 没有的层。存在的理由写在两处�
 | 点「此电脑」 | 普通层入口 | `setDeep(null)` + `setSelected(null)` + `setRootsView(true)` | `:3966-3977`（`data-pc="1"` 在 `:3973`）；「此电脑」层内的返回行 `:3924-3934` |
 | 点面包屑某段 | 头部 | 该段 `path` 为空或等于当前 `dir` 时 **无操作**，否则 `enter(path)` | `pathCrumbs` 函数 `:2225-2243`，渲染 `:3852-3873`（`data-last` `:3862`，同路径 return `:3866`） |
 
-双击的第二下必须把 `query` 清掉——否则进入新层时旧过滤词还在，用户会看到空列表。`client.js:3914` 的 `setQuery('')`（onDoubleClick 内）就是为这个（`enter` 里另有一处，在 `:3804`）。
+双击的第二下必须把 `query` 清掉——否则进入新层时旧过滤词还在，用户会看到空列表。`client.js:3979` 的 `setQuery('')`（onDoubleClick 内）就是为这个（`enter` 里另有一处，在 `:3869`）。
 
 #### 6.3.5 键盘动作
 
@@ -1160,7 +1161,7 @@ S5 是 0.4.x 新增的、DSH picker 没有的层。存在的理由写在两处�
 
 #### 6.3.6 过滤语义
 
-`dirPickModel` 的匹配（`client.js:3726-3729`）：
+`dirPickModel` 的匹配（`client.js:3791-3794`）：
 
 ```js
 var match = function (entry) {
@@ -1183,11 +1184,11 @@ const narrowing = needle !== '' && entries.some(matches);
 | 输入 `workspace` | 命中 `my-workspace`、`workspace-old` | 只命中 `workspace-old` |
 | 输入 `zzz`（无命中） | **空栏** | **显示全量**（用户能立刻看出「这个过滤没用」而不是「这层没东西」） |
 
-过滤只作用于**最后一栏**（`client.js:3739-3740`）：`main` 在 `selected === null` 时才 `filter(match)`，一旦选中，第一栏就恢复全量，第二栏才是被过滤的那栏。这一点与 DSH 同构，是对的。
+过滤只作用于**最后一栏**（`client.js:3804-3805`）：`main` 在 `selected === null` 时才 `filter(match)`，一旦选中，第一栏就恢复全量，第二栏才是被过滤的那栏。这一点与 DSH 同构，是对的。
 
 #### 6.3.7 采纳优先级
 
-`target` 的三级回落（`client.js:3733`）：
+`target` 的三级回落（`client.js:3798`）：
 
 ```js
 var target = deep !== null ? deep
@@ -1195,13 +1196,13 @@ var target = deep !== null ? deep
            : (rootsView ? null : current));
 ```
 
-`accept()`（`client.js:3808-3816`）**不带参数**，自己算 `target`：`:3809` 若 `busy === true` 直接 return；`:3810` 重新调 `dirPickModel(...)` 算 target；`:3813` 若 `target === null || target === ''` 直接 return（这就是「选盘符不会把盘符当工作区」的实现）；否则 `setBusy(true)`（`:3814`）后调 `props.onPick(target)`（`:3815`）。
+`accept()`（`client.js:3873-3881`）**不带参数**，自己算 `target`：`:3874` 若 `busy === true` 直接 return；`:3875` 重新调 `dirPickModel(...)` 算 target；`:3878` 若 `target === null || target === ''` 直接 return（这就是「选盘符不会把盘符当工作区」的实现）；否则 `setBusy(true)`（`:3879`）后调 `props.onPick(target)`（`:3880`）。
 
-页脚的 `disabled` 条件（`client.js:4018`）是 `targetDir === '' || busy === true || listing.loading === true`（`canAccept`，用在 `:4025` 的按钮上）——注意它用的是**字符串是否为空**，不是 `target === null`，因为渲染时 `target` 已经被 `String(...)` 包过（`targetDir` 在 `:4017`）。
+页脚的 `disabled` 条件（`client.js:4083`）是 `targetDir === '' || busy === true || listing.loading === true`（`canAccept`，用在 `:4090` 的按钮上）——注意它用的是**字符串是否为空**，不是 `target === null`，因为渲染时 `target` 已经被 `String(...)` 包过（`targetDir` 在 `:4082`）。
 
 #### 6.3.8 采纳后的时序：`switchDir`
 
-`switchDir`（`client.js:5175-5196`）是「切换工作区」的全部逻辑。JSDoc（`client.js:5171-5174`）写明这是**面板里唯一会销毁并重建 pi 子进程的操作**：
+`switchDir`（`client.js:5264-5285`）是「切换工作区」的全部逻辑。JSDoc（`client.js:5260-5263`）写明这是**面板里唯一会销毁并重建 pi 子进程的操作**：
 
 ```text
 用户点「用这个工作区」
@@ -1217,13 +1218,13 @@ var target = deep !== null ? deep
       8. notice(dirSwitched + ' · ' + landed)
 ```
 
-第 7 步的 `startSession`（`client.js:4912-4943`）有一个关键分支：
+第 7 步的 `startSession`（`client.js:4995-5026`）有一个关键分支：
 
 ```js
 var existing = target !== null ? [] : state.sessions;
 ```
 
-**指定了 cwd 就强制新建，绝不复用已有会话**（`client.js:4923`）。原因很直接：已有会话跑在旧 cwd 的子进程里，复用它等于什么都没改。所以带 `cwd` 时 `existing` 恒为空数组，必走 `api.create({ cwd: target })`。
+**指定了 cwd 就强制新建，绝不复用已有会话**（`client.js:5006`）。原因很直接：已有会话跑在旧 cwd 的子进程里，复用它等于什么都没改。所以带 `cwd` 时 `existing` 恒为空数组，必走 `api.create({ cwd: target })`。
 
 `landed` 取 `metaRef.current.cwd`（子进程真实落地的目录），不是用户输入的字符串——因为宿主可能做路径规范化（`expandUserPath`）。通知里显示 `landed` 而不是 `target`，是为了让用户看到「实际进的是哪」。
 
@@ -1248,7 +1249,7 @@ var existing = target !== null ? [] : state.sessions;
 | 13 | 死键 | **已修复**：0.7.0 已把 `dirMissing` 从 `ZH` / `EN` 两张表里同时删除，`client.js` 全文 0 命中；键集 0.7.0 为 203 / 203、0.8.0 为 215 / 215，两边一致 | 无此问题 | 已修复 |
 | 14 | 分栏分隔 | 相邻兄弟选择器 `.dsh-pi-dir-col + .dsh-pi-dir-col{border-left:.5px}` | 独立 `_divider` span（`.5px` `border-l3`） | 低 |
 | 15 | 开关过渡 | `.dsh-pi-switch` 多一条 `transition:background-color .16s ease` | `._switch_1ik0f_5` 无过渡 | 极低 |
-| 16 | 设置项一致性 | 4 个设置项里只有 `autoCompaction` / `autoRetry` 是开关，另两个仍是文字按钮；注释 `client.js:4151` 的措辞会让人以为全改了 | 无对应 | 中 |
+| 16 | 设置项一致性 | 4 个设置项里只有 `autoCompaction` / `autoRetry` 是开关，另两个仍是文字按钮；注释 `client.js:4216` 的措辞会让人以为全改了 | 无对应 | 中 |
 | 17 | home 来源 | `os.homedir()`，由宿主在 `/directories` 响应里给 | `listing` 字段的一部分 | 低 |
 
 补充三条**注释与实现不一致**（不是 dsh-pi 与 DSH 的差异，是 dsh-pi 内部的文档债）：
@@ -1257,13 +1258,13 @@ var existing = target !== null ? [] : state.sessions;
 | --- | --- | --- |
 | `client.js:723` | 「DSH `._float` 的配方：`bg-layer-2` + `radius-panel` + `elevation-prominent` + 局部描边色」 | `:724` 的 `.dsh-pi-sheet` 是 `bg-base` 铺满，没有 `radius`、没有阴影 |
 | `client.js:798-799` | 「header（padding `22px 14px 12px 24px`）」 | `:803` 的 `.dsh-pi-dialog-head` 是 `padding:22px 18px 0 24px`，`:804` 的 `.dsh-pi-dialog-head h3` 是 `padding:0` |
-| `client.js:4151` | 「开关对齐 DSH 的 `._switch_1ik0f_5`……不再是文字按钮」 | 只有两个是开关；`steeringMode` / `followUpMode`（`client.js:4168-4173`）仍是 `.dsh-pi-btn` 文字按钮 |
+| `client.js:4216` | 「开关对齐 DSH 的 `._switch_1ik0f_5`……不再是文字按钮」 | 只有两个是开关；`steeringMode` / `followUpMode`（`client.js:4233-4238`）仍是 `.dsh-pi-btn` 文字按钮 |
 
 三条都属「描述超前于实现」。第六条（筛选无命中出空栏 vs 显示全量）是 0.7.0 以来唯一被用户直接感知的语义差异。
 
 ### 6.5 宿主契约：`GET /directories`
 
-`index.js:919` 的路由（响应体在 `index.js:926` 的 `send(200, {` 起），响应：
+`index.js:950` 的路由（响应体在 `index.js:957` 的 `send(200, {` 起），响应：
 
 ```json
 { "ok": true,
@@ -1276,21 +1277,21 @@ var existing = target !== null ? [] : state.sessions;
   "roots": [{ "name": "C:", "path": "C:\\" }, { "name": "D:", "path": "D:\\" }] }
 ```
 
-字段来源逐条（`listDirectories` `index.js:1257-1293`）：
+字段来源逐条（`listDirectories` `index.js:1288-1324`）：
 
 | 字段 | 实现 | 备注 |
 | --- | --- | --- |
 | `dir` | `path.resolve()` 后的绝对路径 | — |
 | `parent` | `dirname(dir) === dir ? null : dirname(dir)` | 盘根给 `null` |
-| `writable` | `fs.promises.access(dir, W_OK)` | 整段 `try/catch`；不可写也照常返回（`index.js:1291` 注释：「只读目录 / 权限不足：照样能把目录列出来，只是不能在这里开会话」） |
+| `writable` | `fs.promises.access(dir, W_OK)` | 整段 `try/catch`；不可写也照常返回（`index.js:1322` 注释：「只读目录 / 权限不足：照样能把目录列出来，只是不能在这里开会话」） |
 | `entries` | `opendir` + `dirent.isDirectory()` 过滤 | **符号链接天然跳过**（`dirent` 来自 `lstat` 语义）；**无 hidden 过滤**，`.git` 照常列出 |
 | `truncated` | 超过 `limit`（默认 50，上限 200） | — |
 | `home` | `os.homedir()` | **不是 `listing` 字段**，是路由层另加的 |
 | `roots` | `await listRoots()` | 0.4.1 新增 |
 
-错误码：`opendir` 失败时 `ENOENT` / `ENOTDIR` → **404** `no such directory`，其余 → **500**（归一在 `index.js:1259-1266`，`dirent.isDirectory()` 过滤在 `:1273`、注释 `:1272`）。排序用 `localeCompare(a.name, b.name, { numeric: true, sensitivity: 'base' })`（`index.js:1279`），所以 `a2` 排在 `a10` 前面。
+错误码：`opendir` 失败时 `ENOENT` / `ENOTDIR` → **404** `no such directory`，其余 → **500**（归一在 `index.js:1290-1297`，`dirent.isDirectory()` 过滤在 `:1304`、注释 `:1303`）。排序用 `localeCompare(a.name, b.name, { numeric: true, sensitivity: 'base' })`（`index.js:1310`），所以 `a2` 排在 `a10` 前面。
 
-`listRoots()`（`index.js:1478-1499`）只对 Windows 有意义：
+`listRoots()`（`index.js:1509-1530`）只对 Windows 有意义：
 
 ```js
 // win32：探 A 到 Z，fs.promises.stat(letter + path.sep)，isDirectory 才保留
@@ -1298,23 +1299,23 @@ var existing = target !== null ? [] : state.sessions;
 // 非 win32：返回 [{ name: '/', path: '/' }]
 ```
 
-带 10 秒缓存（`ROOTS_TTL_MS = 10000`，`index.js:1464`；`rootsCache` `:1465`）。注释 `:1467-1477` 说实测四个盘全扫约 3ms（`:1472`），「一个不可读的盘符不该毁掉整个目录浏览」（`:1474`）。
+带 10 秒缓存（`ROOTS_TTL_MS = 10000`，`index.js:1495`；`rootsCache` `:1496`）。注释 `:1498-1508` 说实测四个盘全扫约 3ms（`:1503`），「一个不可读的盘符不该毁掉整个目录浏览」（`:1505`）。
 
-**0.8.0 新增的三条偏好路由**（`index.js:960-976`，`GET /ui-prefs` 在 `:960-963`、`POST /ui-prefs/project` 在 `:964-968`、`POST /ui-prefs/session` 在 `:969-976`）：
+**0.8.0 新增的三条偏好路由**（`index.js:991-1007`，`GET /ui-prefs` 在 `:991-994`、`POST /ui-prefs/project` 在 `:995-999`、`POST /ui-prefs/session` 在 `:1000-1007`）：
 
 | 路由 | 请求体 | 返回 | 出处 |
 | --- | --- | --- | --- |
-| `GET /ui-prefs` | — | `{ version, updatedAt, projects, sessions }` 全量结构 | `index.js:962` |
-| `POST /ui-prefs/project` | `{ key, name }` | 同上的全量结构 | `index.js:967` |
-| `POST /ui-prefs/session` | `{ path, pinned?, name? }` | 同上的全量结构 | `index.js:975` |
+| `GET /ui-prefs` | — | `{ version, updatedAt, projects, sessions }` 全量结构 | `index.js:993` |
+| `POST /ui-prefs/project` | `{ key, name }` | 同上的全量结构 | `index.js:998` |
+| `POST /ui-prefs/session` | `{ path, pinned?, name? }` | 同上的全量结构 | `index.js:1006` |
 
 三条语义约束（实现与校验都在 `src/ui-prefs.mjs`，路由层只转发）：
 
-1. **返回全量、不是增量**。偏好是一份小字典，客户端每次拿全量就不必维护两端合并逻辑（`index.js:954-955` 注释）。
-2. **`POST /ui-prefs/session` 是合并式补丁**：只有请求里出现过的字段才交给 store，`undefined` 表示「别动它」。行内 `⋯` 的「重命名」与「置顶」各自只提交自己那一个字段，读-改-写留在 store 里做（`index.js:972-974`）。
-3. **校验失败由 store 抛 `statusCode:400`**，被同一个 `catch` 原样回给客户端；`deps.uiPrefs` 缺失时三条都回 `501 { error: 'ui prefs unavailable' }`（`index.js:961` / `:965` / `:970`）。
+1. **返回全量、不是增量**。偏好是一份小字典，客户端每次拿全量就不必维护两端合并逻辑（`index.js:985-986` 注释）。
+2. **`POST /ui-prefs/session` 是合并式补丁**：只有请求里出现过的字段才交给 store，`undefined` 表示「别动它」。行内 `⋯` 的「重命名」与「置顶」各自只提交自己那一个字段，读-改-写留在 store 里做（`index.js:1003-1005`）。
+3. **校验失败由 store 抛 `statusCode:400`**，被同一个 `catch` 原样回给客户端；`deps.uiPrefs` 缺失时三条都回 `501 { error: 'ui prefs unavailable' }`（`index.js:992` / `:996` / `:1001`）。
 
-store 在 `apply` 作用域里只建一次（`const uiPrefs = createUiPrefsStore()`，`index.js:740`，注释在 `:733-739` 说明为什么不能每请求新建）；`src/ui-prefs.mjs` 在插件清单里标了 `runtime: true`（`index.js:140-142`），因为它的判断逻辑参与这三条路由。
+store 在 `apply` 作用域里只建一次（`const uiPrefs = createUiPrefsStore()`，`index.js:771`，注释在 `:764-770` 说明为什么不能每请求新建）；`src/ui-prefs.mjs` 在插件清单里标了 `runtime: true`（`index.js:144`），因为它的判断逻辑参与这三条路由。
 
 **能力边界**：宿主只提供「列子目录」，没有 `fs.stat` 单点查询、没有 `mkdir`、没有 `rename`、没有 `delete`。所以 6.4 的第 8 / 9 条差异（隐藏项开关、新建文件夹）**不是面板偷懒，是宿主能力没给**。要补这两个能力，得先在 `index.js` 加 `POST /directories`（mkdir）与 `hidden` 参数。
 
@@ -1388,11 +1389,11 @@ store 在 `apply` 作用域里只建一次（`const uiPrefs = createUiPrefsStore
 | `NAMED_COLORS` | `:63-69` | 命名色黑名单（`white` / `black` / `red` …） |
 | `COLOR_PROPS` | `:71-77` | 需要查色的属性集（`color` / `background` / `border*-color` / `box-shadow` / `outline*` …） |
 
-实跑输出（0.8.0 实测，原样）：
+实跑输出（0.8.1 实测，原样）：
 
 ```text
 css-tokens: C:\Users\PC\Documents\pi-local\dsh-pi\client.js
-client.js 340965 字节 / mtime 2026-11-15T22:43:42.171Z
+client.js 347871 字节 / mtime 2026-11-16T04:58:24.100Z
 CSS 数组 277 段 / 39760 字符
 
 -- 0 门禁自检（合成样例，防止正则写错后静默放行） ----------------------------------
@@ -1415,11 +1416,11 @@ CSS 数组 277 段 / 39760 字符
 PASS (98 checks)
 ```
 
-七个分节标题之间没有违规行，所以下面没有任何一条 `client.js:行号  令牌  片段` 明细；`PASS (98 checks)` = 18 条自检 + 80 条断言。三个头部数字由门禁自己打印，本文件正文一律引用这三行（277 段 / 39760 字符 / 340965 字节），不另行折算。
+七个分节标题之间没有违规行，所以下面没有任何一条 `client.js:行号  令牌  片段` 明细；`PASS (98 checks)` = 18 条自检 + 80 条断言。三个头部数字由门禁自己打印，本文件正文一律引用这三行（277 段 / 39760 字符 / 347871 字节），不另行折算。
 
 「18 条自检」是这一整套门禁里最值得学的一处设计：**它先验证自己的正则**。用合成样例跑一次，样例里既有该报的（硬色值、缺兜底、裸字体栈），也有不该报的（合规写法）。没有自检的门禁最危险——正则写挂了整片全绿，而没人会发现。
 
-### 7.2 `test/client-render.mjs`（888 行，797 assertions）
+### 7.2 `test/client-render.mjs`（961 行，831 assertions）
 
 这是 SSR 渲染断言：用 `react-dom/server` 把组件渲染成字符串，再对 HTML 做字符串/正则断言。覆盖面板的全部主要组件。与本次改造直接相关的 8 条：
 
@@ -1434,7 +1435,7 @@ PASS (98 checks)
 | 首帧单栏 | `:459` | 未选中时 `class="dsh-pi-dir-col"` **恰好 1 个** |
 | `dirPickModel` | `:470-522` | 25 条纯函数断言（9.14 Miller 分栏 14 条在 `:470` 起、9.15 盘符层 11 条在 `:505` 起），含 `dirPickModel(undefined).showSub === false`（`:501` 防 null 入参） |
 
-0.8.0 新增的四块断言（行号为本轮实测，文件现 888 行）：
+0.8.0 新增的四块断言（行号为本轮实测，文件现 961 行）：
 
 | 断言块 | 行号 | 内容 |
 | --- | --- | --- |
@@ -1467,7 +1468,24 @@ PASS (98 checks)
 | 加载态 | `:655` | `projectsLoading` |
 | 英文文案 | `:661-662` | 英文 `projectsEmpty` / `projectsHint` |
 
-后面还有两段与本节相关的渲染断言：9.5 composer `:756-875`（`Composer` `:759`、`composerProps` `:761`、`composerHtml` `:801`、`pickerHtml` `:817`、`busyHtml` `:830`、`AddMenu` `:836`、`addItems` `:838`、`addHtml` `:842`、`menu-section` 断言 `:845`、`withFooter` `:855`）与 10 章整棵面板 `:876-888`（`panelHtml` `:877`）。
+后面还有四段与本节相关的渲染断言：9.5 composer `:756-874`（`Composer` `:759`、`composerProps` `:761`、`composerHtml` `:801`、`pickerHtml` `:817`、`busyHtml` `:830`、`AddMenu` `:836`、`addItems` `:838`、`addHtml` `:842`、`menu-section` 断言 `:845`、`withFooter` `:855`）。
+
+0.8.1 新增的 §9.18（`:876-948`，共 41 条断言）是本轮三项改造的唯一机器证据 —— SSR 渲染不出事件处理器，所以把判定抽成纯函数单独锁死，再用结构断言确认外壳形状：
+
+| 断言 | 行号 | 内容 |
+| --- | --- | --- |
+| `maskHandler` 已导出 | `:880-881` | `typeof internals.maskHandler === 'function'` |
+| 点遮罩关一次 | `:883-886` | 只有 `event.target === event.currentTarget` 才回调，且只回调一次 |
+| 点卡片不关 | `:887-888` | 内层元素（target ≠ currentTarget）不触发关闭 |
+| 每次调用新函数 | `:889` | 防止把同一个闭包复用给多个弹窗、关闭动作串味 |
+| `isOutsideMenu` 六条 | `:891-900` | 菜单自身与 `anchor`（触发按钮）都放行、别处算外部、`anchor` 为 null/undefined 不抛、`node` 为 null 时算外部 |
+| Dialog 两层结构 | `:904-910` | `dsh-pi-dialog-wrap` 必须包着 `dsh-pi-dialog`（防有人把 onClick 挪到卡片上）、`aria-modal` 恰好 1 处、不是 `alertdialog` |
+| ConfirmDialog 两层结构 | `:912-918` | 同上，且 role 必须是 `alertdialog` |
+| ExtensionDialog | `:920-922` | 0.8.1 补的 `aria-modal="true"` 与两层结构 |
+| MoreMenu | `:924-936` | `role="menu"` / `menuitem` / 条目文案；`anchor` 传 null 不抛 |
+| `projectTitleOf` 八条 | `:938-948` | 别名优先 → `displayPath` → `cwd`；只有 cwd；`sessionCwd` 优先于 cwd；meta 为 null 得空串；prefs 为 null 不抛；空对象得空串 |
+
+剩下两段：10 章整棵面板 `:949-961`（`panelHtml` `:950`）。
 
 开关那两条断言的措辞值得单列：`role=switch` + `aria-checked` 的 `true` / `false` 两态都要出现，且「开 / 关」二字**不得**作为按钮文本（避免用文字冒充开关）。这是把无障碍语义写进断言，比只查类名强得多。
 
@@ -1496,7 +1514,7 @@ PASS (98 checks)
 
 ## 附录 A 行号索引
 
-全部基于 **client.js@6178 / 340965 B / sha256 前缀 `58D4415C014F`（dsh-pi 0.8.0）**。`client.js` 在 0.5.0 之后被并发改写十余次（4130 → 4556 → 4789 → 4873 → 5170 → 5572 → 5614 → 5619 → 5872 → 6178），**任何行号都会漂移**。定位请用类名 grep：
+全部基于 **client.js@6275 / 347871 B / sha256 前缀 `570B9EF4B9B0`（dsh-pi 0.8.1）**。`client.js` 在 0.5.0 之后被并发改写十余次（4130 → 4556 → 4789 → 4873 → 5170 → 5572 → 5614 → 5619 → 5872 → 6178 → 6275），**任何行号都会漂移**。定位请用类名 grep：
 
 ```powershell
 Select-String -Path client.js -Pattern "\.dsh-pi-dir-cols\{"
@@ -1510,10 +1528,10 @@ Select-String -Path client.js -Pattern "function dirPickModel"
 | `CSS` 数组起 / 止 | `:477`（`var CSS = [`）/ `:874`（`].join('')`）；段落在 `:478-:873` |
 | `PiIcon` | `1875` |
 | `DirIcon` / `FileIcon` / `DriveIcon` | `1889` / `1900` / `1912` |
-| `iconSvg`（图标工厂） | `1931` |
+| `iconSvg`（图标工厂） | `1931`（跨度 1931-1938） |
 | `CodeIcon` / `ImageFileIcon` / `ArchiveIcon` / `SheetFileIcon` / `DocIcon` | `1941` / `1949` / `1958` / `1967` / `1976` |
 | `ThinkIcon` / `HashIcon` / `TerminalIcon` / `FrameIcon` / `SearchIcon` / `PencilIcon` / `SparkIcon` | `1986` / `1995` / `2005` / `2013` / `2023` / `2031` / `2039` |
-| `WhaleTailIcon`（16 网格鲸鱼尾，工作状态行专用） | `2055` |
+| `WhaleTailIcon`（16 网格鲸鱼尾，工作状态行专用） | `2055`（跨度 2055-2063） |
 | `CloseIcon` / `PaperclipIcon` / `CloseButton` | `2065` / `2073` / `2087`（跨度 2087-2096） |
 | `PlusIcon`（`+` 菜单与「新建项目」） | `2099` |
 | `ArrowUpIcon` / `StopSquareIcon`（发送键两态） | `2107` / `2119` |
@@ -1532,35 +1550,46 @@ Select-String -Path client.js -Pattern "function dirPickModel"
 | `SlashMenu` | `2606`（跨度 2606-2626） |
 | `AddMenu`（`+` 菜单面板） | `2635`（跨度 2635-2671） |
 | `Composer` | `2683`（跨度 2683-3096） |
-| `submit`（`Composer` 内） | `2762` |
+| `submit`（`Composer` 内，`function submit()`） | `2762` |
 | `Sheet`（抽屉骨架） | `3102`（跨度 3102-3109） |
-| `Dialog`（0.7.0 新） | `3119`（跨度 3119-3127） |
-| `SidePanel`（0.7.0 新，左滑侧栏） | `3135`（跨度 3135-3155） |
-| `ConfirmDialog`（0.7.0 新，`role=alertdialog`） | `3161`（跨度 3161-3172） |
-| `MoreMenu`（0.7.0 新，顶栏与行内更多菜单） | `3175`（跨度 3175-3195） |
-| `ModelPicker`（0.7.0 新，模型/思考档位合一弹层） | `3204`（跨度 3204-3254） |
-| `numOr0` / `fmtCount` / `fmtTime` / `fmtDuration` | `3257` / `3262` / `3273` / `3296`（跨度 3296-3308） |
-| `prefName` / `prefPinned` / `sessionHeadline`（0.8.0 新） | `3311` / `3319` / `3331` |
-| `SessionsList`（纯渲染，0.8.0 起两级列表） | `3355`（跨度 3355-3533） |
-| `RenameDialog`（0.8.0 新，项目/会话共用） | `3540`（跨度 3540-3563） |
-| `SessionsSheet`（容器，0.8.0 起持有 ui-prefs） | `3574`（跨度 3574-3696） |
-| `dirPickModel` | `3714`（跨度 3714-3743） |
-| `DirSheet` | `3745`（跨度 3745-4043） |
-| `TreeSheet` / `ForkSheet` / `StatsSheet` | `4052` / `4085` / `4103` |
-| `SettingsSheet` | `4148`（跨度 4148-4175） |
-| `TextSheet` / `FileSheet` | `4178` / `4193` |
-| `ExtensionDialog` / `ImageOverlay` | `4221` / `4300` |
-| `buildContract` / `classifyInput` / `slashItems` | `4313` / `4339` / `4366` |
-| `SelfCheckChip` / `RuntimeGate` | `4406`（跨度 4406-4437）/ `4440`（跨度 4440-4485） |
-| `NameSheet` / `BashBlock` | `4488`（跨度 4488-4504）/ `4514`（跨度 4514-4537） |
-| `PiPanel` | `4545`（跨度 4545-5975） |
+| `maskHandler`（0.8.1 新，遮罩点击判定） | `3121`（跨度 3121-3125） |
+| `isOutsideMenu`（0.8.1 新，菜单外部点击判定） | `3133`（跨度 3133-3138） |
+| `Dialog`（0.7.0 新；0.8.1 起点遮罩关闭） | `3148`（跨度 3148-3156） |
+| `SidePanel`（0.7.0 新，左滑侧栏） | `3164`（跨度 3164-3184） |
+| `ConfirmDialog`（0.7.0 新，`role=alertdialog`；0.8.1 起点遮罩 = 取消） | `3190`（跨度 3190-3202） |
+| `MoreMenu`（0.7.0 新，顶栏与行内更多菜单；0.8.1 起点外部关闭） | `3205`（跨度 3205-3249） |
+| `ModelPicker`（0.7.0 新，模型/思考档位合一弹层） | `3258`（跨度 3258-3308） |
+| `numOr0` / `fmtCount` / `fmtTime` | `3311` / `3316` / `3327` |
+| `fmtDuration` | `3350`（跨度 3350-3362） |
+| `prefName` / `prefPinned` / `sessionHeadline`（0.8.0 新） | `3365` / `3373` / `3408` |
+| `projectTitleOf`（0.8.1 新，顶栏标题：别名 → displayPath → cwd） | `3391`（跨度 3391-3400） |
+| `SessionsList`（纯渲染，0.8.0 起两级列表） | `3432`（跨度 3432-3614） |
+| `RenameDialog`（0.8.0 新，项目/会话共用） | `3621`（跨度 3621-3644） |
+| `SessionsSheet`（容器；0.8.1 起 prefs 由 PiPanel 注入） | `3659`（跨度 3659-3761） |
+| `dirPickModel` | `3779`（跨度 3779-3808） |
+| `DirSheet` | `3810`（跨度 3810-4108） |
+| `TreeSheet` / `ForkSheet` / `StatsSheet` | `4117` / `4150` / `4168`（跨度 4168-4210） |
+| `SettingsSheet` | `4213`（跨度 4213-4240） |
+| `TextSheet` / `FileSheet` | `4243` / `4258`（跨度 4258-4277） |
+| `ExtensionDialog` / `ImageOverlay` | `4286`（跨度 4286-4366）/ `4368` |
+| `buildContract` / `classifyInput` / `slashItems` | `4381` / `4407` / `4434` |
+| `SelfCheckChip` / `RuntimeGate` | `4474`（跨度 4474-4505）/ `4508`（跨度 4508-4553） |
+| `NameSheet` / `BashBlock` | `4556`（跨度 4556-4572）/ `4582`（跨度 4582-4605） |
+| `PiPanel` | `4613`（跨度 4613-6069） |
+| `var prefsState` / `var applyPrefs`（0.8.1 新，偏好提到 PiPanel） | `4676` / `4680` |
+| `var moreRef` / `var rowMenuAnchor`（0.8.1 新，菜单锚点） | `4735` / `3442` |
 | `var addItems = [`（`Composer` 的 `+` 菜单项数组） | `2960`（条目 2961-2970，闭合 `:2971`） |
-| `var drawerNode = null`（`PiPanel` 内抽屉挂载点） | `5860` |
-| `startSession` | `4912`（跨度 4912-4943；`var startSession = function (cwd)`） |
-| `switchDir` | `5175`（跨度 5175-5196；`var switchDir = function (dir)`） |
-| `hotkeyText` / `apply` | `5978` / `6002`（跨度 6002-6090） |
+| `var drawerNode = null`（`PiPanel` 内抽屉挂载点） | `5952` |
+| `startSession` / `switchDir` / `pickSession` | `4995` / `5264` / `5488` |
+| `attach` / `resync` / `openStream` / `hydrate` / `notice` | `4896` / `4855` / `4867` / `4781` / `4741` |
+| `loadState` / `loadFooterStats` / `cycleModel` | `4974` / `4941` / `5203` |
+| `runNewSession` / `endSession` | `5236` / `5248` |
+| `handleSlash` / `pickMore` / `var projectTitle`（PiPanel 内） | `5667` / `5704` / `5689` |
+| `var projectTitle`（SessionsList 内）/ `var rowMore` | `3572` / `3453` |
+| `hotkeyText` / `apply` | `6072` / `6096`（跨度 6096-6184） |
 | `markBusy` / `markIdle` / `createView` | `1487` / `1492` / `1497`（跨度 1497-1524） |
 | `applyRecord` / `applyBatch` | `1708`（跨度 1708-1857）/ `1859` |
+| `exports.__internals` | `6190`（跨度 6190-6262） |
 
 ### A.2 CSS 关键行
 
@@ -1692,19 +1721,21 @@ Select-String -Path client.js -Pattern "function dirPickModel"
 
 | 能力 | 行号 |
 | --- | --- |
-| `CONTRACT_VERSION` | `:66`（`'0.8.0'`；`:823` 回给客户端的 `version` 字段） |
-| `GET /directories` 路由 | `:919-941`（`send(200, …)` `:926`、`home: os.homedir()` `:933`、`roots: await listRoots()` `:939`） |
-| `listDirectories()` | `:1257-1293`（404/500 归一 `:1261-1266`、`isDirectory()` 过滤 `:1273`、按名 `localeCompare` 排序 `:1279`、`W_OK` 探测写权限 `:1288-1291`） |
-| `ROOTS_TTL_MS` / `rootsCache` | `:1464` / `:1465` |
-| `listRoots()` | `:1478-1499`（JSDoc `:1467-1477`、缓存命中 `:1480`、A–Z 并发探测 `:1484-1493`、回填 `:1497`） |
-| `CHANGELOG_MAX_BYTES` | `:93`（`200 * 1024`） |
-| `GET /pi/changelog` 路由 / `readChangelog()` | `:943-945` / `:1508-1541`（三层候选 `:1513-1519`、截断 `:1527`、未找到回落 `{ ok: false }` `:1540`） |
-| **0.8.0 新增** `GET /ui-prefs` | `:960-963`（`deps.uiPrefs` 缺失回 501 `{ error: 'ui prefs unavailable' }` `:961`） |
-| **0.8.0 新增** `POST /ui-prefs/project` | `:964-968`（`readJsonBody` `:966`、`setProject(body.key, body.name)` `:967`） |
-| **0.8.0 新增** `POST /ui-prefs/session` | `:969-976`（501 `:970`、合并式补丁注释 `:972-974`、`setSession(body.path, { pinned, name })` `:975`） |
-| **0.8.0 新增** 三条路由的段注释 | `:947-959`（全量返回 `:954-955`、校验在 `src/ui-prefs.mjs` 抛 `statusCode:400` 由 catch 原样回 `:957-958`） |
-| **0.8.0 新增** `const uiPrefs = createUiPrefsStore()` | `:740`（`apply` 作用域只建一次，注释 `:733-739`）；注入 `createHandler({ … uiPrefs … })` `:742-758` |
-| **0.8.0 新增** `import { createUiPrefsStore }` / manifest | `:55` / `:140-142`（`{ rel: 'src/ui-prefs.mjs', runtime: true }`） |
+| `CONTRACT_VERSION` | `:68`（`'0.8.1'`；`:854` 是 `/contract` 回给客户端的 `version` 字段） |
+| `GET /directories` 路由 | `:950-972`（段注释 `:946-949`、`send(200, …)` `:957`、`home: os.homedir()` `:964`、`roots: await listRoots()` `:970`） |
+| `listDirectories()` | `:1288-1324`（404/500 归一 `:1290-1297`、`isDirectory()` 过滤 `:1304`、按名 `localeCompare` 排序 `:1310`、截断 `:1311-1314`、`parent` `:1316-1317`、`W_OK` 探测写权限 `:1320`） |
+| `ROOTS_TTL_MS` / `rootsCache` | `:1495` / `:1496` |
+| `listRoots()` | `:1509-1530`（JSDoc `:1498-1508`、缓存命中 `:1511`、A–Z 并发探测 `:1513-1524`、回填 `:1528`） |
+| `CHANGELOG_MAX_BYTES` | `:95`（`200 * 1024`） |
+| `GET /pi/changelog` 路由 / `readChangelog()` | `:974-976` / `:1539-1572`（三层候选 `:1544-1550`、截断 `:1558`、未找到回落 `{ ok: false }` `:1571`） |
+| **0.8.0** `GET /ui-prefs` | `:991-994`（`deps.uiPrefs` 缺失回 501 `{ error: 'ui prefs unavailable' }` `:992`） |
+| **0.8.0** `POST /ui-prefs/project` | `:995-999`（`readJsonBody` `:997`、`setProject(body.key, body.name)` `:998`） |
+| **0.8.0** `POST /ui-prefs/session` | `:1000-1007`（501 `:1001`、合并式补丁注释 `:1003-1005`、`setSession(body.path, { pinned: body.pinned, name: body.name })` 在 `:1006`） |
+| **0.8.0** 三条路由的段注释 | `:978-990`（全量返回 `:985-986`、校验在 `src/ui-prefs.mjs` 抛 `statusCode:400` 由 catch 原样回 `:988-989`） |
+| **0.8.0** `const uiPrefs = createUiPrefsStore()` | `:771`（`apply` 作用域只建一次，注释 `:764-770`）；注入 `createHandler({ … uiPrefs … })` `:773-789`（`uiPrefs,` 在 `:786`） |
+| **0.8.0** `import { createUiPrefsStore }` / manifest | `:57` / `:142-144`（`{ rel: 'src/ui-prefs.mjs', runtime: true }`，其上一行 `:142-143` 是「参与 /ui-prefs 三条路由的判断逻辑」的注释） |
+| **0.8.1** `withProjectIdentity()` | `:448-455`（`displayPath` `:452`、`projectKey` `:453`；JSDoc `:436-447` 说明为何抽成模块级纯函数） |
+| **0.8.1** `snapshotOf()` | `:461-463`（`withProjectIdentity(proc.snapshot(options), proc.sessionCwd ?? proc.cwd)` 在 `:462`；注释 `:457-460` 说明必须留模块级） |
 
 ---
 
@@ -1714,21 +1745,21 @@ Select-String -Path client.js -Pattern "function dirPickModel"
 
 | 编号 | 差异 | 位置 | 严重度 | 性质 |
 | --- | --- | --- | --- | --- |
-| D-01 | 目录过滤用 `contains` 而非 `startsWith`；无命中出空栏而非全量 | `client.js:3726-3729`（`indexOf(query) >= 0` 在 `:3728`） | 中 | 语义偏差 |
-| D-02 | 无路径输入预览（DSH 有 250ms 防抖预览） | `client.js:3875-3895`（路径输入 `:3875-3888`、筛选框 `:3889-3895`，两者都只有 `onChange` 直写 state，无防抖请求） | 中 | 能力缺失 |
-| D-03 | 无隐藏项开关；`.git` 等点目录照常列出 | `index.js:1273`（`if (!dirent.isDirectory()) continue`，注释在 `:1272`） | 中 | 能力缺失（宿主未给） |
+| D-01 | 目录过滤用 `contains` 而非 `startsWith`；无命中出空栏而非全量 | `client.js:3791-3794`（`indexOf(query) >= 0` 在 `:3793`，位于 `dirPickModel` 的 `match` 内） | 中 | 语义偏差 |
+| D-02 | 无路径输入预览（DSH 有 250ms 防抖预览） | `client.js:3940-3960`（路径输入 `:3941-3953` 只有 `onChange` + Enter 跳转、筛选框 `:3954-3960` 只有 `onChange`，两者都无防抖请求） | 中 | 能力缺失 |
+| D-03 | 无隐藏项开关；`.git` 等点目录照常列出 | `index.js:1304`（`if (!dirent.isDirectory()) continue`，注释在 `:1303`） | 中 | 能力缺失（宿主未给） |
 | D-04 | 无新建文件夹；不存在的路径靠开会话时创建 | — | 中 | 能力缺失（宿主未给） |
-| D-05 | 当前目录标记用文字徽标而非 `aria-current` | `client.js:3899-3921`（`data-selected` / `data-current` 在 `:3905` / `:3906`，`dsh-pi-dir-mark` 文字徽标在 `:3920`） | 低 | 无障碍退步 |
+| D-05 | 当前目录标记用文字徽标而非 `aria-current` | `client.js:3964-4019`（目录行的 `makeRow` `:3964-3986`：`data-selected` `:3970` / `data-current` `:3971` / `dsh-pi-dir-mark` 徽标 `:3985`；盘符行 `:4004-4019`：`data-selected` `:4008` / 徽标 `:4019`） | 低 | 无障碍退步 |
 | D-06 | `.dsh-pi-sheet` 注释称用 DSH `_float` 配方，实际是 `bg-base` 铺满 | `client.js:723-724`（注释 `:723`，规则体 `background:var(--dsw-alias-bg-base)` 在 `:724`） | 低 | 注释与实现不符 |
-| D-07 | `.dsh-pi-dialog-head h3` 注释称 `22px 14px 12px 24px`，实际留白在 head（`:803` 的 `padding:22px 18px 0 24px`）、h3 本身 `padding:0` | `client.js:798-807`（注释 `:798-799`、`.dsh-pi-dialog-head` `:803`、`h3` `:804`） | 低 | 注释与实现不符 |
-| D-08 | 菜单阴影 `elevation-panel`，DSH 同级菜单用 `elevation-prominent` | `client.js:690` | 低 | 令牌等级偏差 |
-| D-09 | 按钮描边 `border-l4`，DSH `_outline` 用 `border-l3` | `client.js:513` | 低 | 令牌等级偏差 |
+| D-07 | `.dsh-pi-dialog-head h3` 注释称 `22px 14px 12px 24px`，实际留白在 head（`:803` 的 `padding:22px 18px 0 24px`）、h3 本身 `padding:0` | `client.js:797-807`（注释 `:797-799`、`.dsh-pi-dialog-head` `:803`、`h3` `:804`） | 低 | 注释与实现不符 |
+| D-08 | 菜单阴影 `elevation-panel`，DSH 同级菜单用 `elevation-prominent` | `client.js:690`（`.dsh-pi-menu` 的 `box-shadow`；`:689` 注释写着 `elevation-panel`） | 低 | 令牌等级偏差 |
+| D-09 | 按钮描边 `border-l4`，DSH `_outline` 用 `border-l3` | `client.js:513`（`.dsh-pi-btn` 的 `border:1px solid var(--dsw-alias-border-l4)`） | 低 | 令牌等级偏差 |
 | D-10 | 开关胶囊多一条 `transition:background-color .16s ease` | `client.js:760` | 极低 | 动效差异 |
 | D-11 | ~~`dirMissing` 死键~~ **已修复**：0.7.0 已把该键从 ZH / EN 两张 i18n 表同时删除，`client.js` 全文 0 命中 | — | 已修复 | 未使用键（已清理） |
 
 另有两条**不是差异但值得记录**的实现选择：
 
-- `-tool` 平铺行（无框无底）：`client.js:562-569` 有注释块（`:548-561`）说明「框套框的噪音墙」（`:552`），是刻意决定，不是漏做；
+- `-tool` 平铺行（无框无底）：`client.js:562-569` 有对应规则（`.dsh-pi-proc` `:562`、`.dsh-pi-tool` `:563`），注释块在 `:547-561`、其中 `:552` 写着「框套框的噪音墙（用户 18994 明确要求去掉圆角框）」，是刻意决定，不是漏做；
 - `-bubble-user` 的 `max-width:82%`：DSH 是 100%，dsh-pi 按 IM 惯例收窄，属合理分歧。
 
 ---
@@ -1775,7 +1806,7 @@ Select-String -Path client.js -Pattern "function dirPickModel"
 
 | 数值 | 采集方式 | 可信度 |
 | --- | --- | --- |
-| 174 个 `.dsh-pi-*` 类 | 脚本 `matchAll` 去重，与门禁同源（0.7.0 起 168 → 0.8.0 增 6 类：`pin` / `row-more` / `sess-sum` / `side-back` / `side-host` / `side-new`） | A（可复现） |
+| 174 个 `.dsh-pi-*` 类 | 脚本 `matchAll` 去重，与门禁同源（0.7.0 起 168 → 0.8.0 增 6 类：`pin` / `row-more` / `sess-sum` / `side-back` / `side-host` / `side-new`；0.8.1 只加 JS 不动 CSS，类数仍 174，`git show HEAD:client.js` 比对 added=[] removed=[]） | A（可复现） |
 | 70 / 39 / 20 / 6 令牌分层（另 `--dsw-specific-*` 4 + `--dsw-static-*` 1，外部兜底 4） | 脚本统计 + 人工归类 | A（数字可复现，归类是判断） |
 | 277 段 / 39760 字符 / 382 次 `var(` 文本（顶层 366 处 / 兜底嵌套 16 处） | 段数与字符数取门禁输出第 3 行（门禁自身口径印「令牌引用: 377 处 / 74 个唯一变量」，与本文正文的 382 / 366 差在嵌套识别口径，见 §3.1） | A |
 | 32 / 55 / 85 / 2 档位分布 | 174 类逐个人工判定（合计 = 174） | B（判据主观，但每档都列了具体依据） |
@@ -1789,4 +1820,4 @@ Select-String -Path client.js -Pattern "function dirPickModel"
 
 ---
 
-_本文的样式与尺寸取证基于 client.js@4130（sha256 前缀 `06fb24ca5cb7`）与 dsh-pi 0.5.1 起步，1.4 版全部行号重测于 client.js@6178（340965 B，mtime 2026-11-15T22:43:42Z，sha256 前缀 `58D4415C014F`）/ dsh-pi 0.8.0，index.js@1593（75041 B，sha256 前缀 `6FC8AAB27CB8`）。所有行号会随后续改动漂移，定位请用类名 grep。_
+_本文的样式与尺寸取证基于 client.js@4130（sha256 前缀 `06fb24ca5cb7`）与 dsh-pi 0.5.1 起步，1.4 版全部行号重测于 client.js@6275（347871 B，mtime 2026-11-16T04:58:24Z，sha256 前缀 `570B9EF4B9B0`）/ dsh-pi 0.8.1，index.js@1624（76621 B，sha256 前缀 `DDD7C5CD828C`）。所有行号会随后续改动漂移，定位请用类名 grep。_

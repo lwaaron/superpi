@@ -168,10 +168,10 @@ New-Item -ItemType Junction `
 ### 方式三：手工 pnpm add（不想跑脚本时）
 
 ```powershell
-npm pack                                        # 得到 dsh-pi-0.8.0.tgz
+npm pack                                        # 得到 dsh-pi-0.8.1.tgz
 cd "$env:USERPROFILE\.dsh\profiles\desktop"
 node "$env:USERPROFILE\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\pnpm\bin\pnpm.cjs" `
-  add "file:C:\path\to\dsh-pi-0.8.0.tgz" --ignore-scripts
+  add "file:C:\path\to\dsh-pi-0.8.1.tgz" --ignore-scripts
 ```
 
 不要在 profile 里用 `npm install`：npm 会另写一份 `package-lock.json`，而宿主插件管理器用的是 pnpm，两套锁文件互相看不见，下次插件安装就会把 node_modules 重建成 pnpm 理解的样子。
@@ -328,6 +328,7 @@ npm install --prefix <插件>/.runtime --save-exact --no-audit --no-fund --logle
   `/fork` 抽屉读 `get_fork_messages`，选中走 `fork` 并把那条用户消息回填进编辑器。
 - **挂载即对账**：`attach` 之后补一次 `get_messages` 整表重建消息列表（`messagesFromHistory`）。原因是 `new_session` / `switch_session` / `fork` / `clone` 成功后 host 会 `resetEvents()` 把事件缓冲清空，历史消息不会再以事件形式重放 —— 只靠 `snapshot` 重放的话，切过去必然是空白（0.4.0 及之前「点开历史会话没有内容」就是这个根因；命令行 pi 从 jsonl 恢复所以不受影响）。两道防线：会话已切走则丢弃响应；`busy` 期间不覆盖列表，改记待办，等 `agent_settled` 那一拍由 `drainHydrate` 补上。
 - **历史会话两级列表、过程流行距与面板偏好（0.8.0）**：三件事都长在既有结构上，没有新开界面。①历史会话（顶栏入口与 `/resume` 共用 `SessionsSheet`）补齐「面板自己的账」：项目层标题固定「项目列表」且只在这一层给「新建项目」按钮，会话层标题换成项目名、返回箭头由 `SidePanel` 的 `onBack` 提供（原「← 全部项目」文字按钮已删）；搜索框占整行，placeholder 分「搜索项目」/「搜索会话」；项目行与会话行各带一个行内 `⋯` 菜单（重命名项目 / 在此新建会话 / 重命名会话 / 置顶或取消置顶）；会话标题按「用户改的名字 → pi 的会话名 → 首条用户消息摘要 → 末条消息 → 占位」取值（`sessionHeadline()` 取 `firstMessage` 首行、超 60 字符截断加 `…`）；置顶用两遍 partition 而不是 `sort`（host 给的顺序本身有意义，是最近活动降序）；改名走独立的 `RenameDialog` 而不是复用 `NameSheet`（`drawer` 是单值，改名会把左侧栏自己顶掉）。偏好不归 pi 的 RPC 面管，读写走 host 新增的 `/ui-prefs` 三条路由（见上方 HTTP 接口），落盘在 `<home>/.dsh-pi/ui-prefs.json`（`DSH_PI_UI_PREFS` 可覆盖路径），文件不存在时按空偏好处理、不报错。②过程流行距按参考图重算：父行与子行同为 24px 行盒，`.dsh-pi-sub` 组内 `gap:8px`、`margin-left:26px`、`padding-left:12px`，子行步长与父行一致；0.6.4 那版把子行压到 16px 行盒 + gap 0，行距只剩父行一半，是被推翻的中间态。③版本 0.8.0：tarball 名 `dsh-pi-0.8.0.tgz`，`CONTRACT_VERSION` 同步 0.8.0。
+- **弹层交互与顶栏标题（0.8.1）**：三处一起改。①四个居中弹窗（`Dialog` / `ConfirmDialog` / 选择工作区 / 扩展 UI 弹窗）统一成**真模态** —— 点遮罩即关闭，判定式只有一份（`maskHandler(onClose)`，判 `event.target === event.currentTarget`），内层不吞事件、不 `stopPropagation`；语义各自正确：确认框点遮罩等于**取消**而不是确认，扩展 UI 弹窗点遮罩回 `{id, cancelled:true}`（与右上角关闭键同一条路径），并补上原先缺的 `aria-modal`。②`MoreMenu`（顶栏 `⋯` 与历史会话行内 `⋯`）补「点外部关闭」：`isOutsideMenu(node, anchor, target)` 同时放行菜单自身与**触发按钮** —— 少了后半条，同一次点击里 `mousedown` 先关、`click` 又开，表现为「怎么点都关不掉」。③顶栏左上的 `SuperPi` 换成**当前项目标题**：host 侧 `withProjectIdentity()` / `snapshotOf()` 在每份会话快照上补 `displayPath`（`shortenHomePath`，家目录缩成 `~`）与 `projectKey`（`pathComparisonKey`），客户端 `projectTitleOf(prefs, meta)` 按「面板里改过的项目名 → `displayPath` → 原始路径」取值，取不到才回落品牌名；路径缩短的唯一真相留在 host，浏览器侧不复制这套逻辑。`RuntimeGate`（启动期无会话）保留品牌名。面板偏好同时上提到 `PiPanel`，顶栏与历史会话列表读同一份 `prefs`，改名后顶栏立刻跟着变。
 
 ## 自检：现在跑的是不是磁盘上那份代码
 
@@ -374,12 +375,12 @@ pwsh -NoProfile -File .\tools\standalone-verify.ps1   # 全新 DSH_HOME 里只�
 | `test/timeout.mjs` | 28 条超时语义门禁：`timeoutLimitMs` 的三态（正数=毫秒上限 / `0``负数``Infinity`=不设上限 / `NaN``乱码``对象`=TypeError 绝不静默降级）、到期即 reject 且不留孤儿 pending、不设上限时进程关闭由 `handleExit` 兜底、**弹窗未答则计时期续期**、**应答后重开一整轮窗口**、续期上限耗尽时报「dialog(s) never answered」。用 `test/fixtures/fake-pi-rpc.mjs` 做协议替身，把 5 分钟的真实等待压到毫秒级 —— 这是 0.3.0 之前「红条与对话框并存」那个缺陷唯一可靠的门禁 |
 | `test/fixtures/fake-pi-rpc.mjs` | 假 pi RPC 子进程（`FAKE_PI_MODE=dialog/silent`）：只为复现「命令永不回答」与「命令在等弹窗」两种时序，不模拟其他行为 |
 | `test/fixtures/pi-ext-ui-probe.ts` | 扩展 UI 探针（人工验证用，不参与 `npm test`）：复制到 `%USERPROFILE%\.pi\agent\extensions\` 并重启 pi 会话后，`/dsh-ui-probe` 依次弹 select→confirm→input→editor，`/dsh-ui-notify` 验五个单向方法。**扩展对话框必须真人点，自动化只能测到 host 侧的时序**，所以探针留在仓库里当复现手段 |
-| `test/client-render.mjs` | `react-dom/server` 把面板渲染成字符串（含键集与循环展开共执行 797 次，条数由脚本自报 `PASS (797 assertions)`）：挡组件异常、文案缺键、中英键集不一致、引导页结构、以及扩展 UI 四种弹窗（confirm 的「否/确认」按钮集、select 的选项数、input 的 prefill/placeholder、editor 的多行回填、空 title 回落、`dialogBudgetMs` 的「声明值与 5 分钟上限取小」四类非法值回落）。**倒计时的「还剩 Ns」文案断言不到**——那行由 `useEffect` 驱动，SSR 阶段 `left` 为 `null` 不渲染，只能在真浏览器里验 |
+| `test/client-render.mjs` | `react-dom/server` 把面板渲染成字符串（含键集与循环展开共执行 831 次，条数由脚本自报 `PASS (831 assertions)`）：挡组件异常、文案缺键、中英键集不一致、引导页结构、以及扩展 UI 四种弹窗（confirm 的「否/确认」按钮集、select 的选项数、input 的 prefill/placeholder、editor 的多行回填、空 title 回落、`dialogBudgetMs` 的「声明值与 5 分钟上限取小」四类非法值回落）。**倒计时的「还剩 Ns」文案断言不到**——那行由 `useEffect` 驱动，SSR 阶段 `left` 为 `null` 不渲染，只能在真浏览器里验 |
 | `test/css-tokens.mjs` | CSS 门禁 98 条：禁硬色值（只准 `--dsw-*`）、令牌白名单、字体栈、`:focus-visible` 可见性、`prefers-reduced-motion` 兜底，另有 0 号自检确认门禁本身不是空跑 |
 | `test/restart-lib.mjs` | 重启脚本门禁：22 条 node 断言（文件层：UTF-8 BOM、无游离 CR、库模式开关、去注释后无裸 `Start-Process -FilePath $exe`、走 `ProcessStartInfo`、有自保护）+ `test/fixtures/restart-lib-checks.ps1` 的 31 条 PS 断言（`Get-LaunchSpec` 四种输入、`Get-DshHomeFromRoot` 五种、`Get-EnvPatch` 六种、`Get-LaunchRootPid`/`Test-SelfAncestorOf` 对活进程、`Test-DshPiHealth` 对五种假响应与死端口）。**pwsh 7 与 PowerShell 5.1 各跑一遍**，是「5.1 能不能读这个脚本」的唯一机器保障 |
 | `test/version.mjs` | 版本号单一真相：`/health`、`/state`、`/diagnostics` 报的版本必须等于 `package.json` 的 `version`；换版本重新加载要跟着变（防写死常量）；`package.json` 缺失时降级 `0.0.0` 而不是崩；README 里的 tarball 名必须跟版本对齐 |
 | `test/session-projects.mjs` | 两级历史列表 55 条：`pathComparisonKey` 大小写归一、`isTemporaryPath` 三条正则逐条对齐 pi（`/tmp`、`appdata/local/temp`、`pi-runtime-*`）、`shortenHomePath` 的 `~` 缩写边界、`groupSessionsByProject` 的「当前项目 → 非临时 → 最近活动降序」与大小写合并、`listAllSessions`/`listSessions` 的「全部项目 vs 单项目」两种语义、`readSessionCwd` 只读 64KB 头行且首行非杂项时返回空、`firstRunningSessionFile` 的「跨项目也算当前会话」与活/死优先级。造一棵符合 pi 目录约定的假 `sessions/` 树来跑，不碰真会话 |
-| `test/host-parity.mjs` | host 侧离线一致性 276 条：`buildSpawnArgs` 19 条（`persist=false` 不吃 `--continue`、用户自带 `--fork`/`--no-session` 不重复生成、空 `--name` 不传）、`pickCurrentSessionFile` 8 条、以及 `/respond` 的 409/400/415/200、`/reset`、四条替换命令的 reset+refresh、`/files` 排序与 404、`/file` 预览 28 条（文本截断 / 二进制探测 / 目录 400 / ENOENT 404 / MIME 映射 / `~` 与 `%VAR%` 展开）、`/pi/changelog` 三情形、未知路由 404、`/ui-prefs` 三条路由 33 条（GET 空文件回落、项目改名 trim 与键白名单、会话置顶与「只给 name 不许凭空置顶」的合并语义、四类 400）。**路由与参数拼错了只会静默跑偏，所以单独立门禁** |
+| `test/host-parity.mjs` | host 侧离线一致性 291 条：`buildSpawnArgs` 19 条（`persist=false` 不吃 `--continue`、用户自带 `--fork`/`--no-session` 不重复生成、空 `--name` 不传）、`pickCurrentSessionFile` 8 条、以及 `/respond` 的 409/400/415/200、`/reset`、四条替换命令的 reset+refresh、`/files` 排序与 404、`/file` 预览 28 条（文本截断 / 二进制探测 / 目录 400 / ENOENT 404 / MIME 映射 / `~` 与 `%VAR%` 展开）、`/pi/changelog` 三情形、未知路由 404、`/ui-prefs` 三条路由 33 条（GET 空文件回落、项目改名 trim 与键白名单、会话置顶与「只给 name 不许凭空置顶」的合并语义、四类 400）。**路由与参数拼错了只会静默跑偏，所以单独立门禁** |
 | `test/parity.mjs` | 与 pi 的三向对账 78 条：以 pi 的 `RpcCommand` 联合类型、`RpcSessionState` 接口、`docs/json.md` 事件表为事实来源，双向比对（我们缺的 = 缺口，我们编的 = 幻觉），再断言契约里 33 条命令 / 25 类事件 / 12 种 assistant 事件 / 27 条斜杠 / 9 个扩展 UI method 在面板里都有落地字面量，且 `CONTRACT_VERSION` 与 `package.json` 同步。0.2.5 时「只发 5/33 命令、只处理 12/25 事件、27 条斜杠一条没接而 `npm test` 全绿」正是这个门禁要拦的事 |
 | `tools/standalone-verify.ps1` | 全新 DSH_HOME 自证：建临时 profile → pnpm 装 tarball → 起独立实例 → 真实 LLM 往返 → 清理（端到端演练，不是单测） |
 

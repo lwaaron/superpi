@@ -3109,6 +3109,35 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * 遮罩点击判定（用户 35984：居中弹窗一律模态，点非弹窗区域隐藏）。
+     *
+     * 只认 `event.target === event.currentTarget`：卡片内部的点击会冒泡到遮罩，那时 target 是卡片里的
+     * 某个节点而不是遮罩本身，不该关。反过来也成立 —— 从卡片里拖选文本、松手落到遮罩上时 target 是
+     * 遮罩，会关；这和浏览器地址栏里拖选松手的直觉一致，用户要的就是「点了外面」。
+     *
+     * 不用 stopPropagation：内层每一处都得记得吞事件，漏一处就是「点卡片也关」。判定式只有这一份，
+     * 四个弹窗（Dialog / ConfirmDialog / DirSheet / ExtensionDialog）与 SidePanel 全走它。
+     */
+    function maskHandler(onClose) {
+      return function (event) {
+        if (event.target === event.currentTarget) onClose()
+      }
+    }
+
+    /**
+     * 点外部关闭的判定（菜单）：菜单自身与触发按钮都算「内部」。
+     *
+     * 触发按钮必须放行 —— 否则同一次点击里 mousedown 先把它关掉、随后的 click 又打开，
+     * 表现为「⋯ 怎么点都关不掉」。anchor 是触发按钮的 ref 对象（可为 null）。
+     */
+    function isOutsideMenu(node, anchor, target) {
+      if (node !== null && node !== undefined && node.contains(target)) return false
+      var trigger = anchor === null || anchor === undefined ? null : anchor.current
+      if (trigger !== null && trigger !== undefined && trigger.contains(target)) return false
+      return true
+    }
+
+    /**
      * 居中弹窗外壳（统计 / 设置 / 二次确认）。
      *
      * 与抽屉（Sheet）的分界是**语义**：抽屉是「进到另一个空间去挑东西」（历史会话、树、
@@ -3118,7 +3147,7 @@ window.__ModuleLoader__.load({
      */
     function Dialog(props) {
       var className = props.wide === true ? 'dsh-pi-dialog dsh-pi-dialog-wide' : 'dsh-pi-dialog'
-      return h('div', { className: 'dsh-pi-dialog-wrap' },
+      return h('div', { className: 'dsh-pi-dialog-wrap', onClick: maskHandler(props.onClose) },
         h('div', { className: className, role: 'dialog', 'aria-modal': 'true', 'aria-label': props.title },
           h('div', { className: 'dsh-pi-dialog-head' },
             h('h3', null, props.title),
@@ -3143,7 +3172,7 @@ window.__ModuleLoader__.load({
       }, h(ChevronLeftIcon, { size: 16 }))
       return h('div', {
         className: 'dsh-pi-side-wrap',
-        onClick: function (event) { if (event.target === event.currentTarget) props.onClose() },
+        onClick: maskHandler(props.onClose),
       },
         h('div', { className: 'dsh-pi-side', role: 'dialog', 'aria-modal': 'true', 'aria-label': props.title },
           h('div', { className: 'dsh-pi-side-head' },
@@ -3160,7 +3189,8 @@ window.__ModuleLoader__.load({
      */
     function ConfirmDialog(props) {
       var t = props.t
-      return h('div', { className: 'dsh-pi-dialog-wrap' },
+      // 点遮罩 = 取消，绝不等于确认：确认是一次不可逆动作，只能由按钮或 Enter 触发。
+      return h('div', { className: 'dsh-pi-dialog-wrap', onClick: maskHandler(props.onCancel) },
         h('div', { className: 'dsh-pi-dialog', role: 'alertdialog', 'aria-modal': 'true', 'aria-label': props.title },
           h('div', { className: 'dsh-pi-dialog-head' },
             h('h3', null, props.title),
@@ -3174,9 +3204,33 @@ window.__ModuleLoader__.load({
     /** 顶栏「更多」的下拉：锚在按钮右下，向下展开，项 = 图标 + 文案。 */
     function MoreMenu(props) {
       var t = props.t
+      // 点外部关闭（用户 35984）：0.8.0 及之前只有自身 keydown 的 Escape 能收起，点面板别处它赖着不走。
+      // 范式照抄 Composer 的「+」菜单与模型弹层（client.js:2706-2722）：document 级 mousedown + keydown，
+      // 依赖数组给 onClose 而不是 []，父层重新渲染后闭包里的回调不会指向上一轮的 state 快照。
+      // anchor 是触发按钮的 ref：点触发器本身必须放行 —— 否则 mousedown 先关闭、随后的 click 又把它打开，
+      // 表现为「⋯ 怎么点都关不掉」。菜单自身 node 同样放行，点菜单项由 onPick 自己收尾。
+      var menuRef = useRef(null)
+      var anchor = props.anchor === undefined ? null : props.anchor
+      var onCloseMenu = props.onClose
+      useEffect(function () {
+        function onDocDown(event) {
+          if (isOutsideMenu(menuRef.current, anchor, event.target) === false) return
+          onCloseMenu()
+        }
+        function onDocKey(event) {
+          if (event.key === 'Escape') onCloseMenu()
+        }
+        document.addEventListener('mousedown', onDocDown)
+        document.addEventListener('keydown', onDocKey)
+        return function () {
+          document.removeEventListener('mousedown', onDocDown)
+          document.removeEventListener('keydown', onDocKey)
+        }
+      }, [onCloseMenu])
       return h('div', {
         className: 'dsh-pi-menu dsh-pi-more-menu',
         role: 'menu',
+        ref: menuRef,
         onKeyDown: function (event) {
           if (event.key === 'Escape') { event.preventDefault(); props.onClose() }
         },
@@ -3323,6 +3377,29 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * 顶栏标题 = 当前项目标题（用户 35984：原来固定显示品牌名 SuperPi，用户看不出这是哪个项目）。
+     *
+     * 优先级：面板里重命名过的项目名 → host 下发的 displayPath → 原始 cwd。
+     * 三者都空（还没绑会话、或缺运行时）时返回空串，由调用方回落品牌名 ——
+     * 没有项目的时候显示一个项目名是撒谎。
+     *
+     * projectKey 由 host 用 pathComparisonKey 算好随快照下发（Windows 转小写 + 路径归一），
+     * 与 groupSessionsByProject 给项目列表的 key 同源，因此两边命中同一条重命名记录。
+     * displayPath 同理来自 host 的 shortenHomePath（home 下缩成 `~\rel`）：路径缩短只有一份真相，
+     * 不在浏览器里重写一遍 —— 那迟早与历史会话列表的写法分叉。
+     */
+    function projectTitleOf(prefs, meta) {
+      if (meta === null || meta === undefined) return ''
+      var key = typeof meta.projectKey === 'string' ? meta.projectKey : ''
+      var renamed = key === '' ? '' : prefName(prefs === undefined || prefs === null ? null : prefs.projects, key)
+      if (renamed !== '') return renamed
+      var display = typeof meta.displayPath === 'string' ? meta.displayPath : ''
+      if (display !== '') return display
+      var cwd = meta.sessionCwd !== undefined && meta.sessionCwd !== null ? meta.sessionCwd : meta.cwd
+      return typeof cwd === 'string' ? cwd : ''
+    }
+
+    /**
      * 会话标题 = 首条用户消息的第一行。
      * host 的 firstMessage 在没有消息时会回落成哨兵串 `(no messages)`（src/session-store.mjs:34），
      * 直接当标题会出现一行英文占位；这里统一折成空串，由调用方回落到别的文案。
@@ -3361,6 +3438,8 @@ window.__ModuleLoader__.load({
       var prefs = props.prefs === undefined || props.prefs === null ? {} : props.prefs
       var menuKey = typeof props.menuKey === 'string' ? props.menuKey : null
       var onRowMenu = props.onRowMenu === undefined ? function () {} : props.onRowMenu
+      // 只有展开那一行的容器挂 ref：同一 ref 挂在所有行上会被最后一行覆盖，外部点击判定就会误伤。
+      var rowMenuAnchor = useRef(null)
 
       var needle = query.trim().toLowerCase()
       var isProjects = level === 'projects'
@@ -3375,6 +3454,7 @@ window.__ModuleLoader__.load({
         var open = menuKey === key
         return h('div', {
           className: 'dsh-pi-row-more',
+          ref: open ? rowMenuAnchor : null,
           onClick: function (event) { event.stopPropagation() },
         },
           h('button', {
@@ -3391,6 +3471,7 @@ window.__ModuleLoader__.load({
           open ? h(MoreMenu, {
             t: t,
             items: items,
+            anchor: rowMenuAnchor,
             onPick: function (item) { item.run() },
             onClose: function () { onRowMenu(null) },
           }) : null)
@@ -3568,8 +3649,12 @@ window.__ModuleLoader__.load({
      * 全靠 host 返回的数据决定，把取数写在渲染里就只能靠真浏览器验证；拆开之后
      * client-render 可以直接喂假数据断言项目层／会话层两套 DOM，倒计时类断言仍归真浏览器。
      *
-     * 0.8.0 起这里还持有 ui-prefs（项目名 / 会话名 / 置顶）与行内菜单的开关状态：
+     * 0.8.0 起这里还承担 ui-prefs（项目名 / 会话名 / 置顶）与行内菜单的开关状态：
      * 偏好是「面板自己的账」，不归 pi 的 RPC 面管，读写都走 /api/dsh-pi/ui-prefs。
+     *
+     * 0.8.1 起 prefs **不再由这里持有**，改由 PiPanel 单点持有后经 props 下传：顶栏标题要显示
+     * 当前项目名（renamed 优先），若两处各拉一次 /ui-prefs，改名后就会出现「列表已更新、顶栏还是旧名」。
+     * 写入仍由这里发起，成功后把 host 回的全量结构经 props.onPrefs 交回 PiPanel。
      */
     function SessionsSheet(props) {
       var t = props.t
@@ -3585,44 +3670,21 @@ window.__ModuleLoader__.load({
       var stateQuery = useState('')
       var query = stateQuery[0]
       var setQuery = stateQuery[1]
-      var statePrefs = useState({ projects: {}, sessions: {} })
-      var prefs = statePrefs[0]
-      var setPrefs = statePrefs[1]
+      var prefs = props.prefs === undefined || props.prefs === null ? { projects: {}, sessions: {} } : props.prefs
+      var onPrefs = props.onPrefs === undefined ? function () {} : props.onPrefs
       var stateMenuKey = useState(null)
       var menuKey = stateMenuKey[0]
       var setMenuKey = stateMenuKey[1]
       var stateRename = useState(null)
       var rename = stateRename[0]
       var setRename = stateRename[1]
-      var aliveRef = useRef(true)
       var onNotice = props.onNotice === undefined ? function () {} : props.onNotice
 
       var errorText = function (error) {
         return String(error !== null && error !== undefined && error.message !== undefined ? error.message : error)
       }
 
-      /** 只保留 store 真给出的两棵表；缺字段一律当空表，渲染层就不用到处 undefined 判断。 */
-      var applyPrefs = function (body) {
-        if (aliveRef.current === false) return
-        var next = { projects: {}, sessions: {} }
-        if (body !== null && body !== undefined) {
-          if (body.projects !== undefined && body.projects !== null) next.projects = body.projects
-          if (body.sessions !== undefined && body.sessions !== null) next.sessions = body.sessions
-        }
-        setPrefs(next)
-      }
-      var loadPrefs = function () {
-        // 读不到偏好不该让整个列表变红：重命名与置顶是增强项，缺了只是回到默认排序。
-        api.uiPrefs().then(applyPrefs).catch(function () {})
-      }
-
       var openCwd = level === 'sessions' && project !== null ? String(project.cwd) : ''
-
-      useEffect(function () {
-        aliveRef.current = true
-        loadPrefs()
-        return function () { aliveRef.current = false }
-      }, [])
 
       useEffect(function () {
         var stopped = false
@@ -3646,9 +3708,12 @@ window.__ModuleLoader__.load({
         return function () { stopped = true }
       }, [openCwd])
 
-      /** 写一条偏好：成功就把 host 回的**全量**结构吃进来（host 是唯一真相，不在本地猜合并）。 */
+      /**
+       * 写一条偏好：成功就把 host 回的**全量**结构交回 PiPanel（host 是唯一真相，不在本地猜合并）。
+       * 收账的人从 0.8.1 起是 PiPanel —— 它同时供顶栏项目标题与这份列表，两处必须同一份。
+       */
       var pushPref = function (request, failText) {
-        request.then(applyPrefs).catch(function (error) { onNotice(failText + ' · ' + errorText(error), 'err') })
+        request.then(onPrefs).catch(function (error) { onNotice(failText + ' · ' + errorText(error), 'err') })
       }
 
       var submitRename = function (name) {
@@ -4029,7 +4094,7 @@ window.__ModuleLoader__.load({
       // 居中弹窗（不是整块抽屉）：选择工作区是一次会打断当前会话的决策，
       // 用模态把面板其余部分压暗，用户不会误以为还能一边聊天一边挑目录。
       // 尺寸对齐 DSH directory-picker 的 680x500。
-      return h('div', { className: 'dsh-pi-dialog-wrap' },
+      return h('div', { className: 'dsh-pi-dialog-wrap', onClick: maskHandler(props.onClose) },
         h('div', {
           className: 'dsh-pi-dir-dialog',
           role: 'dialog',
@@ -4286,8 +4351,11 @@ window.__ModuleLoader__.load({
           h('button', { type: 'button', className: 'dsh-pi-btn dsh-pi-btn-primary', onClick: function () { props.onRespond({ id: request.id, value: value }) } }, t('extSubmit'))))
       }
       var label = request.method === 'confirm' ? t('extConfirm') : request.method === 'input' ? t('extInput') : request.method === 'editor' ? t('extEditor') : t('extSelect')
-      return h('div', { className: 'dsh-pi-dialog-wrap' },
-        h('div', { className: 'dsh-pi-dialog', role: 'dialog', 'aria-label': label },
+      // 点遮罩 = 取消（回 cancelled:true），与右上角 CloseButton、pi 侧 Esc 同一语义。
+      // 卡片同时补 aria-modal：这类弹窗会阻塞 pi 的整轮等待，不声明模态读屏会以为面板其余部分仍可操作。
+      var cancel = function () { props.onRespond({ id: request.id, cancelled: true }) }
+      return h('div', { className: 'dsh-pi-dialog-wrap', onClick: maskHandler(cancel) },
+        h('div', { className: 'dsh-pi-dialog', role: 'dialog', 'aria-modal': 'true', 'aria-label': label },
           // 扩展弹窗以前只有底部「取消 / 提交」，没有右上角关闭；这里补一个与抽屉同款的 CloseButton，
           // 语义等于取消（回 cancelled:true），跟 pi 的 Esc 取消一致。
           h('div', { className: 'dsh-pi-dialog-head' },
@@ -4602,6 +4670,21 @@ window.__ModuleLoader__.load({
       var confirmState = useState(null)
       var confirm = confirmState[0]
       var setConfirm = confirmState[1]
+      // ui-prefs（项目名 / 会话名 / 置顶）。0.8.1 起由面板单点持有：顶栏标题要显示当前项目名，
+      // 历史会话列表也要用它排「重命名过 / 置顶过」的次序 —— 两处各拉一次就会出现
+      // 「列表已改名、顶栏还是旧名」。写入仍由列表发起，成功后把 host 回的全量交回这里。
+      var prefsState = useState({ projects: {}, sessions: {} })
+      var prefs = prefsState[0]
+      var setPrefs = prefsState[1]
+      /** 只收 store 真给出的两棵表；缺字段一律当空表，渲染层就不用到处 undefined 判断。 */
+      var applyPrefs = function (body) {
+        var next = { projects: {}, sessions: {} }
+        if (body !== null && body !== undefined) {
+          if (body.projects !== undefined && body.projects !== null) next.projects = body.projects
+          if (body.sessions !== undefined && body.sessions !== null) next.sessions = body.sessions
+        }
+        setPrefs(next)
+      }
       var modelsState = useState([])
       var models = modelsState[0]
       var setModels = modelsState[1]
@@ -4957,6 +5040,12 @@ window.__ModuleLoader__.load({
       }
 
       useEffect(function () { runSelfCheck() }, [])
+
+      // 偏好只拉一次：它只在重命名 / 置顶时变，而那时写入方会把 host 回的全量交给 applyPrefs。
+      // 读不到也不该让面板变红 —— 重命名与置顶是增强项，缺了只是回到默认排序。
+      useEffect(function () {
+        api.uiPrefs().then(applyPrefs).catch(function () {})
+      }, [])
 
       useEffect(function () {
         var node = scrollRef.current
@@ -5596,6 +5685,8 @@ window.__ModuleLoader__.load({
       var emptyMeta = meta === null ? null : activeCwd
       var currentModel = meta !== null && meta.model !== null && meta.model !== undefined && typeof meta.model.id === 'string' ? meta.model : null
       var sessionName = meta !== null && typeof meta.sessionName === 'string' && meta.sessionName !== '' ? meta.sessionName : view.title
+      // 顶栏标题走项目标题（prefs 重命名优先），无项目时回落品牌名。RuntimeGate 不参与 —— 那个阶段还没有会话。
+      var projectTitle = projectTitleOf(prefs, meta)
       var slashEntries = slashItems(contract, dynamic)
       var widgets = []
       for (var widgetKey in view.widgets) {
@@ -5638,7 +5729,8 @@ window.__ModuleLoader__.load({
       var head = h('div', { className: 'dsh-pi-head' },
         h('div', { className: 'dsh-pi-head-main' },
           h(PiIcon, null),
-          h('span', { className: 'dsh-pi-brand' }, t('panelTitle')),
+          // 标题 = 当前项目（用户 35984）。title 给完整路径，窄面板里被 ellipsis 截断时还能悬停看全。
+          h('span', { className: 'dsh-pi-brand', title: projectTitle === '' ? null : projectTitle }, projectTitle === '' ? t('panelTitle') : projectTitle),
           h('span', { className: 'dsh-pi-dot', 'data-state': state, title: state }),
           sessionName === null || sessionName === '' ? null : h('span', { className: 'dsh-pi-chip', title: t('sessionName') }, String(sessionName))),
         // 模型与推理等级不在这里：它们跟宿主一样落在输入框下沿（见 Composer 的 picker）。
@@ -5660,7 +5752,7 @@ window.__ModuleLoader__.load({
             'aria-expanded': moreOpen === true ? 'true' : 'false',
             onClick: function () { setMoreOpen(moreOpen !== true) },
           }, h(EllipsisIcon, { size: 16 })),
-          moreOpen === true ? h(MoreMenu, { t: t, items: moreItems, onPick: pickMore, onClose: function () { setMoreOpen(false) } }) : null),
+          moreOpen === true ? h(MoreMenu, { t: t, items: moreItems, anchor: moreRef, onPick: pickMore, onClose: function () { setMoreOpen(false) } }) : null),
         // 「新会话」= 命令行 pi 的 /new：同一个 pi 子进程内换一棵新会话树（保留模型、思考档位、
         // 扩展加载状态），树换完后 reload 重挂数据流。0.3.0 之前这个按钮走 endSession（关掉
         // 子进程再起一个），代价是丢掉进程内一切状态，并且与 /new 的行为不一致 —— 同一件事
@@ -5862,6 +5954,8 @@ window.__ModuleLoader__.load({
         drawerNode = h(SessionsSheet, {
           t: t,
           currentPath: meta === null || meta.sessionFile === undefined ? null : meta.sessionFile,
+          prefs: prefs,
+          onPrefs: applyPrefs,
           onPick: pickSession,
           onNotice: notice,
           onNewProject: function () { setDrawer('dir') },
@@ -6127,6 +6221,7 @@ window.__ModuleLoader__.load({
       SettingsSheet: SettingsSheet,
       SessionsList: SessionsList,
       SessionsSheet: SessionsSheet,
+      projectTitleOf: projectTitleOf,
       RenameDialog: RenameDialog,
       pathCrumbs: pathCrumbs,
       buildContract: buildContract,
@@ -6158,6 +6253,8 @@ window.__ModuleLoader__.load({
       SidePanel: SidePanel,
       ConfirmDialog: ConfirmDialog,
       MoreMenu: MoreMenu,
+      maskHandler: maskHandler,
+      isOutsideMenu: isOutsideMenu,
       ModelPicker: ModelPicker,
       fmtCount: fmtCount,
       numOr0: numOr0,

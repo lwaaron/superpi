@@ -89,12 +89,32 @@ eq('pick 全死掉退回第一个', pick([
 eq('pick 忽略无 sessionFile', pick([{ cwd: 'C:/work', sessionFile: null, state: 'ready' }], 'C:/work'), null)
 eq('pick 忽略 --no-session 的空串', pick([{ cwd: 'C:/work', sessionFile: '', state: 'ready' }], 'C:/work'), null)
 
+// ── 2c. withProjectIdentity：快照带项目标识（0.8.1，顶栏项目标题的数据源） ────
+// 面板顶栏要显示当前项目名，靠的是快照里的 projectKey（与历史会话列表同一个 key）与
+// displayPath（host 端 shortenHomePath 的产物）。这两件事都不能让浏览器自己算：
+// 路径归一/大小写规则抄第二份就会与 groupSessionsByProject 分叉。
+const identity = (cwd, snapshot) => mod.withProjectIdentity(snapshot, cwd)
+const ident = identity('C:\\Users\\PC\\pi-workspace', { id: 's1', cwd: 'C:\\spawn-dir' })
+check('withProjectIdentity 保留原快照字段', ident.id === 's1' && ident.cwd === 'C:\\spawn-dir')
+check('withProjectIdentity 不因 projectCwd 改写 cwd', ident.cwd === 'C:\\spawn-dir')
+check('displayPath 是 home 缩写的短路径', ident.displayPath === '~' + path.sep + 'pi-workspace', JSON.stringify(ident.displayPath))
+check('projectKey 非空且是归一化后的绝对路径', typeof ident.projectKey === 'string' && ident.projectKey.length > 0 && path.isAbsolute(ident.projectKey), JSON.stringify(ident.projectKey))
+eq('displayPath 空 cwd 回落空串', identity('', {}).displayPath, '')
+eq('projectKey 空 cwd 回落空串', identity('', {}).projectKey, '')
+eq('projectCwd 非字符串时不抛', identity(undefined, { id: 'x' }).displayPath, '')
+check('快照为 null 时不抛', typeof identity('C:\\a', null).projectKey === 'string')
+// 同一路径的两种写法必须给出同一个 key —— 否则重命名过的项目在顶栏与列表里对不上号。
+eq('projectKey 大小写不敏感', identity('C:\\Work', {}).projectKey, identity('c:\\work', {}).projectKey)
+eq('projectKey 分隔符归一', identity('C:/work', {}).projectKey, identity('C:\\work', {}).projectKey)
 // ── 3. HTTP 面：stub 掉进程，只验证协议形状 ────────────────────────────────
 function fakeProc(overrides = {}) {
   const proc = {
     id: 'sess-1',
     label: 'fake',
     cwd: 'C:/work',
+    // 面板顶栏的项目标题取 sessionCwd（switch_session 之后 cwd 仍是 spawn 目录），
+    // 所以假进程必须同时带这两个字段才能覆盖 withProjectIdentity 的真实取值路径。
+    sessionCwd: 'C:/work',
     state: 'ready',
     exitInfo: null,
     eventSeq: 0,
@@ -107,7 +127,16 @@ function fakeProc(overrides = {}) {
     nextData: undefined,
     nextError: null,
     snapshot() {
-      return { id: this.id, label: this.label, cwd: this.cwd, state: this.state, eventSeq: this.eventSeq, events: [], pendingUi: [...this.pendingUi.values()] }
+      return {
+        id: this.id,
+        label: this.label,
+        cwd: this.cwd,
+        sessionCwd: this.sessionCwd,
+        state: this.state,
+        eventSeq: this.eventSeq,
+        events: [],
+        pendingUi: [...this.pendingUi.values()],
+      }
     },
     async send(command, options) {
       this.sent.push(command)
@@ -241,6 +270,16 @@ try {
     const missing = await request(server.base, '/sessions/nope/snapshot')
     eq('未知 session 404', missing.status, 404)
 
+    // 3.3a 快照面必须带项目标识（0.8.1）：面板顶栏标题与历史会话列表靠 projectKey 对上号，
+    //      host 少发一个字段，顶栏就静默回落成品牌名 —— 属于「不崩但错」的那类缺陷。
+    const snapById = await request(server.base, '/sessions/sess-1')
+    check('GET /sessions/:id 带 projectKey', typeof snapById.body.projectKey === 'string' && snapById.body.projectKey.length > 0, JSON.stringify(snapById.body).slice(0, 200))
+    check('GET /sessions/:id 带 displayPath', typeof snapById.body.displayPath === 'string' && snapById.body.displayPath.length > 0, JSON.stringify(snapById.body.displayPath))
+    eq('GET /sessions/:id 的 projectKey 用的是 sessionCwd', snapById.body.projectKey, identity(proc.sessionCwd, {}).projectKey)
+    const snapRoute = await request(server.base, '/sessions/sess-1/snapshot?since=0')
+    check('GET /snapshot 同样带项目标识', typeof snapRoute.body.projectKey === 'string' && snapRoute.body.projectKey.length > 0, JSON.stringify(snapRoute.body).slice(0, 200))
+    const createdSnap = await request(server.base, '/sessions', { method: 'POST', body: {} })
+    check('POST /sessions 的 session 快照带项目标识', createdSnap.body.session !== undefined && typeof createdSnap.body.session.projectKey === 'string' && createdSnap.body.session.projectKey.length > 0, createdSnap.status + ' ' + JSON.stringify(createdSnap.body).slice(0, 200))
     // 3.3b /command 的超时三态：缺省=默认上限，正数=毫秒上限，0/负/Infinity=不设上限。
     //        这条链最容易出错的地方是「0 被当成 falsy 吞成默认值」，那样面板发出的
     //        「对话类命令不设上限」会静默退化成 60s，弹窗还没点完命令就先超时。

@@ -36,10 +36,12 @@ import {
   groupSessionsByProject,
   listAllSessions,
   listSessions,
+  pathComparisonKey,
   readSessionCwd,
   resolveAgentDir,
   samePath,
   sessionRootDir,
+  shortenHomePath,
 } from './src/session-store.mjs'
 import {
   PI_PACKAGE,
@@ -63,7 +65,7 @@ const API_PREFIX = '/api/' + PLUGIN_ID
 const MAX_SESSIONS = 8
 const MAX_BODY_BYTES = 4 * 1024 * 1024
 /** GET /contract 里 version 字段的取值：本插件对外的契约版本，与 package.json 解耦。 */
-const CONTRACT_VERSION = '0.8.0'
+const CONTRACT_VERSION = '0.8.1'
 /** 历史会话列表的条数窗口（与 src/session-store.mjs 的 DEFAULT_LIMIT/MAX_LIMIT 一致）。 */
 const HISTORY_DEFAULT_LIMIT = 20
 const HISTORY_MAX_LIMIT = 200
@@ -431,6 +433,35 @@ export function firstRunningSessionFile(running = [], known = []) {
   return matched === undefined ? null : matched.sessionFile
 }
 
+/**
+ * 会话快照 + 项目标识。面板顶栏要显示「当前项目标题」，而路径缩短（home → `~`）与大小写归一
+ * （Windows 盘符/路径不区分大小写）这两件事的唯一真相都在 session-store 里；浏览器侧再抄一份
+ * 迟早分叉，所以由 host 算好随快照下发。
+ *
+ * projectKey 与 groupSessionsByProject 给项目列表的 key 同一算法（pathComparisonKey），
+ * 面板因此能直接用 ui-prefs 里「重命名过的项目名」匹配当前会话，不需要自己猜分隔符。
+ * 取 sessionCwd 而非 cwd：switch_session / fork 到别的项目后，cwd 仍是子进程的 spawn 目录。
+ *
+ * 抽成模块级纯函数（而不是留在 apply 闭包里）是为了能被门禁直接测：真正取快照的
+ * `snapshotOf(proc, options)` 就在下面，apply 与 createHandler 共用同一份。
+ */
+export function withProjectIdentity(snapshot, projectCwd) {
+  const base = snapshot !== null && typeof snapshot === 'object' ? snapshot : {}
+  const cwd = typeof projectCwd === 'string' ? projectCwd : ''
+  return Object.assign({}, base, {
+    displayPath: shortenHomePath(cwd),
+    projectKey: pathComparisonKey(cwd),
+  })
+}
+
+/**
+ * 会话快照 + 项目标识。必须留在**模块级**：createHandler 与 apply 两处都要用，
+ * 放在 apply 闭包里会让 createHandler 那几个路由直接 ReferenceError。
+ */
+export function snapshotOf(proc, options) {
+  return withProjectIdentity(proc.snapshot(options), proc.sessionCwd ?? proc.cwd)
+}
+
 export function apply(ctx, config = {}) {
   const log = makeLog(ctx)
   /**
@@ -638,7 +669,7 @@ export function apply(ctx, config = {}) {
       },
       runtime: runtimeReport(),
       limits: { maxSessions: MAX_SESSIONS },
-      sessions: [...sessions.values()].map(proc => proc.snapshot({ sinceSeq: 0, includeEvents: false })),
+      sessions: [...sessions.values()].map(proc => snapshotOf(proc, { sinceSeq: 0, includeEvents: false })),
     }
   }
 
@@ -982,7 +1013,7 @@ export function createHandler(deps) {
         // 客户端不必再轮询一次。等不到（慢启动/已退出）也照常返回，字段是 null，
         // 后续 SSE 与 /snapshot 会把它们补上——不能为了这几个字段把开新会话拖慢。
         if (proc.stateReady !== undefined) await Promise.race([proc.stateReady, delay(POST_SPAWN_STATE_WAIT_MS)])
-        const snapshot = proc.snapshot({ sinceSeq: 0, includeEvents: false })
+        const snapshot = snapshotOf(proc, { sinceSeq: 0, includeEvents: false })
         return send(200, { ok: true, session: snapshot })
       }
 
@@ -997,11 +1028,11 @@ export function createHandler(deps) {
           await proc.close({ timeoutMs: 6000 })
           return send(200, { ok: true })
         }
-        if (method === 'GET' && tail === '') return send(200, proc.snapshot({ sinceSeq: 0, includeEvents: false }))
+        if (method === 'GET' && tail === '') return send(200, snapshotOf(proc, { sinceSeq: 0, includeEvents: false }))
         if (method === 'GET' && tail === '/events') return streamEvents(req, res, proc, url)
         if (method === 'GET' && tail === '/snapshot') {
           const since = Number(url.searchParams.get('since') ?? 0)
-          return send(200, proc.snapshot({ sinceSeq: Number.isFinite(since) ? since : 0 }))
+          return send(200, snapshotOf(proc, { sinceSeq: Number.isFinite(since) ? since : 0 }))
         }
         if (method === 'POST' && tail === '/command') {
           const contentType = String(req.headers['content-type'] ?? '')
