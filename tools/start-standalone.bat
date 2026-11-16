@@ -1,21 +1,30 @@
 @echo off
 setlocal EnableExtensions
-chcp 65001 >nul
-title 一键启动 dsh-pi（独立实例）
+chcp 65001
+title dsh-pi one-click start
 cd /d "%~dp0.."
 
 rem ======================================================================
-rem  dsh-pi / 一键启动
+rem  dsh-pi : one-click start (tools entry)
 rem
-rem  双击即起一个独立的 dsh-pi 实例（不碰桌面 profile），起完会打印访问地址。
-rem  首次运行要装依赖（需联网，几分钟）；之后直接复用，秒起。
+rem  Starts a standalone dsh-pi instance (does not touch the desktop profile)
+rem  and prints the api url when it is ready.
+rem  First run installs dependencies (network needed, a few minutes).
+rem  Later runs reuse the install and start in seconds.
 rem
-rem  用法：
-rem    双击本文件                        用默认端口 25117 启动
-rem    start-standalone.bat -Port 25117   指定端口
-rem    start-standalone.bat -Status       只看状态，不启动
-rem    start-standalone.bat -Stop         停掉已启动的实例
-rem    start-standalone.bat -Reinstall    插件升级后强制重装
+rem  Usage:
+rem    double-click                    start on the default port (25117)
+rem    -Port 25117                     start on a specific port
+rem    -Status                         report status only, change nothing
+rem    -Stop                           stop the instance this script started
+rem    -Reinstall                      force reinstall after a plugin upgrade
+rem
+rem  WHY THIS FILE IS PURE ASCII:
+rem    cmd.exe re-reads the .bat using the *current* console code page. After
+rem    "chcp 65001" the byte offsets of any non-ASCII line no longer match the
+rem    line boundaries cmd already cached, so multi-byte characters get split
+rem    mid-sequence and the following lines run as garbage. ASCII-only keeps
+rem    this wrapper correct; the Chinese messages live in the .ps1 instead.
 rem ======================================================================
 
 set "HERE=%~dp0"
@@ -23,22 +32,22 @@ set "PS1=%HERE%start-standalone.ps1"
 set "PWSH="
 
 if not exist "%PS1%" (
-  echo [错误] 找不到 start-standalone.ps1
-  echo        期望位置：%PS1%
+  echo [ERROR] start-standalone.ps1 not found.
+  echo         expected: %PS1%
   echo.
   pause
   exit /b 1
 )
 
-rem ---- 1. 优先用 PowerShell 7（pwsh）：脚本是 UTF-8 写的，7 解析最稳 --------
+rem Prefer PowerShell 7: the .ps1 is UTF-8, and 7 parses it most reliably.
 for /f "delims=" %%I in ('where pwsh.exe 2^>nul') do if not defined PWSH set "PWSH=%%I"
 if not defined PWSH if exist "%ProgramFiles%\PowerShell\7\pwsh.exe" set "PWSH=%ProgramFiles%\PowerShell\7\pwsh.exe"
 
 if defined PWSH (
   "%PWSH%" -NoProfile -ExecutionPolicy Bypass -File "%PS1%" %*
 ) else (
-  echo  [提示] 没找到 PowerShell 7，改用系统自带的 Windows PowerShell 5.1。
-  echo         脚本已按 UTF-8 BOM 保存，5.1 也能正确读中文。
+  echo  [note] PowerShell 7 not found, falling back to Windows PowerShell 5.1.
+  echo         The script is saved as UTF-8 with BOM, so 5.1 reads it correctly.
   echo.
   "%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "%PS1%" %*
 )
@@ -46,9 +55,9 @@ if defined PWSH (
 set "RC=%ERRORLEVEL%"
 echo.
 if "%RC%"=="0" (
-  echo  [完成] 实例已就绪，浏览器打开上面的地址即可。
+  echo  [ok] See the output above for the api url, log path and how to stop.
 ) else (
-  echo  [失败] 退出码 %RC%，请看上面的输出。
+  echo  [failed] exit code %RC% - see the output above.
 )
 echo.
 pause

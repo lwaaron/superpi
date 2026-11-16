@@ -32,15 +32,25 @@ assets/icon.svg       插件图标
 
 ### 方式零：一键启动（只想看看面板长什么样，不装进 DSH）
 
-双击 `tools\start-standalone.bat`，或用命令行：
+**双击仓库根目录的 `一键启动.bat`** 即可。也可以双击 `tools\start-standalone.bat`，或用命令行：
 
 ```powershell
-.\tools\start-standalone.bat                  # 默认端口 25117，起完打印访问地址
+.\一键启动.bat                                # 根目录入口，等价于下一行
+.\tools\start-standalone.bat                  # 默认端口 25117
 .\tools\start-standalone.bat -Port 25117      # 换端口
 .\tools\start-standalone.bat -Status          # 只看状态，不动任何东西
 .\tools\start-standalone.bat -Stop            # 停掉这个实例
 .\tools\start-standalone.bat -Reinstall       # 插件升级后强制重装
 ```
+
+根目录的 `一键启动.bat` **只是一个转发器**：逻辑全在 `tools\start-standalone.ps1`，参数（`%*`）与退出码原样透传。
+放这个入口是为了「打开仓库就能双击启动」，不用先钻进 `tools\`；只留一份逻辑，避免两处副本分叉。
+
+> **两个 `.bat` 的内容都是纯 ASCII，这是刻意的。** `cmd.exe` 按**当前控制台代码页**逐行读取 `.bat`；
+> 执行 `chcp 65001` 之后，任何非 ASCII 行的字节偏移与 cmd 已缓存的行边界不再对齐，多字节字符会被从中间切断，
+> 导致后续行被当成乱码命令执行。实测后果是「注释被当命令刷屏」，极端情况下 `set "PS1=..."` 被截断、转发直接失败。
+> 所以中文交互文案全部放在 `.ps1` 里（PowerShell 不经过 cmd 的行解析），`.bat` 只留 ASCII。
+> 仓库既有的 `tools\restart-dsh.bat` 也受同一问题影响（会刷出几条乱码，但主流程仍能跑通），暂未改动。
 
 它做的事和「方式四」同源，但**面向常驻使用**：状态全部落在仓库内的 `.standalone\`（已 gitignore，可随时整个删掉），
 首次运行装一次依赖（约几分钟，需联网），之后**直接复用、秒起**；不碰桌面 profile，不影响你正在用的 DSH。
@@ -405,6 +415,7 @@ pwsh -NoProfile -File .\tools\standalone-verify.ps1   # 全新 DSH_HOME 里只�
 | `test/session-projects.mjs` | 两级历史列表 55 条：`pathComparisonKey` 大小写归一、`isTemporaryPath` 三条正则逐条对齐 pi（`/tmp`、`appdata/local/temp`、`pi-runtime-*`）、`shortenHomePath` 的 `~` 缩写边界、`groupSessionsByProject` 的「当前项目 → 非临时 → 最近活动降序」与大小写合并、`listAllSessions`/`listSessions` 的「全部项目 vs 单项目」两种语义、`readSessionCwd` 只读 64KB 头行且首行非杂项时返回空、`firstRunningSessionFile` 的「跨项目也算当前会话」与活/死优先级。造一棵符合 pi 目录约定的假 `sessions/` 树来跑，不碰真会话 |
 | `test/host-parity.mjs` | host 侧离线一致性 291 条：`buildSpawnArgs` 19 条（`persist=false` 不吃 `--continue`、用户自带 `--fork`/`--no-session` 不重复生成、空 `--name` 不传）、`pickCurrentSessionFile` 8 条、以及 `/respond` 的 409/400/415/200、`/reset`、四条替换命令的 reset+refresh、`/files` 排序与 404、`/file` 预览 28 条（文本截断 / 二进制探测 / 目录 400 / ENOENT 404 / MIME 映射 / `~` 与 `%VAR%` 展开）、`/pi/changelog` 三情形、未知路由 404、`/ui-prefs` 三条路由 33 条（GET 空文件回落、项目改名 trim 与键白名单、会话置顶与「只给 name 不许凭空置顶」的合并语义、四类 400）。**路由与参数拼错了只会静默跑偏，所以单独立门禁** |
 | `test/parity.mjs` | 与 pi 的三向对账 78 条：以 pi 的 `RpcCommand` 联合类型、`RpcSessionState` 接口、`docs/json.md` 事件表为事实来源，双向比对（我们缺的 = 缺口，我们编的 = 幻觉），再断言契约里 33 条命令 / 25 类事件 / 12 种 assistant 事件 / 27 条斜杠 / 9 个扩展 UI method 在面板里都有落地字面量，且 `CONTRACT_VERSION` 与 `package.json` 同步。0.2.5 时「只发 5/33 命令、只处理 12/25 事件、27 条斜杠一条没接而 `npm test` 全绿」正是这个门禁要拦的事 |
+| `一键启动.bat`（仓库根） | 一键启动的**根目录入口**，纯 ASCII 转发器：把 `%*` 与退出码原样透传给 `tools/start-standalone.ps1`。逻辑不重复实现 |
 | `tools/start-standalone.ps1` / `.bat` | **一键启动**常驻实例：状态落在仓库内 `.standalone\`，首次装依赖、之后复用；默认端口 25117；`-Stop` / `-Status` / `-Reinstall` / `-Port`。位置无关，不碰桌面 profile |
 | `tools/standalone-verify.ps1` | 全新 DSH_HOME 自证：建临时 profile → pnpm 装 tarball → 起独立实例 → 真实 LLM 往返 → 清理（端到端演练，不是单测）。默认端口 25119，不与一键启动实例争用 |
 
