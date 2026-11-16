@@ -30,27 +30,50 @@ assets/icon.svg       插件图标
 
 ## 安装
 
-### 方式零：一键启动（只想看看面板长什么样，不装进 DSH）
+### 方式零：一键启动（TUI 编程会话 + 面板，两个一起起）
 
-**双击仓库根目录的 `一键启动.bat`** 即可。也可以双击 `tools\start-standalone.bat`，或用命令行：
+**双击仓库根目录的 `一键启动.bat`** 即可。它**同时**起两个前端，互不阻塞：
+
+| 前端 | 形态 | 用途 |
+| --- | --- | --- |
+| **pi TUI** | 新开一个真实控制台窗口（Windows Terminal 优先，回落 conhost） | **写代码的交互式编程会话**——就是你要敲字进去的那个窗口 |
+| **DSH web** | 后台服务，端口 25117 | 浏览器 / 侧栏面板形态的 UI |
+
+两者是**同一个 pi、同一个 agent loop 的两个平级前端**（见 AGENTS.md 第 1 节），不是父子、不互相替代。
 
 ```powershell
-.\一键启动.bat                                # 根目录入口，等价于下一行
-.\tools\start-standalone.bat                  # 默认端口 25117
-.\tools\start-standalone.bat -Port 25117      # 换端口
-.\tools\start-standalone.bat -Status          # 只看状态，不动任何东西
-.\tools\start-standalone.bat -Stop            # 停掉这个实例
-.\tools\start-standalone.bat -Reinstall       # 插件升级后强制重装
+.\一键启动.bat                                # 两个一起起
+.\一键启动.bat -Resume pick                   # TUI 弹列表选一个历史会话接续
+.\一键启动.bat -Resume new                    # TUI 开全新会话
+.\一键启动.bat -WorkDir D:\my_projects\foo    # 让 agent 在那个项目里干活
+.\一键启动.bat -NoTui                         # 只起面板
+.\一键启动.bat -NoWeb                         # 只开编程会话窗口
+.\一键启动.bat -Status                        # 只看两者状态
+.\一键启动.bat -Stop                          # 两个都停
 ```
 
-根目录的 `一键启动.bat` **只是一个转发器**：逻辑全在 `tools\start-standalone.ps1`，参数（`%*`）与退出码原样透传。
-放这个入口是为了「打开仓库就能双击启动」，不用先钻进 `tools\`；只留一份逻辑，避免两处副本分叉。
+- **TUI 必须开真实控制台窗口**：实测 pi 在非 TTY（stdout 被重定向）下会**直接静默退出**，所以在后台进程里跑它等于什么都没发生。脚本用 `wt -d <workdir> cmd /c <node> <cli> <--continue>` 开新窗口，这一点是这个入口存在的核心理由。
+- **两个互不阻塞**：任一失败不影响另一个，最后分别报 `OK / WARN / FAIL` 与失败原因；只有两个都失败才 `exit 2`。
+- 根目录 `一键启动.bat` **只是转发器**：逻辑全在 `tools\launch-both.ps1`，参数（`%*`）与退出码原样透传，不复制实现。
+- pi 与 node 一律走 `src/pi-runtime.mjs` 的解析链（`resolvePiRuntime` / `resolveNodeRuntime`），**没有任何硬编码路径**。
+- TUI 的 pid 记在 `.standalone\tui.json`，`-Stop` 只关自己起的那个，不动你另外开的 pi。
 
-> **两个 `.bat` 的内容都是纯 ASCII，这是刻意的。** `cmd.exe` 按**当前控制台代码页**逐行读取 `.bat`；
+> **`.bat` 的内容都是纯 ASCII，这是刻意的。** `cmd.exe` 按**当前控制台代码页**逐行读取 `.bat`；
 > 执行 `chcp 65001` 之后，任何非 ASCII 行的字节偏移与 cmd 已缓存的行边界不再对齐，多字节字符会被从中间切断，
-> 导致后续行被当成乱码命令执行。实测后果是「注释被当命令刷屏」，极端情况下 `set "PS1=..."` 被截断、转发直接失败。
+> 导致后续行被当成乱码命令执行。实测后果是「注释被当命令刷屏」，极端情况下 `set "TARGET=..."` 被截断、转发直接失败。
 > 所以中文交互文案全部放在 `.ps1` 里（PowerShell 不经过 cmd 的行解析），`.bat` 只留 ASCII。
 > 仓库既有的 `tools\restart-dsh.bat` 也受同一问题影响（会刷出几条乱码，但主流程仍能跑通），暂未改动。
+
+#### 只想要面板（不起 TUI）
+
+双击 `tools\start-standalone.bat`，或：
+
+```powershell
+.\tools\start-standalone.bat -Port 25117      # 换端口
+.\tools\start-standalone.bat -Status          # 只看状态
+.\tools\start-standalone.bat -Stop            # 停掉面板实例
+.\tools\start-standalone.bat -Reinstall       # 插件升级后强制重装
+```
 
 它做的事和「方式四」同源，但**面向常驻使用**：状态全部落在仓库内的 `.standalone\`（已 gitignore，可随时整个删掉），
 首次运行装一次依赖（约几分钟，需联网），之后**直接复用、秒起**；不碰桌面 profile，不影响你正在用的 DSH。
@@ -201,10 +224,10 @@ New-Item -ItemType Junction `
 ### 方式三：手工 pnpm add（不想跑脚本时）
 
 ```powershell
-npm pack                                        # 得到 dsh-pi-0.8.3.tgz
+npm pack                                        # 得到 dsh-pi-0.8.4.tgz
 cd "$env:USERPROFILE\.dsh\profiles\desktop"
 node "$env:USERPROFILE\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\pnpm\bin\pnpm.cjs" `
-  add "file:C:\path\to\dsh-pi-0.8.3.tgz" --ignore-scripts
+  add "file:C:\path\to\dsh-pi-0.8.4.tgz" --ignore-scripts
 ```
 
 不要在 profile 里用 `npm install`：npm 会另写一份 `package-lock.json`，而宿主插件管理器用的是 pnpm，两套锁文件互相看不见，下次插件安装就会把 node_modules 重建成 pnpm 理解的样子。
@@ -415,7 +438,8 @@ pwsh -NoProfile -File .\tools\standalone-verify.ps1   # 全新 DSH_HOME 里只�
 | `test/session-projects.mjs` | 两级历史列表 55 条：`pathComparisonKey` 大小写归一、`isTemporaryPath` 三条正则逐条对齐 pi（`/tmp`、`appdata/local/temp`、`pi-runtime-*`）、`shortenHomePath` 的 `~` 缩写边界、`groupSessionsByProject` 的「当前项目 → 非临时 → 最近活动降序」与大小写合并、`listAllSessions`/`listSessions` 的「全部项目 vs 单项目」两种语义、`readSessionCwd` 只读 64KB 头行且首行非杂项时返回空、`firstRunningSessionFile` 的「跨项目也算当前会话」与活/死优先级。造一棵符合 pi 目录约定的假 `sessions/` 树来跑，不碰真会话 |
 | `test/host-parity.mjs` | host 侧离线一致性 291 条：`buildSpawnArgs` 19 条（`persist=false` 不吃 `--continue`、用户自带 `--fork`/`--no-session` 不重复生成、空 `--name` 不传）、`pickCurrentSessionFile` 8 条、以及 `/respond` 的 409/400/415/200、`/reset`、四条替换命令的 reset+refresh、`/files` 排序与 404、`/file` 预览 28 条（文本截断 / 二进制探测 / 目录 400 / ENOENT 404 / MIME 映射 / `~` 与 `%VAR%` 展开）、`/pi/changelog` 三情形、未知路由 404、`/ui-prefs` 三条路由 33 条（GET 空文件回落、项目改名 trim 与键白名单、会话置顶与「只给 name 不许凭空置顶」的合并语义、四类 400）。**路由与参数拼错了只会静默跑偏，所以单独立门禁** |
 | `test/parity.mjs` | 与 pi 的三向对账 78 条：以 pi 的 `RpcCommand` 联合类型、`RpcSessionState` 接口、`docs/json.md` 事件表为事实来源，双向比对（我们缺的 = 缺口，我们编的 = 幻觉），再断言契约里 33 条命令 / 25 类事件 / 12 种 assistant 事件 / 27 条斜杠 / 9 个扩展 UI method 在面板里都有落地字面量，且 `CONTRACT_VERSION` 与 `package.json` 同步。0.2.5 时「只发 5/33 命令、只处理 12/25 事件、27 条斜杠一条没接而 `npm test` 全绿」正是这个门禁要拦的事 |
-| `一键启动.bat`（仓库根） | 一键启动的**根目录入口**，纯 ASCII 转发器：把 `%*` 与退出码原样透传给 `tools/start-standalone.ps1`。逻辑不重复实现 |
+| `一键启动.bat`（仓库根） | 一键启动的**根目录入口**，纯 ASCII 转发器：把 `%*` 与退出码原样透传给 `tools/launch-both.ps1`。逻辑不重复实现 |
+| `tools/launch-both.ps1` | **同时起两个前端**：① pi TUI（新开真实控制台窗口，走 `src/pi-runtime.mjs` 解析链拿 pi 与 node）；② DSH web（后台 25117）。互不阻塞，分别报 `OK/WARN/FAIL`；`-Stop` 只关自己起的（TUI pid 记在 `.standalone/tui.json`）。**pi 在非 TTY 下会静默退出，所以 TUI 必须开真实窗口** |
 | `tools/start-standalone.ps1` / `.bat` | **一键启动**常驻实例：状态落在仓库内 `.standalone\`，首次装依赖、之后复用；默认端口 25117；`-Stop` / `-Status` / `-Reinstall` / `-Port`。位置无关，不碰桌面 profile |
 | `tools/standalone-verify.ps1` | 全新 DSH_HOME 自证：建临时 profile → pnpm 装 tarball → 起独立实例 → 真实 LLM 往返 → 清理（端到端演练，不是单测）。默认端口 25119，不与一键启动实例争用 |
 

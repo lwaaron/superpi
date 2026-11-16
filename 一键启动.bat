@@ -4,33 +4,44 @@ chcp 65001
 cd /d "%~dp0"
 
 rem ======================================================================
-rem  dsh-pi : one-click launcher (repo root entry)
+rem  dsh-pi : one-click launch (repo root entry)
 rem
-rem  This file is ONLY a forwarder. All real logic lives in
-rem  tools\start-standalone.ps1 -- one copy, no duplicated logic to drift.
+rem  Starts BOTH front ends at once, in parallel, neither blocking the other:
+rem
+rem    1) pi TUI  - a real console window running the coding session
+rem                 (this is the interactive coding agent you type into)
+rem    2) DSH web - a standalone instance of the dsh-pi panel on port 25117
+rem                 (browser / sidebar UI, runs in the background)
+rem
+rem  They are two parallel front ends of the SAME pi and the SAME agent loop.
+rem  Neither replaces the other: the TUI is for writing code, the web panel is
+rem  for the GUI.
+rem
+rem  All real logic lives in tools\launch-both.ps1 -- this file only forwards.
 rem
 rem  Usage:
-rem    double-click                    start on the default port (25117)
-rem    -Port 25117                     start on a specific port
-rem    -Status                         report status only, change nothing
-rem    -Stop                           stop the instance this script started
-rem    -Reinstall                      force reinstall after a plugin upgrade
+rem    double-click                    start both (TUI window + web on 25117)
+rem    -Resume pick                    pick a past session to resume
+rem    -Resume new                     start a fresh session
+rem    -WorkDir D:\path\to\project     the folder the agent works in
+rem    -NoTui / -NoWeb                 start only one of the two
+rem    -Port 25117                     web port
+rem    -Status                         report both, change nothing
+rem    -Stop                           stop both
 rem
 rem  WHY THIS FILE IS PURE ASCII:
-rem    cmd.exe re-reads the .bat file using the *current* console code page.
-rem    After "chcp 65001" the byte offsets of any non-ASCII line no longer match
-rem    the line boundaries cmd already cached, so multi-byte characters get
-rem    split mid-sequence and the following lines are executed as garbage.
-rem    Keeping this file ASCII-only makes the forwarder immune to that. The
-rem    Chinese title/echo live in tools\start-standalone.ps1 (a PowerShell
-rem    file, which cmd never parses) so the user still sees Chinese.
+rem    cmd.exe re-reads the .bat using the *current* console code page. After
+rem    "chcp 65001" the byte offsets of any non-ASCII line no longer match the
+rem    line boundaries cmd already cached, so multi-byte characters get split
+rem    mid-sequence and the following lines run as garbage. ASCII-only keeps
+rem    this wrapper correct; all Chinese text lives in the .ps1 instead.
 rem ======================================================================
 
-set "TARGET=%~dp0tools\start-standalone.ps1"
+set "TARGET=%~dp0tools\launch-both.ps1"
 set "PWSH="
 
 if not exist "%TARGET%" (
-  echo [ERROR] tools\start-standalone.ps1 not found.
+  echo [ERROR] tools\launch-both.ps1 not found.
   echo         expected: %TARGET%
   echo.
   echo         Check that the tools directory is complete.
@@ -55,7 +66,7 @@ if defined PWSH (
 set "RC=%ERRORLEVEL%"
 echo.
 if "%RC%"=="0" (
-  echo  [ok] See the output above for the api url, log path and how to stop.
+  echo  [ok] Done - see the summary above for each front end.
 ) else (
   echo  [failed] exit code %RC% - see the output above.
 )
