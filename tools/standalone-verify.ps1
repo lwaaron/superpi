@@ -13,7 +13,11 @@
     6. 关掉服务；除 -Keep 外删除临时目录
 
 .PARAMETER Port
-  standalone 实例监听端口，默认 5599。
+  验一个临时实例用哪个端口，默认 25119。
+
+  不要与 tools/start-standalone.ps1 的默认端口（25117）相同：那是常驻的一键启动实例，
+  本脚本会真的起第二个 DSH 并占端口，两者撞上会导致后起的一方绑不上。
+  两个端口都刻意选了罕见值，避开 3000/5173/8080 这类被开发工具占满的区间。
 
 .PARAMETER Keep
   保留临时 DSH_HOME，便于人工排查。
@@ -23,7 +27,7 @@
 #>
 [CmdletBinding()]
 param(
-  [int]$Port = 5599,
+  [int]$Port = 25119,
   [switch]$Keep,
   [string]$PnpmPath = '',
   [string]$PluginRoot = (Split-Path -Parent $PSScriptRoot),

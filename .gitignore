@@ -19,6 +19,10 @@ node_modules/
 # 一键安装的 pi 运行时（npm install 落的 24MB，不进版本库）
 .runtime/
 
+# 一键启动（tools/start-standalone）的独立 DSH_HOME、日志与进程记录。
+# 这里装的是 dsh-pi 的 tarball 副本与 pi 运行时，体积大且可重建，随时可删。
+.standalone/
+
 # npm pack 产物
 *.tgz
 

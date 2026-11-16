@@ -30,6 +30,29 @@ assets/icon.svg       插件图标
 
 ## 安装
 
+### 方式零：一键启动（只想看看面板长什么样，不装进 DSH）
+
+双击 `tools\start-standalone.bat`，或用命令行：
+
+```powershell
+.\tools\start-standalone.bat                  # 默认端口 25117，起完打印访问地址
+.\tools\start-standalone.bat -Port 25117      # 换端口
+.\tools\start-standalone.bat -Status          # 只看状态，不动任何东西
+.\tools\start-standalone.bat -Stop            # 停掉这个实例
+.\tools\start-standalone.bat -Reinstall       # 插件升级后强制重装
+```
+
+它做的事和「方式四」同源，但**面向常驻使用**：状态全部落在仓库内的 `.standalone\`（已 gitignore，可随时整个删掉），
+首次运行装一次依赖（约几分钟，需联网），之后**直接复用、秒起**；不碰桌面 profile，不影响你正在用的 DSH。
+
+- 端口默认 **25117**，刻意选了罕见值，避开 3000 / 5173 / 8080 这类被开发工具占满的区间。
+- 起完会打印 `api -> http://127.0.0.1:25117/api/dsh-pi`。**面板是 DSH 的侧栏 slot，没有独立的 `/dsh-pi` 网页入口**；要看界面就把这个 profile 接进 DSH 客户端，或用任意 HTTP 客户端打上面这组免 token 接口（`/health`、`/state`、`/sessions`…）。实例的 web 根路径由宿主鉴权层保护，无 token 直接 401 属于预期。
+- 已装版本与仓库 `package.json` 版本不一致时自动重装，避免面板跑旧代码。
+- 全部路径从脚本自身位置推导，**换目录、换盘符都不用改脚本**。
+
+> 与「方式四」的区别：`standalone-verify.ps1` 是**一次性自证**——每次从空 `DSH_HOME` 重装、跑完真实 LLM 往返就把临时目录删掉，
+> 默认端口 25119（不与常驻的一键启动实例争用）。本脚本是**常驻启动器**，装一次留着用。
+
 ### 方式一：一键装进 DSH profile（推荐）
 
 ```powershell
@@ -168,10 +191,10 @@ New-Item -ItemType Junction `
 ### 方式三：手工 pnpm add（不想跑脚本时）
 
 ```powershell
-npm pack                                        # 得到 dsh-pi-0.8.1.tgz
+npm pack                                        # 得到 dsh-pi-0.8.2.tgz
 cd "$env:USERPROFILE\.dsh\profiles\desktop"
 node "$env:USERPROFILE\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\pnpm\bin\pnpm.cjs" `
-  add "file:C:\path\to\dsh-pi-0.8.1.tgz" --ignore-scripts
+  add "file:C:\path\to\dsh-pi-0.8.2.tgz" --ignore-scripts
 ```
 
 不要在 profile 里用 `npm install`：npm 会另写一份 `package-lock.json`，而宿主插件管理器用的是 pnpm，两套锁文件互相看不见，下次插件安装就会把 node_modules 重建成 pnpm 理解的样子。
@@ -191,7 +214,7 @@ Select-String -LiteralPath node_modules\.modules.yaml -Pattern 'dsh-pi'    # pnp
 想知道「这东西真的能独立跑吗」，用这个脚本自证。它在你没碰过的临时 `DSH_HOME` 里从零搭一个 profile，只装 dsh-pi，启动、开会话、跑一轮真实 LLM 往返，然后全部删掉：
 
 ```powershell
-pwsh -NoProfile -File .\tools\standalone-verify.ps1            # 默认 5599 端口
+pwsh -NoProfile -File .\tools\standalone-verify.ps1            # 默认 25119 端口
 pwsh -NoProfile -File .\tools\standalone-verify.ps1 -Keep      # 保留临时目录便于排查
 ```
 
@@ -382,7 +405,8 @@ pwsh -NoProfile -File .\tools\standalone-verify.ps1   # 全新 DSH_HOME 里只�
 | `test/session-projects.mjs` | 两级历史列表 55 条：`pathComparisonKey` 大小写归一、`isTemporaryPath` 三条正则逐条对齐 pi（`/tmp`、`appdata/local/temp`、`pi-runtime-*`）、`shortenHomePath` 的 `~` 缩写边界、`groupSessionsByProject` 的「当前项目 → 非临时 → 最近活动降序」与大小写合并、`listAllSessions`/`listSessions` 的「全部项目 vs 单项目」两种语义、`readSessionCwd` 只读 64KB 头行且首行非杂项时返回空、`firstRunningSessionFile` 的「跨项目也算当前会话」与活/死优先级。造一棵符合 pi 目录约定的假 `sessions/` 树来跑，不碰真会话 |
 | `test/host-parity.mjs` | host 侧离线一致性 291 条：`buildSpawnArgs` 19 条（`persist=false` 不吃 `--continue`、用户自带 `--fork`/`--no-session` 不重复生成、空 `--name` 不传）、`pickCurrentSessionFile` 8 条、以及 `/respond` 的 409/400/415/200、`/reset`、四条替换命令的 reset+refresh、`/files` 排序与 404、`/file` 预览 28 条（文本截断 / 二进制探测 / 目录 400 / ENOENT 404 / MIME 映射 / `~` 与 `%VAR%` 展开）、`/pi/changelog` 三情形、未知路由 404、`/ui-prefs` 三条路由 33 条（GET 空文件回落、项目改名 trim 与键白名单、会话置顶与「只给 name 不许凭空置顶」的合并语义、四类 400）。**路由与参数拼错了只会静默跑偏，所以单独立门禁** |
 | `test/parity.mjs` | 与 pi 的三向对账 78 条：以 pi 的 `RpcCommand` 联合类型、`RpcSessionState` 接口、`docs/json.md` 事件表为事实来源，双向比对（我们缺的 = 缺口，我们编的 = 幻觉），再断言契约里 33 条命令 / 25 类事件 / 12 种 assistant 事件 / 27 条斜杠 / 9 个扩展 UI method 在面板里都有落地字面量，且 `CONTRACT_VERSION` 与 `package.json` 同步。0.2.5 时「只发 5/33 命令、只处理 12/25 事件、27 条斜杠一条没接而 `npm test` 全绿」正是这个门禁要拦的事 |
-| `tools/standalone-verify.ps1` | 全新 DSH_HOME 自证：建临时 profile → pnpm 装 tarball → 起独立实例 → 真实 LLM 往返 → 清理（端到端演练，不是单测） |
+| `tools/start-standalone.ps1` / `.bat` | **一键启动**常驻实例：状态落在仓库内 `.standalone\`，首次装依赖、之后复用；默认端口 25117；`-Stop` / `-Status` / `-Reinstall` / `-Port`。位置无关，不碰桌面 profile |
+| `tools/standalone-verify.ps1` | 全新 DSH_HOME 自证：建临时 profile → pnpm 装 tarball → 起独立实例 → 真实 LLM 往返 → 清理（端到端演练，不是单测）。默认端口 25119，不与一键启动实例争用 |
 
 `client-render.mjs` 需要 `react` / `react-dom` —— 本插件刻意不带 `node_modules`，所以它从同级 `pi-main/node_modules` 借（找不到就 SKIP 并退出 0，不算失败）。
 
