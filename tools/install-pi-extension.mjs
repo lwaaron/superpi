@@ -118,7 +118,8 @@ function report(state) {
   line('pi 运行时', state.piFound ? `${state.piVersion || '(版本未知)'}` : '未找到（扩展仍然可装，pi 会自己找）')
   process.stdout.write('\n生效方式：重启 pi 会话窗口，或在 pi 里执行 /reload\n')
   process.stdout.write(
-    '外观：四边闭合、框线 80% 白 · Working 按状态变色（正常白 / 成功绿 / 出错红） · 粘贴路径带浅灰底 · 右下 settings / home\n',
+    '外观：四边闭合、框线 80% 白 · Working 按状态变色（正常白 / 成功绿 / 出错红） · 粘贴路径带浅灰底 · ' +
+    'footer：项目名 (分支) ⇄ + settings / home 同行（鼠标移入变亮，点了就执行）\n',
   )
   process.stdout.write(
     '键位：Ctrl+A 全选 · Shift+方向扩选 · Ctrl+C 复制（不清空）· Ctrl+X 剪切 · Backspace/Delete 删选区 · Ctrl+V 粘贴文件路径\n',

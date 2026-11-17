@@ -15,6 +15,7 @@
  */
 
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { resolvePiRuntime } from '../src/pi-runtime.mjs'
@@ -103,6 +104,17 @@ const parseProbe = extensionModule.parseProbe
 const resolveClipboardPaste = extensionModule.resolveClipboardPaste
 const saveClipboardImage = extensionModule.saveClipboardImage
 const borderBody = extensionModule.borderBody
+const SWITCH_ICON = extensionModule.SWITCH_ICON
+const hoverState = extensionModule.hoverState
+const hoverStyle = extensionModule.hoverStyle
+const projectLabel = extensionModule.projectLabel
+const splitFooterLine = extensionModule.splitFooterLine
+const splitModelSegment = extensionModule.splitModelSegment
+const SuperPiFooter = extensionModule.SuperPiFooter
+const groupProjects = extensionModule.groupProjects
+const pathComparisonKey = extensionModule.pathComparisonKey
+const ensureProjectSession = extensionModule.ensureProjectSession
+const isTemporaryProjectPath = extensionModule.isTemporaryProjectPath
 const paintColumns = extensionModule.paintColumns
 const decodeListing = extensionModule.decodeListing
 const defaultExport = extensionModule.default
@@ -112,7 +124,17 @@ ok(typeof decodeListing === 'function', '扩展导出 decodeListing')
 ok(typeof defaultExport === 'function', '扩展导出默认入口（pi 加载用）')
 
 const tuiModule = await import(pathToFileURL(piTuiEntry).href)
-const { CustomEditor } = await import(pathToFileURL(path.join(pi.packageDir, 'dist', 'index.js')).href)
+const { CustomEditor, FooterComponent: FooterComponentStub } = await import(pathToFileURL(path.join(pi.packageDir, 'dist', 'index.js')).href)
+
+// pi 的 FooterComponent 渲染时要读模块级主题（theme.js 的 Theme 单例）。
+// 不初始化就会抛 "Theme not initialized. Call initTheme() first." —— 单测里照 pi
+// 自己的启动顺序先 initTheme 一次，这样 footer 用的就是真实现，不是影子。
+{
+  const themeModule = await import(
+    pathToFileURL(path.join(pi.packageDir, 'dist', 'modes', 'interactive', 'theme', 'theme.js')).href
+  )
+  themeModule.initTheme('dark')
+}
 ok(typeof CustomEditor === 'function', 'pi 公开导出了 CustomEditor（扩展继承它）')
 ok(SuperPiEditor.prototype instanceof CustomEditor, 'SuperPiEditor 继承自 pi 的 CustomEditor（app 键位/actionHandlers 生效）')
 
@@ -398,6 +420,7 @@ const anchorOf = editor => editor.selAnchor
   }
   const factories = []
   const titles = []
+  const footers = []
   const ctx = {
     mode: 'tui',
     sessionManager: { getCwd: () => 'D:\\projects\\SuperPi' },
@@ -405,11 +428,18 @@ const anchorOf = editor => editor.selAnchor
       setEditorComponent: factory => factories.push(factory),
       setWorkingVisible: visible => { ctx.ui.workingVisible = visible },
       setTitle: title => titles.push(title),
+      setFooter: factory => footers.push(factory),
     },
   }
   for (const call of calls) call.handler({}, ctx)
   eq(factories.length, 2, '两个会话事件都装了编辑器工厂')
   eq(ctx.ui.workingVisible, false, '关掉 pi 内置 Working 行（改由本扩展渲染状态）')
+  // 0.9.9：cwd + settings/home 同一行、切换图标、可点的 max —— 都靠接管 footer 实现。
+  eq(footers.length, 1, 'footer 只装一次（session_switch 不会叠层）')
+  const footerTui = { renders: 0, requestRender() { this.renders += 1 } }
+  const footerData = { getGitBranch: () => 'master', getExtensionStatuses: () => new Map(), getAvailableProviderCount: () => 1, onBranchChange: () => () => {} }
+  const footerInstance = footers[0](footerTui, { fg: (t, x) => x }, footerData)
+  ok(footerInstance instanceof SuperPiFooter, 'footer 工厂返回 SuperPiFooter')
   // 标题必须盖住上游默认的 "π"：TUI 下叫 SuperPi，形状对齐 pi 的 "${APP_TITLE} - ${cwd}"。
   // 目录名与品牌同名时不重复拼（避免 "SuperPi - SuperPi"）。
   ok(titles.length > 0 && titles[0] === 'SuperPi', '窗口标题 = SuperPi（目录名与品牌同名时不重复），实际 ' + String(titles[0]))
@@ -501,6 +531,12 @@ const anchorOf = editor => editor.selAnchor
 
 /* ---------------------------------------------- 输入框外观与入口（0.9.4） */
 
+/** 主题桩：必须是真 ANSI —— 字面标签会被 visibleWidth 当成可见字符，把排版算歪。 */
+const ANSI = {
+  dim: text => '[2m' + text + '[22m',
+  accent: text => '[36m' + text + '[39m',
+}
+
 const stripAnsi = text => text.replace(/\x1b\[[0-9;:?]*[A-Za-z]/g, '').replace(/\x1b\][^\x07]*\x07/g, '')
 const rowIndexOf = (rows, needle) => rows.findIndex(row => stripAnsi(row).includes(needle))
 const columnOf = (rows, y, needle) => stripAnsi(rows[y] ?? '').indexOf(needle)
@@ -574,51 +610,222 @@ const columnOf = (rows, y, needle) => stripAnsi(rows[y] ?? '').indexOf(needle)
   ok(!plainRows.some(row => row.includes('\x1b[48;2;104;104;104m')), '普通文字不带路径底色')
 }
 
-// ④ settings / home 入口：框外右下角、模型上方，颜色跟模型名一致（小写）
+// ④ settings / home 入口搬进 footer：与「项目名 (分支)」同行，右侧；小写
 {
-  const dimmed = label => `<dim>${label}</dim>`
+  const dimmed = label => '[2m' + label + '[22m'
   const { editor } = makeEditor('', { hooks: { dim: dimmed } })
   const rows = editor.render(60)
   const boxBottom = rows.findIndex(row => stripAnsi(row).startsWith('└'))
   ok(boxBottom > 0, '找得到下边框')
+  // 0.9.9 起框外只剩 settings 展开出来的子菜单；两个入口由 footer 画。
   const outside = rows.slice(boxBottom + 1)
-  ok(outside.length >= 1, '框外有内容行')
-  const actionsRowIndex = outside.findIndex(row => stripAnsi(row).includes('settings'))
-  ok(actionsRowIndex >= 0, 'settings 在框外（下边框之下）')
-  ok(stripAnsi(outside[actionsRowIndex]).includes('home'), '同一行有 home')
-  ok(!stripAnsi(outside[actionsRowIndex]).includes('Home'), 'home 必须小写（用户明确要求）')
-  // 注入的 dim 会把文案包起来，所以先去掉标记再比
-  const plainActions = stripAnsi(outside[actionsRowIndex]).replace(/<\/?dim>/g, '').trimEnd()
-  eq(plainActions.endsWith('home'), true, 'settings/home 右对齐到右下角')
-  // 颜色与模型名一致：走注入的 dim（扩展入口用 ctx.ui.theme.fg('dim', …) 提供）
-  ok(outside[actionsRowIndex].includes(dimmed('settings')), 'settings 用 dim（与模型名同色）')
-  ok(outside[actionsRowIndex].includes(dimmed('home')), 'home 用 dim（与模型名同色）')
+  eq(outside.length, 0, '输入框自己的框外不再有入口行（settings/home 移到 footer）')
   eq(EDITOR_ACTIONS.map(a => a.label).join(','), 'settings,home', '两个入口的文案与顺序')
-  ok(boxBottom < rows.length - 1, '框外入口在组件末尾（pi footer 紧随其后）')
+}
+
+// ④c footer：`项目名 (分支)  ⇄` + 右对齐的 `settings  home`（用户 0.9.9 的第一条要求）
+{
+  const dimmed = label => '[2m' + label + '[22m'
+  const fakeSession = {
+    state: { model: { id: 'Deepseek-V4.1-Flash', provider: 'odys-deepseek', reasoning: true, contextWindow: 1000000 }, thinkingLevel: 'max' },
+    sessionManager: {
+      getEntryCount: () => 0,
+      getSessionId: () => 's',
+      getLeafId: () => null,
+      getEntries: () => [],
+      getCwd: () => 'D:\\my_projects\\SuperPi\\SuperPi',
+      getSessionName: () => undefined,
+    },
+    modelRuntime: { isUsingSubscription: () => false },
+    getContextUsage: () => ({ tokens: 1234, contextWindow: 1000000, percent: 0.1 }),
+    autoCompactionEnabled: true,
+  }
+  const footerData = { getGitBranch: () => 'master', getExtensionStatuses: () => new Map(), getAvailableProviderCount: () => 1, onBranchChange: () => () => {} }
+  const tui = { renders: 0, requestRender() { this.renders += 1 } }
+  const themeFg = (token, text) => ANSI[token === 'accent' ? 'accent' : 'dim'](text)
+  const actions = []
+  const footer = new SuperPiFooter(tui, { fg: themeFg }, footerData, {
+    ctx: {
+      session: fakeSession,
+      sessionManager: fakeSession.sessionManager,
+      FooterComponent: FooterComponentStub,
+      onFooterAction: kind => actions.push(kind),
+    },
+  })
+  const rows = footer.render(100)
+  eq(rows.length, 2, 'footer 两行（项目行 + pi 自己的统计/模型行）')
+  const first = stripAnsi(rows[0])
+  ok(first.includes('SuperPi (master)'), '第一行是 项目名 (分支)')
+  ok(first.includes(SWITCH_ICON), '项目名右侧有切换图标')
+  ok(first.indexOf(SWITCH_ICON) > first.indexOf('(master)'), '切换图标紧贴项目名右侧')
+  ok(first.includes('settings') && first.includes('home'), 'settings/home 与项目名同一行')
+  ok(first.trimEnd().endsWith('home'), 'settings/home 右对齐')
+  ok(!first.includes('Home'), 'home 必须小写（用户明确要求）')
+  ok(rows[0].includes(dimmed('settings')) || rows[0].includes('<dim>settings'), 'settings 平时是 dim（与模型名同色）')
+  // 第二行：模型名与档位都在，各自是独立的命中区（用户第三条：点 max 能切换）
+  const second = stripAnsi(rows[1])
+  ok(second.includes('Deepseek-V4.1-Flash'), '第二行有模型名')
+  ok(second.includes('max'), '第二行有推理档位')
+  eq(SWITCH_ICON, String.fromCharCode(0x21c4), '切换图标是 U+21C4（单列宽，不会撑歪项目行）')
+  void actions
+}
+
+// ④d footer 点击：项目名/图标 → 项目列表，模型名 → /model，max → /thinking
+{
+  const emitted = []
+  const make = () => {
+    const fakeSession = {
+      state: { model: { id: 'M', provider: 'p', reasoning: true, contextWindow: 100 }, thinkingLevel: 'max' },
+      sessionManager: { getEntryCount: () => 0, getSessionId: () => 's', getLeafId: () => null, getEntries: () => [], getCwd: () => 'D:\\p', getSessionName: () => undefined },
+      modelRuntime: { isUsingSubscription: () => false },
+      getContextUsage: () => ({ tokens: 1, contextWindow: 100, percent: 1 }),
+      autoCompactionEnabled: true,
+    }
+    const footerData = { getGitBranch: () => null, getExtensionStatuses: () => new Map(), getAvailableProviderCount: () => 1, onBranchChange: () => () => {} }
+    const tui = { requestRender() {} }
+    return new SuperPiFooter(tui, { fg: (t, x) => x }, footerData, {
+      ctx: {
+        session: fakeSession,
+        sessionManager: fakeSession.sessionManager,
+        FooterComponent: FooterComponentStub,
+        onFooterAction: kind => emitted.push(kind),
+      },
+    })
+  }
+  const footer = make()
+  const rows = footer.render(80)
+  const pick = (rowIndex, needle) => {
+    const plain = stripAnsi(rows[rowIndex])
+    const at = plain.indexOf(needle)
+    ok(at >= 0, `行 ${rowIndex} 里有 ${needle}`)
+    return at
+  }
+  // 点切换图标
+  footer.handleMouse({ type: 'click', button: 'left', x: pick(0, SWITCH_ICON), y: 0 })
+  eq(emitted.at(-1), 'project', '点切换图标 → 项目列表')
+  // 点模型名
+  footer.handleMouse({ type: 'click', button: 'left', x: pick(1, 'M'), y: 1 })
+  eq(emitted.at(-1), 'model', '点模型名 → /model')
+  // 点 max
+  footer.handleMouse({ type: 'click', button: 'left', x: pick(1, 'max'), y: 1 })
+  eq(emitted.at(-1), 'thinking', '点 max → /thinking（用户第三条要求）')
+}
+
+// ④e 悬停：移入变亮 + 下划线，移出复原（用户第四条要求）
+{
+  const emitted = []
+  const fakeSession = {
+    state: { model: { id: 'M', provider: 'p', reasoning: true, contextWindow: 100 }, thinkingLevel: 'max' },
+    sessionManager: { getEntryCount: () => 0, getSessionId: () => 's', getLeafId: () => null, getEntries: () => [], getCwd: () => 'D:\\p', getSessionName: () => undefined },
+    modelRuntime: { isUsingSubscription: () => false },
+    getContextUsage: () => ({ tokens: 1, contextWindow: 100, percent: 1 }),
+    autoCompactionEnabled: true,
+  }
+  const footerData = { getGitBranch: () => null, getExtensionStatuses: () => new Map(), getAvailableProviderCount: () => 1, onBranchChange: () => () => {} }
+  const tui = { requestRender() {} }
+  const footer = new SuperPiFooter(tui, { fg: (t, x) => ANSI[t === 'accent' ? 'accent' : 'dim'](x) }, footerData, {
+    ctx: {
+      session: fakeSession,
+      sessionManager: fakeSession.sessionManager,
+      FooterComponent: FooterComponentStub,
+      onFooterAction: kind => emitted.push(kind),
+    },
+  })
+  hoverState.id = null
+  const before = footer.render(80)
+  ok(!before[1].includes('[36m'), '平时 max 不是 accent')
+  // 移到 max 上
+  const maxX = stripAnsi(before[1]).indexOf('max')
+  ok(maxX >= 0, '找得到 max 的位置')
+  const move = footer.handleMouse({ type: 'move', button: 'none', x: maxX, y: 1 })
+  ok(move && move.handled, '移入被 footer 消费（不会传下去）')
+  eq(hoverState.id, 'thinking', '悬停态记到 thinking')
+  const hovered = footer.render(80)
+  ok(hovered[1].includes('[36m'), '悬停后 max 变成 accent 色')
+  ok(hovered[1].includes('\x1b[4m'), '悬停后加下划线（终端里最稳的可点信号）')
+  eq(emitted.length, 0, '悬停不触发动作（只有点击才切）')
+  // 移到项目行上的空白处（不是项目名、也不是两个入口）
+  const blankX = stripAnsi(before[0]).indexOf(SWITCH_ICON) + 3
+  footer.handleMouse({ type: 'move', button: 'none', x: blankX, y: 0 })
+  eq(hoverState.id, null, '移到空白处清掉悬停态')
+  const restored = footer.render(80)
+  ok(!restored[1].includes('\x1b[4m'), '移出后下划线消失')
+  // 悬停样式本身
+  ok(hoverStyle('x', (t, v) => ANSI[t === 'accent' ? 'accent' : 'dim'](v)).includes('[36m'), 'hoverStyle 用 accent')
+  ok(hoverStyle('x', null).includes('\x1b[4m'), '没有主题取色时仍加下划线（降级但仍可见）')
+}
+
+// ④f 项目列表：分组 + 排序 + 比较键 + 临时目录
+{
+  eq(pathComparisonKey('D:\\A\\b\\'), pathComparisonKey('d:/a/B'), '比较键归一大小写与分隔符')
+  eq(isTemporaryProjectPath('C:\\Users\\x\\AppData\\Local\\Temp\\a'), true, 'AppData/Local/Temp 是临时目录')
+  eq(isTemporaryProjectPath('D:\\my_projects\\SuperPi'), false, '普通工程不是临时目录')
+  eq(isTemporaryProjectPath('/tmp/x'), true, 'POSIX /tmp 是临时目录')
+  const sessions = [
+    { cwd: 'D:\\work\\old', modified: new Date('2026-01-01'), path: 'a' },
+    { cwd: 'D:\\work\\current', modified: new Date('2026-01-02'), path: 'b' },
+    { cwd: 'C:\\Users\\x\\AppData\\Local\\Temp\\t', modified: new Date('2026-03-01'), path: 'c' },
+    { cwd: 'D:\\work\\recent', modified: new Date('2026-02-01'), path: 'd' },
+    { cwd: '', modified: new Date('2026-02-01'), path: 'e' },
+  ]
+  const projects = groupProjects(sessions, 'D:\\work\\current')
+  eq(projects.map(p => p.cwd).join('|'), 'D:\\work\\current|D:\\work\\recent|D:\\work\\old|C:\\Users\\x\\AppData\\Local\\Temp\\t', '当前项目置顶 → 最近活动降序 → 临时目录沉底')
+  eq(projects[0].sessionCount, 1, '会话计数')
+  eq(projects[0].lastSessionPath, 'b', '最近的会话文件路径')
+  eq(projects.length, 4, 'cwd 为空的会话被跳过')
+
+  // ensureProjectSession：目标项目还没有会话文件时，按 pi 的 header 格式写一个
+  const fakeSM = {
+    CURRENT_SESSION_VERSION: 3,
+    create: (cwd) => {
+      const file = path.join(os.tmpdir(), 'superpi-proj-' + process.pid + '-' + Date.now() + '.jsonl')
+      return { getSessionFile: () => file, getSessionId: () => 'sid', getCwd: () => cwd, getEntries: () => [] }
+    },
+  }
+  const created = ensureProjectSession(fakeSM, 'D:\\x')
+  ok(created.endsWith('.jsonl'), 'ensureProjectSession 给出会话文件路径')
+  ok(fs.existsSync(created), '空会话文件真的写出来了')
+  const header = JSON.parse(fs.readFileSync(created, 'utf8').split('\n')[0])
+  eq(header.type, 'session', 'header.type = session')
+  eq(header.cwd, 'D:\\x', 'header.cwd = 目标项目（pi 换 cwd 就靠它）')
+  eq(header.version, 3, 'header.version 跟 pi 的 CURRENT_SESSION_VERSION 一致')
+  fs.unlinkSync(created)
+  eq(ensureProjectSession(null, 'D:\\x'), '', '拿不到 SessionManager 时返回空串（不抛）')
+
+  // splitFooterLine / splitModelSegment
+  eq(splitFooterLine('12%/1.0M (auto)        Model • max').model, 'Model • max', 'splitFooterLine 切出右侧模型段')
+  eq(splitFooterLine('12%/1.0M (auto)        Model • max').stats, '12%/1.0M (auto)', 'splitFooterLine 保留左侧统计')
+  eq(splitFooterLine('just text').model, '', '没有右对齐段时不瞎猜')
+  eq(splitModelSegment('Model • max').model, 'Model', 'splitModelSegment 切模型名')
+  eq(splitModelSegment('Model • max').thinking, 'max', 'splitModelSegment 切档位')
+  eq(splitModelSegment('Model').thinking, '', '没有档位时为空')
+  eq(projectLabel('D:\\my_projects\\SuperPi', 'master'), 'D:\\my_projects\\SuperPi (master)', 'projectLabel 带分支')
+  eq(projectLabel('D:\\x', null), 'D:\\x', 'projectLabel 无分支')
 }
 
 // ④b 回归：theme 没有 fg、也没有注入 dim 时，**框仍然要在**（0.9.4 就是这里静默失效）
 {
   const { editor } = makeEditor('测试内容')
   const rows = editor.render(60)
-  ok(rows.length >= 4, '仍然渲染出框（不是退化成无框原始行）')
+  // 0.9.9 起框外没有自己的行（入口搬去 footer），框本身仍然必须闭合。
+  ok(rows.length >= 3, '仍然渲染出框（不是退化成无框原始行）')
   ok(stripAnsi(rows[0]).startsWith('┌'), '上边框是直角')
   ok(stripAnsi(rows[0]).includes('Working'), 'Working 仍在上边框里')
   ok(stripAnsi(rows.find(row => row.startsWith('[38;2;204;204;204m└')) || '').startsWith('└'), '下边框在')
-  ok(stripAnsi(rows.at(-1)).includes('settings'), '框外的 settings 仍在')
+  ok(stripAnsi(rows.at(-1)).startsWith('└'), '最后一行仍是不依赖取色的下边框')
   // 直接对 theme.fg 做取色也不许抛（编辑器的 theme 没有这个方法）
   eq(typeof theme.fg, 'undefined', 'pi 交给编辑器的 theme 确实没有 fg')
 }
 
-// ⑤ 点 settings 展开菜单，点菜单项提交 pi 自己的斜杠命令
+// ⑤ settings 子菜单：toggleMenu() 展开，点条目提交 pi 自己的斜杠命令
 {
   const { editor } = makeEditor('')
   const submitted = []
   editor.onSubmit = command => submitted.push(command)
-  const before = editor.render(60)
-  const y = rowIndexOf(before, 'settings')
-  const x = columnOf(before, y, 'settings')
-  editor.handleMouse({ type: 'click', button: 'left', x, y })
+  ok(!stripAnsi(editor.render(60).join('\n')).includes('scoped-models'), '菜单默认收起')
+  // 0.9.9 起 settings 入口在 footer，点击由 footer 转给编辑器的 toggleMenu()。
+  editor.toggleMenu()
+  eq(editor.isMenuOpen(), true, 'toggleMenu() 打开子菜单')
   const opened = editor.render(60)
   for (const item of SETTINGS_COMMANDS) {
     ok(stripAnsi(opened.join('\n')).includes(item.label), `菜单展开后有 ${item.label}`)
@@ -631,41 +838,36 @@ const columnOf = (rows, y, needle) => stripAnsi(rows[y] ?? '').indexOf(needle)
   ok(!stripAnsi(editor.render(60).join('\n')).includes('scoped-models'), '提交后菜单收起')
 }
 
-// ⑥ 点 home 回首页（= pi 的 /new）
+// ⑥ home = /new；运行中不切（runCommand 的两条语义都还在）
 {
   const { editor } = makeEditor('')
   const submitted = []
   editor.onSubmit = command => submitted.push(command)
-  const rows = editor.render(60)
-  const y = rowIndexOf(rows, 'home')
-  const x = columnOf(rows, y, 'home')
-  editor.handleMouse({ type: 'click', button: 'left', x, y })
-  eq(submitted.at(-1), HOME_COMMAND, '点 home 提交 /new')
-  eq(HOME_COMMAND, '/new', 'home 对应 pi 的 /new（起新会话树 = 刚启动时的界面）')
+  eq(HOME_COMMAND, '/new', 'home 对应 pi 的 /new（起新会话树 = 刚启动时的界��）')
+  editor.runCommand(HOME_COMMAND)
+  eq(submitted.at(-1), HOME_COMMAND, '空闲时提交 /new')
 
   // 运行中不许切：给提示而不是静默丢弃
   const notices = []
+  markRunStart()
   const busy = makeEditor('')
   busy.editor.hooks = { notify: (text, level) => notices.push(`${level}:${text}`) }
   busy.editor.onSubmit = command => submitted.push(command)
-  markRunStart()
-  const busyRows = busy.editor.render(60)
-  const by = rowIndexOf(busyRows, 'home')
-  busy.editor.handleMouse({ type: 'click', button: 'left', x: columnOf(busyRows, by, 'home'), y: by })
-  eq(submitted.filter(c => c === HOME_COMMAND).length, 1, '运行中点 home 不提交 /new')
-  ok(notices.length === 1 && notices[0].startsWith('warning:'), '运行中点 home 给出 warning 提示')
+  const before = submitted.length
+  busy.editor.runCommand(HOME_COMMAND)
+  eq(submitted.length, before, '运行中不提交 /new')
+  ok(notices.length === 1 && notices[0].startsWith('warning:'), '运行中给出 warning 提示')
   resetRunState()
 }
 
 // ⑦ Esc 先关菜单
 {
   const { editor } = makeEditor('')
-  const rows = editor.render(60)
-  const y = rowIndexOf(rows, 'settings')
-  editor.handleMouse({ type: 'click', button: 'left', x: columnOf(rows, y, 'settings'), y })
+  editor.toggleMenu()
   ok(stripAnsi(editor.render(60).join('\n')).includes('scoped-models'), '菜单已展开')
   editor.handleInput(KEY.esc)
   ok(!stripAnsi(editor.render(60).join('\n')).includes('scoped-models'), 'Esc 关掉菜单')
+  eq(editor.isMenuOpen(), false, 'Esc 之后 isMenuOpen() 为 false')
 }
 
 // ⑧ settings 菜单里的命令必须仍然存在于 pi（不自造）
@@ -695,9 +897,9 @@ const columnOf = (rows, y, needle) => stripAnsi(rows[y] ?? '').indexOf(needle)
     const widths = new Set(rows.slice(0, boxBottom + 1).map(row => tuiModule.visibleWidth(row)))
     eq([...widths].join(','), String(width), `宽度 ${width}：框内所有行等宽（含中文/换行/选区）`)
     ok(stripAnsi(rows[0]).startsWith('┌'), `宽度 ${width}：上边框是直角`)
-    // settings / home 在框外，任何宽度下都必须完整可见
+    // 0.9.9 起 settings / home 搬进 footer：编辑器渲染里不该再有框外入口行
     const outside = rows.slice(boxBottom + 1).map(row => stripAnsi(row)).join(String.fromCharCode(10))
-    ok(outside.includes('settings') && outside.includes('home'), `宽度 ${width}：settings/home 在框外且完整`)
+    ok(!outside.includes('settings'), `宽度 ${width}：编辑器不再画 settings（归 footer）`)
   }
 }
 
