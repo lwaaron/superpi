@@ -1515,6 +1515,75 @@ export function splitModelSegment(segment: string): { model: string; thinking: s
   return { model: text.slice(0, index), thinking: text.slice(index + 3) }
 }
 
+/** 安全读 ctx 上的字段（getter 可能抛；扩展 ctx 可能缺字段）。 */
+function readCtx<T>(ctx: any, pick: (ctx: any) => T): T | undefined {
+  try {
+    const value = pick(ctx)
+    return value === null || value === undefined ? undefined : value
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * 从 `ctx.sessionManager.getEntries()` 累加 usage —— 与 pi footer 的
+ * `getSessionStats()`（`footer.js:83-125`）同一套口径：assistant 消息的 usage
+ * + `usage` 条目 + toolResult 的 usage + branch_summary/compaction 的 usage，
+ * 命中率取**最后一条** assistant 消息的 cacheRead/(input+cacheRead+cacheWrite)。
+ */
+export function sumUsage(sessionManager: any): {
+  input: number
+  output: number
+  cacheRead: number
+  cacheWrite: number
+  latestCacheHitRate: number | undefined
+} {
+  const totals = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, latestCacheHitRate: undefined as number | undefined }
+  let entries: any[] = []
+  try {
+    entries = Array.isArray(sessionManager?.getEntries?.()) ? sessionManager.getEntries() : []
+  } catch {
+    return totals
+  }
+  for (const entry of entries) {
+    const usage =
+      entry?.type === 'usage'
+        ? entry.usage
+        : entry?.type === 'message' && entry.message?.role === 'assistant'
+          ? entry.message.usage
+          : entry?.type === 'message' && entry.message?.role === 'toolResult'
+            ? entry.message.usage
+            : entry?.type === 'branch_summary' || entry?.type === 'compaction'
+              ? entry.usage
+              : undefined
+    if (!usage) continue
+    totals.input += Number(usage.input ?? 0)
+    totals.output += Number(usage.output ?? 0)
+    totals.cacheRead += Number(usage.cacheRead ?? 0)
+    totals.cacheWrite += Number(usage.cacheWrite ?? 0)
+    if (entry?.type === 'message' && entry.message?.role === 'assistant') {
+      const prompt = totalsCachePrompt(usage)
+      totals.latestCacheHitRate = prompt > 0 ? (Number(usage.cacheRead ?? 0) / prompt) * 100 : undefined
+    }
+  }
+  return totals
+}
+
+function totalsCachePrompt(usage: any): number {
+  return Number(usage?.input ?? 0) + Number(usage?.cacheRead ?? 0) + Number(usage?.cacheWrite ?? 0)
+}
+
+/** token 数缩写（与 pi footer 的 formatTokens 同一条规则）。 */
+export function formatTokens(count: number): string {
+  const value = Number(count ?? 0)
+  if (!Number.isFinite(value) || value <= 0) return '0'
+  if (value < 1000) return String(value)
+  if (value < 10000) return (value / 1000).toFixed(1) + 'k'
+  if (value < 1000000) return Math.round(value / 1000) + 'k'
+  if (value < 10000000) return (value / 1000000).toFixed(1) + 'M'
+  return Math.round(value / 1000000) + 'M'
+}
+
 /** footer 里的可点元素 → 命中的那个（按显示列）。 */
 function hitAt(hits: FooterHit[], x: unknown, y: unknown): FooterHit | undefined {
   if (typeof x !== 'number' || typeof y !== 'number') return undefined
@@ -1526,8 +1595,6 @@ export class SuperPiFooter {
   private theme: any
   private footerData: any
   private ctx: any
-  private inner: any = null
-  private innerSession: any = null
   private hits: FooterHit[] = []
   private lastWidth = 80
 
@@ -1542,17 +1609,6 @@ export class SuperPiFooter {
     } catch {
       /* 拿不到订阅就不订阅 */
     }
-  }
-
-  /** 会话被替换（switchSession / newSession）时重建内层 footer。 */
-  private ensureInner(): any {
-    const session = this.ctx?.session ?? null
-    if (this.inner === null || this.innerSession !== session) {
-      this.innerSession = session
-      const FooterComponent = this.ctx?.FooterComponent
-      this.inner = typeof FooterComponent === 'function' && session ? new FooterComponent(session, this.footerData) : null
-    }
-    return this.inner
   }
 
   /** 与模型名一致的暗色；取不到色就原样返回（footer 不许因取色失败消失）。 */
@@ -1589,37 +1645,97 @@ export class SuperPiFooter {
   }
 
   invalidate(): void {
-    try {
-      this.inner?.invalidate?.()
-    } catch {
-      /* 内层失效不影响本层 */
-    }
+    // 第 2 行每帧现算，无缓存可失效。
   }
 
   dispose(): void {
-    try {
-      this.inner?.dispose?.()
-    } catch {
-      /* 同上 */
-    }
+    // 没有定时器/订阅需要释放（分支订阅由 pi 的 footerData 自己管）。
   }
 
-  /** 第 2 行原样来自 pi 的 FooterComponent（统计 + 模型/档位全由 pi 算）。 */
+  /**
+   * 第 2 行：**统计 + 模型/档位**。
+   *
+   * 为什么不直接 new pi 的 `FooterComponent`：它要一个 `AgentSession`
+   * （`session.state` / `session.modelRuntime` / `session.getContextUsage()` /
+   * `session.sessionManager.getEntries()` …），而 **扩展的 `ExtensionContext`
+   * 里根本没有 `session`**（0.9.9 第一版就踩了这个坑：`ctx.session` 恒 undefined
+   * → 内层 footer 建不出来 → 用户看到「窗口最底部那一行信息没有了」）。
+   * 扩展能拿到的公开面只有 `ctx.model / ctx.thinkingLevel / ctx.sessionManager /
+   * ctx.getContextUsage() / footerData.getGetBranch()`，所以这一行由本扩展
+   * **按 pi 同一套公式**算出来（`footer.js:160-236` 逐项照抄）：
+   *   `↑input ↓output RcacheRead WcacheWrite CH命中率 (auto) 上下文%/窗口` + 右对齐 `(provider) Model • 档位`
+   * 只用了 4 个可空字段，任何一项取不到就跳过它，绝不整行消失。
+   */
   private innerLine(): string {
-    const inner = this.ensureInner()
-    if (!inner) return ''
+    const width = this.lastWidth
+    const model = readCtx(this.ctx, c => c.model)
+    const thinking = readCtx(this.ctx, c => c.thinkingLevel)
+    let usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } as any
     try {
-      inner.setAutoCompactEnabled?.(this.ctx?.session?.autoCompactionEnabled ?? true)
+      usage = sumUsage(readCtx(this.ctx, c => c.sessionManager)) ?? usage
     } catch {
-      /* 老版本没有这个方法 */
+      /* 统计拿不到就只显示上下文与模型 */
     }
-    let rows: string[] = []
+    let context: any = undefined
     try {
-      rows = inner.render(this.lastWidth) ?? []
+      context = this.ctx?.getContextUsage?.()
     } catch {
-      rows = []
+      context = undefined
     }
-    return rows[1] ?? rows[0] ?? ''
+
+    // 左侧统计（顺序与 pi footer 一致：输入、输出、缓存读、缓存写、命中率、上下文）
+    const parts: string[] = []
+    if (usage.input) parts.push('↑' + formatTokens(usage.input))
+    if (usage.output) parts.push('↓' + formatTokens(usage.output))
+    if (usage.cacheRead) parts.push('R' + formatTokens(usage.cacheRead))
+    if (usage.cacheWrite) parts.push('W' + formatTokens(usage.cacheWrite))
+    const promptTokens = usage.input + usage.cacheRead + usage.cacheWrite
+    if (promptTokens > 0 && usage.latestCacheHitRate !== undefined) {
+      parts.push('CH' + usage.latestCacheHitRate.toFixed(1) + '%')
+    }
+    const window = Number(context?.contextWindow ?? model?.contextWindow ?? 0)
+    if (context !== undefined) {
+      const percent = context?.percent
+      const auto = this.autoCompactEnabled()
+      const shown = percent === null || percent === undefined ? '?' : Number(percent).toFixed(1) + '%'
+      parts.push(shown + '/' + formatTokens(window) + (auto ? ' (auto)' : ''))
+    }
+    const stats = parts.join(' ')
+
+    // 右侧：`(provider) Model • 档位`（provider 只在有多个 provider 时加，与 pi 同规则）
+    if (!model) return stats
+    const modelName = String(model?.id ?? '') || 'no-model'
+    let right = modelName
+    if (model?.reasoning) {
+      const level = thinking || 'off'
+      right = level === 'off' ? modelName + ' • thinking off' : modelName + ' • ' + level
+    }
+    let providers = 1
+    try {
+      providers = Number(this.footerData?.getAvailableProviderCount?.() ?? 1)
+    } catch {
+      providers = 1
+    }
+    if (providers > 1 && model?.provider) {
+      const withProvider = '(' + model.provider + ') ' + right
+      if (widthOf(stats) + 2 + widthOf(withProvider) <= width) right = withProvider
+    }
+
+    const leftWidth = widthOf(stats)
+    const rightWidth = widthOf(right)
+    if (stats === '') return right
+    if (leftWidth + 2 + rightWidth > width) return stats
+    return stats + ' '.repeat(Math.max(2, width - leftWidth - rightWidth)) + right
+  }
+
+  /** 自动压缩开关（`ctx.getSettings().compaction.enabled`，拿不到就当开 —— 与 pi 同默认）。 */
+  private autoCompactEnabled(): boolean {
+    try {
+      const enabled = this.ctx?.getSettings?.()?.compaction?.enabled
+      return typeof enabled === 'boolean' ? enabled : true
+    } catch {
+      return true
+    }
   }
 
   render(width: number): string[] {
@@ -1630,11 +1746,7 @@ export class SuperPiFooter {
     const inner = this.innerLine()
     if (inner === '') return lines
     const { stats, model } = splitFooterLine(stripAnsi(inner))
-    if (model === '') {
-      // 拿不到右对齐的模型段就原样透传 pi 那一行（绝不吞掉统计）。
-      lines.push(inner)
-      return lines
-    }
+    // 拿不到右对齐的模型段 → 整行只当统计用（绝不吞掉统计）。
     const statsWidth = widthOf(stats)
     const modelWidth = widthOf(model)
     const gap = Math.max(2, width - statsWidth - modelWidth)
@@ -1646,21 +1758,24 @@ export class SuperPiFooter {
     // 模型名与档位各自可点、各自可悬停（用户要求「点 max 能切换选项」）。
     const modelHovered = hoverState.id === 'model'
     const thinkHovered = hoverState.id === 'thinking'
-    let row = this.dim(stats) + ' '.repeat(gap)
-    if (nameWidth > 0) {
-      row += modelHovered ? hoverStyle(modelName, (t, v) => this.fg(t, v)) : this.dim(modelName)
-      this.hits.push({ kind: 'model', x: modelX, y: 1, width: nameWidth })
+    let row = stats === '' ? '' : this.dim(stats)
+    if (model !== '') {
+      row += ' '.repeat(gap)
+      if (nameWidth > 0) {
+        row += modelHovered ? hoverStyle(modelName, (t, v) => this.fg(t, v)) : this.dim(modelName)
+        this.hits.push({ kind: 'model', x: modelX, y: 1, width: nameWidth })
+      }
+      if (thinkWidth > 0) {
+        const tail = model.slice(modelName.length)
+        row += thinkHovered ? hoverStyle(tail, (t, v) => this.fg(t, v)) : this.dim(tail)
+        this.hits.push({ kind: 'thinking', x: modelX + nameWidth, y: 1, width: thinkWidth })
+      } else if (nameWidth === 0) {
+        // 整段都不认得：当成档位处理，至少能点。
+        row += thinkHovered ? hoverStyle(model, (t, v) => this.fg(t, v)) : this.dim(model)
+        this.hits.push({ kind: 'thinking', x: modelX, y: 1, width: Math.max(1, modelWidth) })
+      }
     }
-    if (thinkWidth > 0) {
-      const tail = model.slice(modelName.length)
-      row += thinkHovered ? hoverStyle(tail, (t, v) => this.fg(t, v)) : this.dim(tail)
-      this.hits.push({ kind: 'thinking', x: modelX + nameWidth, y: 1, width: thinkWidth })
-    } else if (nameWidth === 0) {
-      // 整段都不认得：当成档位处理，至少能点。
-      row += thinkHovered ? hoverStyle(model, (t, v) => this.fg(t, v)) : this.dim(model)
-      this.hits.push({ kind: 'thinking', x: modelX, y: 1, width: Math.max(1, modelWidth) })
-    }
-    lines.push(padToWidth(row, width))
+    if (row !== '') lines.push(padToWidth(row, width))
     return lines
   }
 
@@ -1994,20 +2109,39 @@ export default function superpiEditor(pi: any): void {
       if (typeof ctx?.ui?.setFooter !== 'function') return
       footerInstalled = true
       ctx.ui.setFooter((tui: any, theme: any, footerData: any) => {
+        // 全部用 getter，**不用快照**：switchSession 之后 pi 会换一个新的 ctx，
+        // 快照会让 footer 永远盯着旧会话（统计 / 模型名从此不动）。
+        //
+        // 只暴露 `ExtensionContext` 真实存在的字段 —— 它**没有 `session`**
+        // （0.9.9 首版就是从这里拿 AgentSession，结果 footer 第二行整条消失）。
         const component: any = new SuperPiFooter(tui, theme, footerData, {
           ctx: {
-            // 用 getter 而不是快照：switchSession 之后 ctx 会换新对象，
-            // 快照会让 footer 永远盯着旧会话（统计/模型名从此不动）。
-            get session() {
-              return ctx?.session
+            get model() {
+              return ctx?.model
+            },
+            get thinkingLevel() {
+              return ctx?.thinkingLevel
             },
             get sessionManager() {
               return ctx?.sessionManager
             },
+            getContextUsage: () => {
+              try {
+                return ctx?.getContextUsage?.()
+              } catch {
+                return undefined
+              }
+            },
+            getSettings: () => {
+              try {
+                return ctx?.getSettings?.()
+              } catch {
+                return undefined
+              }
+            },
             get menuOpen() {
               return liveEditor?.isMenuOpen?.() === true
             },
-            FooterComponent: (publicApi() as any)?.FooterComponent,
             onFooterAction: (kind: string) => onFooterAction(ctx, kind),
           },
         })

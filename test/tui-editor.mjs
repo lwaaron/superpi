@@ -115,6 +115,8 @@ const groupProjects = extensionModule.groupProjects
 const pathComparisonKey = extensionModule.pathComparisonKey
 const ensureProjectSession = extensionModule.ensureProjectSession
 const isTemporaryProjectPath = extensionModule.isTemporaryProjectPath
+const formatTokens = extensionModule.formatTokens
+const sumUsage = extensionModule.sumUsage
 const paintColumns = extensionModule.paintColumns
 const decodeListing = extensionModule.decodeListing
 const defaultExport = extensionModule.default
@@ -405,6 +407,14 @@ const anchorOf = editor => editor.selAnchor
   ok(editor.getText() === 'xy' || editor.getText() === '', '内容被外部替换后删除不抛错')
 }
 
+/** 主题桩：必须是真 ANSI —— 字面标签会被 visibleWidth 当成可见字符，把排版算歪。 */
+const ANSI = {
+  dim: text => '[2m' + text + '[22m',
+  accent: text => '[36m' + text + '[39m',
+}
+
+const stripAnsi = text => text.replace(/\x1b\[[0-9;:?]*[A-Za-z]/g, '').replace(/\x1b\][^\x07]*\x07/g, '')
+
 /* ------------------------------------------------------ 扩展注册与安装面 */
 
 {
@@ -438,8 +448,26 @@ const anchorOf = editor => editor.selAnchor
   eq(footers.length, 1, 'footer 只装一次（session_switch 不会叠层）')
   const footerTui = { renders: 0, requestRender() { this.renders += 1 } }
   const footerData = { getGitBranch: () => 'master', getExtensionStatuses: () => new Map(), getAvailableProviderCount: () => 1, onBranchChange: () => () => {} }
+  // 这个 ctx 是照 **真实 ExtensionContext** 造的：有 model / thinkingLevel /
+  // sessionManager / getContextUsage / getSettings，**没有 session**。
+  // 0.9.9 首版就是从这里拿 ctx.session，真实环境恒 undefined → footer 第二行消失。
+  ctx.model = { id: 'Deepseek-V4.1-Flash', provider: 'odys-deepseek', reasoning: true, contextWindow: 1000000 }
+  ctx.thinkingLevel = 'max'
+  ctx.sessionManager.getEntries = () => [
+    { type: 'message', message: { role: 'assistant', usage: { input: 167000, output: 252000, cacheRead: 48000000, cacheWrite: 1100000 } } },
+  ]
+  ctx.getContextUsage = () => ({ tokens: 287000, contextWindow: 1000000, percent: 28.7 })
+  ctx.getSettings = () => ({ compaction: { enabled: true } })
+  ok(!('session' in ctx), '夹具照抄真实形状：ExtensionContext 里没有 session')
   const footerInstance = footers[0](footerTui, { fg: (t, x) => x }, footerData)
   ok(footerInstance instanceof SuperPiFooter, 'footer 工厂返回 SuperPiFooter')
+  // **接线回归**：入口必须把真实 ctx 的字段透给 footer，否则第二行静默空掉。
+  const liveRows = footerInstance.render(96)
+  eq(liveRows.length, 2, '经入口接线后 footer 真的渲染两行（回归：最底部那行不能没）')
+  ok(stripAnsi(liveRows[1]).includes('Deepseek-V4.1-Flash'), '第二行有模型名（入口把 ctx.model 透下去了）')
+  ok(stripAnsi(liveRows[1]).includes('max'), '第二行有档位（入口把 ctx.thinkingLevel 透下去了）')
+  ok(stripAnsi(liveRows[1]).includes('28.7%/1.0M'), '第二行有上下文（入口把 ctx.getContextUsage 透下去了）')
+  ok(stripAnsi(liveRows[1]).includes('↑167k'), '第二行有 token 统计（入口把 ctx.sessionManager 透下去了）')
   // 标题必须盖住上游默认的 "π"：TUI 下叫 SuperPi，形状对齐 pi 的 "${APP_TITLE} - ${cwd}"。
   // 目录名与品牌同名时不重复拼（避免 "SuperPi - SuperPi"）。
   ok(titles.length > 0 && titles[0] === 'SuperPi', '窗口标题 = SuperPi（目录名与品牌同名时不重复），实际 ' + String(titles[0]))
@@ -531,13 +559,6 @@ const anchorOf = editor => editor.selAnchor
 
 /* ---------------------------------------------- 输入框外观与入口（0.9.4） */
 
-/** 主题桩：必须是真 ANSI —— 字面标签会被 visibleWidth 当成可见字符，把排版算歪。 */
-const ANSI = {
-  dim: text => '[2m' + text + '[22m',
-  accent: text => '[36m' + text + '[39m',
-}
-
-const stripAnsi = text => text.replace(/\x1b\[[0-9;:?]*[A-Za-z]/g, '').replace(/\x1b\][^\x07]*\x07/g, '')
 const rowIndexOf = (rows, needle) => rows.findIndex(row => stripAnsi(row).includes(needle))
 const columnOf = (rows, y, needle) => stripAnsi(rows[y] ?? '').indexOf(needle)
 
@@ -623,37 +644,53 @@ const columnOf = (rows, y, needle) => stripAnsi(rows[y] ?? '').indexOf(needle)
   eq(EDITOR_ACTIONS.map(a => a.label).join(','), 'settings,home', '两个入口的文案与顺序')
 }
 
-// ④c footer：`项目名 (分支)  ⇄` + 右对齐的 `settings  home`（用户 0.9.9 的第一条要求）
-{
-  const dimmed = label => '[2m' + label + '[22m'
-  const fakeSession = {
-    state: { model: { id: 'Deepseek-V4.1-Flash', provider: 'odys-deepseek', reasoning: true, contextWindow: 1000000 }, thinkingLevel: 'max' },
+/**
+ * 造一个**形状正确**的扩展 ctx。
+ *
+ * 关键教训（0.9.9 首版翻车）：`ExtensionContext` **没有 `session`** —— 它只有
+ * `model / thinkingLevel / sessionManager / getContextUsage() / getSettings()`。
+ * 首版从 `ctx.session` 拿 AgentSession 去 new pi 的 FooterComponent，真实环境里
+ * `ctx.session` 恒 undefined，内层 footer 建不出来，用户看到的就是「窗口最底部
+ * 那一行信息没有了」。当时的门禁喂了假的 `ctx.session`，所以测试全绿 ——
+ * **测 UI 的假数据必须照抄上游真实形状**，否则门禁只证明自己和自己一致。
+ */
+function makeExtCtx({ finished = true, level = 'max' } = {}) {
+  const entries = finished
+    ? [
+        { type: 'message', message: { role: 'assistant', usage: { input: 1200, output: 340, cacheRead: 41000, cacheWrite: 1800 } } },
+        { type: 'message', message: { role: 'user' } },
+      ]
+    : []
+  return {
+    model: { id: 'Deepseek-V4.1-Flash', provider: 'odys-deepseek', reasoning: true, contextWindow: 1000000 },
+    thinkingLevel: level,
     sessionManager: {
-      getEntryCount: () => 0,
-      getSessionId: () => 's',
-      getLeafId: () => null,
-      getEntries: () => [],
-      getCwd: () => 'D:\\my_projects\\SuperPi\\SuperPi',
+      getCwd: () => ['D:', 'my_projects', 'SuperPi', 'SuperPi'].join(path.sep),
+      getEntries: () => entries,
       getSessionName: () => undefined,
     },
-    modelRuntime: { isUsingSubscription: () => false },
-    getContextUsage: () => ({ tokens: 1234, contextWindow: 1000000, percent: 0.1 }),
-    autoCompactionEnabled: true,
+    getContextUsage: () => ({ tokens: 276000, contextWindow: 1000000, percent: 27.6 }),
+    getSettings: () => ({ compaction: { enabled: true } }),
   }
-  const footerData = { getGitBranch: () => 'master', getExtensionStatuses: () => new Map(), getAvailableProviderCount: () => 1, onBranchChange: () => () => {} }
+}
+
+const makeFooterData = () => ({
+  getGitBranch: () => 'master',
+  getExtensionStatuses: () => new Map(),
+  getAvailableProviderCount: () => 1,
+  onBranchChange: () => () => {},
+})
+
+// ④c footer：`项目名 (分支)  ⇄` + 右对齐的 `settings  home`（用户 0.9.9 的第一条要求）
+{
+  const dimmed = label => '\x1b[2m' + label + '\x1b[22m'
   const tui = { renders: 0, requestRender() { this.renders += 1 } }
-  const themeFg = (token, text) => ANSI[token === 'accent' ? 'accent' : 'dim'](text)
   const actions = []
-  const footer = new SuperPiFooter(tui, { fg: themeFg }, footerData, {
-    ctx: {
-      session: fakeSession,
-      sessionManager: fakeSession.sessionManager,
-      FooterComponent: FooterComponentStub,
-      onFooterAction: kind => actions.push(kind),
-    },
+  const footer = new SuperPiFooter(tui, { fg: (t, x) => ANSI[t === 'accent' ? 'accent' : 'dim'](x) }, makeFooterData(), {
+    ctx: { ...makeExtCtx(), menuOpen: false, onFooterAction: kind => actions.push(kind) },
   })
   const rows = footer.render(100)
-  eq(rows.length, 2, 'footer 两行（项目行 + pi 自己的统计/模型行）')
+  eq(rows.length, 2, 'footer 两行（项目行 + 统计/模型行）')
   const first = stripAnsi(rows[0])
   ok(first.includes('SuperPi (master)'), '第一行是 项目名 (分支)')
   ok(first.includes(SWITCH_ICON), '项目名右侧有切换图标')
@@ -661,37 +698,45 @@ const columnOf = (rows, y, needle) => stripAnsi(rows[y] ?? '').indexOf(needle)
   ok(first.includes('settings') && first.includes('home'), 'settings/home 与项目名同一行')
   ok(first.trimEnd().endsWith('home'), 'settings/home 右对齐')
   ok(!first.includes('Home'), 'home 必须小写（用户明确要求）')
-  ok(rows[0].includes(dimmed('settings')) || rows[0].includes('<dim>settings'), 'settings 平时是 dim（与模型名同色）')
-  // 第二行：模型名与档位都在，各自是独立的命中区（用户第三条：点 max 能切换）
+  ok(rows[0].includes(dimmed('settings')), 'settings 平时是 dim（与模型名同色）')
+  // 第二行：统计 + 模型名 + 档位都得在（用户报的「最底部那行没了」就是这里空掉）
   const second = stripAnsi(rows[1])
   ok(second.includes('Deepseek-V4.1-Flash'), '第二行有模型名')
   ok(second.includes('max'), '第二行有推理档位')
+  ok(second.includes('27.6%/1.0M'), '第二行有上下文百分比')
+  ok(second.includes('↑'), '第二行有 token 统计（↑ 输入）')
+  ok(second.trimEnd().endsWith('max'), '模型/档位右对齐')
   eq(SWITCH_ICON, String.fromCharCode(0x21c4), '切换图标是 U+21C4（单列宽，不会撑歪项目行）')
   void actions
+}
+
+// ④c2 回归：**没有 `ctx.session` 时第二行也必须在**（0.9.9 首版就是这里空掉）
+{
+  const tui = { requestRender() {} }
+  const extCtx = makeExtCtx()
+  ok(!('session' in extCtx), '夹具照抄真实形状：ExtensionContext 里没有 session')
+  const footer = new SuperPiFooter(tui, { fg: (t, x) => x }, makeFooterData(), { ctx: extCtx })
+  const rows = footer.render(100)
+  eq(rows.length, 2, '没有 ctx.session 也渲染出两行（回归：最底部那行不能再消失）')
+  ok(stripAnsi(rows[1]).includes('Deepseek-V4.1-Flash'), '第二行仍有模型名')
+}
+
+// ④c3 极端兜底：ctx 什么字段都没有时，第一行照样在，且不抛
+{
+  const footer = new SuperPiFooter({ requestRender() {} }, { fg: (t, x) => x }, makeFooterData(), { ctx: {} })
+  const rows = footer.render(80)
+  ok(rows.length >= 1, '空 ctx 也至少渲染出项目行')
+  ok(stripAnsi(rows[0]).includes('settings'), 'settings 仍在')
+  eq(stripAnsi(rows[0]).includes(undefined), false, '不出现 undefined 字样')
 }
 
 // ④d footer 点击：项目名/图标 → 项目列表，模型名 → /model，max → /thinking
 {
   const emitted = []
-  const make = () => {
-    const fakeSession = {
-      state: { model: { id: 'M', provider: 'p', reasoning: true, contextWindow: 100 }, thinkingLevel: 'max' },
-      sessionManager: { getEntryCount: () => 0, getSessionId: () => 's', getLeafId: () => null, getEntries: () => [], getCwd: () => 'D:\\p', getSessionName: () => undefined },
-      modelRuntime: { isUsingSubscription: () => false },
-      getContextUsage: () => ({ tokens: 1, contextWindow: 100, percent: 1 }),
-      autoCompactionEnabled: true,
-    }
-    const footerData = { getGitBranch: () => null, getExtensionStatuses: () => new Map(), getAvailableProviderCount: () => 1, onBranchChange: () => () => {} }
-    const tui = { requestRender() {} }
-    return new SuperPiFooter(tui, { fg: (t, x) => x }, footerData, {
-      ctx: {
-        session: fakeSession,
-        sessionManager: fakeSession.sessionManager,
-        FooterComponent: FooterComponentStub,
-        onFooterAction: kind => emitted.push(kind),
-      },
+  const make = () =>
+    new SuperPiFooter({ requestRender() {} }, { fg: (t, x) => x }, makeFooterData(), {
+      ctx: { ...makeExtCtx(), onFooterAction: kind => emitted.push(kind) },
     })
-  }
   const footer = make()
   const rows = footer.render(80)
   const pick = (rowIndex, needle) => {
@@ -700,13 +745,10 @@ const columnOf = (rows, y, needle) => stripAnsi(rows[y] ?? '').indexOf(needle)
     ok(at >= 0, `行 ${rowIndex} 里有 ${needle}`)
     return at
   }
-  // 点切换图标
   footer.handleMouse({ type: 'click', button: 'left', x: pick(0, SWITCH_ICON), y: 0 })
   eq(emitted.at(-1), 'project', '点切换图标 → 项目列表')
-  // 点模型名
-  footer.handleMouse({ type: 'click', button: 'left', x: pick(1, 'M'), y: 1 })
+  footer.handleMouse({ type: 'click', button: 'left', x: pick(1, 'Deepseek'), y: 1 })
   eq(emitted.at(-1), 'model', '点模型名 → /model')
-  // 点 max
   footer.handleMouse({ type: 'click', button: 'left', x: pick(1, 'max'), y: 1 })
   eq(emitted.at(-1), 'thinking', '点 max → /thinking（用户第三条要求）')
 }
@@ -714,44 +756,29 @@ const columnOf = (rows, y, needle) => stripAnsi(rows[y] ?? '').indexOf(needle)
 // ④e 悬停：移入变亮 + 下划线，移出复原（用户第四条要求）
 {
   const emitted = []
-  const fakeSession = {
-    state: { model: { id: 'M', provider: 'p', reasoning: true, contextWindow: 100 }, thinkingLevel: 'max' },
-    sessionManager: { getEntryCount: () => 0, getSessionId: () => 's', getLeafId: () => null, getEntries: () => [], getCwd: () => 'D:\\p', getSessionName: () => undefined },
-    modelRuntime: { isUsingSubscription: () => false },
-    getContextUsage: () => ({ tokens: 1, contextWindow: 100, percent: 1 }),
-    autoCompactionEnabled: true,
-  }
-  const footerData = { getGitBranch: () => null, getExtensionStatuses: () => new Map(), getAvailableProviderCount: () => 1, onBranchChange: () => () => {} }
-  const tui = { requestRender() {} }
-  const footer = new SuperPiFooter(tui, { fg: (t, x) => ANSI[t === 'accent' ? 'accent' : 'dim'](x) }, footerData, {
-    ctx: {
-      session: fakeSession,
-      sessionManager: fakeSession.sessionManager,
-      FooterComponent: FooterComponentStub,
-      onFooterAction: kind => emitted.push(kind),
-    },
-  })
+  const footer = new SuperPiFooter(
+    { requestRender() {} },
+    { fg: (t, x) => ANSI[t === 'accent' ? 'accent' : 'dim'](x) },
+    makeFooterData(),
+    { ctx: { ...makeExtCtx(), onFooterAction: kind => emitted.push(kind) } },
+  )
   hoverState.id = null
   const before = footer.render(80)
-  ok(!before[1].includes('[36m'), '平时 max 不是 accent')
-  // 移到 max 上
+  ok(!before[1].includes('\x1b[36m'), '平时 max 不是 accent')
   const maxX = stripAnsi(before[1]).indexOf('max')
   ok(maxX >= 0, '找得到 max 的位置')
   const move = footer.handleMouse({ type: 'move', button: 'none', x: maxX, y: 1 })
   ok(move && move.handled, '移入被 footer 消费（不会传下去）')
   eq(hoverState.id, 'thinking', '悬停态记到 thinking')
   const hovered = footer.render(80)
-  ok(hovered[1].includes('[36m'), '悬停后 max 变成 accent 色')
+  ok(hovered[1].includes('\x1b[36m'), '悬停后 max 变成 accent 色')
   ok(hovered[1].includes('\x1b[4m'), '悬停后加下划线（终端里最稳的可点信号）')
   eq(emitted.length, 0, '悬停不触发动作（只有点击才切）')
-  // 移到项目行上的空白处（不是项目名、也不是两个入口）
   const blankX = stripAnsi(before[0]).indexOf(SWITCH_ICON) + 3
   footer.handleMouse({ type: 'move', button: 'none', x: blankX, y: 0 })
   eq(hoverState.id, null, '移到空白处清掉悬停态')
-  const restored = footer.render(80)
-  ok(!restored[1].includes('\x1b[4m'), '移出后下划线消失')
-  // 悬停样式本身
-  ok(hoverStyle('x', (t, v) => ANSI[t === 'accent' ? 'accent' : 'dim'](v)).includes('[36m'), 'hoverStyle 用 accent')
+  ok(!footer.render(80)[1].includes('\x1b[4m'), '移出后下划线消失')
+  ok(hoverStyle('x', (t, v) => ANSI[t === 'accent' ? 'accent' : 'dim'](v)).includes('\x1b[36m'), 'hoverStyle 用 accent')
   ok(hoverStyle('x', null).includes('\x1b[4m'), '没有主题取色时仍加下划线（降级但仍可见）')
 }
 
@@ -801,6 +828,23 @@ const columnOf = (rows, y, needle) => stripAnsi(rows[y] ?? '').indexOf(needle)
   eq(splitModelSegment('Model').thinking, '', '没有档位时为空')
   eq(projectLabel('D:\\my_projects\\SuperPi', 'master'), 'D:\\my_projects\\SuperPi (master)', 'projectLabel 带分支')
   eq(projectLabel('D:\\x', null), 'D:\\x', 'projectLabel 无分支')
+  // formatTokens 与 pi footer 同一套（footer.js:20-27）
+  eq(formatTokens(0), '0', 'formatTokens 0')
+  eq(formatTokens(999), '999', 'formatTokens 三位数')
+  eq(formatTokens(1500), '1.5k', 'formatTokens 千位带一位小数')
+  eq(formatTokens(42000), '42k', 'formatTokens 万位取整')
+  eq(formatTokens(1000000), '1.0M', 'formatTokens 百万')
+  // sumUsage 的口径与 pi footer 一致
+  const usage = sumUsage({ getEntries: () => [
+    { type: 'message', message: { role: 'assistant', usage: { input: 1200, output: 340, cacheRead: 41000, cacheWrite: 1800 } } },
+    { type: 'usage', usage: { input: 100, output: 10, cacheRead: 0, cacheWrite: 0 } },
+  ] })
+  eq(usage.input, 1300, 'sumUsage 累加 input')
+  eq(usage.output, 350, 'sumUsage 累加 output')
+  eq(usage.cacheRead, 41000, 'sumUsage 累加 cacheRead')
+  // 41000 / (1200+41000+1800) = 93.18%
+  ok(Math.abs(usage.latestCacheHitRate - 93.18) < 0.05, 'sumUsage 命中率 = cacheRead/(input+cacheRead+cacheWrite)，实际 ' + String(usage.latestCacheHitRate))
+  eq(sumUsage(null).input, 0, 'sumUsage 拿不到 sessionManager 时返回 0（不抛）')
 }
 
 // ④b 回归：theme 没有 fg、也没有注入 dim 时，**框仍然要在**（0.9.4 就是这里静默失效）
