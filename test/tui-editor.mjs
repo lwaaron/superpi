@@ -118,16 +118,17 @@ ok(SuperPiEditor.prototype instanceof CustomEditor, 'SuperPiEditor 继承自 pi 
 
 /* ------------------------------------------------------------------ 夹具 */
 
-const theme = {
-  borderColor: String,
-  fg: (_color, text) => text,
-  bg: (_color, text) => text,
-  fgDim: text => text,
-}
+// pi 通过 getEditorTheme() 交给编辑器的 theme **只有 borderColor 与 selectList**，
+// 没有 fg。0.9.4 的 `this.theme.fg(...)` 因此抛错、render() 的兜底又退化成无框原始行，
+// 现象就是用户看到的「改了没变化」。门禁必须用真实形状，否则测不出来。
+const theme = { borderColor: String, selectList: {} }
 
-function makeEditor(text = '') {
+function makeEditor(text = '', options = {}) {
   const tui = { renders: 0, terminal: { rows: 40, columns: 120 }, requestRender() { this.renders += 1 } }
-  const editor = new SuperPiEditor(tui, theme, { matches: () => false }, { embedWorkingStatus: false })
+  const editor = new SuperPiEditor(tui, theme, { matches: () => false }, {
+    embedWorkingStatus: false,
+    ...options,
+  })
   if (text) editor.setText(text)
   return { editor, tui }
 }
@@ -575,7 +576,8 @@ const columnOf = (rows, y, needle) => stripAnsi(rows[y] ?? '').indexOf(needle)
 
 // ④ settings / home 入口：框外右下角、模型上方，颜色跟模型名一致（小写）
 {
-  const { editor } = makeEditor('')
+  const dimmed = label => `<dim>${label}</dim>`
+  const { editor } = makeEditor('', { hooks: { dim: dimmed } })
   const rows = editor.render(60)
   const boxBottom = rows.findIndex(row => stripAnsi(row).startsWith('└'))
   ok(boxBottom > 0, '找得到下边框')
@@ -585,14 +587,27 @@ const columnOf = (rows, y, needle) => stripAnsi(rows[y] ?? '').indexOf(needle)
   ok(actionsRowIndex >= 0, 'settings 在框外（下边框之下）')
   ok(stripAnsi(outside[actionsRowIndex]).includes('home'), '同一行有 home')
   ok(!stripAnsi(outside[actionsRowIndex]).includes('Home'), 'home 必须小写（用户明确要求）')
-  // 右下角：右对齐
-  eq(stripAnsi(outside[actionsRowIndex]).endsWith('home'), true, 'settings/home 右对齐到右下角')
-  // 颜色与模型名一致：pi 的 footer 把模型名画成 theme.fg('dim', …)，这里也用 dim
-  ok(outside[actionsRowIndex].includes(theme.fg('dim', 'settings')), 'settings 用 dim（与模型名同色）')
-  ok(outside[actionsRowIndex].includes(theme.fg('dim', 'home')), 'home 用 dim（与模型名同色）')
+  // 注入的 dim 会把文案包起来，所以先去掉标记再比
+  const plainActions = stripAnsi(outside[actionsRowIndex]).replace(/<\/?dim>/g, '').trimEnd()
+  eq(plainActions.endsWith('home'), true, 'settings/home 右对齐到右下角')
+  // 颜色与模型名一致：走注入的 dim（扩展入口用 ctx.ui.theme.fg('dim', …) 提供）
+  ok(outside[actionsRowIndex].includes(dimmed('settings')), 'settings 用 dim（与模型名同色）')
+  ok(outside[actionsRowIndex].includes(dimmed('home')), 'home 用 dim（与模型名同色）')
   eq(EDITOR_ACTIONS.map(a => a.label).join(','), 'settings,home', '两个入口的文案与顺序')
-  // pi footer 在编辑器之后渲染 → 框外这一行天然在模型信息上方
   ok(boxBottom < rows.length - 1, '框外入口在组件末尾（pi footer 紧随其后）')
+}
+
+// ④b 回归：theme 没有 fg、也没有注入 dim 时，**框仍然要在**（0.9.4 就是这里静默失效）
+{
+  const { editor } = makeEditor('测试内容')
+  const rows = editor.render(60)
+  ok(rows.length >= 4, '仍然渲染出框（不是退化成无框原始行）')
+  ok(stripAnsi(rows[0]).startsWith('┌'), '上边框是直角')
+  ok(stripAnsi(rows[0]).includes('Working'), 'Working 仍在上边框里')
+  ok(stripAnsi(rows.find(row => row.startsWith('[38;2;204;204;204m└')) || '').startsWith('└'), '下边框在')
+  ok(stripAnsi(rows.at(-1)).includes('settings'), '框外的 settings 仍在')
+  // 直接对 theme.fg 做取色也不许抛（编辑器的 theme 没有这个方法）
+  eq(typeof theme.fg, 'undefined', 'pi 交给编辑器的 theme 确实没有 fg')
 }
 
 // ⑤ 点 settings 展开菜单，点菜单项提交 pi 自己的斜杠命令

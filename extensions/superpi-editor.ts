@@ -161,7 +161,11 @@ export class SuperPiEditor extends CustomEditor {
   /** 本次渲染里可点的矩形（组件坐标，y 是本组件输出行号）。 */
   private hits: Array<{ id: string; kind: 'action' | 'command'; command?: string; x: number; y: number; width: number }> = []
   /** 由扩展入口注入（notify 等），测试里可不给。 */
-  private hooks: { notify?: (text: string, level?: string) => void }
+  private hooks: {
+    notify?: (text: string, level?: string) => void
+    /** 与模型名一致的「暗色」包装（pi 的 ctx.ui.theme.fg('dim', …)）。 */
+    dim?: (text: string) => string
+  }
 
   constructor(tui: any, theme: any, keybindings: any, options: any = {}) {
     super(tui, theme, keybindings, options)
@@ -413,11 +417,26 @@ export class SuperPiEditor extends CustomEditor {
       ? (this as any).renderedVisibleLineCount
       : Math.max(0, rows.length - 2)
     const decorated = this.decorate(rows, inner, visibleCount)
+    // 套框失败时必须**仍然给出一个可用的框**（哪怕是素的），否则用户看到的
+    // 就是「改了没变化」——0.9.4 的 dim 取色抛错走的正是这条兜底。
     try {
       return this.compose(decorated, inner, visibleCount)
     } catch {
-      return decorated
+      try {
+        return this.plainFrame(decorated, inner, visibleCount)
+      } catch {
+        return decorated
+      }
     }
+  }
+
+  /** 最退化但可用的框：只有框线与 Working 图标，不依赖任何主题取色。 */
+  private plainFrame(rows: string[], inner: number, visibleCount: number): string[] {
+    const line = '─'.repeat(inner)
+    const out = ['┌' + line + '┐']
+    for (const row of rows.slice(1, 1 + visibleCount)) out.push('│' + padToWidth(row, inner) + '│')
+    out.push('└' + line + '┘')
+    return out
   }
 
   /** 路径底色 + 选区反色（都画在 pi 自己的行上，之后才套框）。 */
@@ -468,7 +487,7 @@ export class SuperPiEditor extends CustomEditor {
       for (const item of SETTINGS_COMMANDS) {
         const y = out.length
         const prefix = '  '
-        out.push(padToWidth(this.theme.fg('dim', prefix + item.label), inner + 2))
+        out.push(padToWidth(this.dim(prefix + item.label), inner + 2))
         this.hits.push({ id: item.label, kind: 'command', command: item.command, x: 0, y, width: inner + 2 })
       }
     }
@@ -498,6 +517,34 @@ export class SuperPiEditor extends CustomEditor {
     return '─ ' + chosen + ' ' + borderBody(raw, rest)
   }
 
+  /**
+   * 取「与模型名一致」的颜色。
+   *
+   * pi 通过 `getEditorTheme()` 交给编辑器的 theme **只有 borderColor 与 selectList**，
+   * 没有 fg —— 直接 this.theme.fg(...) 会抛，而 render() 的兜底会退化成无框原始行
+   * （0.9.4 上线后的实测现象就是「改了没变化」）。所以这里走 pi-tui 的模块级主题。
+   */
+  private dim(text: string): string {
+    const themeObj: any = this.theme as any
+    if (themeObj && typeof themeObj.fg === 'function') {
+      try {
+        return themeObj.fg('dim', text)
+      } catch {
+        /* 落到注入的 dimFn */
+      }
+    }
+    const injected = (this.hooks as any)?.dim
+    if (typeof injected === 'function') {
+      try {
+        const value = injected(text)
+        if (typeof value === 'string') return value
+      } catch {
+        /* 无色 */
+      }
+    }
+    return text
+  }
+
   /** 框外右下角的 settings / home（颜色与模型名一致）。 */
   private actionsRow(width: number, y: number): string {
     const plain = EDITOR_ACTIONS.map(action => action.label).join('  ')
@@ -507,7 +554,7 @@ export class SuperPiEditor extends CustomEditor {
     const pieces: string[] = []
     for (const action of EDITOR_ACTIONS) {
       const active = action.id === 'settings' && this.menuOpen
-      const text = active ? sgrFg(FRAME_RGB) + action.label + SGR_RESET : this.theme.fg('dim', action.label)
+      const text = active ? sgrFg(FRAME_RGB) + action.label + SGR_RESET : this.dim(action.label)
       this.hits.push({ id: action.id, kind: 'action', x: cursor, y, width: widthOf(action.label) })
       pieces.push(text)
       cursor += widthOf(action.label) + 2
@@ -1304,7 +1351,18 @@ export default function superpiEditor(pi: any): void {
         (tui: any, theme: any, keybindings: any) =>
           new SuperPiEditor(tui, theme, keybindings, {
             embedWorkingStatus: false,
-            hooks: { notify: (text: string, level?: string) => ctx?.ui?.notify?.(text, level) },
+            hooks: {
+              notify: (text: string, level?: string) => ctx?.ui?.notify?.(text, level),
+              // 颜色与模型名一致：pi footer 画模型名用的是 theme.fg('dim', …)。
+              // 扩展里能拿到主题的唯一公开入口是 ctx.ui.theme。
+              dim: (text: string) => {
+                try {
+                  return ctx?.ui?.theme?.fg?.('dim', text) ?? text
+                } catch {
+                  return text
+                }
+              },
+            },
           }),
       )
     } catch (error) {

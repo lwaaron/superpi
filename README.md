@@ -232,10 +232,10 @@ New-Item -ItemType Junction `
 ### 方式三：手工 pnpm add（不想跑脚本时）
 
 ```powershell
-npm pack                                        # 得到 superpi-0.9.7.tgz
+npm pack                                        # 得到 superpi-0.9.8.tgz
 cd "$env:USERPROFILE\.dsh\profiles\desktop"
 node "$env:USERPROFILE\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\pnpm\bin\pnpm.cjs" `
-  add "file:C:\path\to\superpi-0.9.7.tgz" --ignore-scripts
+  add "file:C:\path\to\superpi-0.9.8.tgz" --ignore-scripts
 ```
 
 不要在 profile 里用 `npm install`：npm 会另写一份 `package-lock.json`，而宿主插件管理器用的是 pnpm，两套锁文件互相看不见，下次插件安装就会把 node_modules 重建成 pnpm 理解的样子。
@@ -396,6 +396,7 @@ npm install --prefix <插件>/.runtime --save-exact --no-audit --no-fund --logle
 - **输入框能力两端对齐（0.9.2）**：面板的输入框是浏览器的真 `textarea`，粘贴文件路径 / `Ctrl+A` 全选 / `Ctrl+C` 复制 / `Ctrl+X` 剪切 / `Backspace` 删选区都是浏览器原生行为；命令行 TUI 的输入框是 pi-tui 自己实现的 `Editor`，**没有选区模型**（`Ctrl+A` 是移到行首、`Ctrl+C` 被 pi 的 `app.clear` 吃掉去清空输入框、`Ctrl+X` 无绑定），Windows 的 native 剪贴板也没有 `getFilePaths`（只有 macOS 有），所以在资源管理器里复制文件后 `Ctrl+V` 三档全空。这段差异由 `extensions/superpi-editor.ts` 补齐 —— pi 官方扩展点 `ctx.ui.setEditorComponent()`，**不改 pi 任何文件、不打补丁**。装法 `npm run pi:editor`，卸载 `npm run pi:editor:remove`，生效需重启 pi 会话窗口或 `/reload`；一键启动会在起 TUI 前自动装一次（`-NoEditorExtension` 可关）。键位对照表见 `docs/parity.md` §5.1。
 - **输入框外观与入口（0.9.4，0.9.7 收口）**：①**四边闭合的直角框**（`┌─┐ │ │ └─┘`），框线 **80% 白**（`FRAME_RGB = [204,204,204]`）—— pi 原本只有上下两条线；框内每行都按显示宽度补齐，框线不会错位，pi 的滚动提示（`↑ N more`）保留。**没有铺整块近白底色**：终端里那样必须同时强改文字色（pi 主题是浅色系），会压掉选区反色与思考配色。②**Working 回到 pi 原来的位置**（上边框内侧左侧，形如 `┌─ ◒ Working · 8s ───┐`）并**按状态换色**：正常白 / 成功绿 `[126,211,133]` / 出错红 `[236,94,94]`，**图标与文案同色**（`○` / `◐◓◑◒` / `✔` / `✖`，运行中带 `· Ns`）；状态由 `agent_start` / `tool_execution_end.isError` / `agent_settled` 驱动，同时关掉 pi 内置的那条，不会出现两行。③**粘贴进来的绝对路径带浅灰底色**（`[104,104,104]`），**底色只覆盖路径本身** —— `trimPathToken()` 在最后一个已知扩展名处截断，所以「`D:.png`然后把图改深色」不会把后面的字一起染色；圆角格只在确实是空白时才吃。URL、相对路径、`/settings` 这类斜杠命令不会被误涂。④`settings` `home` 放在**框外右下角、模型信息上方**，**全小写**，**颜色与模型名一致**（`theme.fg('dim', …)`）：`settings` 展开 `settings` / `model` / `thinking` / `scoped-models` 四条 —— **全部是 pi 自己的斜杠命令**，点了等同敲回车；`home` 提交 `/new`（起新会话树 = 刚启动时的界面）。运行中点击只提示不打断，`Esc` 先关菜单。
 - **Ctrl+V 判定归扩展自己（0.9.7）**：pi 的 `handleClipboardPaste` 依赖 pi-tui 的 native `getFilePaths`（Windows 没实现），实测连 `getImage` / `getText` 在截图后也读不到 —— 于是「截图后 Ctrl+V」在 Windows 上就是点了没反应。现在由扩展的 `resolveClipboardPaste()` 自己判定：先问 native 快路径（位图落成 `%TEMP%\superpi-paste-*.png`，与 pi 自己的做法一致），读不到才起 PowerShell 探头一次性拿文件列表 / 文本 / 位图，三者都没有才回落 pi 的 `onPasteImage`。实测三条通道：截图 → 得到临时 PNG 路径；资源管理器复制文件 → 得到原始绝对路径；复制文本 → 原样插入。
+- **修「`/reload` 之后没变化」（0.9.8）**：pi 通过 `getEditorTheme()` 交给编辑器的 theme **只有 `borderColor` 与 `selectList`，没有 `fg`**；0.9.4 起为了取「与模型名一致」的颜色调了 `this.theme.fg('dim', …)`，直接抛错，而 `render()` 的兜底是「返回没套框的原始行」—— 于是 0.9.4~0.9.7 的外观改动**全部静默失效**，门禁因为假 theme 带了 `fg` 也没发现。现在：取色次序 = `theme.fg` → 注入的 `hooks.dim`（来自 `ctx.ui.theme.fg('dim', …)`）→ 原样文本；兜底改成 `plainFrame()`（只有框线与 Working，不依赖取色），**任何情况下都不会变成无框原始行**。门禁换用 pi 的真实 theme 形状，并专测「没有 `fg` 时框仍然在」。
 
 ## 自检：现在跑的是不是磁盘上那份代码
 
@@ -452,7 +453,7 @@ pwsh -NoProfile -File .\tools\standalone-verify.ps1   # 全新 DSH_HOME 里只�
 | `test/session-projects.mjs` | 两级历史列表 55 条：`pathComparisonKey` 大小写归一、`isTemporaryPath` 三条正则逐条对齐 pi（`/tmp`、`appdata/local/temp`、`pi-runtime-*`）、`shortenHomePath` 的 `~` 缩写边界、`groupSessionsByProject` 的「当前项目 → 非临时 → 最近活动降序」与大小写合并、`listAllSessions`/`listSessions` 的「全部项目 vs 单项目」两种语义、`readSessionCwd` 只读 64KB 头行且首行非杂项时返回空、`firstRunningSessionFile` 的「跨项目也算当前会话」与活/死优先级。造一棵符合 pi 目录约定的假 `sessions/` 树来跑，不碰真会话 |
 | `test/host-parity.mjs` | host 侧离线一致性 291 条：`buildSpawnArgs` 19 条（`persist=false` 不吃 `--continue`、用户自带 `--fork`/`--no-session` 不重复生成、空 `--name` 不传）、`pickCurrentSessionFile` 8 条、以及 `/respond` 的 409/400/415/200、`/reset`、四条替换命令的 reset+refresh、`/files` 排序与 404、`/file` 预览 28 条（文本截断 / 二进制探测 / 目录 400 / ENOENT 404 / MIME 映射 / `~` 与 `%VAR%` 展开）、`/pi/changelog` 三情形、未知路由 404、`/ui-prefs` 三条路由 33 条（GET 空文件回落、项目改名 trim 与键白名单、会话置顶与「只给 name 不许凭空置顶」的合并语义、四类 400）。**路由与参数拼错了只会静默跑偏，所以单独立门禁** |
 | `test/parity.mjs` | 与 pi 的三向对账 78 条：以 pi 的 `RpcCommand` 联合类型、`RpcSessionState` 接口、`docs/json.md` 事件表为事实来源，双向比对（我们缺的 = 缺口，我们编的 = 幻觉），再断言契约里 33 条命令 / 25 类事件 / 12 种 assistant 事件 / 27 条斜杠 / 9 个扩展 UI method 在面板里都有落地字面量，且 `CONTRACT_VERSION` 与 `package.json` 同步。0.2.5 时「只发 5/33 命令、只处理 12/25 事件、27 条斜杠一条没接而 `npm test` 全绿」正是这个门禁要拦的事 |
-| `test/tui-editor.mjs` | 输入框扩展门禁 **177 条**（0.9.2 起，0.9.4 补外观与入口）：**用 jiti 加载真 `.ts` 扩展**（与 pi 的 `core/extensions/loader.js` 同一套 alias）+ **pi 真的 `CustomEditor`** + **真终端按键序列**（直接喂原始转义字节的按键序列），断言 Ctrl+A 全选、Shift+方向扩选、Ctrl+C 复制后内容不消失、Ctrl+X 剪切、Backspace/Delete 删选区、可打印字符与括号内粘贴替换选区、Esc 不吞键、空编辑器 Ctrl+C 放行、自动补全打开时不抢方向键、渲染反色开合成对；末组用 **pi 自己的扩展加载器**（`discoverAndLoadExtensions`）把装到临时 `agentDir` 的扩展真加载一遍断言无 error —— 这一步才证明「装完 pi 真的能认」。**不 mock 编辑器**：影子实现会让「测试绿、真机不灵」|
+| `test/tui-editor.mjs` | 输入框扩展门禁 **183 条**（0.9.2 起；0.9.4 补外观与入口，0.9.8 修「改了没变化」）：**用 jiti 加载真 `.ts` 扩展**（与 pi 的 `core/extensions/loader.js` 同一套 alias）+ **pi 真的 `CustomEditor`** + **真终端按键序列**（直接喂原始转义字节的按键序列），断言 Ctrl+A 全选、Shift+方向扩选、Ctrl+C 复制后内容不消失、Ctrl+X 剪切、Backspace/Delete 删选区、可打印字符与括号内粘贴替换选区、Esc 不吞键、空编辑器 Ctrl+C 放行、自动补全打开时不抢方向键、渲染反色开合成对；末组用 **pi 自己的扩展加载器**（`discoverAndLoadExtensions`）把装到临时 `agentDir` 的扩展真加载一遍断言无 error —— 这一步才证明「装完 pi 真的能认」。**不 mock 编辑器**：影子实现会让「测试绿、真机不灵」|
 | `extensions/superpi-editor.ts` | 命令行会话窗口的**输入框增强**：`class SuperPiEditor extends CustomEditor` + `ctx.ui.setEditorComponent()`（pi 官方扩展点），补上 TUI 缺的那套 Windows 输入框语义（全选 / 扩选 / 复制不清空 / 剪切 / 删选区）与「剪贴板里的文件 → 绝对路径」。**不改 pi 任何文件、不打补丁**，卸载就是删一个 `.ts`（`npm run pi:editor:remove`）|
 | `tools/install-pi-extension.mjs` | 把上面的扩展装进 `<piAgentDir>/extensions/`（`--install` / `--remove` / 默认只读状态），`PI_CONFIG_DIR` 跟随；幂等、内容变了先留 `.bak`。`npm run pi:editor` / `pi:editor:status` / `pi:editor:remove` 三个别名|
 | `一键启动.bat`（仓库根） | 一键启动的**根目录入口**，纯 ASCII 转发器：把 `%*` 与退出码原样透传给 `tools/launch-both.ps1`。逻辑不重复实现 |
