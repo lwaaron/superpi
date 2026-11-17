@@ -1,0 +1,25 @@
+#!/bin/sh
+# SuperPi: after every commit, try to sync the local commit to GitHub.
+#
+# Why a hook: the release rule is "commit locally first, push when the network is up".
+# A commit must never fail or block because of the network, so this runs the sync
+# detached and always exits 0. If it cannot reach GitHub, nothing is lost: the commit
+# is local, the next commit (or `npm run sync`) pushes the backlog.
+#
+# Installed by `npm run hooks` from tools/git-hooks/post-commit.
+# Disable: set SUPERPI_GIT_SYNC=0 in the environment.
+
+case "$SUPERPI_GIT_SYNC" in
+  0|off|no|false) exit 0 ;;
+esac
+
+root=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
+sync="$root/tools/github-sync.mjs"
+[ -f "$sync" ] || exit 0
+command -v node >/dev/null 2>&1 || exit 0
+
+# Detached on purpose: a push must not slow down or fail the commit.
+# The sync script writes its own single-line log to .git/superpi-sync.log.
+node "$sync" --from-hook >/dev/null 2>&1 &
+
+exit 0

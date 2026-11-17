@@ -39,7 +39,8 @@ DSH（DeepSeek Runtime）插件：把 pi 编码 agent 装进 DSH 的侧栏面板
 3. **客户端接 UI**：`client.js` 三处——`api` 对象（`:932-1006`）加方法、`applyRecord`（`:1708-1857`）加事件分支、面板加控件与 i18n 词条（`ZH` `:36-256` / `EN` `:257-474`，两套键集必须一致）。
 4. **更新账本**：`docs/parity.md` 对应行的「面板端状态」改成已实现，补「门禁用例」，并按需改 `## 1/3/4` 末尾的统计数字。
 5. **跑门禁**：`npm test`。红了不许提交。
-6. **提交**：`git add` 你实际改的文件。**改代码必须同时升 `package.json` 的 version**（pnpm 对 `file:` 依赖按 lock 里的 integrity 复用 store，版本号不变会把旧内容装回来且 exit=0；`test/version.mjs` 与 `test/parity.mjs:213-218` 都断言版本单一真相）。
+6. **提交**：`git add` 你实际改的文件。**改代码必须同时升 `package.json` 的 version**（pnpm 对 `file:` 依赖按 lock 里的 integrity 复用 store，版本号不变会把旧内容装回来且 exit=0；`test/version.mjs` 与 `test/parity.mjs:213-218` 都断言版本单一真相）。提交之后跑 **`npm run sync`** 把这次提交同步到线上 GitHub（见第 9 节）——装了钩子的话它会自动在后台推一次，但**离线时不会告诉你欠了多少**，手动跑一次才能看到结论。
+7. **推线上**：`npm run sync`（有网）/ 只提交本地（无网，退出码 2）。发布一个新版本时顺手 `git tag -a v<version>` —— tag 由同一条 push 带上去。
 
 ## 5. 禁止项
 
@@ -65,14 +66,19 @@ DSH（DeepSeek Runtime）插件：把 pi 编码 agent 装进 DSH 的侧栏面板
 ## 7. 验证命令
 
 ```powershell
-npm test                                        # 11 项离线门禁，全程实测 ~15 秒：
+npm test                                        # 12 项离线门禁，全程实测 ~20.5 秒：
                                                 # selfcheck → client-render(831) → css-tokens(98)
                                                 # → runtime-resolve → config-hot → host-parity(291)
                                                 # → session-projects(55) → timeout(28) → parity(78)
-                                                # → restart-lib(31×2 引擎) → version
+                                                # → restart-lib(31×2 引擎) → github-sync(82) → version
                                                 # 耗时大头：restart-lib ~9.1 s（起 pwsh 7 + 5.1 各跑一遍 fixture）、
+                                                # github-sync ~6.3 s（临时仓库里用真 git 跑完整同步流程）、
                                                 # timeout ~3.1 s（真等超时周期）；其余合计 <1.5 s
-npm run test:all                                # 上面 11 项 + 真起 pi 子进程跑一轮 LLM
+npm run test:all                                # 上面 12 项 + 真起 pi 子进程跑一轮 LLM
+npm run test:github                             # 只跑线上同步门禁（临时裸仓库，不联网、不碰 origin）
+npm run sync                                    # 把本地提交同步到 GitHub（0 已同步 / 2 离线待补推 / 3 要人处理）
+npm run sync -- --status                        # 本地 vs 线上差多少提交、钩子装没装
+npm run hooks                                   # 装 post-commit：每次 commit 后台自动试推一次
 npm run test:fresh                              # 全新机器：无运行时 → missing → 一键安装 → 能开会话（需网络）
 pwsh -NoProfile -File tools\standalone-verify.ps1   # 全新 DSH_HOME 自证（装 tarball、起独立端口、跑一轮、清理）
 pwsh -NoProfile -File install-plugin.ps1 -Profile desktop   # 装进 desktop profile（含 rollback 脚本）
@@ -82,7 +88,7 @@ pwsh -NoProfile -File install-plugin.ps1 -Profile desktop   # 装进 desktop pro
 
 `test/fixtures/` 放两类「不能在门禁里自造」的东西：`fake-pi-rpc.mjs`（pi RPC 协议替身，`FAKE_PI_MODE=dialog|silent` 让超时语义可以在毫秒级被实测，`test/timeout.mjs` 用它）与 `pi-ext-ui-probe.ts`（真扩展，**只能靠真人点击验证**——扩展 UI 的九个 method 没有替身能覆盖「用户到底点了没」。用法写在文件头：复制到 `%USERPROFILE%\.pi\agent\extensions\`、重启 pi 会话、依次跑 `/dsh-ui-probe` 与 `/dsh-ui-notify`、验完删除）。
 
-## 8. 现状快照（2026-11-15 · v0.8.1）
+## 8. 现状快照（2026-11-17 · v0.9.1）
 
 - **RPC 命令**：pi 侧 33 条，面板已实现 32 条 + `steer` 1 条走等价路径（`prompt` + `streamingBehavior:'steer'`，`client.js:5067`），缺口 0。
 - **扩展 UI**：9 种请求全部已实现（`applyExtensionUi()` `client.js:1661-1706`），3 种应答全通（`POST /sessions/:id/respond` `index.js:1083-1102`）。倒计时取 `min(pi 声明值, 5 分钟兜底)`（`dialogBudgetMs()` `client.js:1646`，`DIALOG_FALLBACK_MS` `src/rpc-contract.mjs:260`），且 host 侧命令 timer 会为挂起的弹窗让位（`restartPendingTimers()` `src/pi-rpc.mjs:490`）——**这两侧必须同时成立**，否则就是 0.2.5 那个「红条与对话框并存」的缺陷。
@@ -106,4 +112,34 @@ pwsh -NoProfile -File install-plugin.ps1 -Profile desktop   # 装进 desktop pro
 - **弹层交互与顶栏标题（0.8.1）**：三处一起改，都不新增界面。①四个居中弹窗（`Dialog` `client.js:3148` / `ConfirmDialog` `:3190` / 选择工作区 `DirSheet` `:4097` / 扩展 UI `ExtensionDialog` `:4357`）统一成**真模态** —— 点遮罩即关闭，判定式只留一份 `maskHandler(onClose)`（`client.js:3121`，判 `event.target === event.currentTarget`，内层不吞事件、不 `stopPropagation`）；语义各自正确：确认框点遮罩等于**取消**而不是确认，扩展 UI 弹窗点遮罩回 `{id, cancelled:true}`（与右上角关闭键同一条路径），并补上原先缺的 `aria-modal`。②`MoreMenu`（`:3205`；顶栏 `⋯` 与历史会话行内 `⋯` 共用）补「点外部关闭」：`isOutsideMenu(node, anchor, target)`（`:3133`）**同时放行菜单自身与触发按钮** —— 少了后半条，同一次点击里 `mousedown` 先关、`click` 又开，表现为「怎么点都关不掉」；顶栏传 `moreRef`（`:4735`）、行内传 `rowMenuAnchor`（`SessionsList` 内 `:3442`，同一时刻只允许一个行内菜单）。③顶栏左上的 `SuperPi` 换成**当前项目标题**（`:5733`）：host 侧新增 `withProjectIdentity(snapshot, projectCwd)`（`index.js:448-455`）与 `snapshotOf(proc, options)`（`index.js:461-463`），在每份会话快照上补 `displayPath`（`shortenHomePath`，家目录缩成 `~`）与 `projectKey`（`pathComparisonKey`），四处调用点 `index.js:672` / `1016` / `1031` / `1035`；客户端 `projectTitleOf(prefs, meta)`（`client.js:3391`）按「面板里改过的项目名 → `displayPath` → 原始路径」取值，全空才回落 `t('panelTitle')`。路径缩短与大小写归一的唯一真相留在 host，浏览器侧不复制这套逻辑 —— 复制一份就是等它下次分叉。`RuntimeGate`（`:4536`，启动期没有会话）保留品牌名。面板偏好同时从 `SessionsSheet` 上提到 `PiPanel`（`prefsState` `:4676`、`applyPrefs` `:4680`、挂载时 `api.uiPrefs()` `:5047`），顶栏与历史会话列表读同一份 `prefs`，改名后顶栏立刻跟着变而不是等下次开侧栏。
 - 门禁规模（0.8.0）：`test/client-render.mjs` 797 断言（0.7.0 的 755 + 历史会话两级列表 / 行内菜单 / `/ui-prefs` 回读相关渲染）、`test/css-tokens.mjs` 98、`test/host-parity.mjs` 276（新增 `/ui-prefs` 三条路由 33 条，其余为既有的 `buildSpawnArgs` / `/file` 预览 / `POST /reveal` / 未知路由）、`test/session-projects.mjs` 55、`test/parity.mjs` 78、`test/timeout.mjs` 28、`test/restart-lib.mjs` 22 条 node 断言 + 双引擎各 31 条 PS 断言。
 - 门禁规模（0.8.1）：`test/client-render.mjs` 831 断言（0.8.0 的 797 + 弹窗遮罩与菜单外部点击的纯函数断言、四个弹窗的 SSR 两层结构、`projectTitleOf` 八条）、`test/css-tokens.mjs` 98、`test/host-parity.mjs` 291（0.8.0 的 276 + `withProjectIdentity` 9 条 + 会话快照带 `displayPath`/`projectKey` 6 条）、`test/session-projects.mjs` 55、`test/parity.mjs` 78、`test/timeout.mjs` 28、`test/restart-lib.mjs` 22 条 node 断言 + 双引擎各 31 条 PS 断言。
+- **一键启动链路（0.8.2–0.8.4）**：只动 `tools/`，没碰插件运行时。0.8.2 新增 `tools/start-standalone.ps1` / `.bat`（状态落在仓库内 `.standalone\`、默认端口 25117、`-Stop` / `-Status` / `-Reinstall` / `-Port`，首次装依赖之后复用）；0.8.3 加仓库根目录 `一键启动.bat`（**纯 ASCII 转发器**，逻辑不复制）；0.8.4 新增 `tools/launch-both.ps1` —— 一次双击**并行起两个前端**（新控制台窗口里的 pi TUI + 后台 DSH web），根目录 bat 转给它。**关键事实**：pi 不带 `--mode` 时进交互式 TUI，而它在非 TTY 下会静默退出（`exit 0` 零输出），所以 TUI 必须开真实控制台窗口（`wt -d <dir> cmd /c ...`，wt 缺失回落 `start "" /D ...`），后台进程里跑 pi 等于什么都没发生。
+- **改名 SuperPi（0.9.0）**：产品与插件标识全量改为 `superpi` / `SuperPi`，涉及 `client.js`（i18n、面板标题）、`index.js`（`NS` / `apiPrefix` / 自检文案）、`cordis.patch.yml`、README、LICENSE、`docs/*`。**包名与安装链保持不变**：`package.json.name` 仍是 `superpi`，tarball 仍是 `superpi-<version>.tgz`（`test/version.mjs` 写死这个名字）。
+- **线上同步（0.9.1）**：把仓库发布到 <https://github.com/lwaaron/superpi>（private，`origin` / `master`），并落地「提交永远先本地、能连上就同时推线上」的机器约束 —— 见第 9 节。新增 `tools/github-sync.mjs`（同步引擎 + CLI）、`tools/git-hooks/post-commit`（后台自动试推）、`test/github-sync.mjs`（82 条门禁，临时裸仓库当真远端，不联网）、`.gitattributes`（钉死 `*.ps1` LF / `*.bat` CRLF，否则 `core.autocrlf=true` 的克隆会让 `test/restart-lib.mjs` 的「无游离 CR」断言必红）。npm 脚本新增 `sync` / `sync:status` / `hooks`；`npm test` 从 11 项变 **12 项**（耗时 ~15 s → ~20.5 s，github-sync ~6.3 s）。**`tools/` 不进 npm 包**（`files` 不含它），插件运行时与 RPC 契约一行未动。
 - 逐条账本见 `docs/parity.md`；机器保障是 `npm test` 里的 `test/parity.mjs` + `test/host-parity.mjs` + `test/timeout.mjs`。
+
+## 9. 线上同步（GitHub）
+
+代码在 <https://github.com/lwaaron/superpi>（**private**）：远端名 `origin`、分支 `master`、HTTPS，凭据只走本机 Git Credential Manager，**仓库里不放任何 token**。
+
+用户 2026-11-17 定的规矩，逐字：「以后每次有新的版本提交都同步更新到线上 github，如果连不上网就先提交本地，如果连上了就提交本地之后同时提交线上 github。」落到代码里是三条硬约束：
+
+1. **提交永不因网络失败**。`tools/git-hooks/post-commit` 把同步跑在后台（`&` 分离、永远 `exit 0`），离线时什么都不做，提交照旧落地。
+2. **欠的提交会被补推**。`npm run sync` 每次都先 `ls-remote` 比对，不相等才推 —— 上次离线留下的提交下次自动跟着走。
+3. **失败必须分得清**。`auth`（凭据/权限）/ `rejected`（线上分叉）/ `offline`（连不上）/ `failed` 四类不许合并：把认证失效说成离线，就会永远静默重试并以为「只是没网」。
+
+| 命令 | 用途 |
+| --- | --- |
+| `npm run sync` | 推当前分支 + 全部 tag。退出码 **0 已同步 · 2 离线待补推 · 3 要人处理 · 1 其它** |
+| `npm run sync -- --status` | 只读：本地/线上 HEAD、待推几个提交、钩子装没装、最近 5 条同步日志 |
+| `npm run sync -- --init` | 克隆丢了 `origin` 时补回 `https://github.com/lwaaron/superpi.git` |
+| `npm run hooks` | 装 `.git/hooks/post-commit`（模板在 `tools/git-hooks/post-commit`，装出的文件与模板逐字节相同） |
+
+禁止项（与第 5 节同级）：
+
+- **禁止 `git push --force` / `--force-with-lease`**：线上分叉只能被 `rejected` 拦住，交给人看，不许自动改写历史。
+- **禁止把 token / 凭据写进仓库或脚本**：认证只走凭据管理器；`GIT_TERMINAL_PROMPT=0` + `GCM_INTERACTIVE=never` + `execFile` 硬超时，保证后台跑不会弹出认证窗口把人挂住。
+- **禁止让同步阻塞提交**：钩子里只能后台跑并 `exit 0`（`test/github-sync.mjs` 断言这两条，改钩子先跑它）。
+- **禁止把「没网」当成其它失败的同义词**：分类写错等于把认证问题永久藏起来。
+- 日志与锁固定在 `.git/` 里（`superpi-sync.log` / `superpi-sync.lock`，锁 120 s 残留自动接管），天然不入库；`SUPERPI_GIT_SYNC=0` 可临时关掉自动推送。
+
+门禁：`test/github-sync.mjs` 82 条 —— 临时裸仓库当真远端、`127.0.0.1:1` 拒连当断网、另一个 clone 当分叉方，**全程不联网**，已进 `npm test`。`.gitattributes` 钉死行尾：代码类（`*.js` / `*.mjs` / `*.json` / `*.yml` / `*.ps1` / `tools/git-hooks/*`）LF，`*.bat` / `*.cmd` CRLF —— 门禁读的是工作区字节，新克隆的行尾不该由本机 `core.autocrlf` 决定。

@@ -1,0 +1,33 @@
+# 行尾在任何克隆上都保持一致，不依赖本机的 core.autocrlf。
+#
+# 为什么必须钉死：门禁里读的是**工作区字节**。`test/restart-lib.mjs` 断言
+# `tools/restart-dsh.ps1` 里没有游离 CR（那份文件同时被当 UTF-8 逐字节校验），
+# `test/github-sync.mjs` 断言同步脚本与钩子都是 LF —— core.autocrlf=true 的机器
+# clone 下来会得到 CRLF 工作区，这些断言必红。把规则写进版本库才是唯一可靠做法。
+#
+# 只钉「代码类」文件：它们当前全是 LF，加规则不会产生 renormalize 噪音。
+# docs/*.md 历史上是 CRLF 工作区，刻意不在钉死范围里（列进来会让首次 add 把整份文件
+# 重写成 LF，一次无关的行尾改动盖掉真正的 diff）。
+*.js text eol=lf
+*.mjs text eol=lf
+*.json text eol=lf
+*.yml text eol=lf
+*.ps1 text eol=lf
+
+# git 钩子没有扩展名，必须显式钉 LF：CRLF 的 sh 脚本会报 "bad interpreter"。
+tools/git-hooks/* text eol=lf
+
+# .bat 反过来必须是 CRLF：cmd 对 LF-only 的多行括号块与标签行为没有保证。
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# 误判成文本会让 git 试图「修复」行尾，直接把包读坏。
+*.tgz binary
+*.zip binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.woff binary
+*.woff2 binary

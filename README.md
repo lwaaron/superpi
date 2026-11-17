@@ -224,10 +224,10 @@ New-Item -ItemType Junction `
 ### 方式三：手工 pnpm add（不想跑脚本时）
 
 ```powershell
-npm pack                                        # 得到 superpi-0.9.0.tgz
+npm pack                                        # 得到 superpi-0.9.1.tgz
 cd "$env:USERPROFILE\.dsh\profiles\desktop"
 node "$env:USERPROFILE\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\pnpm\bin\pnpm.cjs" `
-  add "file:C:\path\to\superpi-0.9.0.tgz" --ignore-scripts
+  add "file:C:\path\to\superpi-0.9.1.tgz" --ignore-scripts
 ```
 
 不要在 profile 里用 `npm install`：npm 会另写一份 `package-lock.json`，而宿主插件管理器用的是 pnpm，两套锁文件互相看不见，下次插件安装就会把 node_modules 重建成 pnpm 理解的样子。
@@ -403,11 +403,13 @@ npm install --prefix <插件>/.runtime --save-exact --no-audit --no-fund --logle
 ## 测试
 
 ```powershell
-npm test            # 十一项门禁：selfcheck + client-render + css-tokens + runtime-resolve + config-hot
-                    # + host-parity + session-projects + timeout + parity + restart-lib + version
-                    # 全离线（不起 pi、不打 LLM），全程实测 ~14.3 秒。两个大头：
+npm test            # 十二项门禁：selfcheck + client-render + css-tokens + runtime-resolve + config-hot
+                    # + host-parity + session-projects + timeout + parity + restart-lib + github-sync + version
+                    # 全离线（不起 pi、不打 LLM、不推 GitHub），全程实测 ~20.5 秒。三个大头：
                     #   test/restart-lib.mjs ~9.1 s（pwsh 7 与 PowerShell 5.1 各起一遍跑 fixture）
-                    #   test/timeout.mjs     ~3.1 s（协议替身真等若干超时周期，把「弹窗让位」压到毫秒级）
+                    #   test/github-sync.mjs ~6.3 s（临时仓库里用真 git 跑完整同步流程：裸仓库当远端、
+                    #                          127.0.0.1:1 拒连当断网、另一个 clone 当分叉的那一方）
+                    #   test/timeout.mjs      ~3.1 s（协议替身真等若干超时周期，把「弹窗让位」压到毫秒级）
                     #   其余八项合计 <1.5 s
 npm run test:host   # 真起 pi 子进程跑一轮 LLM 往返（用插件的 .runtime）
 npm run test:fresh  # 模拟全新机器：拷一份不带运行时的插件 → 断言 missing → 一键安装 → 能开会话
@@ -442,8 +444,37 @@ pwsh -NoProfile -File .\tools\standalone-verify.ps1   # 全新 DSH_HOME 里只�
 | `tools/launch-both.ps1` | **同时起两个前端**：① pi TUI（新开真实控制台窗口，走 `src/pi-runtime.mjs` 解析链拿 pi 与 node）；② DSH web（后台 25117）。互不阻塞，分别报 `OK/WARN/FAIL`；`-Stop` 只关自己起的（TUI pid 记在 `.standalone/tui.json`）。**pi 在非 TTY 下会静默退出，所以 TUI 必须开真实窗口** |
 | `tools/start-standalone.ps1` / `.bat` | **一键启动**常驻实例：状态落在仓库内 `.standalone\`，首次装依赖、之后复用；默认端口 25117；`-Stop` / `-Status` / `-Reinstall` / `-Port`。位置无关，不碰桌面 profile |
 | `tools/standalone-verify.ps1` | 全新 DSH_HOME 自证：建临时 profile → pnpm 装 tarball → 起独立实例 → 真实 LLM 往返 → 清理（端到端演练，不是单测）。默认端口 25119，不与一键启动实例争用 |
+| `tools/github-sync.mjs` | **线上同步**（把本地提交推到 <https://github.com/lwaaron/superpi>）：`syncOnce()` 先 `ls-remote` 探一次（既测连通、也避免重复推）→ 不相等才 `git push origin HEAD:refs/heads/<branch>` → 再补 `git push --tags`。失败按 stderr **分四类**：`auth`（凭据/权限，要人处理）/ `rejected`（线上分叉，**绝不 force**）/ `offline`（连不上，提交留本地等下次）/ `failed`；退出码 0 已同步 · 2 离线待补推 · 3 要人处理 · 1 其它。并发用 `.git/superpi-sync.lock`（120 s 残留自动接管），每次尝试记一行 `.git/superpi-sync.log`（在 .git 里，不入库）。`GIT_TERMINAL_PROMPT=0` + `GCM_INTERACTIVE=never` + `execFile` 硬超时，保证后台跑不会弹出认证窗口把人挂住 |
+| `tools/git-hooks/post-commit` / `npm run hooks` | 装进 `.git/hooks/post-commit` 的 8 行 sh 钩子：每次 commit 后**后台**跑一次 `github-sync.mjs --from-hook`（短超时、安静、`&` 不阻塞、永远 `exit 0`）。离线时它什么都不做 —— 提交已经落地，下次提交或 `npm run sync` 会把欠的提交一起推上去。关掉：`SUPERPI_GIT_SYNC=0` |
+| `test/github-sync.mjs` | 线上同步门禁 82 条：文件层（无 BOM / LF / ASCII 钩子 / 不硬编码本机路径 / 无 `--force` / 带超时与禁交互认证）+ 纯函数（四类错误分类、`ls-remote` 解析、退出码）+ **真 git** 跑完整个生命周期（首推 / 幂等 / 新提交再推 / 补 tag / 锁与残留锁接管 / 无远端 / 断网且本地提交不丢 / 分叉拒绝且远端 ref 不动 / 游离 HEAD / 无提交 / 开关关闭 / 只读状态 / 装钩子）+ 接线（`npm run sync` / `npm run hooks` / README / AGENTS.md / `tools/` 不进 npm 包）。远端是临时裸仓库，断网用 `127.0.0.1:1` 拒连模拟，**全程不联网** |
 
 `client-render.mjs` 需要 `react` / `react-dom` —— 本插件刻意不带 `node_modules`，所以它从同级 `pi-main/node_modules` 借（找不到就 SKIP 并退出 0，不算失败）。
+
+## 线上仓库与版本同步
+
+代码放在 <https://github.com/lwaaron/superpi>（**private**）。远端 `origin` 走 HTTPS，凭据由本机的 Git Credential Manager 管，**仓库里不放任何 token**。
+
+规矩只有一条：**本地提交永远优先，推送是可重试的后续动作**。
+
+```powershell
+npm run sync            # 推一次：分支 + 全部 tag（幂等，线上已最新就什么都不做）
+npm run sync -- --status   # 只看差多少：本地 HEAD / 线上 HEAD / 待推几个提交 / 钩子装没装
+npm run sync -- --init  # 克隆丢了 origin 时补回来
+npm run hooks           # 装 post-commit 钩子：之后每次 commit 自动在后台试推一次
+```
+
+| 情形 | 行为 | 退出码 |
+| --- | --- | --- |
+| 线上已是最新 | 不重复推，只补 tag | 0 |
+| 有新提交且能连上 | 推分支 + tag | 0 |
+| 连不上网 | **本地提交保留**，记一行日志，等下次提交或手动 `npm run sync` 补推 | 2 |
+| 线上有本地没有的提交（非快进） | 拒绝，**绝不 `--force`**，交给人看 | 3 |
+| 凭据失效 / 没权限 | 明确报认证失败（不许装成离线静默重试） | 3 |
+
+- 装了钩子之后，**离线提交也照旧成功**：钩子在后台跑、`&` 分离、永远 `exit 0`；推送失败只写 `.git/superpi-sync.log`。
+- 日志与锁都在 `.git/` 里（`superpi-sync.log` / `superpi-sync.lock`），不会入库，也不会被 `npm pack` 打进包里。
+- 想临时停掉自动推送：`set SUPERPI_GIT_SYNC=0`。
+- `.gitattributes` 钉死了行尾：代码类（`*.js` / `*.mjs` / `*.json` / `*.yml` / `*.ps1` / `tools/git-hooks/*`）一律 LF，`*.bat` / `*.cmd` 一律 CRLF —— 否则 `core.autocrlf=true` 的机器克隆下来，`test/restart-lib.mjs` 的「无游离 CR」与 `test/github-sync.mjs` 的「钩子必须是 LF」断言必红。
 
 ## 与 DSH 插件管理器的关系
 
