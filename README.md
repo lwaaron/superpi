@@ -57,6 +57,14 @@ assets/icon.svg       插件图标
 - 根目录 `一键启动.bat` **只是转发器**：逻辑全在 `tools\launch-both.ps1`，参数（`%*`）与退出码原样透传，不复制实现。
 - pi 与 node 一律走 `src/pi-runtime.mjs` 的解析链（`resolvePiRuntime` / `resolveNodeRuntime`），**没有任何硬编码路径**。
 - TUI 的 pid 记在 `.standalone\tui.json`，`-Stop` 只关自己起的那个，不动你另外开的 pi。
+- **窗口标题与 TUI 内的自称都是 SuperPi**，不是上游默认的 `π` / `pi`：
+  - 标题由 `extensions/superpi-editor.ts` 通过官方扩展点 `ctx.ui.setTitle()` 接管
+    （只在 `ctx.mode === 'tui'` 时设；RPC 模式不设，否则会污染面板的会话名）。
+  - TUI 内的「Welcome to pi」「Quit pi」「pi --help」走 pi 官方 `piConfig.name`
+    （见 `docs/cli-integration.md` 的 "Fork and rebrand Pi"），工具 `tools/brand-pi-runtime.mjs`。
+    **`configDir` 保持 `.pi`**，否则 `~/.pi/agent/sessions` 的历史会话会读不到。
+  - 改完后必须**重启 TUI 窗口**（或 `/reload`）——pi 在启动时才读这些配置。
+    `node tools/install-pi-extension.mjs --install` 会顺手把品牌名一起同步（幂等）。
 
 > **`.bat` 的内容都是纯 ASCII，这是刻意的。** `cmd.exe` 按**当前控制台代码页**逐行读取 `.bat`；
 > 执行 `chcp 65001` 之后，任何非 ASCII 行的字节偏移与 cmd 已缓存的行边界不再对齐，多字节字符会被从中间切断，
@@ -224,10 +232,10 @@ New-Item -ItemType Junction `
 ### 方式三：手工 pnpm add（不想跑脚本时）
 
 ```powershell
-npm pack                                        # 得到 superpi-0.9.5.tgz
+npm pack                                        # 得到 superpi-0.9.6.tgz
 cd "$env:USERPROFILE\.dsh\profiles\desktop"
 node "$env:USERPROFILE\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\pnpm\bin\pnpm.cjs" `
-  add "file:C:\path\to\superpi-0.9.5.tgz" --ignore-scripts
+  add "file:C:\path\to\superpi-0.9.6.tgz" --ignore-scripts
 ```
 
 不要在 profile 里用 `npm install`：npm 会另写一份 `package-lock.json`，而宿主插件管理器用的是 pnpm，两套锁文件互相看不见，下次插件安装就会把 node_modules 重建成 pnpm 理解的样子。

@@ -230,6 +230,20 @@ if ($failures.Count -gt 0) {
 }
 Write-Output 'verified: manifest / lock / node_modules agree'
 
+# 用 pi 官方的 piConfig 机制把运行时品牌名改成 SuperPi（docs/cli-integration.md 的
+# 「Fork and rebrand Pi」）。必须放在 pnpm add 之后 —— 它会把 registry 上的原始
+# package.json 装回来，把之前的品牌配置覆盖掉。脚本是幂等的，已正确则不动。
+# 只改 piConfig.name，configDir 保持 .pi，否则会读不到历史会话。
+Step 'brand pi runtime (piConfig.name = SuperPi)'
+$brandScript = Join-Path $pluginRoot 'tools\brand-pi-runtime.mjs'
+if (Test-Path $brandScript) {
+  $brandOut = & node $brandScript --apply --profile-dir $profileDir 2>&1
+  $brandOut | ForEach-Object { Write-Output ('  ' + $_) }
+  if ($LASTEXITCODE -ne 0) { Write-Output '  WARN brand step failed (TUI 仍会自称 pi，但功能不受影响)' }
+} else {
+  Write-Output ('  WARN 缺少 ' + $brandScript)
+}
+
 # 副本必须与刚打出的 tarball 逐字节一致。pnpm 对 file: 依赖按 lock 里的 integrity
 # 复用它自己的缓存——版本号没变但内容变了时，它会把旧内容装回来且 exit=0。
 # 这种「装成功但装的是旧代码」只能靠内容比对拦住。

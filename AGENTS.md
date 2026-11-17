@@ -47,6 +47,17 @@ DSH（DeepSeek Runtime）插件：把 pi 编码 agent 装进 DSH 的侧栏面板
 
 - **禁止在 `tools/restart-dsh.ps1` 里用 `Start-Process -FilePath $exe` 重启**（0.4.2 之前的老实现）。桌面实例的启动命令行带 6 个参数，裸起等于换个东西启动。重启必须走 `Get-LaunchSpec` + `ProcessStartInfo`，参数一个字节都不重排。
 - **禁止给 pi 打补丁（2026-11-17 用户明确禁用）。** 不许改 `node_modules` 里 pi / pi-tui 的任何文件，不许 wrap 它们已打包 chunk 的原型方法，不许替换 bundle 里的函数体 —— 哪怕「可回滚 + 幂等标记 + 备份」也不行。要补能力只能走两条路：① pi 的**官方扩展点**（`pi.on()` / `registerTool` / `registerCommand` / `ctx.ui.setEditorComponent()` / `ctx.ui.custom()`，见 `docs/extensions.md`）；② `docs/parity.md` 记为显式缺口交上游。0.9.2 的教训：先做的补丁版（wrapper chunk）已全部删除回退，最终用 `extensions/superpi-editor.ts` 这个官方扩展实现同一能力。
+
+  **唯一的例外：`piConfig` 品牌配置（2026-11-17 用户明确授权）。** pi 官方文档
+  `docs/cli-integration.md` 有一节就叫 **“Fork and rebrand Pi”**，明示用 `package.json` 的
+  `piConfig.name` 可以改 CLI 品牌名，并说明它影响 "the CLI banner, configuration paths,
+  and derived environment variable names"。这是**配置面而不是补丁**：不改任何 .js、不 wrap 任何方法。
+  工具 `tools/brand-pi-runtime.mjs`（`--apply/--revert/--status`，幂等），门禁
+  `test/brand-pi-runtime.mjs`（20 checks）。两条铁律：
+  ① **只改 `piConfig.name`，`configDir` 必须保持 `.pi`** —— 用户的 9 个项目历史会话都在
+  `~/.pi/agent/sessions`，把 configDir 改成 `.superpi` 会让 pi 去新目录找、历史会话全部读不到；
+  ② **必须幂等且可重跑** —— `pnpm add` / `npm install` 会用 registry 上的原始 package.json
+  覆盖本地改动，所以 `install-plugin.ps1` 与 `install-pi-extension.mjs` 里都挂了自动重打。
 - **禁止以「UI 没做」为由在 host 或协议层留缺口。** 缺的是 UI 就说缺 UI，别把能力做成半截。
 - **禁止把斜杠命令当普通文本发给模型。** `/compact` 走的是 `compact` 命令，绝不能当 prompt 发出去——pi 的 RPC prompt 通道只认扩展命令、`/skill:`、prompt template（`agent-session.ts:2410-2445`），TUI 那 27 条内置命令在 RPC 侧一条都没有。输入一律先过 `classifyInput()`，`handleSlash`（`client.js:5667-5673`）按 disposition 五路分流。未知斜杠照发是 pi 的既有语义，不要"顺手修"。
 - **禁止硬编码本机绝对路径。** pi 可执行与 node 必须走 `src/pi-runtime.mjs` 的解析链（config → 环境变量 → 插件 `.runtime` → 插件 `node_modules` → 逐级 walk-up → pnpm store → 全局 npm）。

@@ -22,6 +22,7 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { resolvePiRuntime } from '../src/pi-runtime.mjs'
 
@@ -69,10 +70,31 @@ export function install(options = {}) {
     fs.copyFileSync(state.target, backup)
   }
   fs.copyFileSync(state.source, state.target)
+  // 顺手把 pi 的品牌名改成 SuperPi（官方 piConfig 机制，幂等）。
+  // 扩展只负责 TUI 输入框；TUI 里的「Welcome to pi」等文案归 piConfig 管，
+  // 两件事都在“让命令行窗口看起来是 SuperPi”，所以装扩展时一起做。
+  const brand = brandRuntime()
   return {
     code: 0,
     message: state.identical ? '已是最新（内容一致，重新写入一次）' : '已安装',
     target: state.target,
+    brand,
+  }
+}
+
+/**
+ * 调用 brand-pi-runtime 给所有已知 pi 副本打品牌名。
+ * 失败不阻断扩展安装 —— 品牌只是外观，输入框能用才是关键。
+ */
+function brandRuntime() {
+  try {
+    const script = path.join(pluginRoot, 'tools', 'brand-pi-runtime.mjs')
+    if (!fs.existsSync(script)) return { ok: false, message: '缺少 brand-pi-runtime.mjs' }
+    const out = execFileSync(process.execPath, [script, '--apply', '--all-profiles'], { encoding: 'utf8' })
+    const changed = /完成：改 (\d+) 处/.exec(out)?.[1] ?? '?'
+    return { ok: true, message: '品牌名已同步（改 ' + changed + ' 处）' }
+  } catch (error) {
+    return { ok: false, message: '品牌同步失败：' + String(error?.message ?? error) }
   }
 }
 
@@ -110,6 +132,7 @@ if (isMain) {
   if (args.has('--install')) {
     result = install()
     if (result.message) process.stdout.write((result.code === 0 ? '' : '失败：') + result.message + '\n')
+    if (result.brand) process.stdout.write('品牌名 ' + (result.brand.ok ? '' : '(未生效) ') + result.brand.message + '\n')
     report(status())
   } else if (args.has('--remove')) {
     result = remove()
