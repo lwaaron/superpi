@@ -95,7 +95,12 @@ function report(state) {
   line('内容一致', state.sourceExists && state.targetExists ? (state.identical ? '是' : '否，需要 --install') : '—')
   line('pi 运行时', state.piFound ? `${state.piVersion || '(版本未知)'}` : '未找到（扩展仍然可装，pi 会自己找）')
   process.stdout.write('\n生效方式：重启 pi 会话窗口，或在 pi 里执行 /reload\n')
-  process.stdout.write('能力：Ctrl+A 全选 · Shift+方向扩选 · Ctrl+C 复制（不清空）· Ctrl+X 剪切 · Backspace/Delete 删选区 · Ctrl+V 粘贴文件路径\n')
+  process.stdout.write(
+    '外观：四边闭合、框线 80% 白 · Working 按状态变色（正常白 / 成功绿 / 出错红） · 粘贴路径带浅灰底 · 右下 settings / home\n',
+  )
+  process.stdout.write(
+    '键位：Ctrl+A 全选 · Shift+方向扩选 · Ctrl+C 复制（不清空）· Ctrl+X 剪切 · Backspace/Delete 删选区 · Ctrl+V 粘贴文件路径\n',
+  )
 }
 
 const isMain = process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url))

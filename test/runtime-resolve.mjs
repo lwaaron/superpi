@@ -97,12 +97,12 @@ const makePluginRoot = name => {
   assert(byDir.cliPath === cli && byDir.source === 'config', 'config.cliPath 指包目录应解析到 cli，实际 ' + byDir.cliPath)
 }
 
-// 5) 环境变量 PI_CLI_PATH 次优
+// 5) 环境变量 SUPERPI_CLI_PATH 次优
 {
   const pluginRoot = makePluginRoot('with-env')
   const external = makePiPackage(path.join(tempRoot, 'external'))
-  const found = resolvePiRuntime({ pluginRoot, config: {}, env: { PI_CLI_PATH: external } })
-  assert(found.cliPath === external, 'PI_CLI_PATH 应命中，实际 ' + found.cliPath)
+  const found = resolvePiRuntime({ pluginRoot, config: {}, env: { SUPERPI_CLI_PATH: external } })
+  assert(found.cliPath === external, 'SUPERPI_CLI_PATH 应命中，实际 ' + found.cliPath)
   assert(found.source === 'env', 'source 应为 env，实际 ' + found.source)
 }
 

@@ -7,8 +7,8 @@
  *
  * 解析顺序（先命中先用）：
  *   1. config.cliPath            插件配置里手填的入口（或包目录）
- *   2. env PI_CLI_PATH           环境变量
- *   3. env PI_RUNTIME_DIR        指向一个自带 pi 的目录（Node 模块解析起点）
+ *   2. env SUPERPI_CLI_PATH           环境变量
+ *   3. env SUPERPI_RUNTIME_DIR        指向一个自带 pi 的目录（Node 模块解析起点）
  *   4. <plugin>/node_modules     可选依赖 @earendil-works/pi-coding-agent
  *   5. <plugin>/.runtime         一键安装的落点（服务端 npm install --prefix 到此）
  *   6. 逐级向上找 node_modules   覆盖 npm/pnpm 把依赖提升到 <proj>/node_modules 的布局
@@ -28,7 +28,7 @@ export const PI_PACKAGE = '@earendil-works/pi-coding-agent'
 /** 插件期望的 pi 版本；安装自举默认装这个版本。 */
 export const PI_VERSION = '1.5.2'
 /** 一键安装在插件目录下的落点。 */
-export const PI_RUNTIME_DIR = '.runtime'
+export const SUPERPI_RUNTIME_DIR = '.runtime'
 /** 自举安装的超时（ms）：慢网下 24MB 包 + 123 个依赖，给足 15 分钟。 */
 const INSTALL_TIMEOUT_MS = 15 * 60 * 1000
 
@@ -246,14 +246,14 @@ export function resolvePiRuntime(options = {}) {
   }
 
   // 2. 环境变量入口
-  if (typeof env.PI_CLI_PATH === 'string' && env.PI_CLI_PATH.trim() !== '') {
-    const found = fromEntry('env', env.PI_CLI_PATH)
+  if (typeof env.SUPERPI_CLI_PATH === 'string' && env.SUPERPI_CLI_PATH.trim() !== '') {
+    const found = fromEntry('env', env.SUPERPI_CLI_PATH)
     if (found !== null) return found
   }
 
   // 3. 环境变量运行时目录（Node 解析起点）
-  if (typeof env.PI_RUNTIME_DIR === 'string' && env.PI_RUNTIME_DIR.trim() !== '') {
-    const found = fromModuleDir('env-runtime', expandPath(env.PI_RUNTIME_DIR))
+  if (typeof env.SUPERPI_RUNTIME_DIR === 'string' && env.SUPERPI_RUNTIME_DIR.trim() !== '') {
+    const found = fromModuleDir('env-runtime', expandPath(env.SUPERPI_RUNTIME_DIR))
     if (found !== null) return found
   }
 
@@ -265,7 +265,7 @@ export function resolvePiRuntime(options = {}) {
 
   // 5. 插件 .runtime（一键安装落点）
   if (pluginRoot !== '') {
-    const found = fromModuleDir('plugin-runtime', path.join(pluginRoot, PI_RUNTIME_DIR))
+    const found = fromModuleDir('plugin-runtime', path.join(pluginRoot, SUPERPI_RUNTIME_DIR))
     if (found !== null) return found
   }
 
@@ -293,7 +293,7 @@ export function resolvePiRuntime(options = {}) {
 
 /**
  * 解析 node 可执行文件。
- * 顺序：配置 → PI_NODE_PATH → PATH 扫描 → 宿主自己（Electron 用 ELECTRON_RUN_AS_NODE）。
+ * 顺序：配置 → SUPERPI_NODE_PATH → PATH 扫描 → 宿主自己（Electron 用 ELECTRON_RUN_AS_NODE）。
  */
 export function resolveNodeRuntime(options = {}) {
   const config = options.config !== null && typeof options.config === 'object' ? options.config : {}
@@ -311,8 +311,8 @@ export function resolveNodeRuntime(options = {}) {
     if (isFile(abs)) return hit('config', abs)
     miss('config', abs)
   }
-  if (typeof env.PI_NODE_PATH === 'string' && env.PI_NODE_PATH.trim() !== '') {
-    const abs = expandPath(env.PI_NODE_PATH)
+  if (typeof env.SUPERPI_NODE_PATH === 'string' && env.SUPERPI_NODE_PATH.trim() !== '') {
+    const abs = expandPath(env.SUPERPI_NODE_PATH)
     if (isFile(abs)) return hit('env', abs)
     miss('env', abs)
   }
@@ -338,7 +338,7 @@ export function describeRuntime(pi) {
     packageDir: pi.packageDir,
     expected: pi.expected,
     // 只有一键安装才会用到这个目录；手填 cliPath 时它可能根本不存在。
-    runtimeDir: typeof pi.pluginRoot === 'string' && pi.pluginRoot !== '' ? path.join(pi.pluginRoot, PI_RUNTIME_DIR) : null,
+    runtimeDir: typeof pi.pluginRoot === 'string' && pi.pluginRoot !== '' ? path.join(pi.pluginRoot, SUPERPI_RUNTIME_DIR) : null,
     searched: pi.searched,
   }
 }
@@ -354,7 +354,7 @@ export function installPiRuntime(options = {}) {
   const onLog = typeof options.onLog === 'function' ? options.onLog : () => {}
   if (pluginRoot === '') return Promise.resolve({ ok: false, code: null, log: [], error: 'plugin root unknown', cliPath: '', durationMs: 0 })
 
-  const runtimeDir = path.join(pluginRoot, PI_RUNTIME_DIR)
+  const runtimeDir = path.join(pluginRoot, SUPERPI_RUNTIME_DIR)
   const spec = PI_PACKAGE + '@' + version
   const startedAt = Date.now()
   try { fs.mkdirSync(runtimeDir, { recursive: true }) } catch (error) {

@@ -13,7 +13,7 @@
  *
  * 可移植性：pi 运行时不写死任何机器的绝对路径，全部交给 src/pi-runtime.mjs 的解析链。
  * 解析不到时可以用 POST /runtime/install 把 pi 装进 <plugin>/.runtime（离线/受限网络
- * 下则手工配 config.cliPath 或环境变量 PI_CLI_PATH）。
+ * 下则手工配 config.cliPath 或环境变量 SUPERPI_CLI_PATH）。
  */
 
 import { spawn } from 'node:child_process'
@@ -46,7 +46,7 @@ import {
 import {
   PI_PACKAGE,
   PI_VERSION,
-  PI_RUNTIME_DIR,
+  SUPERPI_RUNTIME_DIR,
   describeRuntime,
   installPiRuntime,
   readSetting,
@@ -65,7 +65,7 @@ const API_PREFIX = '/api/' + PLUGIN_ID
 const MAX_SESSIONS = 8
 const MAX_BODY_BYTES = 4 * 1024 * 1024
 /** GET /contract 里 version 字段的取值：本插件对外的契约版本，与 package.json 解耦。 */
-const CONTRACT_VERSION = '0.9.3'
+const CONTRACT_VERSION = '0.9.4'
 /** 历史会话列表的条数窗口（与 src/session-store.mjs 的 DEFAULT_LIMIT/MAX_LIMIT 一致）。 */
 const HISTORY_DEFAULT_LIMIT = 20
 const HISTORY_MAX_LIMIT = 200
@@ -502,7 +502,7 @@ export function apply(ctx, config = {}) {
   const resolveWorkspace = () => {
     const configured = configString('workspace')
     if (configured !== '') return configured
-    const fromEnv = String(process.env.PI_WORKSPACE ?? '').trim()
+    const fromEnv = String(process.env.SUPERPI_WORKSPACE ?? '').trim()
     if (fromEnv !== '') return fromEnv
     return path.join(os.homedir(), 'pi-workspace')
   }
@@ -553,7 +553,7 @@ export function apply(ctx, config = {}) {
     platform: process.platform + '-' + process.arch,
     install: {
       available: PLUGIN_ROOT !== '',
-      target: PLUGIN_ROOT === '' ? null : path.join(PLUGIN_ROOT, PI_RUNTIME_DIR),
+      target: PLUGIN_ROOT === '' ? null : path.join(PLUGIN_ROOT, SUPERPI_RUNTIME_DIR),
       package: PI_PACKAGE,
       version: PI_VERSION,
       running: installing !== null,
@@ -575,7 +575,7 @@ export function apply(ctx, config = {}) {
     if (detected.cliPath === '' || configSignature() !== lastSignature) refreshRuntime()
     if (detected.cliPath === '') {
       const error = new Error('pi 运行时未找到（' + PI_PACKAGE + '@' + PI_VERSION + '）。装一次就好：POST ' + API_PREFIX + '/runtime/install，' +
-        '或在插件配置里填 cliPath / 设置环境变量 PI_CLI_PATH。已搜索：' +
+        '或在插件配置里填 cliPath / 设置环境变量 SUPERPI_CLI_PATH。已搜索：' +
         detected.runtimeSearched.map(item => item.source + (item.ok ? ' ✓' : ' ✗')).join(' / '))
       error.statusCode = 500
       error.code = 'PI_RUNTIME_MISSING'

@@ -84,6 +84,20 @@ const jiti = createJiti(extensionFile, {
 
 const extensionModule = await jiti.import(extensionFile)
 const SuperPiEditor = extensionModule.SuperPiEditor
+const FRAME_RGB = extensionModule.FRAME_RGB
+const STATUS_RGB = extensionModule.STATUS_RGB
+const EDITOR_ACTIONS = extensionModule.EDITOR_ACTIONS
+const SETTINGS_COMMANDS = extensionModule.SETTINGS_COMMANDS
+const HOME_COMMAND = extensionModule.HOME_COMMAND
+const paintPathChips = extensionModule.paintPathChips
+const statusIcon = extensionModule.statusIcon
+const runState = extensionModule.runState
+const markRunStart = extensionModule.markRunStart
+const markRunSettled = extensionModule.markRunSettled
+const markToolError = extensionModule.markToolError
+const resetRunState = extensionModule.resetRunState
+const isLikelyPath = extensionModule.isLikelyPath
+const padToWidth = extensionModule.padToWidth
 const paintColumns = extensionModule.paintColumns
 const decodeListing = extensionModule.decodeListing
 const defaultExport = extensionModule.default
@@ -346,17 +360,62 @@ const anchorOf = editor => editor.selAnchor
   const calls = []
   const fakePi = { on: (event, handler) => calls.push({ event, handler }) }
   defaultExport(fakePi)
-  eq(calls.length, 2, '入口注册两个会话事件')
+  // 3 个状态事件 + session_start + session_switch + session_info_changed（标题重设）
+  eq(calls.length, 6, '入口注册六个事件（状态机 3 + 会话 3）')
   ok(calls.every(c => typeof c.handler === 'function'), '入口注册的都是函数')
+  const events = calls.map(c => c.event)
+  for (const name of ['agent_start', 'tool_execution_end', 'agent_settled', 'session_start', 'session_switch', 'session_info_changed']) {
+    ok(events.includes(name), `入口订阅了 ${name}`)
+  }
   const factories = []
-  const ctx = { ui: { setEditorComponent: factory => factories.push(factory) } }
+  const titles = []
+  const ctx = {
+    mode: 'tui',
+    sessionManager: { getCwd: () => 'D:\\projects\\SuperPi' },
+    ui: {
+      setEditorComponent: factory => factories.push(factory),
+      setWorkingVisible: visible => { ctx.ui.workingVisible = visible },
+      setTitle: title => titles.push(title),
+    },
+  }
   for (const call of calls) call.handler({}, ctx)
-  eq(factories.length, 2, '每个事件都装了编辑器工厂')
+  eq(factories.length, 2, '两个会话事件都装了编辑器工厂')
+  eq(ctx.ui.workingVisible, false, '关掉 pi 内置 Working 行（改由本扩展渲染状态）')
+  // 标题必须盖住上游默认的 "π"：TUI 下叫 SuperPi，形状对齐 pi 的 "${APP_TITLE} - ${cwd}"。
+  ok(titles.length > 0 && titles[0] === 'SuperPi - SuperPi', '窗口标题 = SuperPi - <cwd 目录名>，实际 ' + String(titles[0]))
   const tui = { renders: 0, terminal: { rows: 40, columns: 100 }, requestRender() { this.renders += 1 } }
   const built = factories[0](tui, theme, { matches: () => false })
   ok(built instanceof SuperPiEditor, '工厂返回 SuperPiEditor 实例')
-  // 工作状态继续画在输入框边框里，与 pi 的 defaultEditor 同选项；不然 pi 会把它降级成独立状态行。
-  eq(built.embedWorkingStatus, true, '工厂开了 embedWorkingStatus（状态嵌在边框里）')
+  // 状态行由本扩展自己画（要按状态换色），所以 pi 内置的 Working 行必须关掉，否则会出现两条。
+  eq(built.embedWorkingStatus, false, '关掉 pi 内置状态嵌入（本扩展自绘状态行）')
+}
+
+// 标题接管：RPC 模式绝不能设（面板把 setTitle 的值当会话名回退，会污染显示）
+{
+  const calls = []
+  defaultExport({ on: (event, handler) => calls.push({ event, handler }) })
+  const titles = []
+  const ctx = {
+    mode: 'rpc',
+    sessionManager: { getCwd: () => 'D:\\projects\\SuperPi' },
+    ui: { setEditorComponent: () => {}, setWorkingVisible: () => {}, setTitle: t => titles.push(t) },
+  }
+  for (const call of calls) call.handler({}, ctx)
+  eq(titles.length, 0, 'RPC 模式不设终端标题（避免污染面板会话名）')
+}
+
+// 标题兜底：拿不到 cwd 时也要显示品牌名，且不能抛
+{
+  const calls = []
+  defaultExport({ on: (event, handler) => calls.push({ event, handler }) })
+  const titles = []
+  const ctx = {
+    mode: 'tui',
+    sessionManager: { getCwd: () => { throw new Error('boom') } },
+    ui: { setEditorComponent: () => {}, setWorkingVisible: () => {}, setTitle: t => titles.push(t) },
+  }
+  for (const call of calls) call.handler({}, ctx)
+  ok(titles.length > 0 && titles[0] === 'SuperPi', 'cwd 取不到时标题回落为 SuperPi，实际 ' + String(titles[0]))
 }
 
 // 没有 UI 的环境（print/json 模式）不能抛
@@ -407,6 +466,169 @@ const anchorOf = editor => editor.selAnchor
   ok(!fs.existsSync(path.join(dir, EXTENSION_FILE_NAME)), '卸载后目标文件消失')
   eq(remove({ dir }).code, 0, 'remove 幂等（未安装也不报错）')
   fs.rmSync(dir, { recursive: true, force: true })
+}
+
+
+/* ---------------------------------------------- 输入框外观与入口（0.9.4） */
+
+const stripAnsi = text => text.replace(/\x1b\[[0-9;:?]*[A-Za-z]/g, '').replace(/\x1b\][^\x07]*\x07/g, '')
+const rowIndexOf = (rows, needle) => rows.findIndex(row => stripAnsi(row).includes(needle))
+const columnOf = (rows, y, needle) => stripAnsi(rows[y] ?? '').indexOf(needle)
+
+// ① 框线 80% 白 + 四边闭合
+{
+  const { editor } = makeEditor('hello')
+  const rows = editor.render(60)
+  eq(FRAME_RGB.join(','), '204,204,204', '框线色常量为 80% 白（255×0.8）')
+  ok(rows[0].includes('\x1b[38;2;204;204;204m'), '上边框是 80% 白')
+  ok(rows.at(-1).includes('\x1b[38;2;204;204;204m'), '下边框是 80% 白')
+  ok(stripAnsi(rows[0]).startsWith('╭') && stripAnsi(rows[0]).endsWith('╮'), '上边框带左右圆角')
+  ok(stripAnsi(rows.at(-1)).startsWith('╰') && stripAnsi(rows.at(-1)).endsWith('╯'), '下边框带左右圆角')
+  // 左右两侧闭合：中间每一行都以 │ 开头和结尾（pi 原来只有上下两条线）
+  const middle = rows.slice(1, -1)
+  ok(middle.length > 0, '框内有内容行')
+  for (const [index, row] of middle.entries()) {
+    const plain = stripAnsi(row)
+    ok(plain.startsWith('│'), `第 ${index + 1} 行左侧有框线`)
+    ok(plain.endsWith('│'), `第 ${index + 1} 行右侧有框线`)
+  }
+  // 每行显示宽度必须一致，否则框线会错位
+  const widths = new Set(rows.map(row => tuiModule.visibleWidth(row)))
+  eq([...widths].join(','), '60', '每行显示宽度都等于渲染宽度（框线不错位）')
+}
+
+// ② Working 状态：白 / 绿 / 红，图标同色
+{
+  const cases = [
+    ['idle', () => resetRunState(), '○'],
+    ['running', () => markRunStart(Date.now() - 3000), null],
+    ['success', () => { markRunStart(); markRunSettled() }, '✔'],
+    ['error', () => { markRunStart(); markToolError(); markRunSettled() }, '✖'],
+  ]
+  for (const [phase, setup, icon] of cases) {
+    setup()
+    const { editor } = makeEditor('')
+    const rows = editor.render(60)
+    const y = rowIndexOf(rows, 'Working')
+    ok(y > 0, `${phase}: 状态行里有 Working 文案`)
+    const rgb = STATUS_RGB[phase].join(';')
+    ok(rows[y].includes(`\x1b[38;2;${rgb}m`), `${phase}: 文案与图标用该状态的颜色`)
+    if (icon) ok(stripAnsi(rows[y]).includes(icon), `${phase}: 图标是 ${icon}`)
+    else ok(/[◐◓◑◒]/.test(stripAnsi(rows[y])), 'running: 图标是转盘')
+  }
+  // 三种状态颜色必须互不相同（用户报的正是「只用一种颜色」）
+  const distinct = new Set([STATUS_RGB.idle, STATUS_RGB.success, STATUS_RGB.error].map(c => c.join(',')))
+  eq(distinct.size, 3, 'idle / success / error 三色互不相同')
+  resetRunState()
+}
+
+// ③ 粘贴路径带浅灰底色
+{
+  ok(isLikelyPath('E:\\xwechat_files\\a b\\0cf6.png'), 'Windows 绝对路径识别')
+  ok(isLikelyPath('/home/x/a.png'), 'POSIX 绝对路径识别')
+  eq(isLikelyPath('https://a.com/b.png'), false, 'URL 不算路径')
+  eq(isLikelyPath('a/b'), false, '相对路径不算路径')
+  eq(isLikelyPath('/settings'), false, '斜杠命令不算路径')
+
+  const pathText = 'E:\\xwechat_files\\wxid\\0cf6a4d3.png'
+  const { editor } = makeEditor(`看这个 ${pathText}`)
+  const rows = editor.render(80)
+  const y = rowIndexOf(rows, '0cf6a4d3')
+  ok(y > 0, '路径出现在渲染结果里')
+  ok(rows[y].includes('\x1b[48;2;104;104;104m'), '路径带浅灰底色')
+  ok(rows[y].includes('\x1b[49m'), '底色有闭合（不污染后续字符）')
+  // 普通文字不带底色
+  const { editor: plainEditor } = makeEditor('就是一段普通话')
+  const plainRows = plainEditor.render(80)
+  ok(!plainRows.some(row => row.includes('\x1b[48;2;104;104;104m')), '普通文字不带路径底色')
+}
+
+// ④ settings / home 入口（小写）
+{
+  const { editor } = makeEditor('')
+  const rows = editor.render(60)
+  const y = rowIndexOf(rows, 'settings')
+  ok(y > 0, '底部有 settings 入口')
+  ok(stripAnsi(rows[y]).includes('home'), '同一行有 home 入口')
+  ok(!stripAnsi(rows[y]).includes('Home'), 'home 必须小写（用户明确要求）')
+  eq(EDITOR_ACTIONS.map(a => a.label).join(','), 'settings,home', '两个入口的文案与顺序')
+  // 模型信息在 pi 自己的 footer 里，位于本组件之下 —— 所以这两个入口天然在它上方
+  const settingsX = columnOf(rows, y, 'settings')
+  ok(settingsX > 0, 'settings 在状态行右侧')
+}
+
+// ⑤ 点 settings 展开菜单，点菜单项提交 pi 自己的斜杠命令
+{
+  const { editor } = makeEditor('')
+  const submitted = []
+  editor.onSubmit = command => submitted.push(command)
+  const before = editor.render(60)
+  const y = rowIndexOf(before, 'settings')
+  const x = columnOf(before, y, 'settings')
+  editor.handleMouse({ type: 'click', button: 'left', x, y })
+  const opened = editor.render(60)
+  for (const item of SETTINGS_COMMANDS) {
+    ok(stripAnsi(opened.join('\n')).includes(item.label), `菜单展开后有 ${item.label}`)
+  }
+  const menuLabel = SETTINGS_COMMANDS[0].label
+  const menuY = rowIndexOf(opened, menuLabel)
+  const menuX = columnOf(opened, menuY, menuLabel) + 1
+  editor.handleMouse({ type: 'click', button: 'left', x: menuX, y: menuY })
+  eq(submitted.at(-1), SETTINGS_COMMANDS[0].command, '点菜单项提交对应的 pi 斜杠命令')
+  ok(!stripAnsi(editor.render(60).join('\n')).includes('scoped-models'), '提交后菜单收起')
+}
+
+// ⑥ 点 home 回首页（= pi 的 /new）
+{
+  const { editor } = makeEditor('')
+  const submitted = []
+  editor.onSubmit = command => submitted.push(command)
+  const rows = editor.render(60)
+  const y = rowIndexOf(rows, 'home')
+  const x = columnOf(rows, y, 'home')
+  editor.handleMouse({ type: 'click', button: 'left', x, y })
+  eq(submitted.at(-1), HOME_COMMAND, '点 home 提交 /new')
+  eq(HOME_COMMAND, '/new', 'home 对应 pi 的 /new（起新会话树 = 刚启动时的界面）')
+
+  // 运行中不许切：给提示而不是静默丢弃
+  const notices = []
+  const busy = makeEditor('')
+  busy.editor.hooks = { notify: (text, level) => notices.push(`${level}:${text}`) }
+  busy.editor.onSubmit = command => submitted.push(command)
+  markRunStart()
+  const busyRows = busy.editor.render(60)
+  const by = rowIndexOf(busyRows, 'home')
+  busy.editor.handleMouse({ type: 'click', button: 'left', x: columnOf(busyRows, by, 'home'), y: by })
+  eq(submitted.filter(c => c === HOME_COMMAND).length, 1, '运行中点 home 不提交 /new')
+  ok(notices.length === 1 && notices[0].startsWith('warning:'), '运行中点 home 给出 warning 提示')
+  resetRunState()
+}
+
+// ⑦ Esc 先关菜单
+{
+  const { editor } = makeEditor('')
+  const rows = editor.render(60)
+  const y = rowIndexOf(rows, 'settings')
+  editor.handleMouse({ type: 'click', button: 'left', x: columnOf(rows, y, 'settings'), y })
+  ok(stripAnsi(editor.render(60).join('\n')).includes('scoped-models'), '菜单已展开')
+  editor.handleInput(KEY.esc)
+  ok(!stripAnsi(editor.render(60).join('\n')).includes('scoped-models'), 'Esc 关掉菜单')
+}
+
+// ⑧ settings 菜单里的命令必须仍然存在于 pi（不自造）
+{
+  const piSource = fs.readFileSync(path.join(pi.packageDir, 'dist', 'modes', 'interactive', 'interactive-mode.js'), 'utf8')
+  for (const item of SETTINGS_COMMANDS) {
+    ok(piSource.includes(`text === "${item.command}"`), `pi 里仍然有 ${item.command}`)
+  }
+  ok(piSource.includes('text === "/new"'), 'pi 里仍然有 /new（home 的目标）')
+}
+
+// ⑨ padToWidth 不会破坏框线对齐
+{
+  eq(stripAnsi(padToWidth('abc', 5)), 'abc  ', 'padToWidth 补空格')
+  eq(tuiModule.visibleWidth(padToWidth('\x1b[31mabc\x1b[0m', 5)), 5, 'padToWidth 按可见宽度算（含 ANSI）')
+  eq(tuiModule.visibleWidth(padToWidth('abcdef', 4)), 4, 'padToWidth 超长时截断')
 }
 
 console.log(`PASS (${checks} checks)`)
