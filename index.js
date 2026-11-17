@@ -1,5 +1,5 @@
 /**
- * dsh-pi — host half.
+ * superpi — host half.
  *
  * 把 pi（编码代理 CLI）作为常驻子进程管起来，用 HTTP 暴露给浏览器半区。
  *
@@ -56,16 +56,16 @@ import {
 } from './src/pi-runtime.mjs'
 import { createUiPrefsStore } from './src/ui-prefs.mjs'
 
-export const name = 'dsh-pi'
+export const name = 'superpi'
 export const inject = []
 
-const PLUGIN_ID = 'dsh-pi'
-const DISPLAY_NAME = 'pi'
+const PLUGIN_ID = 'superpi'
+const DISPLAY_NAME = 'SuperPi'
 const API_PREFIX = '/api/' + PLUGIN_ID
 const MAX_SESSIONS = 8
 const MAX_BODY_BYTES = 4 * 1024 * 1024
 /** GET /contract 里 version 字段的取值：本插件对外的契约版本，与 package.json 解耦。 */
-const CONTRACT_VERSION = '0.8.4'
+const CONTRACT_VERSION = '0.9.0'
 /** 历史会话列表的条数窗口（与 src/session-store.mjs 的 DEFAULT_LIMIT/MAX_LIMIT 一致）。 */
 const HISTORY_DEFAULT_LIMIT = 20
 const HISTORY_MAX_LIMIT = 200
@@ -127,7 +127,7 @@ const DEFAULTS = {
 
 /**
  * 自检：插件在进程里加载的那一刻，把真正参与运行的文件的 sha256 记下来。
- * 之后 GET /api/dsh-pi/selfcheck 会重算磁盘上的 sha256 并对比，回答一个
+ * 之后 GET /api/superpi/selfcheck 会重算磁盘上的 sha256 并对比，回答一个
  * 光看 mtime 回答不了的问题——「现在跑的到底是不是磁盘上这份代码」。
  *
  * runtime:true 的文件改动必须重启 DSH 才生效；runtime:false 只是随身文件。
@@ -766,7 +766,7 @@ export function apply(ctx, config = {}) {
    *
    * 放在 apply 作用域里只建一次：store 内部有一条写队列，必须被所有请求共享，
    * 每次请求新建实例就等于没有串行化（并发 read-modify-write 会互相覆盖）。
-   * 落盘路径由 src/ui-prefs.mjs 解析（DSH_PI_UI_PREFS 或 ~/.dsh-pi/ui-prefs.json）。
+   * 落盘路径由 src/ui-prefs.mjs 解析（SUPERPI_UI_PREFS 或 ~/.superpi/ui-prefs.json）。
    */
   const uiPrefs = createUiPrefsStore()
 
@@ -1618,6 +1618,6 @@ export const Config = schema === undefined
   })
 
 if (schema === undefined) {
-  console.warn('[dsh-pi] @deepseek-ai/schemastery 解析失败：插件详情页没有配置区（侧栏面板与运行时自举不受影响）')
+  console.warn('[superpi] @deepseek-ai/schemastery 解析失败：插件详情页没有配置区（侧栏面板与运行时自举不受影响）')
 }
 

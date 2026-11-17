@@ -1,10 +1,10 @@
 @echo off
 setlocal EnableExtensions
 chcp 65001 >nul
-title 重启 DSH（让 dsh-pi 生效）
+title 重启 DSH（让 superpi 生效）
 
 rem ======================================================================
-rem  重启 DSH 并核对 dsh-pi 是否换成了磁盘上那份代码。
+rem  重启 DSH 并核对 superpi 是否换成了磁盘上那份代码。
 rem
 rem  为什么要有这个 bat：插件在 import 时把代码快照进内存，改完必须重启 DSH
 rem  才生效；而重启会杀掉当前会话所在的宿主进程，所以不能在 DSH 对话里跑。

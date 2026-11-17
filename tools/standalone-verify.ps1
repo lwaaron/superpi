@@ -1,13 +1,13 @@
 ﻿<#
 .SYNOPSIS
-  在一个全新的 DSH_HOME 里只装 dsh-pi，验证插件能独立跑起来。
+  在一个全新的 DSH_HOME 里只装 superpi，验证插件能独立跑起来。
 
 .DESCRIPTION
   这是「可独立在 DSH 中运行」的最强证据：不碰现有 profile，不依赖本机源码目录。
   流程：
-    1. 建临时 DSH_HOME（<temp>\dsh-pi-standalone-<6hex>），里面只有 profiles\<name>
+    1. 建临时 DSH_HOME（<temp>\superpi-standalone-<6hex>），里面只有 profiles\<name>
     2. profile 的 bundles 只留 @deepseek-ai/dsh-base + @deepseek-ai/dsh-web-app
-    3. 用 pnpm 把 dsh-pi 的 tarball 装进去（pi 运行时来自 optionalDependency）
+    3. 用 pnpm 把 superpi 的 tarball 装进去（pi 运行时来自 optionalDependency）
     4. 用 DSH 自己的 Electron Node 启动该 profile 的 web 服务（独立端口）
     5. 走真实 HTTP + 真实 LLM 往返：health / state / create / get_state / prompt / snapshot / delete
     6. 关掉服务；除 -Keep 外删除临时目录
@@ -83,9 +83,9 @@ Push-Location -LiteralPath $PluginRoot
 try {
   $pkg = Get-Content -LiteralPath (Join-Path $PluginRoot 'package.json') -Raw | ConvertFrom-Json
   $version = $pkg.version
-  $tgz = Join-Path $PluginRoot ('dsh-pi-' + $version + '.tgz')
+  $tgz = Join-Path $PluginRoot ('superpi-' + $version + '.tgz')
   if (-not (Test-Path -LiteralPath $tgz)) {
-    Step "packing dsh-pi $version"
+    Step "packing superpi $version"
     if (-not $env:HTTPS_PROXY) { $env:HTTPS_PROXY = 'http://127.0.0.1:10808' }
     if (-not $env:HTTP_PROXY) { $env:HTTP_PROXY = 'http://127.0.0.1:10808' }
     & npm pack --silent | Out-Null
@@ -95,7 +95,7 @@ try {
   Step ("tarball   = " + $tgz + " (" + (Get-Item -LiteralPath $tgz).Length + " B)")
 
   $suffix = -join ((1..6) | ForEach-Object { '0123456789abcdef'[(Get-Random -Max 16)] })
-  $homeDir = Join-Path $env:TEMP ("dsh-pi-standalone-" + $suffix)
+  $homeDir = Join-Path $env:TEMP ("superpi-standalone-" + $suffix)
   $profileName = 'pi-standalone'
   $profileDir = Join-Path $homeDir ("profiles\" + $profileName)
   New-Item -ItemType Directory -Force -Path $profileDir | Out-Null
@@ -124,16 +124,16 @@ try {
   )
   Set-Content -LiteralPath (Join-Path $profileDir 'pnpm-workspace.yaml') -Value ($workspaceLines -join [Environment]::NewLine) -Encoding utf8
   $patchLines = @(
-    '# dsh-pi standalone verification: the only third-party plugin in this profile',
+    '# superpi standalone verification: the only third-party plugin in this profile',
     '- insert:',
-    '    - id: dsh-pi',
-    '      name: dsh-pi',
+    '    - id: superpi',
+    '      name: superpi',
     '      config: {}',
     ''
   )
   Set-Content -LiteralPath (Join-Path $profileDir 'cordis.patch.yml') -Value ($patchLines -join [Environment]::NewLine) -Encoding utf8
 
-  Step 'installing dsh-pi with pnpm'
+  Step 'installing superpi with pnpm'
   $spec = 'file:' + ($tgz -replace '\\', '/')
   Push-Location -LiteralPath $profileDir
   try {
@@ -141,11 +141,11 @@ try {
     if ($LASTEXITCODE -ne 0) { Fail 'pnpm add 失败' }
   } finally { Pop-Location }
 
-  $installedIndex = Join-Path $profileDir 'node_modules\dsh-pi\index.js'
+  $installedIndex = Join-Path $profileDir 'node_modules\superpi\index.js'
   $piCli = Join-Path $profileDir 'node_modules\@earendil-works\pi-coding-agent\dist\bundle\cli.js'
-  if (-not (Test-Path -LiteralPath $installedIndex)) { Fail '安装后找不到 dsh-pi/index.js' }
+  if (-not (Test-Path -LiteralPath $installedIndex)) { Fail '安装后找不到 superpi/index.js' }
   if (-not (Test-Path -LiteralPath $piCli)) { Fail '安装后找不到 @earendil-works/pi-coding-agent' }
-  Step 'installed dsh-pi + pi runtime'
+  Step 'installed superpi + pi runtime'
 
   $logPath = Join-Path $homeDir 'standalone.log'
   $env:ELECTRON_RUN_AS_NODE = '1'
@@ -156,7 +156,7 @@ try {
   $proc = Start-Process -FilePath $dshExePath -ArgumentList $bootArgs -PassThru -RedirectStandardOutput $logPath -RedirectStandardError ($logPath + '.err')
   Step ("pid       = " + $proc.Id)
 
-  $base = "http://127.0.0.1:$Port/api/dsh-pi"
+  $base = "http://127.0.0.1:$Port/api/superpi"
   $ready = $false
   $sw = [Diagnostics.Stopwatch]::StartNew()
   while ($sw.Elapsed.TotalSeconds -lt $WaitSeconds) {
@@ -174,7 +174,7 @@ try {
   Step ("health    = ok (boot " + [int]$sw.Elapsed.TotalMilliseconds + " ms)")
 
   $state = Invoke-RestMethod -Uri ($base + '/state') -TimeoutSec 30
-  $plugVersion = (Get-Content -LiteralPath (Join-Path $profileDir 'node_modules\dsh-pi\package.json') -Raw | ConvertFrom-Json).version
+  $plugVersion = (Get-Content -LiteralPath (Join-Path $profileDir 'node_modules\superpi\package.json') -Raw | ConvertFrom-Json).version
   Step ("plugin    = " + $state.version + " (installed " + $plugVersion + ")")
   Step ("pi source = " + $state.resolved.cliSource + " " + $state.resolved.cliVersion)
   Step ("pi cli    = " + $state.resolved.cliPath)
@@ -221,7 +221,7 @@ try {
   }
 
   if ($assistantText.Trim() -eq '') { Fail '助手回复为空' }
-  Step 'PASS - dsh-pi runs standalone in a fresh DSH_HOME'
+  Step 'PASS - superpi runs standalone in a fresh DSH_HOME'
   exit 0
 } finally {
   Pop-Location

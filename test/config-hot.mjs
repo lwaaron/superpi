@@ -81,7 +81,7 @@ console.log('empty config -> cliSource=' + first.resolved.cliSource + ' cli=' + 
 expect(first.resolved.cliSource !== 'config', '空配置时不应走 config 分支')
 
 // 2) 宿主在详情页填入 cliPath（就地写入同一个引用）→ 下一次 /state 必须立刻反映
-const externalRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-pi-cfg-'))
+const externalRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'superpi-cfg-'))
 const fakePkg = path.join(externalRoot, 'node_modules', '@earendil-works', 'pi-coding-agent')
 fs.mkdirSync(path.join(fakePkg, 'dist', 'bundle'), { recursive: true })
 fs.writeFileSync(path.join(fakePkg, 'package.json'), JSON.stringify({ name: '@earendil-works/pi-coding-agent', version: '1.5.2', bin: { pi: 'dist/bundle/cli.js' } }), 'utf8')

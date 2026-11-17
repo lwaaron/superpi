@@ -183,7 +183,7 @@ function makeServer(deps) {
   const server = http.createServer((req, res) => { void handler(req, res) })
   return new Promise(resolve => {
     server.listen(0, '127.0.0.1', () => {
-      const base = 'http://127.0.0.1:' + String(server.address().port) + '/api/dsh-pi'
+      const base = 'http://127.0.0.1:' + String(server.address().port) + '/api/superpi'
       resolve({ base, close: () => new Promise(done => server.close(done)) })
     })
   })
@@ -216,7 +216,7 @@ function request(base, routePath, { method = 'GET', body, contentType = 'applica
   })
 }
 
-const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-pi-parity-'))
+const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'superpi-parity-'))
 try {
   const proc = fakeProc()
   const calls = { history: [], spawn: [] }

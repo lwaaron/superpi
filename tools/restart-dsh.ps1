@@ -1,4 +1,4 @@
-﻿# 重启 DSH 并在重启后自动核对 dsh-pi 是否换成了磁盘上那份代码。
+﻿# 重启 DSH 并在重启后自动核对 superpi 是否换成了磁盘上那份代码。
 #
 # 为什么需要单独一个脚本：插件在 import 时把代码快照进内存，不重启不生效；
 # 而重启会杀掉当前会话所在的宿主进程，所以不能在对话里直接跑 —— 脚本会拦住这种情况。
@@ -23,7 +23,7 @@
 #   3) 过去直接继承当前进程的环境变量。从 DSH 集成终端/工具里跑时环境里有
 #      ELECTRON_RUN_AS_NODE=1（GUI 会被当成 plain node 起，窗口不出来）以及别处的
 #      DSH_HOME / DSH_PROFILE / DSH_PORT，会把实例顶到错误的 home。
-#      现在按目标实例自己 /selfcheck 报的 root 反推 DSH_HOME（<home>\profiles\<name>\node_modules\dsh-pi），
+#      现在按目标实例自己 /selfcheck 报的 root 反推 DSH_HOME（<home>\profiles\<name>\node_modules\superpi），
 #      ELECTRON_RUN_AS_NODE 只在命令行确实是「跑一个 .js」时才设。反推不出来就拒绝重启。
 #   4) 新增自保护：本脚本若正跑在目标实例内部（当前进程的祖先链里有启动根），拒绝重启并
 #      说明该到外部终端双击 bat；确实要这样干可加 -Force。
@@ -44,7 +44,7 @@ $ErrorActionPreference = 'Stop'
 $profileDir = Join-Path $ProfileRoot $Profile
 
 function Test-DshPiHealth([string]$base) {
-  # 只认真正的 dsh-pi：光凭 200 不够 —— 前端 dev server 对任意路径都回 200 + HTML。
+  # 只认真正的 superpi：光凭 200 不够 —— 前端 dev server 对任意路径都回 200 + HTML。
   # /health 的真实响应是 JSON { ok: true, version: "x.y.z" }；HTML 会被解析成字符串。
   try {
     $body = Invoke-RestMethod -Uri "$base/health" -TimeoutSec 2 -ErrorAction Stop
@@ -52,13 +52,13 @@ function Test-DshPiHealth([string]$base) {
   if ($body -is [string]) { return $false }
   if ($body.ok -ne $true) { return $false }
   $names = $body.PSObject.Properties.Name
-  if ($names -contains 'plugin') { return ($body.plugin -eq 'dsh-pi') }
+  if ($names -contains 'plugin') { return ($body.plugin -eq 'superpi') }
   return [bool]$body.version
 }
 
 # 一个实例 = /health 的 version + /selfcheck 的 root/pid（老版本没有 selfcheck 则为 $null）
 function Get-Instance([int]$port) {
-  $base = "http://127.0.0.1:$port/api/dsh-pi"
+  $base = "http://127.0.0.1:$port/api/superpi"
   if (-not (Test-DshPiHealth $base)) { return $null }
   $health = Invoke-RestMethod -Uri "$base/health" -TimeoutSec 4
   $root = $null
@@ -186,11 +186,11 @@ function Get-LaunchSpec($procInfo) {
   }
 }
 
-# <home>\profiles\<name>\node_modules\dsh-pi → home 与 name
+# <home>\profiles\<name>\node_modules\superpi → home 与 name
 function Get-DshHomeFromRoot([string]$root) {
   if ([string]::IsNullOrWhiteSpace($root)) { return $null }
   $p = $root.TrimEnd('\')
-  $suffix = '\node_modules\dsh-pi'
+  $suffix = '\node_modules\superpi'
   if (-not $p.EndsWith($suffix, [System.StringComparison]::OrdinalIgnoreCase)) { return $null }
   $profileDirPath = $p.Substring(0, $p.Length - $suffix.Length)
   $name = Split-Path -Path $profileDirPath -Leaf
@@ -287,7 +287,7 @@ function Test-SelfAncestorOf([int]$pidToFind) {
   return $false
 }
 
-# 主流程。库模式（$env:DSH_PI_RESTART_LIB = 1）只加载上面的函数，供 test/restart-lib.mjs 做单元测试；
+# 主流程。库模式（$env:SUPERPI_RESTART_LIB = 1）只加载上面的函数，供 test/restart-lib.mjs 做单元测试；
 # 不这么做就只能靠真起真杀来验证重启分支，测试既慢又会动用户正在用的实例。
 function Invoke-RestartMain {
   Write-Output "profile = $profileDir"
@@ -298,8 +298,8 @@ function Invoke-RestartMain {
     if ($dsh.Count -eq 0) {
       Write-Output 'DeepSeek Runtime.exe 没在跑 —— 先启动 DSH 再试。'
     } else {
-      Write-Output "有 $($dsh.Count) 个 DeepSeek 进程在跑，但没有任何端口回 /api/dsh-pi/health。"
-      Write-Output '可能是宿主还在启动，或者 dsh-pi 没装进这个 profile。'
+      Write-Output "有 $($dsh.Count) 个 DeepSeek 进程在跑，但没有任何端口回 /api/superpi/health。"
+      Write-Output '可能是宿主还在启动，或者 superpi 没装进这个 profile。'
     }
     exit 1
   }
@@ -313,7 +313,7 @@ function Invoke-RestartMain {
   $target = $resolved.inst
   Write-Output ("api base = {0}  (匹配依据：{1})" -f $target.Base, $resolved.reason)
   if ($resolved.all.Count -gt 1) {
-    Write-Output '本机其它 dsh-pi 实例（不参与本次核对）：'
+    Write-Output '本机其它 superpi 实例（不参与本次核对）：'
     Show-Instances @($resolved.all | Where-Object { $_.Port -ne $target.Port })
   }
 
@@ -369,7 +369,7 @@ function Invoke-RestartMain {
     }
 
     $child = Start-LaunchSpec $spec $workDir $patch
-    Write-Output ("已重新拉起：pid {0}，等待最多 {1} 秒直到 /api/dsh-pi/health 就绪…" -f $child.Id, $WaitSeconds)
+    Write-Output ("已重新拉起：pid {0}，等待最多 {1} 秒直到 /api/superpi/health 就绪…" -f $child.Id, $WaitSeconds)
     $deadline = (Get-Date).AddSeconds($WaitSeconds)
     $target = $null
     while ((Get-Date) -lt $deadline) {
@@ -377,7 +377,7 @@ function Invoke-RestartMain {
       $again = Resolve-Target $Port $profileDir
       if ($null -ne $again -and $null -ne $again.inst) { $target = $again.inst; break }
     }
-    if ($null -eq $target) { Write-Output '重启后没等到 /api/dsh-pi 就绪。'; exit 1 }
+    if ($null -eq $target) { Write-Output '重启后没等到 /api/superpi 就绪。'; exit 1 }
     Write-Output ("api base = {0}" -f $target.Base)
   }
 
@@ -388,7 +388,7 @@ function Invoke-RestartMain {
   $diskPkg = $null
   if ($null -ne $target.Root) { $diskPkg = Join-Path $target.Root 'package.json' }
   if ($null -eq $diskPkg -or -not (Test-Path -LiteralPath $diskPkg)) {
-    $fallback = Join-Path $profileDir 'node_modules\dsh-pi\package.json'
+    $fallback = Join-Path $profileDir 'node_modules\superpi\package.json'
     if (Test-Path -LiteralPath $fallback) { $diskPkg = $fallback }
   }
   $diskVersion = if ($diskPkg -and (Test-Path -LiteralPath $diskPkg)) { (Get-Content -LiteralPath $diskPkg -Raw | ConvertFrom-Json).version } else { '<missing>' }
@@ -406,10 +406,10 @@ function Invoke-RestartMain {
   Write-Output ("MISMATCH: 运行中的插件版本 {0} ≠ 磁盘版本 {1}" -f $state.version, $diskVersion)
   Write-Output '  成因 A：磁盘刚装了新版本、宿主还没重启（-SkipRestart 只核对不重启，就是这个情况）。'
   Write-Output '          去掉 -SkipRestart 再跑一次即可（或双击 tools\restart-dsh.bat）。'
-  Write-Output '  成因 B：重启过但旧进程没退干净。看上面「本机其它 dsh-pi 实例」，确认没有旧实例占着端口。'
+  Write-Output '  成因 B：重启过但旧进程没退干净。看上面「本机其它 superpi 实例」，确认没有旧实例占着端口。'
   exit 2
 }
 
-if ($env:DSH_PI_RESTART_LIB -ne '1') {
+if ($env:SUPERPI_RESTART_LIB -ne '1') {
   Invoke-RestartMain
 }

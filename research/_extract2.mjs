@@ -9,7 +9,7 @@ const jsonSize = buf.readUInt32LE(8);
 const raw = buf.subarray(16, 16 + jsonSize).toString('utf8');
 const json = JSON.parse(raw.slice(0, raw.lastIndexOf('}') + 1));
 const dataBase = 16 + pickle;
-const outDir = 'C:/Users/PC/Documents/pi-local/dsh-pi/research/asar-docs';
+const outDir = 'C:/Users/PC/Documents/pi-local/superpi/research/asar-docs';
 function find(node, prefix, target) {
   for (const [k, v] of Object.entries(node.files || {})) {
     const p = prefix + '/' + k;

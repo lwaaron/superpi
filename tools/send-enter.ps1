@@ -14,4 +14,4 @@ Start-Sleep -Milliseconds 400
 $ws = New-Object -ComObject WScript.Shell
 $ws.SendKeys("{ENTER}")
 Start-Sleep -Seconds 3
-pwsh -NoProfile -File C:\Users\PC\Documents\pi-local\dsh-pi\tools\screenshot-window.ps1 -ProcessId 55416 -Out C:\Users\PC\Documents\pi-local\dsh-pi\out\resume-in-project.png
+pwsh -NoProfile -File C:\Users\PC\Documents\pi-local\superpi\tools\screenshot-window.ps1 -ProcessId 55416 -Out C:\Users\PC\Documents\pi-local\superpi\out\resume-in-project.png

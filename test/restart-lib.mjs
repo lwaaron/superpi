@@ -7,7 +7,7 @@
  * 面板永远起不来。这类缺陷只在真重启时才暴露，而真重启会杀掉正在用的宿主，只能靠函数级断言守住。
  *
  * 分工：PowerShell 侧 test/fixtures/restart-lib-checks.ps1 做断言（它能直接调用 PS 函数），
- * 这个文件负责起一个假 dsh-pi 服务（含「对任意路径都回 200 HTML」的 dev server 形态）、
+ * 这个文件负责起一个假 superpi 服务（含「对任意路径都回 200 HTML」的 dev server 形态）、
  * 跑它、解析结果。两个引擎都跑：pwsh 7 与 Windows PowerShell 5.1 —— 用户双击的 bat 会回落 5.1。
  *
  * 跑法：node test/restart-lib.mjs
@@ -41,7 +41,7 @@ const raw = fs.readFileSync(scriptPath)
 check(raw[0] === 0xef && raw[1] === 0xbb && raw[2] === 0xbf, 'restart-dsh.ps1 has UTF-8 BOM (5.1 reads Chinese correctly)')
 const text = raw.toString('utf8').replace(/^\uFEFF/, '')
 check(!text.includes('\r'), 'restart-dsh.ps1 has no stray CR')
-check(text.includes('$env:DSH_PI_RESTART_LIB'), 'restart-dsh.ps1 exposes library mode for tests')
+check(text.includes('$env:SUPERPI_RESTART_LIB'), 'restart-dsh.ps1 exposes library mode for tests')
 const codeOnly = text.split(/\r?\n/).filter(l => !/^\s*#/.test(l)).join('\n')
 check(!/Start-Process\s+-FilePath\s+\$exe\b/.test(codeOnly), 'no bare Start-Process -FilePath $exe in executed code (the old defect)')
 check(text.includes('ProcessStartInfo'), 'launch goes through ProcessStartInfo (arguments not re-parsed)')
@@ -51,33 +51,33 @@ check(text.includes('Test-SelfAncestorOf'), 'self-restart guard present')
 const fixtureRaw = fs.readFileSync(fixture, 'utf8')
 check([...fixtureRaw].every(ch => ch.charCodeAt(0) < 128), 'fixture is ASCII only (same file must parse under 5.1)')
 
-/** 2. 假 dsh-pi 服务：HTML 200 / ok=false / 别的插件 / 真 dsh-pi。 */
+/** 2. 假 superpi 服务：HTML 200 / ok=false / 别的插件 / 真 superpi。 */
 function startFake() {
   const server = http.createServer((req, res) => {
     const url = req.url || ''
-    if (url.startsWith('/html/api/dsh-pi/health')) {
+    if (url.startsWith('/html/api/superpi/health')) {
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
       res.end('<!doctype html><title>Reveric - Web (React)</title><div id="root"></div>')
       return
     }
-    if (url.startsWith('/ok/api/dsh-pi/health')) {
+    if (url.startsWith('/ok/api/superpi/health')) {
       res.writeHead(200, { 'content-type': 'application/json' })
       res.end(JSON.stringify({ ok: true, version: FAKE_VERSION }))
       return
     }
-    if (url.startsWith('/bad/api/dsh-pi/health')) {
+    if (url.startsWith('/bad/api/superpi/health')) {
       res.writeHead(200, { 'content-type': 'application/json' })
       res.end(JSON.stringify({ ok: false, version: FAKE_VERSION }))
       return
     }
-    if (url.startsWith('/other/api/dsh-pi/health')) {
+    if (url.startsWith('/other/api/superpi/health')) {
       res.writeHead(200, { 'content-type': 'application/json' })
       res.end(JSON.stringify({ ok: true, plugin: 'someone-else', version: '1.0.0' }))
       return
     }
-    if (url.startsWith('/pi/api/dsh-pi/health')) {
+    if (url.startsWith('/pi/api/superpi/health')) {
       res.writeHead(200, { 'content-type': 'application/json' })
-      res.end(JSON.stringify({ ok: true, plugin: 'dsh-pi', version: FAKE_VERSION }))
+      res.end(JSON.stringify({ ok: true, plugin: 'superpi', version: FAKE_VERSION }))
       return
     }
     res.writeHead(404, { 'content-type': 'text/plain' })

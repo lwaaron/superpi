@@ -15,4 +15,4 @@ Start-Sleep -Milliseconds 500
 $ws = New-Object -ComObject WScript.Shell
 $ws.SendKeys("{ENTER}")
 Start-Sleep -Seconds 3
-pwsh -NoProfile -File C:\Users\PC\Documents\pi-local\dsh-pi\tools\screenshot-window.ps1 -ProcessId 55416 -Out C:\Users\PC\Documents\pi-local\dsh-pi\out\bat-inner.png
+pwsh -NoProfile -File C:\Users\PC\Documents\pi-local\superpi\tools\screenshot-window.ps1 -ProcessId 55416 -Out C:\Users\PC\Documents\pi-local\superpi\out\bat-inner.png

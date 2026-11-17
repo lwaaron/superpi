@@ -1,10 +1,10 @@
 ﻿<#
 .SYNOPSIS
-  一键启动 dsh-pi 独立实例（不碰桌面 profile，双击 .bat 即用）。
+  一键启动 superpi 独立实例（不碰桌面 profile，双击 .bat 即用）。
 
 .DESCRIPTION
   这是「只想看看面板长什么样」的最短路径：建一个独立的 DSH_HOME、把当前仓库的
-  dsh-pi 装进去、用 DSH 自己的 Electron Node 起 web 服务，然后把访问地址打出来。
+  superpi 装进去、用 DSH 自己的 Electron Node 起 web 服务，然后把访问地址打出来。
 
   与 tools/standalone-verify.ps1 的分工：
     - 本脚本：常驻启动器。装一次、之后复用；自己管端口与进程，配 -Stop 关停。
@@ -74,7 +74,7 @@ function Get-ListeningPid([int]$p) {
 
 function Test-Health([int]$p) {
   try {
-    $h = Invoke-RestMethod -Uri ('http://127.0.0.1:' + $p + '/api/dsh-pi/health') -TimeoutSec 3
+    $h = Invoke-RestMethod -Uri ('http://127.0.0.1:' + $p + '/api/superpi/health') -TimeoutSec 3
     return [bool]$h.ok
   } catch { return $false }
 }
@@ -175,7 +175,7 @@ if ($existingListen -gt 0 -and -not $Reinstall) {
   $st = Read-State
   if ($st -and [int]$st.port -eq $Port -and (Test-Health $Port)) {
     Step ("already running (pid " + $existingListen + ")")
-    Step ("api          = " + $st.url + '/api/dsh-pi')
+    Step ("api          = " + $st.url + '/api/superpi')
     Step ("version      = " + $st.version)
     Step ("home         = " + $st.home)
     Step ("log          = " + $st.log)
@@ -189,12 +189,12 @@ if ($existingListen -gt 0 -and -not $Reinstall) {
 New-Item -ItemType Directory -Force -Path $StateDir | Out-Null
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 
-# ── 装 dsh-pi 到独立 DSH_HOME（只在缺失或 -Reinstall 时做）────────────────
+# ── 装 superpi 到独立 DSH_HOME（只在缺失或 -Reinstall 时做）────────────────
 $pkg = Get-Content -LiteralPath (Join-Path $PluginRoot 'package.json') -Raw | ConvertFrom-Json
 $version = $pkg.version
-$tgz = Join-Path $PluginRoot ('dsh-pi-' + $version + '.tgz')
-$installedIndex = Join-Path $ProfileDir ('node_modules\dsh-pi\index.js')
-$installedVersionFile = Join-Path $ProfileDir 'node_modules\dsh-pi\package.json'
+$tgz = Join-Path $PluginRoot ('superpi-' + $version + '.tgz')
+$installedIndex = Join-Path $ProfileDir ('node_modules\superpi\index.js')
+$installedVersionFile = Join-Path $ProfileDir 'node_modules\superpi\package.json'
 
 $needInstall = $Reinstall.IsPresent -or (-not (Test-Path -LiteralPath $installedIndex))
 if (-not $needInstall) {
@@ -211,7 +211,7 @@ if ($needInstall) {
   $pnpm = Resolve-Pnpm $PnpmPath
   Step ("pnpm         = " + $pnpm)
   if (-not (Test-Path -LiteralPath $tgz)) {
-    Step ("packing dsh-pi " + $version)
+    Step ("packing superpi " + $version)
     Push-Location -LiteralPath $PluginRoot
     try {
       & npm pack --silent | Out-Null
@@ -231,9 +231,9 @@ if ($needInstall) {
   Set-Content -LiteralPath (Join-Path $ProfileDir 'package.json') -Value ($manifest | ConvertTo-Json -Depth 8) -Encoding utf8
   Set-Content -LiteralPath (Join-Path $ProfileDir 'cordis.yml') -Value (@('# dsh profile root - an empty entry list patched over by the layers above.', '[]', '') -join [Environment]::NewLine) -Encoding utf8
   Set-Content -LiteralPath (Join-Path $ProfileDir 'pnpm-workspace.yaml') -Value (@('packages:', '  - .', '', 'nodeLinker: hoisted', 'autoInstallPeers: false', '') -join [Environment]::NewLine) -Encoding utf8
-  Set-Content -LiteralPath (Join-Path $ProfileDir 'cordis.patch.yml') -Value (@('# dsh-pi one-click start: the only third-party plugin in this profile', '- insert:', '    - id: dsh-pi', '      name: dsh-pi', '      config: {}', '') -join [Environment]::NewLine) -Encoding utf8
+  Set-Content -LiteralPath (Join-Path $ProfileDir 'cordis.patch.yml') -Value (@('# superpi one-click start: the only third-party plugin in this profile', '- insert:', '    - id: superpi', '      name: superpi', '      config: {}', '') -join [Environment]::NewLine) -Encoding utf8
 
-  Step 'installing dsh-pi with pnpm (first run only, may take a while)'
+  Step 'installing superpi with pnpm (first run only, may take a while)'
   $spec = 'file:' + ($tgz -replace '\\', '/')
   Push-Location -LiteralPath $ProfileDir
   try {
@@ -241,12 +241,12 @@ if ($needInstall) {
     if ($LASTEXITCODE -ne 0) { Fail 'pnpm add 失败' }
   } finally { Pop-Location }
 
-  if (-not (Test-Path -LiteralPath $installedIndex)) { Fail '安装后找不到 dsh-pi/index.js' }
+  if (-not (Test-Path -LiteralPath $installedIndex)) { Fail '安装后找不到 superpi/index.js' }
   $piCli = Join-Path $ProfileDir 'node_modules\@earendil-works\pi-coding-agent\dist\bundle\cli.js'
   if (-not (Test-Path -LiteralPath $piCli)) { Fail '安装后找不到 @earendil-works/pi-coding-agent' }
-  Step ('installed dsh-pi ' + $version + ' + pi runtime')
+  Step ('installed superpi ' + $version + ' + pi runtime')
 } else {
-  Step ('reusing installed dsh-pi ' + $version)
+  Step ('reusing installed superpi ' + $version)
 }
 
 # ── 启动 ────────────────────────────────────────────────────────────────
@@ -266,7 +266,7 @@ $proc = Start-Process -FilePath $dshExePath -ArgumentList $bootArgs -PassThru `
 Step ("pid          = " + $proc.Id)
 
 $base = 'http://127.0.0.1:' + $Port
-$apiBase = $base + '/api/dsh-pi'
+$apiBase = $base + '/api/superpi'
 $sw = [Diagnostics.Stopwatch]::StartNew()
 $ready = $false
 while ($sw.Elapsed.TotalSeconds -lt $WaitSeconds) {
@@ -304,15 +304,15 @@ Step ("health       = ok (boot " + [int]$sw.Elapsed.TotalMilliseconds + " ms)")
 Step ("version      = " + $state.version)
 Step ("pi source    = " + $state.resolved.cliSource + " " + $state.resolved.cliVersion)
 Step ''
-# 不要在这里编造浏览器地址：面板是 DSH 的侧栏 slot，没有独立的 /dsh-pi 网页入口。
-# 该实例的 web 根路径由宿主鉴权层保护（无 token 直接 401），而 /api/dsh-pi/* 是免 token 的。
+# 不要在这里编造浏览器地址：面板是 DSH 的侧栏 slot，没有独立的 /superpi 网页入口。
+# 该实例的 web 根路径由宿主鉴权层保护（无 token 直接 401），而 /api/superpi/* 是免 token 的。
 Step ("  api     ->  " + $apiBase)
 Step ("  health  ->  " + $apiBase + '/health')
 Step ("  home    ->  " + $HomeDir)
 Step ("  log     ->  " + $logPath)
 Step ''
 Step 'how to open the panel:'
-Step '  add this profile to your DSH desktop app, then open the dsh-pi entry in the sidebar;'
+Step '  add this profile to your DSH desktop app, then open the superpi entry in the sidebar;'
 Step '  or point any DSH client at this instance. The HTTP API above needs no token.'
 Step ''
 Step ('stop with:  .\tools\start-standalone.bat -Stop')

@@ -1,6 +1,6 @@
 ﻿<#
 .SYNOPSIS
-  把 dsh-pi 作为真正的 pnpm 依赖装进某个 DSH profile，并生成回滚脚本。
+  把 superpi 作为真正的 pnpm 依赖装进某个 DSH profile，并生成回滚脚本。
 
 .DESCRIPTION
   每步失败即停，不留半成品。关键是「用包管理器安装」，而不是手工往
@@ -10,10 +10,10 @@
     1. npm pack 出 tarball
     2. 装到临时目录，用装出来的那份跑一轮真实 LLM 往返（证明产物可用）
     3. tarball 收进 <profile>\.dsh-local-packages\（profile 自带，不依赖源码仓库还在）
-    4. 备份 profile\package.json 与 profile\pnpm-lock.yaml，记录现有 node_modules\dsh-pi 形态
+    4. 备份 profile\package.json 与 profile\pnpm-lock.yaml，记录现有 node_modules\superpi 形态
     5. 用 DSH 自带的 pnpm 执行 add file:<tarball> —— manifest / lock / node_modules 三者
        由 pnpm 一次性写一致，pi 运行时（optionalDependencies @earendil-works/*）随之落入
-    6. 校验：manifest 依赖串、lock 条目、node_modules\dsh-pi\index.js、pi CLI、再跑一遍真机冒烟
+    6. 校验：manifest 依赖串、lock 条目、node_modules\superpi\index.js、pi CLI、再跑一遍真机冒烟
     7. 生成 rollback-<时间戳>.ps1（恢复 package.json + pnpm-lock.yaml，再让 pnpm 收敛 node_modules）
 
 .EXAMPLE
@@ -38,7 +38,7 @@ $profileLock = Join-Path $profileDir 'pnpm-lock.yaml'
 function Step([string]$text) { Write-Output ''; Write-Output "=== $text ===" }
 
 # 暂存目录一旦建出来就必须在每条退出路径上清掉 —— 0.3.0 / 0.3.1 两次逐字节比对失败各在
-# %TEMP% 下留了一棵约 1.7 万文件的 dsh-pi-stage-*。
+# %TEMP% 下留了一棵约 1.7 万文件的 superpi-stage-*。
 #   · 正常结束：末尾显式调用 Remove-StageDir
 #   · Fail 路径：Fail 先清理再 exit（exit 不触发 trap，所以必须显式调）
 #   · 意外抛错 / Ctrl-C：trap 兜底，清理后 break 终止脚本
@@ -88,22 +88,22 @@ Pop-Location
 
 # ── 2. 暂存安装 + 真机验证 ─────────────────────────────────
 Step 'staging install into TEMP'
-$stage = Join-Path $env:TEMP ('dsh-pi-stage-' + [guid]::NewGuid().ToString('N').Substring(0, 6))
+$stage = Join-Path $env:TEMP ('superpi-stage-' + [guid]::NewGuid().ToString('N').Substring(0, 6))
 New-Item -ItemType Directory -Path $stage | Out-Null
 $script:stageDir = $stage
 Push-Location $stage
-'{ "name": "dsh-pi-stage", "private": true, "type": "module" }' | Set-Content -Path package.json -Encoding utf8
+'{ "name": "superpi-stage", "private": true, "type": "module" }' | Set-Content -Path package.json -Encoding utf8
 $stageRaw = npm install $tgzPath --no-audit --no-fund --loglevel=error 2>&1 | Out-String
 $installExit = $LASTEXITCODE
 Pop-Location
 if ($installExit -ne 0) { Fail ("npm install failed (exit=$installExit): " + $stageRaw) }
 foreach ($line in ($stageRaw.Trim() -split '\r?\n' | Select-Object -Last 3)) { Write-Output $line }
 
-$stagedPlugin = Join-Path $stage 'node_modules\dsh-pi'
+$stagedPlugin = Join-Path $stage 'node_modules\superpi'
 $stagedPiScope = Join-Path $stage 'node_modules\@earendil-works'
-if (-not (Test-Path (Join-Path $stagedPlugin 'index.js'))) { Fail 'staging dir has no dsh-pi\index.js' }
+if (-not (Test-Path (Join-Path $stagedPlugin 'index.js'))) { Fail 'staging dir has no superpi\index.js' }
 $hasPi = Test-Path (Join-Path $stagedPiScope 'pi-coding-agent\package.json')
-Write-Output "staged dsh-pi = $stagedPlugin"
+Write-Output "staged superpi = $stagedPlugin"
 Write-Output "staged pi     = $hasPi"
 if ($hasPi) {
   $stagedCli = Join-Path $stagedPiScope 'pi-coding-agent\dist\bundle\cli.js'
@@ -134,13 +134,13 @@ Write-Output "dep spec = $depSpec"
 
 # ── 4. 备份现状 ────────────────────────────────────────────
 Step 'backup current state'
-$backupDir = Join-Path (Join-Path $profileDir '.backup') ('dsh-pi-' + $stamp)
+$backupDir = Join-Path (Join-Path $profileDir '.backup') ('superpi-' + $stamp)
 New-Item -ItemType Directory -Path $backupDir -Force | Out-Null
 Copy-Item -LiteralPath $profilePkg -Destination (Join-Path $backupDir 'package.json') -Force
 $hadLock = Test-Path $profileLock
 if ($hadLock) { Copy-Item -LiteralPath $profileLock -Destination (Join-Path $backupDir 'pnpm-lock.yaml') -Force }
 
-$pluginDir = Join-Path $profileModules 'dsh-pi'
+$pluginDir = Join-Path $profileModules 'superpi'
 $prior = [ordered]@{
   stamp = $stamp
   profile = $Profile
@@ -159,11 +159,11 @@ if (Test-Path $pluginDir) {
   if ($null -ne $item.LinkType) {
     $prior.kind = 'junction'
     $prior.junctionTarget = @($item.Target)[0]
-    Write-Output "existing dsh-pi is a link -> $($prior.junctionTarget) (recorded only)"
+    Write-Output "existing superpi is a link -> $($prior.junctionTarget) (recorded only)"
   } else {
     $prior.kind = 'dir'
-    $copyTo = Join-Path $backupDir 'node_modules-dsh-pi'
-    Write-Output "existing dsh-pi is a real dir; copied to $copyTo"
+    $copyTo = Join-Path $backupDir 'node_modules-superpi'
+    Write-Output "existing superpi is a real dir; copied to $copyTo"
     Copy-Item -LiteralPath $pluginDir -Destination $copyTo -Recurse -Force
   }
 }
@@ -183,14 +183,14 @@ if ($addExit -ne 0) { Fail ("pnpm add failed (exit=$addExit). Rollback: pwsh -Fi
 Step 'verify installation'
 $failures = New-Object System.Collections.Generic.List[string]
 
-if (-not (Test-Path (Join-Path $pluginDir 'index.js'))) { $failures.Add('node_modules\dsh-pi\index.js missing') }
+if (-not (Test-Path (Join-Path $pluginDir 'index.js'))) { $failures.Add('node_modules\superpi\index.js missing') }
 
 $pkgAfter = Get-Content -LiteralPath $profilePkg -Raw | ConvertFrom-Json
-$depAfter = $pkgAfter.dependencies.'dsh-pi'
+$depAfter = $pkgAfter.dependencies.'superpi'
 if ($null -eq $depAfter) {
-  $failures.Add('profile package.json has no dsh-pi dependency')
+  $failures.Add('profile package.json has no superpi dependency')
 } elseif (-not $depAfter.StartsWith('file:')) {
-  $failures.Add("profile package.json dsh-pi is not a file: spec, got $depAfter")
+  $failures.Add("profile package.json superpi is not a file: spec, got $depAfter")
 } else {
   Write-Output "manifest dep = $depAfter"
 }
@@ -199,8 +199,8 @@ if (-not (Test-Path $profileLock)) {
   $failures.Add('profile pnpm-lock.yaml missing')
 } else {
   $lockText = Get-Content -LiteralPath $profileLock -Raw
-  # 缩进随 pnpm 版本变化（v11 是 6 空格），只认「整行是 dsh-pi: 键」
-  if ($lockText -notmatch '(?m)^\s+dsh-pi:\s*$') { $failures.Add('pnpm-lock.yaml has no dsh-pi entry (lock drift)') }
+  # 缩进随 pnpm 版本变化（v11 是 6 空格），只认「整行是 superpi: 键」
+  if ($lockText -notmatch '(?m)^\s+superpi:\s*$') { $failures.Add('pnpm-lock.yaml has no superpi entry (lock drift)') }
   if ($lockText -notmatch 'pi-coding-agent') { $failures.Add('pnpm-lock.yaml has no pi-coding-agent (runtime not locked)') }
   Write-Output ('lock = {0} B' -f (Get-Item -LiteralPath $profileLock).Length)
 }
@@ -219,7 +219,7 @@ if (Test-Path $profilePiCli) {
 $modulesYaml = Join-Path $profileModules '.modules.yaml'
 if (Test-Path $modulesYaml) {
   $my = Get-Content -LiteralPath $modulesYaml -Raw
-  if ($my -notmatch 'dsh-pi') { $failures.Add('node_modules .modules.yaml does not know dsh-pi (next pnpm run would prune it)') }
+  if ($my -notmatch 'superpi') { $failures.Add('node_modules .modules.yaml does not know superpi (next pnpm run would prune it)') }
 } else {
   $failures.Add('node_modules .modules.yaml missing')
 }
@@ -276,11 +276,11 @@ if (-not $SkipVerify) {
 Step 'generate rollback script'
 $rollback = Join-Path $backupDir ('rollback-' + $stamp + '.ps1')
 $lines = New-Object System.Collections.Generic.List[string]
-$lines.Add('# Rollback dsh-pi install (' + $stamp + ') - generated by tools\install-plugin.ps1')
+$lines.Add('# Rollback superpi install (' + $stamp + ') - generated by tools\install-plugin.ps1')
 $lines.Add('$ErrorActionPreference = ''Stop''')
 $lines.Add('$profileDir = ' + "'" + $profileDir + "'")
 $lines.Add('$profileModules = Join-Path $profileDir ''node_modules''')
-$lines.Add('$pluginDir = Join-Path $profileModules ''dsh-pi''')
+$lines.Add('$pluginDir = Join-Path $profileModules ''superpi''')
 $lines.Add('$pnpmCli = ' + "'" + $pnpmCli + "'")
 $lines.Add('')
 $lines.Add('Copy-Item -LiteralPath (Join-Path $PSScriptRoot ''package.json'') -Destination (Join-Path $profileDir ''package.json'') -Force')
@@ -292,10 +292,10 @@ if ($prior.kind -eq 'junction') {
   $lines.Add('New-Item -ItemType Junction -Path $pluginDir -Target ' + "'" + $prior.junctionTarget + "'" + ' | Out-Null')
   $lines.Add('Write-Output ''2/3 restored junction -> ' + $prior.junctionTarget + '''')
 } elseif ($prior.kind -eq 'dir') {
-  $lines.Add('Copy-Item -LiteralPath (Join-Path $PSScriptRoot ''node_modules-dsh-pi'') -Destination $pluginDir -Recurse -Force')
-  $lines.Add('Write-Output ''2/3 restored previous node_modules\dsh-pi directory''')
+  $lines.Add('Copy-Item -LiteralPath (Join-Path $PSScriptRoot ''node_modules-superpi'') -Destination $pluginDir -Recurse -Force')
+  $lines.Add('Write-Output ''2/3 restored previous node_modules\superpi directory''')
 } else {
-  $lines.Add('Write-Output ''2/3 previous state had no dsh-pi, leaving it removed''')
+  $lines.Add('Write-Output ''2/3 previous state had no superpi, leaving it removed''')
 }
 $lines.Add('')
 foreach ($name in $prior.addedPiPackages) {
@@ -321,8 +321,8 @@ Write-Output "rollback = $rollback"
 Remove-StageDir
 
 Step 'done'
-Write-Output "dsh-pi is now a pnpm dependency of profile '$Profile'. Next:"
+Write-Output "superpi is now a pnpm dependency of profile '$Profile'. Next:"
 Write-Output '  1) restart DSH (plugin code is snapshotted at import, a restart is required)'
 Write-Output '  2) open the pi panel; if the runtime is missing, click "install pi"'
-Write-Output '  3) diagnostics: GET http://127.0.0.1:<port>/api/dsh-pi/diagnostics'
+Write-Output '  3) diagnostics: GET http://127.0.0.1:<port>/api/superpi/diagnostics'
 Write-Output "  4) rollback: pwsh -File '$rollback'"

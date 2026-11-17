@@ -1,15 +1,15 @@
-# dsh-pi UI 规格书：DSH 设计令牌对齐与目录选择器交互
+# superpi UI 规格书：DSH 设计令牌对齐与目录选择器交互
 
 | 项 | 值 |
 | --- | --- |
 | 文档版本 | 1.5 |
 | 代码基线 | `client.js` 6275 行 / 347871 B / sha256 前 12 位 `570B9EF4B9B0` |
-| 版本号 | `package.json` version = **0.8.1**（`index.js` 的 `CONTRACT_VERSION` 同为 `0.8.1`；0.6.0 新增助手文本里的文件路径标签与 Composer 任意文件插入，0.6.1 新增类型图标文件标签、右键资源管理器定位与统一的 `CloseButton`，0.6.2 把 composer 换成宿主主对话区的卡面 + 圆形按钮 + `+` 菜单 + 底部统计行，0.6.3 修 composer 首次进入统计行无数字与统计行混入会话路径，0.6.4 把「思考块 + 工具行」重做成 DSH 会话流的过程行：思考 = 父行、工具调用 = 缩进子行组、工具结果并入调用行、末尾工作状态行（该行按 DSH `RunningStatus` 收尾：`--dsw-alias-label-deep-diving` 蓝字 + 16 网格鲸鱼尾 + `···`），0.7.0 把模型名与思考档位合成同一个 `.dsh-pi-picker-box` 锚点并换成自绘 `-picker-menu` 弹层（删掉原生 `<select>` 叠层与 `picker-wrap` / `picker-native` 两个类），新增顶栏 `more` 菜单（`MoreMenu`）、历史会话 `side` 左滑侧栏（`SidePanel`）、`dialog-wide` / `dialog-grow` / `dialog-content` 三个对话框变体与 `role=alertdialog` 的 `ConfirmDialog`，并给 `sess-top` 的子段加 `nowrap` 修「1 个会话」折行，0.8.0 把历史会话抽屉重做成**两级列表**（项目层 → 会话层，`SessionsList` / `SessionsSheet`）、给项目行与会话行加行内「更多」菜单（`row-more`，两项：重命名 / 在此新建会话、重命名 / 置顶），新增项目与会话的重命名弹窗（`RenameDialog`）、会话置顶（`pin` 图标 + 置顶优先的两遍分区排序）、宿主侧三条 `ui-prefs` 路由（`GET /ui-prefs`、`POST /ui-prefs/project`、`POST /ui-prefs/session`）与 `~/.dsh-pi/ui-prefs.json` 原子写偏好文件，修正会话标题胶囊的显示条件（由「既有偏好名又有 pi 会话名才显示」改为「只在标题位置已被名字占据时才把原始摘要放进胶囊」，只有 `firstMessage` 的会话也能看到摘要），并把过程流子行组的 18px 行盒改成与父行一致的 32px 步长（删掉子行 `line-height` 覆盖、组内 `gap` 0→8、子行缩进 22px→26px、行内三段间距统一 11px），附录 A 的行号已整体刷新到 0.8.0 实测值，0.8.1 把四个居中弹窗统一成真模态（遮罩点击即关闭，判定式抽成 `maskHandler`）、给 `MoreMenu` 补「点外部关闭」（`isOutsideMenu` 同时放行菜单自身与触发按钮）、并把顶栏标题从品牌名换成当前项目标题（`projectTitleOf` + host 侧 `withProjectIdentity` / `snapshotOf` 下发 `displayPath` 与 `projectKey`），附录 A 的行号已整体刷新到 0.8.1 实测值） |
+| 版本号 | `package.json` version = **0.8.1**（`index.js` 的 `CONTRACT_VERSION` 同为 `0.8.1`；0.6.0 新增助手文本里的文件路径标签与 Composer 任意文件插入，0.6.1 新增类型图标文件标签、右键资源管理器定位与统一的 `CloseButton`，0.6.2 把 composer 换成宿主主对话区的卡面 + 圆形按钮 + `+` 菜单 + 底部统计行，0.6.3 修 composer 首次进入统计行无数字与统计行混入会话路径，0.6.4 把「思考块 + 工具行」重做成 DSH 会话流的过程行：思考 = 父行、工具调用 = 缩进子行组、工具结果并入调用行、末尾工作状态行（该行按 DSH `RunningStatus` 收尾：`--dsw-alias-label-deep-diving` 蓝字 + 16 网格鲸鱼尾 + `···`），0.7.0 把模型名与思考档位合成同一个 `.superpi-picker-box` 锚点并换成自绘 `-picker-menu` 弹层（删掉原生 `<select>` 叠层与 `picker-wrap` / `picker-native` 两个类），新增顶栏 `more` 菜单（`MoreMenu`）、历史会话 `side` 左滑侧栏（`SidePanel`）、`dialog-wide` / `dialog-grow` / `dialog-content` 三个对话框变体与 `role=alertdialog` 的 `ConfirmDialog`，并给 `sess-top` 的子段加 `nowrap` 修「1 个会话」折行，0.8.0 把历史会话抽屉重做成**两级列表**（项目层 → 会话层，`SessionsList` / `SessionsSheet`）、给项目行与会话行加行内「更多」菜单（`row-more`，两项：重命名 / 在此新建会话、重命名 / 置顶），新增项目与会话的重命名弹窗（`RenameDialog`）、会话置顶（`pin` 图标 + 置顶优先的两遍分区排序）、宿主侧三条 `ui-prefs` 路由（`GET /ui-prefs`、`POST /ui-prefs/project`、`POST /ui-prefs/session`）与 `~/.superpi/ui-prefs.json` 原子写偏好文件，修正会话标题胶囊的显示条件（由「既有偏好名又有 pi 会话名才显示」改为「只在标题位置已被名字占据时才把原始摘要放进胶囊」，只有 `firstMessage` 的会话也能看到摘要），并把过程流子行组的 18px 行盒改成与父行一致的 32px 步长（删掉子行 `line-height` 覆盖、组内 `gap` 0→8、子行缩进 22px→26px、行内三段间距统一 11px），附录 A 的行号已整体刷新到 0.8.0 实测值，0.8.1 把四个居中弹窗统一成真模态（遮罩点击即关闭，判定式抽成 `maskHandler`）、给 `MoreMenu` 补「点外部关闭」（`isOutsideMenu` 同时放行菜单自身与触发按钮）、并把顶栏标题从品牌名换成当前项目标题（`projectTitleOf` + host 侧 `withProjectIdentity` / `snapshotOf` 下发 `displayPath` 与 `projectKey`），附录 A 的行号已整体刷新到 0.8.1 实测值） |
 | 设计系统基线 | DSH 客户端样式包 `index-lh_YM6sT.css`（87124 字符 / 748 条规则 / 17 个 `@keyframes`）与 `tokens.txt`（414 个 `--dsw-*` 令牌，浅深两套值） |
 | 采集口径 | 全部数值由脚本从仓库文件与探针文件读出；两种字符口径（源文本 / 门禁还原文本）分别标注 |
 | 适用范围 | 只描述样式令牌、组件规格与目录选择器交互。不改任何源码，本文件是**规格**而非实现 |
 
-> **行号会漂移。** `client.js` 在取证期间被并发改写多次：0.5.0 因历史会话抽屉拆成容器 + 视图涨到 4130 行，0.6.0 又因文件标签与任意文件插入涨到 4556 行，0.6.1 因类型图标、`CloseButton` 与资源管理器定位涨到 4789 行，0.6.2 因 composer 重做涨到 4873 行，0.6.3 又因 composer 首帧统计与 dock 归位涨到 5170 行，0.6.4 因过程流按 DSH 会话过程流重做涨到 5572 行，同日又把末尾工作状态行按 DSH `RunningStatus` 收尾涨到 5614 行、把中文用时单位之间的半角空格去掉后涨到 5619 行，同日又给工作状态行的首帧加了 `Math.max(1000, …)` 钳位（不钳位首帧会闪「0秒」，与 DSH `RunningStatus` 的 `formatRunDuration(Math.max(1e3, now - startTime), t)` 同一处理）涨到 5619 行，0.7.0 再因 picker 合一弹层、`more` 顶栏菜单、`side` 左滑侧栏、三个对话框变体与过程流子行行盒涨到 5872 行，0.8.0 又因历史会话两级列表、项目与会话重命名、会话置顶、会话行内「更多」菜单与 `ui-prefs` 三条宿主路由涨到 6178 行，0.8.1 因四个居中弹窗模态化（`maskHandler`）、`MoreMenu` 点外部关闭（`isOutsideMenu`）与顶栏改项目标题（`projectTitleOf`）涨到 6275 行。**附录 A 的行号已整体刷新到 0.8.1 实测值**；正文其余段落的行号本轮也已逐条重新实测到 0.8.1，但它仍会随下一次改动漂移，读者若在当前版本上找不到对应行，请用类名 grep 定位（例如搜 `dsh-pi-dir-cols`），类名是稳定锚点，行号不是。样式令牌与尺寸规格不受行号漂移影响。
+> **行号会漂移。** `client.js` 在取证期间被并发改写多次：0.5.0 因历史会话抽屉拆成容器 + 视图涨到 4130 行，0.6.0 又因文件标签与任意文件插入涨到 4556 行，0.6.1 因类型图标、`CloseButton` 与资源管理器定位涨到 4789 行，0.6.2 因 composer 重做涨到 4873 行，0.6.3 又因 composer 首帧统计与 dock 归位涨到 5170 行，0.6.4 因过程流按 DSH 会话过程流重做涨到 5572 行，同日又把末尾工作状态行按 DSH `RunningStatus` 收尾涨到 5614 行、把中文用时单位之间的半角空格去掉后涨到 5619 行，同日又给工作状态行的首帧加了 `Math.max(1000, …)` 钳位（不钳位首帧会闪「0秒」，与 DSH `RunningStatus` 的 `formatRunDuration(Math.max(1e3, now - startTime), t)` 同一处理）涨到 5619 行，0.7.0 再因 picker 合一弹层、`more` 顶栏菜单、`side` 左滑侧栏、三个对话框变体与过程流子行行盒涨到 5872 行，0.8.0 又因历史会话两级列表、项目与会话重命名、会话置顶、会话行内「更多」菜单与 `ui-prefs` 三条宿主路由涨到 6178 行，0.8.1 因四个居中弹窗模态化（`maskHandler`）、`MoreMenu` 点外部关闭（`isOutsideMenu`）与顶栏改项目标题（`projectTitleOf`）涨到 6275 行。**附录 A 的行号已整体刷新到 0.8.1 实测值**；正文其余段落的行号本轮也已逐条重新实测到 0.8.1，但它仍会随下一次改动漂移，读者若在当前版本上找不到对应行，请用类名 grep 定位（例如搜 `superpi-dir-cols`），类名是稳定锚点，行号不是。样式令牌与尺寸规格不受行号漂移影响。
 
 ---
 
@@ -17,18 +17,18 @@
 
 ### 1.1 目的
 
-dsh-pi 是 DSH 侧栏里的 pi 面板，它的视觉必须与宿主 DSH 属于同一个设计系统：同一套颜色语义、同一套字号阶梯、同一套圆角与阴影、同一套状态色。做不到这一点，面板就会像一个外挂 iframe 贴在界面上。
+superpi 是 DSH 侧栏里的 pi 面板，它的视觉必须与宿主 DSH 属于同一个设计系统：同一套颜色语义、同一套字号阶梯、同一套圆角与阴影、同一套状态色。做不到这一点，面板就会像一个外挂 iframe 贴在界面上。
 
 本规格书解决三件具体的事：
 
 1. **令牌纪律**：哪些 `--dsw-*` 允许用、每个令牌负责什么语义、哪些令牌禁止引用、外部变量必须怎么写兜底。
-2. **组件对齐**：每个 `.dsh-pi-*` 类对应 DSH 的哪个组件、依据是 `index-lh_YM6sT.css` 里的哪条规则、几何与状态差异在哪。
-3. **目录选择器**：DSH 的 directory-picker 是一个有明确交互契约的组件（Miller 分栏、前缀过滤、目标路径优先级）。dsh-pi 的 `DirSheet` 是它的对等物，交互必须写死，否则每改一次都会漂。
+2. **组件对齐**：每个 `.superpi-*` 类对应 DSH 的哪个组件、依据是 `index-lh_YM6sT.css` 里的哪条规则、几何与状态差异在哪。
+3. **目录选择器**：DSH 的 directory-picker 是一个有明确交互契约的组件（Miller 分栏、前缀过滤、目标路径优先级）。superpi 的 `DirSheet` 是它的对等物，交互必须写死，否则每改一次都会漂。
 
 ### 1.2 在范围内
 
 - `client.js` 内联 CSS 数组（`:477` – `:874`）的每一条规则。
-- 174 个 `.dsh-pi-*` 类名与 74 个唯一 CSS 变量的对应关系。
+- 174 个 `.superpi-*` 类名与 74 个唯一 CSS 变量的对应关系。
 - 16 个组件族的规格：几何、令牌、状态、与 DSH 的差异（含 0.7.0 新增的五个外壳组件与过程流排版、0.8.0 新增的 §4.15 历史会话两级列表与 §4.16 `ui-prefs` 三条宿主路由）。
 - `DirSheet` / `dirPickModel` 的完整交互规格与宿主契约。
 - 两道门禁（`test/css-tokens.mjs`、`test/client-render.mjs`）覆盖了什么、没覆盖什么。
@@ -65,10 +65,10 @@ dsh-pi 是 DSH 侧栏里的 pi 面板，它的视觉必须与宿主 DSH 属于�
 | --- | --- | --- | --- | --- | --- |
 | S1 | DSH 组件规则 | `_probe/dsh-css/index-lh_YM6sT.css` | 87124 字符 / 748 条规则 / 17 个 `@keyframes` | 组件级对齐依据（几何、状态、动效） | A：原始产物，逐条原文可 grep |
 | S2 | DSH 令牌表 | `_probe/dsh-theme/tokens.txt` | 414 个 `--dsw-*`，格式 `name = 浅 \| 深` | 令牌值、浅深两套、别名链 | A：原始产物 |
-| S3 | DSH 目录选择器源码 | `_probe/dsh-picker/client.js` | 1138 行，CSS 在 `:26` 单行内联，hash 前缀 `_3zXc5G_` | Miller 分栏、`visibleEntries`、目标路径优先级 | A：原始产物 |
-| S4 | dsh-pi 现状 | `client.js` 的 CSS 数组 `:477` – `:874` | 277 段字符串 / 174 个 `.dsh-pi-*` 类 | 现状记录与逐类映射 | A：仓库文件 |
+| S3 | DSH 目录选择器源码 | `_probe/superpicker/client.js` | 1138 行，CSS 在 `:26` 单行内联，hash 前缀 `_3zXc5G_` | Miller 分栏、`visibleEntries`、目标路径优先级 | A：原始产物 |
+| S4 | superpi 现状 | `client.js` 的 CSS 数组 `:477` – `:874` | 277 段字符串 / 174 个 `.superpi-*` 类 | 现状记录与逐类映射 | A：仓库文件 |
 
-探针目录 `_probe/` 在 `C:/Users/PC/Documents/pi-local/` 下，不在 `dsh-pi` 仓库内。它是采集时的快照，不是构建产物；S1–S3 的内容可能随 DSH 升级变化，届时需要重新采集。
+探针目录 `_probe/` 在 `C:/Users/PC/Documents/pi-local/` 下，不在 `superpi` 仓库内。它是采集时的快照，不是构建产物；S1–S3 的内容可能随 DSH 升级变化，届时需要重新采集。
 
 ### 2.2 两种字符口径
 
@@ -84,13 +84,13 @@ dsh-pi 是 DSH 侧栏里的 pi 面板，它的视觉必须与宿主 DSH 属于�
 ### 2.3 可信度分级
 
 - **A 级**：直接从文件读出的原文或统计值。本文绝大多数结论属此类。
-- **B 级**：从 A 级数值推算出的判断（例如「dsh-pi 的 74 个变量里 70 个是 `--dsw-*`，说明令牌纪律覆盖了 94.6%」）。
+- **B 级**：从 A 级数值推算出的判断（例如「superpi 的 74 个变量里 70 个是 `--dsw-*`，说明令牌纪律覆盖了 94.6%」）。
 - **C 级**：无法从文件证实、只能标注「待确认」的项。全文共 4 条，集中在附录 C。
 
 ### 2.4 复现命令
 
 ```
-cd C:/Users/PC/Documents/pi-local/dsh-pi
+cd C:/Users/PC/Documents/pi-local/superpi
 node test/css-tokens.mjs     # 令牌门禁，期望 PASS (98 checks)
 node test/client-render.mjs  # 渲染门禁，期望 PASS (831 assertions)
 ```
@@ -119,7 +119,7 @@ node test/client-render.mjs  # 渲染门禁，期望 PASS (831 assertions)
 | Tier D `--dsw-specific-*` | 4 | 组件私有底色（气泡 / 输入卡 / 菜单 / 下拉），语义上不属于上面三层 | 随主题变，但只有对应组件能用 |
 | Tier E `--dsw-static-*` | 1 | `static-neutral-bluish-00`，不随主题变 | 恒为 `#fff` |
 | 合计 | 70 | 全部 `--dsw-*` | — |
-| 外部兜底 | 4 | `--dsh-*` 3 个 + `--ds-*` 1 个 | 宿主注入，不归 dsh-pi 管 |
+| 外部兜底 | 4 | `--dsh-*` 3 个 + `--ds-*` 1 个 | 宿主注入，不归 superpi 管 |
 
 20 + 39 + 6 + 4 + 1 = 70，与「74 个唯一变量减去 4 个外部变量」完全吻合，没有游离令牌。
 
@@ -127,13 +127,13 @@ node test/client-render.mjs  # 渲染门禁，期望 PASS (831 assertions)
 
 | 令牌 | 值 | 用在哪 |
 | --- | --- | --- |
-| `--dsw-font-family` | 主题给的字体栈 | `.dsh-pi-root`、`.dsh-pi-fence-lang` |
-| `--dsw-font-base-strong-16` | `500 16px/24px var(--dsw-font-family)` | 标题：`.dsh-pi-empty h2`、`.dsh-pi-sheet-title`、`.dsh-pi-gate-card h3`、`.dsh-pi-dir-title`、`.dsh-pi-dialog h3` |
-| `--dsw-font-markdown-code-block` | 11px / 19px + delta 的可变字体串 | `.dsh-pi-fence`、`.dsh-pi-pre` |
-| `--dsw-font-markdown-code-block-small` | 同族 16px 档 | `.dsh-pi-code-inline` |
-| `--dsw-font-markdown-h3` | `700 calc(18px + d)/calc(26px + d)` | `.dsh-pi-prose h3` |
+| `--dsw-font-family` | 主题给的字体栈 | `.superpi-root`、`.superpi-fence-lang` |
+| `--dsw-font-base-strong-16` | `500 16px/24px var(--dsw-font-family)` | 标题：`.superpi-empty h2`、`.superpi-sheet-title`、`.superpi-gate-card h3`、`.superpi-dir-title`、`.superpi-dialog h3` |
+| `--dsw-font-markdown-code-block` | 11px / 19px + delta 的可变字体串 | `.superpi-fence`、`.superpi-pre` |
+| `--dsw-font-markdown-code-block-small` | 同族 16px 档 | `.superpi-code-inline` |
+| `--dsw-font-markdown-h3` | `700 calc(18px + d)/calc(26px + d)` | `.superpi-prose h3` |
 | `--dsw-font-s-14-font-size` / `-line-height` | 14px / 22px | 根、品牌、气泡、正文、textarea、开关标签 |
-| `--dsw-font-xs-13` | 13px/20px 简写 | `.dsh-pi-mini-ta` |
+| `--dsw-font-xs-13` | 13px/20px 简写 | `.superpi-mini-ta` |
 | `--dsw-font-xs-13-font-size` / `-line-height` | 13px / 20px | 菜单项、目录项、思考块、对话框选项 |
 | `--dsw-font-xxs-12-font-size` / `-line-height` | 12px / 18px | 按钮、下拉、搜索框、会话行、提示条 |
 | `--dsw-font-xxxs-11-font-size` / `-line-height` | 11px / 14px | chip、tag、usage、状态栏、注释类文本 |
@@ -163,7 +163,7 @@ node test/client-render.mjs  # 渲染门禁，期望 PASS (831 assertions)
 | 滚动条 | `scrollbar-bg-l2`、`scrollbar-hover-l2` | 根上重绑给 `--dsh-scrollbar-thumb` |
 | 开关 | `switch-thumb` | 开关关闭态滑块 |
 
-六级文本层次是这套系统里最值得注意的设计：`primary` → `secondary` → `tertiary` → `caption` → `dimmed` 再分 `primary-foreground`，每一级都有明确职责，不允许「随便挑一个灰」。dsh-pi 的用法是：
+六级文本层次是这套系统里最值得注意的设计：`primary` → `secondary` → `tertiary` → `caption` → `dimmed` 再分 `primary-foreground`，每一级都有明确职责，不允许「随便挑一个灰」。superpi 的用法是：
 
 - `primary`：正文、被选中的项、当前值；
 - `secondary`：次要说明、按钮默认态、下划线文字；
@@ -178,14 +178,14 @@ node test/client-render.mjs  # 渲染门禁，期望 PASS (831 assertions)
 | --- | --- | --- |
 | `--dsw-elevation-panel` | 描边 + `0 3px 8px 0 #00000008, 0 0 16px 0 #00000005` | 弹出菜单、gate 卡 |
 | `--dsw-elevation-prominent` | 描边 + `0 3px 8px 0 #0000000a, 0 0 20px 0 #0000000d` | 目录弹窗、通用对话框 |
-| `--dsw-elevation-soft` | 描边 + `0 4px 16px 0 #00000008, 0 0 24px 0 #00000008` | composer 卡面（`.dsh-pi-box`）：最轻的一档，卡片浮起但不抢焦点 |
+| `--dsw-elevation-soft` | 描边 + `0 4px 16px 0 #00000008, 0 0 24px 0 #00000008` | composer 卡面（`.superpi-box`）：最轻的一档，卡片浮起但不抢焦点 |
 | `--dsw-focus-ring-color` | `transparent`（单值） | 根上被重绑为 `var(--dsw-alias-state-business-primary)` |
 | `--dsw-focus-ring-width` | `2px` | 全局 `:focus-visible` 描边宽度 |
 | `--dsw-menu-backdrop-filter` | `blur(40px) saturate(150%)` | 弹出菜单毛玻璃 |
 
 `--dsw-specific-*`（4 个：bubble / input-major / menu / selector）与 `--dsw-static-neutral-bluish-00`（1 个）不属「阴影与特殊」，已单列为 §3.1 的 Tier D / Tier E。
 
-**`focus-ring-color` 是这套系统里唯一的坑。** DSH 把 `--dsw-focus-ring-color` 定义成 `transparent`（等于「默认不要焦点环」），所有 DSH 组件都在规则里写 `outline:var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary))` —— 靠 `var()` 的第二个参数兜底。dsh-pi 在 `.dsh-pi-root` 上直接把这个变量重绑成 `state-business-primary`（`client.js:483`），于是整个子树拿到的是真色值，`var()` 的第二参数永远不生效但保留着，作为「万一宿主改了」的保险。这是刻意设计，注释 `client.js:480-482` 写明了理由。
+**`focus-ring-color` 是这套系统里唯一的坑。** DSH 把 `--dsw-focus-ring-color` 定义成 `transparent`（等于「默认不要焦点环」），所有 DSH 组件都在规则里写 `outline:var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary))` —— 靠 `var()` 的第二个参数兜底。superpi 在 `.superpi-root` 上直接把这个变量重绑成 `state-business-primary`（`client.js:483`），于是整个子树拿到的是真色值，`var()` 的第二参数永远不生效但保留着，作为「万一宿主改了」的保险。这是刻意设计，注释 `client.js:480-482` 写明了理由。
 
 ### 3.5 外部兜底令牌（4 个）
 
@@ -294,7 +294,7 @@ font-family:var(--ds-font-family-code,ui-monospace,SFMono-Regular,Menlo,Consolas
 
 **来源：index-lh_YM6sT.css 的 ._pane_3oazc_211 与 ._switch_1ik0f_5:focus-visible**
 
-`.dsh-pi-root`（`client.js:483`）是整个面板的根，它做四件事：铺底色、立字体基线、重绑两个宿主变量、立全局三条基础规则。
+`.superpi-root`（`client.js:483`）是整个面板的根，它做四件事：铺底色、立字体基线、重绑两个宿主变量、立全局三条基础规则。
 
 **令牌**：`bg-base`、`label-primary`、`font-family`、`font-s-14-font-size`、`font-s-14-line-height`、`scrollbar-bg-l2`、`scrollbar-hover-l2`、`state-business-primary`（重绑焦点环）。
 
@@ -304,7 +304,7 @@ font-family:var(--ds-font-family-code,ui-monospace,SFMono-Regular,Menlo,Consolas
 
 | 行号 | 规则 | 作用 |
 | --- | --- | --- |
-| `:484` | `.dsh-pi-root *{box-sizing:border-box}` | 面板是独立子树，不能假设宿主已经设过 |
+| `:484` | `.superpi-root *{box-sizing:border-box}` | 面板是独立子树，不能假设宿主已经设过 |
 | `:485` | `:is(button,input,select,textarea){font-family:inherit}` | 浏览器对表单控件默认给系统字体，不继承会突然出现另一种字形 |
 | `:486` | `:is(button,input,select,textarea,summary,a,[tabindex]):focus-visible{outline:var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color,…);outline-offset:2px}` | 用属性选择器兜住所有可聚焦元素，而不是逐个类名写 |
 
@@ -312,15 +312,15 @@ font-family:var(--ds-font-family-code,ui-monospace,SFMono-Regular,Menlo,Consolas
 
 **差异**：
 
-1. DSH 的 `._pane_3oazc_211` 不含底色调，底色由更上层的 surface 决定；dsh-pi 的根自己铺 `bg-base`。因为面板要能独立存在于侧栏，不能假设父级已经铺过底。
+1. DSH 的 `._pane_3oazc_211` 不含底色调，底色由更上层的 surface 决定；superpi 的根自己铺 `bg-base`。因为面板要能独立存在于侧栏，不能假设父级已经铺过底。
 2. `:486` 用 `[tabindex]` 兜底，DSH 用逐组件写 `:focus-visible`。ds-pi 的做法覆盖面更广但也更容易和宿主的环叠加——目前不会，因为面板在独立 iframe/容器里。
-3. 根上重绑 `--dsh-scrollbar-thumb` / `--dsh-scrollbar-thumb-hover` 是 dsh-pi 独有，DSH 的 `._list_1p5el_7` 也做同样的事（局部重绑滚动条色），属于同一手法。
+3. 根上重绑 `--dsh-scrollbar-thumb` / `--dsh-scrollbar-thumb-hover` 是 superpi 独有，DSH 的 `._list_1p5el_7` 也做同样的事（局部重绑滚动条色），属于同一手法。
 
 ### 4.2 头栏与状态点
 
 **来源：index-lh_YM6sT.css 的 ._dot_1i3xo_2**
 
-**令牌**：`.dsh-pi-head` → `border-l3`；`.dsh-pi-brand` → `font-s-14-*` + `label-primary`；`.dsh-pi-dot` → 五色状态（`state-idle-primary` 默认、`ready` 用 `state-success-primary`、`busy` 用 `state-business-primary`、`dead` 用 `state-error-primary`）。
+**令牌**：`.superpi-head` → `border-l3`；`.superpi-brand` → `font-s-14-*` + `label-primary`；`.superpi-dot` → 五色状态（`state-idle-primary` 默认、`ready` 用 `state-success-primary`、`busy` 用 `state-business-primary`、`dead` 用 `state-error-primary`）。
 
 **几何**：头栏 `border-bottom:.5px solid`，高由内容撑（品牌 14px 行高 22px + 6px 纵向 padding 左右）。状态点是 `7px × 7px` 实心圆，`border-radius:50%`。
 
@@ -330,16 +330,16 @@ font-family:var(--ds-font-family-code,ui-monospace,SFMono-Regular,Menlo,Consolas
 | --- | --- | --- |
 | 无（默认） | `state-idle-primary` | 无 |
 | `ready` | `state-success-primary` | 无 |
-| `busy` | `state-business-primary` | `animation:dsh-pi-pulse 1.2s` |
+| `busy` | `state-business-primary` | `animation:superpi-pulse 1.2s` |
 | `dead` | `state-error-primary` | 无 |
 
-`@keyframes dsh-pi-pulse`（`:496`）只动 `opacity`：`0%,100%{opacity:1} 50%{opacity:.35}`。没有 scale、没有位移。这与 DSH 全部 17 个 keyframes 的风格一致——除 `_spin_u7vgf_45`、`_dsh-state-dot-spin_1i3xo_1`、`_dsh-state-dot-dash_1i3xo_1` 三个旋转类之外，**其余 14 个都只动 opacity**。
+`@keyframes superpi-pulse`（`:496`）只动 `opacity`：`0%,100%{opacity:1} 50%{opacity:.35}`。没有 scale、没有位移。这与 DSH 全部 17 个 keyframes 的风格一致——除 `_spin_u7vgf_45`、`_dsh-state-dot-spin_1i3xo_1`、`_dsh-state-dot-dash_1i3xo_1` 三个旋转类之外，**其余 14 个都只动 opacity**。
 
 **差异**：
 
-1. **形态不同**。DSH 的 `._dot_1i3xo_2` 是一个空 span + `:after{position:absolute;inset:20%;border-radius:50%;corner-shape:round;background:currentColor}`，颜色通过 `color` 传递；dsh-pi 的 `.dsh-pi-dot` 是实心圆直接写 `background`。两者视觉接近但机制不同：DSH 的写法让点的尺寸由外层容器决定（`inset:20%` 自动留白），dsh-pi 的写法把 7px 写死。
-2. **状态名不同**。DSH 是 `done` / `warning` / `error` / `idle`；dsh-pi 是 `ready` / `busy` / `dead` / 默认。这不是错误，dsh-pi 的状态语义来自 pi 子进程的存活状态，与 DSH 的任务状态不是一回事。
-3. DSH 还有配套的 `._spinner_1i3xo_37` 与 `._spinnerMotion`（1.5s 线性旋转），dsh-pi 没有旋转指示器，busy 靠透明度脉冲。
+1. **形态不同**。DSH 的 `._dot_1i3xo_2` 是一个空 span + `:after{position:absolute;inset:20%;border-radius:50%;corner-shape:round;background:currentColor}`，颜色通过 `color` 传递；superpi 的 `.superpi-dot` 是实心圆直接写 `background`。两者视觉接近但机制不同：DSH 的写法让点的尺寸由外层容器决定（`inset:20%` 自动留白），superpi 的写法把 7px 写死。
+2. **状态名不同**。DSH 是 `done` / `warning` / `error` / `idle`；superpi 是 `ready` / `busy` / `dead` / 默认。这不是错误，superpi 的状态语义来自 pi 子进程的存活状态，与 DSH 的任务状态不是一回事。
+3. DSH 还有配套的 `._spinner_1i3xo_37` 与 `._spinnerMotion`（1.5s 线性旋转），superpi 没有旋转指示器，busy 靠透明度脉冲。
 
 ### 4.3 chip 胶囊与 tag 标签
 
@@ -362,24 +362,24 @@ chip 与 tag 是同一族视觉：小圆角胶囊 + 极小字号 + 语义色。�
 
 **状态**：chip 三种 tone（`ok` / `warn` / `err`）+ 可点击态（`data-clickable="1"` 时 hover 转 `interactive-bg-hover` 且文字转 `label-primary`）；tag 四种 tone（`run` / `ok` / `err` / `warn`）。
 
-tone 色的实现统一用 `color-mix(in srgb, <state-color> N%, transparent)`，其中 success / err / run 用 **10%**、warn 用 **12%**。DSH 的 `._tag_brmue_4[data-tone=success]` 也用 `color-mix(… 10%, transparent)`，两者数值一致；DSH 另有 `outline` / `solid` / `neutral` / `quiet` 四种 tone 形态（描边、实底、中性底、纯文字），dsh-pi 没有采纳。
+tone 色的实现统一用 `color-mix(in srgb, <state-color> N%, transparent)`，其中 success / err / run 用 **10%**、warn 用 **12%**。DSH 的 `._tag_brmue_4[data-tone=success]` 也用 `color-mix(… 10%, transparent)`，两者数值一致；DSH 另有 `outline` / `solid` / `neutral` / `quiet` 四种 tone 形态（描边、实底、中性底、纯文字），superpi 没有采纳。
 
 **差异**：
 
-1. **tag 的 tone 语义比 DSH 少一半**。DSH 有 8 种 tone（outline / solid / neutral / quiet / success / info / warning / danger），dsh-pi 只有 4 种且全是语义色。在当前面板里够用，但如果将来要表达「中性标签」就得回来补。
+1. **tag 的 tone 语义比 DSH 少一半**。DSH 有 8 种 tone（outline / solid / neutral / quiet / success / info / warning / danger），superpi 只有 4 种且全是语义色。在当前面板里够用，但如果将来要表达「中性标签」就得回来补。
 2. **chip 高度是写死的 20px**，DSH 靠 padding + line-height 推。写死的好处是行高严格可控，坏处是字号一变就挤。
 3. **chip 有 max-width 与省略号**，DSH 的 tag 用 `nowrap` 不截断（tag 通常很短）。这是合理的分歧：会话名可能很长，tag 不会。
-4. **tag 的高度写死 17px**，但 `line-height` 也是 17px，两者相等意味着没有上下留白。DSH 用 `line-height:17px` + `padding:1px` 得到约 19px。视觉上 dsh-pi 的 tag 比 DSH 矮 2px。
+4. **tag 的高度写死 17px**，但 `line-height` 也是 17px，两者相等意味着没有上下留白。DSH 用 `line-height:17px` + `padding:1px` 得到约 19px。视觉上 superpi 的 tag 比 DSH 矮 2px。
 
 ### 4.4 按钮族
 
 **来源：index-lh_YM6sT.css 的 ._button_1ulci_2 / ._sm_1ulci_28 / ._primary_1ulci_36 / ._outline_1ulci_56**
 
-**令牌**：`.dsh-pi-btn` → `radius-sm`、`border-l4`、`label-primary`、`font-xxs-12-*`；hover `interactive-bg-hover`；active `interactive-bg-active`；`-primary` → `button-primary-fill` + `label-primary-foreground`，hover/active `button-primary-hover`；`-danger` → `state-error-primary`，hover `interactive-bg-hover-danger`；`-ghost` → `label-secondary`，hover 加 `label-primary`。
+**令牌**：`.superpi-btn` → `radius-sm`、`border-l4`、`label-primary`、`font-xxs-12-*`；hover `interactive-bg-hover`；active `interactive-bg-active`；`-primary` → `button-primary-fill` + `label-primary-foreground`，hover/active `button-primary-hover`；`-danger` → `state-error-primary`，hover `interactive-bg-hover-danger`；`-ghost` → `label-secondary`，hover 加 `label-primary`。
 
 **几何**：
 
-| 属性 | dsh-pi `.dsh-pi-btn` | DSH `._button_1ulci_2` + `._sm_1ulci_28` |
+| 属性 | superpi `.superpi-btn` | DSH `._button_1ulci_2` + `._sm_1ulci_28` |
 | --- | --- | --- |
 | 高度 | `28px` | `._md` 36px / `._sm` 28px |
 | padding | `0 10px` | `._sm` `0 10px` |
@@ -395,10 +395,10 @@ tone 色的实现统一用 `color-mix(in srgb, <state-color> N%, transparent)`�
 
 **差异**：
 
-1. **描边色不同**：DSH `._outline` 默认用 `border-l3`（可被 `--dsh-button-outline-color` 覆盖），dsh-pi 固定用 `border-l4`。`l4` 比 `l3` 更浅一档（浅色主题 `#00000029` vs `#0000001f`）。视觉上 dsh-pi 的按钮边框更弱。
-2. **没有 `_md` 36px 档**：dsh-pi 全部按钮统一 28px。面板里没有需要 36px 的场景，统一反而更整齐。
-3. **`_ghost` 去掉描边**：DSH 的 ghost 保留 `border:none` 但仍有 `background:transparent`，dsh-pi 的 ghost 连内阴影描边一起去掉。空心 × 按钮、图标按钮用这个变体。
-4. **hover 未包 `@media (hover:hover)`**：DSH 的 `._item_1p5el_105` 与 `._button_1ulci_2` 都把 hover 包在 `@media(hover:hover)` 里，防止触屏设备「点击后 hover 黏住」。dsh-pi 没有包。这是可复现的触屏小瑕疵。
+1. **描边色不同**：DSH `._outline` 默认用 `border-l3`（可被 `--dsh-button-outline-color` 覆盖），superpi 固定用 `border-l4`。`l4` 比 `l3` 更浅一档（浅色主题 `#00000029` vs `#0000001f`）。视觉上 superpi 的按钮边框更弱。
+2. **没有 `_md` 36px 档**：superpi 全部按钮统一 28px。面板里没有需要 36px 的场景，统一反而更整齐。
+3. **`_ghost` 去掉描边**：DSH 的 ghost 保留 `border:none` 但仍有 `background:transparent`，superpi 的 ghost 连内阴影描边一起去掉。空心 × 按钮、图标按钮用这个变体。
+4. **hover 未包 `@media (hover:hover)`**：DSH 的 `._item_1p5el_105` 与 `._button_1ulci_2` 都把 hover 包在 `@media(hover:hover)` 里，防止触屏设备「点击后 hover 黏住」。superpi 没有包。这是可复现的触屏小瑕疵。
 
 ### 4.5 消息流：气泡、正文、代码块
 
@@ -408,11 +408,11 @@ tone 色的实现统一用 `color-mix(in srgb, <state-color> N%, transparent)`�
 
 **几何**：
 
-| 元素 | dsh-pi | DSH 原文 | 判定 |
+| 元素 | superpi | DSH 原文 | 判定 |
 | --- | --- | --- | --- |
 | 用户气泡 | `max-width:82%` / `padding:10px 16px` / `radius-xl` | `max-width:100%` / `padding:10px 16px` / `radius-xl` | 一致，仅 max-width 不同 |
 | 气泡行高 | `calc(22px + delta)` | `calc(22px + var(--dsh-content-font-delta,0px))` | 逐字一致 |
-| 正文行高 | `calc(24px + delta)` | 无对应（DSH 正文由 markdown 层给） | dsh-pi 自定义 |
+| 正文行高 | `calc(24px + delta)` | 无对应（DSH 正文由 markdown 层给） | superpi 自定义 |
 | 代码块 | `margin:16px 0` / `radius-lg` | `margin:16px 0` / `radius-lg` | 一致 |
 | banner | `padding:10px 18px 8px 22px` | `padding:10px 18px 8px 22px` | **逐值一致** |
 | 代码主体 | `padding:6px 22px 20px` | `padding:6px 22px 20px` | **逐值一致** |
@@ -423,10 +423,10 @@ tone 色的实现统一用 `color-mix(in srgb, <state-color> N%, transparent)`�
 
 **差异**：
 
-1. **banner 底色来源不同**。DSH：`background:var(--dsl-code-block-background, var(--dsw-alias-markdown-code-block))`，即优先用 `--dsl-*` 私有变量，否则退回代码块主底色（**banner 与 body 同色**）。dsh-pi：直接用 `--dsw-alias-markdown-code-block-banner`（**banner 比 body 浅一档**）。视觉上 dsh-pi 的代码块有更清晰的标题条。
-2. **banner 字体不同**。DSH：`font:11px/18px var(--dsw-font-family)`（比例字体）；dsh-pi：`font-family:var(--dsw-font-family)` + `font-xxxs-11-*`（11px/14px）。行高差 4px，dsh-pi 的 banner 更紧。
-3. **气泡 `max-width:82%`** 是 dsh-pi 独有。DSH 的气泡 `max-width:100%` 靠父容器给宽度。82% 让用户消息不会铺满整行，是常见的 IM 惯例。
-4. **没有 `_actions` / `_status` / `_heading`**。DSH 的 `._card_1mqf1_1` 内有 `._heading_1mqf1_23`（语言名 + 标题）、`._actions_1mqf1_*`（复制按钮）、`._status_1mqf1_*`。dsh-pi 只有 `-fence-lang` 一个语言标签，没有复制按钮。
+1. **banner 底色来源不同**。DSH：`background:var(--dsl-code-block-background, var(--dsw-alias-markdown-code-block))`，即优先用 `--dsl-*` 私有变量，否则退回代码块主底色（**banner 与 body 同色**）。superpi：直接用 `--dsw-alias-markdown-code-block-banner`（**banner 比 body 浅一档**）。视觉上 superpi 的代码块有更清晰的标题条。
+2. **banner 字体不同**。DSH：`font:11px/18px var(--dsw-font-family)`（比例字体）；superpi：`font-family:var(--dsw-font-family)` + `font-xxxs-11-*`（11px/14px）。行高差 4px，superpi 的 banner 更紧。
+3. **气泡 `max-width:82%`** 是 superpi 独有。DSH 的气泡 `max-width:100%` 靠父容器给宽度。82% 让用户消息不会铺满整行，是常见的 IM 惯例。
+4. **没有 `_actions` / `_status` / `_heading`**。DSH 的 `._card_1mqf1_1` 内有 `._heading_1mqf1_23`（语言名 + 标题）、`._actions_1mqf1_*`（复制按钮）、`._status_1mqf1_*`。superpi 只有 `-fence-lang` 一个语言标签，没有复制按钮。
 
 ### 4.6 过程行（思考 / 工具调用 / 工具结果 / `!` bash）
 
@@ -434,7 +434,7 @@ tone 色的实现统一用 `color-mix(in srgb, <state-color> N%, transparent)`�
 
 0.6.4 之前这一节叫「思考块与工具行」：思考是一个 `details` 折叠块（左侧 2px 竖线 + 13px 小字），工具调用是一条平铺行（`工具` 标签 + 工具名 + `结果` 标签）。0.6.4 按 DSH 宿主的过程流重做，因为原来那套把「模型的意图」和「模型的动作」摆成了同一层的两件东西。
 
-**层级**：一次模型回合是父行（`details.dsh-pi-proc`，摘要只有首行），它之下的每次工具调用是缩进子行组（`div.dsh-pi-sub`，左 1px 竖线 + `margin-left:22px`，竖线正好落在父行图标框左缘）。纯文本 / 图片是正文块，**打断**分组 —— 文本之后再出现的调用重新起一组，不会挂到很久以前的思考下面。
+**层级**：一次模型回合是父行（`details.superpi-proc`，摘要只有首行），它之下的每次工具调用是缩进子行组（`div.superpi-sub`，左 1px 竖线 + `margin-left:22px`，竖线正好落在父行图标框左缘）。纯文本 / 图片是正文块，**打断**分组 —— 文本之后再出现的调用重新起一组，不会挂到很久以前的思考下面。
 
 **一次调用 = 一行**：工具结果不单独占一行。pi 把结果作为独立的 `toolResult` 消息送达，面板按 `toolCallId` 建派生表折叠进调用行的展开区（`── output ──`）；对不上号的孤儿结果仍按行渲染，不吞内容。展开区里的 `── live ──` 段**只在 `status === 'running'` 时出现**：跑完后 `partialResult` 与最终结果说的是同一件事，两段都印等于把输出写两遍（第一次实拍就撞上了这个）。
 
@@ -444,38 +444,38 @@ tone 色的实现统一用 `color-mix(in srgb, <state-color> N%, transparent)`�
 
 | 元素 | 几何 |
 | --- | --- |
-| `.dsh-pi-proc` / `.dsh-pi-tool` | **无边框、无背景、无阴影**（`border-radius:0`），`display:block` |
-| `.dsh-pi-proc-head` | `display:flex`、`align-items:center`、`line-height:calc(24px + delta)`、无 `padding`（行距由 `line-height` 给，24px 行高对实测的 24px） |
-| `.dsh-pi-proc-icon` | 16×16 框、`margin-right:11px`（行内三段间距统一 11，见 §4.14） |
-| `.dsh-pi-sep` | 2×2 圆点、`margin:0 11px`、`border-radius:1px`（不是圆，DSH 的「·」是 2px 方块） |
-| `.dsh-pi-proc-text` | `flex:1 1 auto` + `text-overflow:ellipsis` 单行省略 |
-| `.dsh-pi-proc-note` | 行尾状态（失败 / `exit N` / truncated），`tabular-nums` 防宽度跳动 |
-| `.dsh-pi-proc-path` | 整路径可点：`text-decoration:underline 1px dotted`、`text-underline-offset:3px`、`color:inherit` |
-| `.dsh-pi-sub` | `margin:0 0 0 26px`、`padding:0 0 0 12px`、`border-left:1px solid border-l3`、`gap:8px`（行盒沿用父行的 24px，组内间距与 body 同为 8px ⇒ 子行步长与父行一致） |
-| `.dsh-pi-proc-body` | `margin:2px 0 2px 26px`、`padding:0 0 0 14px`、`border-left:1px solid border-l3`、`white-space:pre-wrap` |
-| `.dsh-pi-tool-body` | `padding-left:14px`、`border-left:1px solid border-l3`、`max-height:340px`、等宽 + `xxxs-11` |
-| `.dsh-pi-working` | 过程流末尾：`.5px` 顶部 hairline + `padding-top:10px` + 14×14 鲸鱼尾 + 一行状态；文字 `--dsw-alias-label-deep-diving`（#345EBA）、`font-size:calc(var(--dsh-content-font-size,14px) - 2px)`（12px）、`line-height:calc(22px + delta)`、`tabular-nums` |
+| `.superpi-proc` / `.superpi-tool` | **无边框、无背景、无阴影**（`border-radius:0`），`display:block` |
+| `.superpi-proc-head` | `display:flex`、`align-items:center`、`line-height:calc(24px + delta)`、无 `padding`（行距由 `line-height` 给，24px 行高对实测的 24px） |
+| `.superpi-proc-icon` | 16×16 框、`margin-right:11px`（行内三段间距统一 11，见 §4.14） |
+| `.superpi-sep` | 2×2 圆点、`margin:0 11px`、`border-radius:1px`（不是圆，DSH 的「·」是 2px 方块） |
+| `.superpi-proc-text` | `flex:1 1 auto` + `text-overflow:ellipsis` 单行省略 |
+| `.superpi-proc-note` | 行尾状态（失败 / `exit N` / truncated），`tabular-nums` 防宽度跳动 |
+| `.superpi-proc-path` | 整路径可点：`text-decoration:underline 1px dotted`、`text-underline-offset:3px`、`color:inherit` |
+| `.superpi-sub` | `margin:0 0 0 26px`、`padding:0 0 0 12px`、`border-left:1px solid border-l3`、`gap:8px`（行盒沿用父行的 24px，组内间距与 body 同为 8px ⇒ 子行步长与父行一致） |
+| `.superpi-proc-body` | `margin:2px 0 2px 26px`、`padding:0 0 0 14px`、`border-left:1px solid border-l3`、`white-space:pre-wrap` |
+| `.superpi-tool-body` | `padding-left:14px`、`border-left:1px solid border-l3`、`max-height:340px`、等宽 + `xxxs-11` |
+| `.superpi-working` | 过程流末尾：`.5px` 顶部 hairline + `padding-top:10px` + 14×14 鲸鱼尾 + 一行状态；文字 `--dsw-alias-label-deep-diving`（#345EBA）、`font-size:calc(var(--dsh-content-font-size,14px) - 2px)`（12px）、`line-height:calc(22px + delta)`、`tabular-nums` |
 
-**图标**：`ThinkIcon`(⊗) / `TerminalIcon`(>_) / `FrameIcon`(▤) / `SearchIcon` / `PencilIcon` / `DocIcon` / `ListIcon` / `SparkIcon`，全部 24 网格、1.7 描边、round cap/join、`currentColor`，尺寸 15px。另有一个例外：工作状态行的 `WhaleTailIcon` 是 **16 网格 / 1 描边**的鲸鱼尾（照抄 DSH `RunningWhaleTail` 的 `REST_PATH`，`stroke:currentColor`、`fill:none`、`stroke-width:1`），装在 14×14 的 `.dsh-pi-working-icon` 盒里 —— 换网格的原因是 DSH 的路径本身按 16 网格设计，塞进 24 网格会整体缩到 2/3，笔画细到发灰。映射是**按工具名静态查表**（`TOOL_VIEWS`），不按参数猜：`read` 命中图片扩展名时才切成 `FrameIcon` + 「读取图片」。
+**图标**：`ThinkIcon`(⊗) / `TerminalIcon`(>_) / `FrameIcon`(▤) / `SearchIcon` / `PencilIcon` / `DocIcon` / `ListIcon` / `SparkIcon`，全部 24 网格、1.7 描边、round cap/join、`currentColor`，尺寸 15px。另有一个例外：工作状态行的 `WhaleTailIcon` 是 **16 网格 / 1 描边**的鲸鱼尾（照抄 DSH `RunningWhaleTail` 的 `REST_PATH`，`stroke:currentColor`、`fill:none`、`stroke-width:1`），装在 14×14 的 `.superpi-working-icon` 盒里 —— 换网格的原因是 DSH 的路径本身按 16 网格设计，塞进 24 网格会整体缩到 2/3，笔画细到发灰。映射是**按工具名静态查表**（`TOOL_VIEWS`），不按参数猜：`read` 命中图片扩展名时才切成 `FrameIcon` + 「读取图片」。
 
 **行标签的措辞直接取自 DSH 官方中文标题表**（`tool.title.*`：思考 / 运行命令 / 读取 / 读取图片 / 写入 / 编辑 / 搜索文件内容 / 查找文件 / 浏览目录 / 工具调用），未知工具兜底「工具调用 · <工具名>」——这一条照抄 DSH 的 `toolRowModel` 摘要拼接规则：只有 generic 行才把工具名当 label。
 
 **这是全套组件里最刻意的一处设计决定**：一次任务常连着十几次工具调用，每行都套圆角框 + hairline 会形成「框套框的噪音墙」，所以是**平铺行 + 左侧竖线**；展开区沿用同一条竖线语言，让「附着在一条行下的补充信息」看起来是一类东西。
 
-**状态**：折叠 / 展开（`[open]`）、hover（只提亮文字，**不铺底色**——没有外框时铺底色会露出一块矩形色斑）、`:focus-visible`（`outline:var(--dsw-focus-ring-width)` + `outline-offset:2px`）、运行中（圆点换品牌色 + `dsh-pi-pulse 1.2s`）、失败（`data-state="error"` + note）、`prefers-reduced-motion` 下动画全关。
+**状态**：折叠 / 展开（`[open]`）、hover（只提亮文字，**不铺底色**——没有外框时铺底色会露出一块矩形色斑）、`:focus-visible`（`outline:var(--dsw-focus-ring-width)` + `outline-offset:2px`）、运行中（圆点换品牌色 + `superpi-pulse 1.2s`）、失败（`data-state="error"` + note）、`prefers-reduced-motion` 下动画全关。
 
 **差异**：
 
-1. **DSH 的 `._body_jrv99_22` 有底色与描边**（`background:markdown-code-block` + `border:.5px solid border-l1` + `radius-lg`），dsh-pi 的展开区没有底色。dsh-pi 更轻，DSH 更「块」。
-2. **DSH 的 `._toggle_jrv99_5` 是「一行小字按钮 + 展开后一块 body」**，嵌套层级由外层容器给；dsh-pi 的父子关系由 `22px 缩进 + 左竖线` 自己表达 —— 面板拿不到宿主的会话结构，只能从 pi 的块序列里推。
-3. **`--ds-font-family-code` 在 DSH 里不带兜底**（`._body_jrv99_22` 直接写 `font-family:var(--ds-font-family-code)`），dsh-pi 全部带兜底。dsh-pi 更保守，门禁第 3 条强制。
+1. **DSH 的 `._body_jrv99_22` 有底色与描边**（`background:markdown-code-block` + `border:.5px solid border-l1` + `radius-lg`），superpi 的展开区没有底色。superpi 更轻，DSH 更「块」。
+2. **DSH 的 `._toggle_jrv99_5` 是「一行小字按钮 + 展开后一块 body」**，嵌套层级由外层容器给；superpi 的父子关系由 `22px 缩进 + 左竖线` 自己表达 —— 面板拿不到宿主的会话结构，只能从 pi 的块序列里推。
+3. **`--ds-font-family-code` 在 DSH 里不带兜底**（`._body_jrv99_22` 直接写 `font-family:var(--ds-font-family-code)`），superpi 全部带兜底。superpi 更保守，门禁第 3 条强制。
 4. **工作状态行照抄 DSH `RunningStatus`**。第一次实现（0.6.4 中期）曾因 `research/` 全目录 grep「深度求索」= 0 命中而自造 `working` 键 + 灰字 + 品牌色星形；拿到目标截图底部那行的实测色值后改为照抄：文案 `deepDiving`=「深度求索中」/ `working`=「深度求索中，用时 {duration} ···」（结尾三个 `U+00B7`，不是 `…`）、时长按 DSH `formatRunDuration` 三段拆（`durHour` 仅 hours>0、`durMin` 仅 total≥60、`durSec` 恒有）、颜色 `--dsw-alias-label-deep-diving`、图标 16 网格鲸鱼尾。**单位间距由词条自带**（与 DSH 完全一致）：中文 `durMin`=「{n}分」/ `durSec`=「{n}秒」不带空格（目标图就是「43分54秒」），EN `durMin`=「{n}m 」/ `durHour`=「{n}h 」带尾空格，`fmtDuration` 用 `parts.join('')` 拼 —— 与 DSH `formatRunDuration(...).map((part) => part.text).join('')` 同一拼法。早先中英都用 `join(' ')`，中文会多出半角空格，逐像素对比才发现。
 
 ### 4.7 空态与运行时引导
 
 **来源：index-lh_YM6sT.css 的 ._card_u7vgf_24 / ._empty_1j4y1_104 / ._status_1j4y1_144**
 
-**令牌**：`.dsh-pi-empty` → `label-secondary`；`h2` → `font-base-strong-16` + `label-primary`；`-empty-meta` → `--ds-font-family-code` + `font-xxs-12-*` + `label-caption`；`-gate-card` → `radius-lg` + `bg-layer-1` + `elevation-panel`；`-gate-path` → `font-xxxs-11-*` + `label-tertiary`；`-gate-searched` → `font-xxxs-11-*` + `label-dimmed`。
+**令牌**：`.superpi-empty` → `label-secondary`；`h2` → `font-base-strong-16` + `label-primary`；`-empty-meta` → `--ds-font-family-code` + `font-xxs-12-*` + `label-caption`；`-gate-card` → `radius-lg` + `bg-layer-1` + `elevation-panel`；`-gate-path` → `font-xxxs-11-*` + `label-tertiary`；`-gate-searched` → `font-xxxs-11-*` + `label-dimmed`。
 
 **几何**：空态 `padding:48px 24px`（垂直留白极大，因为空态通常是首屏唯一内容）；`h2` 后 `p{max-width:420px}`（限制行宽，避免长句横跨整个面板）；`-empty-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:center;margin-top:4px}`；gate 卡 `max-width:520px` / `padding:20px`。
 
@@ -483,9 +483,9 @@ tone 色的实现统一用 `color-mix(in srgb, <state-color> N%, transparent)`�
 
 **差异**：
 
-1. **DSH 的 `._empty_1j4y1_104` 用 `font:var(--dsw-font-xs-13)`（13px）**，dsh-pi 的 `-empty-row` 用 `font-xxs-12-*`（12px）+ `label-dimmed`。dsh-pi 更小更淡。`-empty-row` 用于抽屉里的「没有匹配项」，比整页空态更次要，这个下调是合理的。
-2. **DSH 的 `._card_u7vgf_24` 是 `flex-direction:column;align-items:center;gap:16px`**，dsh-pi 的 `-gate-card` 用 `padding:20px` + `elevation-panel`。DSH 那张卡没有阴影，dsh-pi 有。
-3. dsh-pi 的 `-empty-actions` 是 0.4.x 新增（工作区入口），DSH 空态没有对应结构。
+1. **DSH 的 `._empty_1j4y1_104` 用 `font:var(--dsw-font-xs-13)`（13px）**，superpi 的 `-empty-row` 用 `font-xxs-12-*`（12px）+ `label-dimmed`。superpi 更小更淡。`-empty-row` 用于抽屉里的「没有匹配项」，比整页空态更次要，这个下调是合理的。
+2. **DSH 的 `._card_u7vgf_24` 是 `flex-direction:column;align-items:center;gap:16px`**，superpi 的 `-gate-card` 用 `padding:20px` + `elevation-panel`。DSH 那张卡没有阴影，superpi 有。
+3. superpi 的 `-empty-actions` 是 0.4.x 新增（工作区入口），DSH 空态没有对应结构。
 
 ### 4.8 输入区
 
@@ -495,56 +495,56 @@ composer 自 0.6.2 起整体换成宿主主对话区的语言：卡面、圆形 
 
 **令牌**：
 
-- `.dsh-pi-box` → `--dsw-radius-panel`（28px）+ `--dsw-specific-input-major` 底 + `--dsw-elevation-soft` 投影；`:focus-within` 只局部覆盖 `--dsw-elevation-stroke-color`
-- `.dsh-pi-ta` → `label-primary` + `font-s-14-font-size` + `--dsh-content-font-delta`，`caret-color:state-business-primary`；占位符 `label-caption`
-- `.dsh-pi-add` → `specific-selector` 底 + `label-primary`，hover `interactive-bg-hover-solid`
-- `.dsh-pi-picker` → `label-secondary` + `font-xs-13-*`（weight 500），hover `interactive-bg-hover-solid`
-- `.dsh-pi-send` → `button-info-fill` 底 + `label-primary-foreground`，hover `button-info-hover`，`:disabled` opacity .4
-- `.dsh-pi-stop` → `interactive-bg-hover-solid` 底 + `label-primary`，hover `interactive-bg-hover-danger`
-- `.dsh-pi-widget-body` → `border-l2` + `radius-sm` + `bg-layer-2` + `label-secondary` + `font-xxxs-11-*` + `--ds-font-family-code`
-- `.dsh-pi-statusbar` → `font-xxxs-11-*` + `label-caption`
-- `.dsh-pi-thumb` → 内描边 `border-l3`；`.dsh-pi-thumb-x` → `bg-mask-1` + `static-neutral-bluish-00`
+- `.superpi-box` → `--dsw-radius-panel`（28px）+ `--dsw-specific-input-major` 底 + `--dsw-elevation-soft` 投影；`:focus-within` 只局部覆盖 `--dsw-elevation-stroke-color`
+- `.superpi-ta` → `label-primary` + `font-s-14-font-size` + `--dsh-content-font-delta`，`caret-color:state-business-primary`；占位符 `label-caption`
+- `.superpi-add` → `specific-selector` 底 + `label-primary`，hover `interactive-bg-hover-solid`
+- `.superpi-picker` → `label-secondary` + `font-xs-13-*`（weight 500），hover `interactive-bg-hover-solid`
+- `.superpi-send` → `button-info-fill` 底 + `label-primary-foreground`，hover `button-info-hover`，`:disabled` opacity .4
+- `.superpi-stop` → `interactive-bg-hover-solid` 底 + `label-primary`，hover `interactive-bg-hover-danger`
+- `.superpi-widget-body` → `border-l2` + `radius-sm` + `bg-layer-2` + `label-secondary` + `font-xxxs-11-*` + `--ds-font-family-code`
+- `.superpi-statusbar` → `font-xxxs-11-*` + `label-caption`
+- `.superpi-thumb` → 内描边 `border-l3`；`.superpi-thumb-x` → `bg-mask-1` + `static-neutral-bluish-00`
 
 **几何**：
 
 | 元素 | 值 |
 | --- | --- |
-| `.dsh-pi-composer` | `padding:0 12px 4px`、`background:bg-base`、`column` + `align-items:center`（卡与 dock 同宽同心） |
-| `.dsh-pi-composer-inner` | `column` + `gap:6px`、`width:100%` |
-| `.dsh-pi-box` | `border:0`、`radius-panel`（28px）、`gap:12px`、`padding-top:8px`、soft 投影、`transition:box-shadow .16s` |
-| `.dsh-pi-ta` | `min-height:52px`、`max-height:220px`、`border:0`、`outline:0`、`padding:4px 8px 0 14px` |
-| `.dsh-pi-bar` | `flex-wrap` + `gap:12px` + `padding:2px 8px 6px`；左 `.dsh-pi-bar-actions`（`gap:8px`、`flex:0 1 auto`）、右 `.dsh-pi-bar-right`（`flex:1 1 auto` + `justify-content:flex-end`） |
-| `.dsh-pi-add` | `28px × 28px`、`999px` |
-| `.dsh-pi-picker` | `height:28px`、`max-width:220px`、`radius-sm`（触发按钮本体，`:669`） |
-| `.dsh-pi-picker-box` | `position:relative`、`display:flex`、`align-items:center`、`min-width:0`、`flex:0 1 auto`（`client.js:824`；模型名与思考档位共用这一个定位锚点，0.7.0 删掉了原生 `<select>` 叠层与 `-picker-wrap` / `-picker-native`） |
-| `.dsh-pi-picker-menu` | `left:0`、`right:auto`、`bottom:calc(100% + 6px)`、`min-width:260px`、`max-width:min(380px,calc(100vw - 48px))`（`client.js:825`；**向上弹**，与 `-more-menu` 的向下展开方向相反） |
-| `.dsh-pi-picker-sec` | `padding:8px 8px 4px`、11px、`label-caption`（`client.js:826`；段标题 = 「选择模型」/「思考档位」） |
-| `.dsh-pi-picker-row` | `min-height:32px`、`padding:5px 8px`、`radius-md`、13px（`client.js:827`）；`:hover` 转 `interactive-bg-hover`（`:828`）、`[data-current="1"]` 内描边 `state-business-primary`（`:829`） |
-| `.dsh-pi-picker-empty` | `padding:10px 8px`、12px、`label-dimmed`（`client.js:832`；加载中与空列表同款） |
-| `.dsh-pi-send` / `.dsh-pi-stop` | `34px × 34px`、`999px`、`translateY(-2px)`，同一位置互斥显示 |
-| `.dsh-pi-widget-body` | `max-height:120px`、可滚动 |
-| `.dsh-pi-thumb` | `52px × 52px`、`radius-sm`、内描边 `border-l3` |
-| `.dsh-pi-thumb-x` | `16px × 16px`、`radius-xs` |
+| `.superpi-composer` | `padding:0 12px 4px`、`background:bg-base`、`column` + `align-items:center`（卡与 dock 同宽同心） |
+| `.superpi-composer-inner` | `column` + `gap:6px`、`width:100%` |
+| `.superpi-box` | `border:0`、`radius-panel`（28px）、`gap:12px`、`padding-top:8px`、soft 投影、`transition:box-shadow .16s` |
+| `.superpi-ta` | `min-height:52px`、`max-height:220px`、`border:0`、`outline:0`、`padding:4px 8px 0 14px` |
+| `.superpi-bar` | `flex-wrap` + `gap:12px` + `padding:2px 8px 6px`；左 `.superpi-bar-actions`（`gap:8px`、`flex:0 1 auto`）、右 `.superpi-bar-right`（`flex:1 1 auto` + `justify-content:flex-end`） |
+| `.superpi-add` | `28px × 28px`、`999px` |
+| `.superpi-picker` | `height:28px`、`max-width:220px`、`radius-sm`（触发按钮本体，`:669`） |
+| `.superpi-picker-box` | `position:relative`、`display:flex`、`align-items:center`、`min-width:0`、`flex:0 1 auto`（`client.js:824`；模型名与思考档位共用这一个定位锚点，0.7.0 删掉了原生 `<select>` 叠层与 `-picker-wrap` / `-picker-native`） |
+| `.superpi-picker-menu` | `left:0`、`right:auto`、`bottom:calc(100% + 6px)`、`min-width:260px`、`max-width:min(380px,calc(100vw - 48px))`（`client.js:825`；**向上弹**，与 `-more-menu` 的向下展开方向相反） |
+| `.superpi-picker-sec` | `padding:8px 8px 4px`、11px、`label-caption`（`client.js:826`；段标题 = 「选择模型」/「思考档位」） |
+| `.superpi-picker-row` | `min-height:32px`、`padding:5px 8px`、`radius-md`、13px（`client.js:827`）；`:hover` 转 `interactive-bg-hover`（`:828`）、`[data-current="1"]` 内描边 `state-business-primary`（`:829`） |
+| `.superpi-picker-empty` | `padding:10px 8px`、12px、`label-dimmed`（`client.js:832`；加载中与空列表同款） |
+| `.superpi-send` / `.superpi-stop` | `34px × 34px`、`999px`、`translateY(-2px)`，同一位置互斥显示 |
+| `.superpi-widget-body` | `max-height:120px`、可滚动 |
+| `.superpi-thumb` | `52px × 52px`、`radius-sm`、内描边 `border-l3` |
+| `.superpi-thumb-x` | `16px × 16px`、`radius-xs` |
 
-**状态**：聚焦只有**一条通道** —— `client.js:649` 的 `.dsh-pi-box:focus-within{--dsw-elevation-stroke-color:var(--dsw-alias-state-business-primary)}`：把 elevation 的描边层换成品牌色，投影保留。0.4–0.6.1 曾并行一条 `[data-focus="1"]` 通道，0.6.2 换成 elevation 表达后已删除（全文件 grep `data-focus` 命中 0，旧文档的双通道描述作废）。卡内按钮各自有 hover / `:disabled` / `[data-open="1"]` 三态。
+**状态**：聚焦只有**一条通道** —— `client.js:649` 的 `.superpi-box:focus-within{--dsw-elevation-stroke-color:var(--dsw-alias-state-business-primary)}`：把 elevation 的描边层换成品牌色，投影保留。0.4–0.6.1 曾并行一条 `[data-focus="1"]` 通道，0.6.2 换成 elevation 表达后已删除（全文件 grep `data-focus` 命中 0，旧文档的双通道描述作废）。卡内按钮各自有 hover / `:disabled` / `[data-open="1"]` 三态。
 
 **差异**：
 
-1. **卡面与宿主同源**：`.dsh-pi-box` 与宿主 `._card`（`GRgSLq_card`）逐项同值 —— `radius-panel` + `specific-input-major` + `elevation-soft` + `gap:12px` + `padding-top:8px`。差别只在宿主把 composer 拆成更多子组件，我们用一层 `-inner` 收口。
-2. **三个圆钮与宿主同值**：`.dsh-pi-add` / `-picker` / `-send` 对宿主 `._add` / `._select` / `._primary`，尺寸 28 / 28 / 34 全同。唯一实质差异是发送键前景：宿主硬写 `#fff`，我们走 `label-primary-foreground` 令牌（门禁禁止硬色值）。
-3. **`.dsh-pi-search` 才属于 `._wrap_14sgc_1` 那一族**，参数不同：dsh-pi 28px / `radius-sm` / `bg-layer-3` / `border-l4`；DSH 32px / `radius-md` / `bg-layer-1` / `border-l4`。同族不同档。
-4. **`.dsh-pi-ta` 用 `min-height` / `max-height` 而不是 flex 拉伸**：面板高度固定，不需要 `_editor_61ozo_1` 那种自适应。
+1. **卡面与宿主同源**：`.superpi-box` 与宿主 `._card`（`GRgSLq_card`）逐项同值 —— `radius-panel` + `specific-input-major` + `elevation-soft` + `gap:12px` + `padding-top:8px`。差别只在宿主把 composer 拆成更多子组件，我们用一层 `-inner` 收口。
+2. **三个圆钮与宿主同值**：`.superpi-add` / `-picker` / `-send` 对宿主 `._add` / `._select` / `._primary`，尺寸 28 / 28 / 34 全同。唯一实质差异是发送键前景：宿主硬写 `#fff`，我们走 `label-primary-foreground` 令牌（门禁禁止硬色值）。
+3. **`.superpi-search` 才属于 `._wrap_14sgc_1` 那一族**，参数不同：superpi 28px / `radius-sm` / `bg-layer-3` / `border-l4`；DSH 32px / `radius-md` / `bg-layer-1` / `border-l4`。同族不同档。
+4. **`.superpi-ta` 用 `min-height` / `max-height` 而不是 flex 拉伸**：面板高度固定，不需要 `_editor_61ozo_1` 那种自适应。
 5. **缩略图尺寸仍无据**：52px 无法在 `index-lh_YM6sT.css` 的 748 条规则里溯源（见附录 C 待确认 4）。
 
 ### 4.9 弹出菜单
 
 **来源：index-lh_YM6sT.css 的 ._list_1p5el_7 / ._item_1p5el_105 / ._label_1p5el_146 / ._itemIcon_1p5el_165 / ._itemLabel_1p5el_208**
 
-**令牌**：`.dsh-pi-menu` → `radius-lg` + `specific-menu` + `menu-backdrop-filter` + `elevation-panel` + `border-l1`，并局部覆盖 `--dsw-elevation-stroke-color:var(--dsw-alias-border-l1)`；`.dsh-pi-item` → `radius-md` + `font-xs-13-*` + `label-primary`，`[data-active="1"]` 转 `interactive-bg-hover`；`-item-name` 用 `--ds-font-family-code`；`-item-desc` `font-xxxs-11-*` + `label-tertiary`；`-item-side` `font-xxxs-11-*` + `label-caption`。
+**令牌**：`.superpi-menu` → `radius-lg` + `specific-menu` + `menu-backdrop-filter` + `elevation-panel` + `border-l1`，并局部覆盖 `--dsw-elevation-stroke-color:var(--dsw-alias-border-l1)`；`.superpi-item` → `radius-md` + `font-xs-13-*` + `label-primary`，`[data-active="1"]` 转 `interactive-bg-hover`；`-item-name` 用 `--ds-font-family-code`；`-item-desc` `font-xxxs-11-*` + `label-tertiary`；`-item-side` `font-xxxs-11-*` + `label-caption`。
 
 **几何**：
 
-| 属性 | dsh-pi `.dsh-pi-menu` / `.dsh-pi-item` | DSH `._list_1p5el_7` / `._item_1p5el_105` |
+| 属性 | superpi `.superpi-menu` / `.superpi-item` | DSH `._list_1p5el_7` / `._item_1p5el_105` |
 | --- | --- | --- |
 | 容器 padding | `4px` | `4px` |
 | 容器圆角 | `radius-lg` | 由上层给 |
@@ -556,29 +556,29 @@ composer 自 0.6.2 起整体换成宿主主对话区的语言：卡面、圆形 
 | item 圆角 | `radius-md` | `radius-md` |
 | item 字号 | 13px / 20px | 13px / 20px |
 | 图标尺寸 | 无统一规则 | `._itemIcon_1p5el_165` `14px × 14px` |
-| `.dsh-pi-more-wrap` | `position:relative`、`display:flex`（`client.js:835`） | 无对应物：DSH 浮层由父容器承担定位 |
-| `.dsh-pi-more-menu` | `left:auto`、`right:0`、`top:calc(100% + 6px)`、`bottom:auto`、`min-width:184px`、`max-width:min(260px,calc(100vw - 32px))`（`client.js:836`；顶栏 `···` 向右下展开） | `._list_1p5el_7` 的定位族：DSH 的浮层一律向下，dsh-pi 从顶栏锚点向右下展开 |
-| `.dsh-pi-more-item` | `min-height:32px`、`padding:6px 8px`、`radius-md`、13px，hover `interactive-bg-hover`（`client.js:837`） | `._item_1p5el_105`：同族菜单项，DSH `min-height:34px` |
-| `.dsh-pi-more-icon` | `16px × 16px` 居中容器、`label-secondary`（`client.js:839`） | `._itemIcon_1p5el_165`：DSH `14px × 14px` + `menu-icon` |
-| `.dsh-pi-more-label` | `flex:1 1 auto` + 单行省略（`client.js:871`） | `._itemLabel_1p5el_208`：同为 `flex:1` + `text-overflow` 单段标签 |
+| `.superpi-more-wrap` | `position:relative`、`display:flex`（`client.js:835`） | 无对应物：DSH 浮层由父容器承担定位 |
+| `.superpi-more-menu` | `left:auto`、`right:0`、`top:calc(100% + 6px)`、`bottom:auto`、`min-width:184px`、`max-width:min(260px,calc(100vw - 32px))`（`client.js:836`；顶栏 `···` 向右下展开） | `._list_1p5el_7` 的定位族：DSH 的浮层一律向下，superpi 从顶栏锚点向右下展开 |
+| `.superpi-more-item` | `min-height:32px`、`padding:6px 8px`、`radius-md`、13px，hover `interactive-bg-hover`（`client.js:837`） | `._item_1p5el_105`：同族菜单项，DSH `min-height:34px` |
+| `.superpi-more-icon` | `16px × 16px` 居中容器、`label-secondary`（`client.js:839`） | `._itemIcon_1p5el_165`：DSH `14px × 14px` + `menu-icon` |
+| `.superpi-more-label` | `flex:1 1 auto` + 单行省略（`client.js:871`） | `._itemLabel_1p5el_208`：同为 `flex:1` + `text-overflow` 单段标签 |
 
 **状态**：`data-active`（键盘高亮）、`data-disabled`（`opacity:.4`）、hover（`interactive-bg-hover`）、空列表（`-empty-row`）。
 
 **差异**：
 
-1. **阴影等级不同**：dsh-pi 用 `elevation-panel`，DSH 的 `._list_1p5el_7` 用 `elevation-prominent`。`prominent` 的第二层阴影更大更散（`0 0 20px #0000000d` vs `0 0 16px #00000005`）。菜单是浮在最上层的元素，用 `prominent` 更符合 DSH 的层级直觉。这是一处**可以低成本修正**的偏差。
-2. **`_item_1p5el_105` 的 hover 包在 `@media(hover:hover)` 里且带 `:not(:disabled):not([aria-disabled=true])`**，dsh-pi 只写 `[data-active="1"]` 与 hover，没有排除禁用态。DSH 的 `:focus-visible` 也走同一个底色（`background:interactive-bg-hover;outline:none`），dsh-pi 没有为 item 单独写 focus 规则（靠根的全局 `:focus-visible` 描边）。
-3. **DSH 的 `._list_1p5el_7` 有定位与宽度约束**（`position:absolute;top:calc(100% + 4px);min-width:min(144px,…);max-width:min(360px,…)`），dsh-pi 的定位在 JS 里算，CSS 只给外观。分工不同，不算差异。
+1. **阴影等级不同**：superpi 用 `elevation-panel`，DSH 的 `._list_1p5el_7` 用 `elevation-prominent`。`prominent` 的第二层阴影更大更散（`0 0 20px #0000000d` vs `0 0 16px #00000005`）。菜单是浮在最上层的元素，用 `prominent` 更符合 DSH 的层级直觉。这是一处**可以低成本修正**的偏差。
+2. **`_item_1p5el_105` 的 hover 包在 `@media(hover:hover)` 里且带 `:not(:disabled):not([aria-disabled=true])`**，superpi 只写 `[data-active="1"]` 与 hover，没有排除禁用态。DSH 的 `:focus-visible` 也走同一个底色（`background:interactive-bg-hover;outline:none`），superpi 没有为 item 单独写 focus 规则（靠根的全局 `:focus-visible` 描边）。
+3. **DSH 的 `._list_1p5el_7` 有定位与宽度约束**（`position:absolute;top:calc(100% + 4px);min-width:min(144px,…);max-width:min(360px,…)`），superpi 的定位在 JS 里算，CSS 只给外观。分工不同，不算差异。
 
 ### 4.10 抽屉外壳
 
 **来源：index-lh_YM6sT.css 的 ._pane_3oazc_211 / ._surface_3oazc_127（无直接对标）**
 
-**令牌**：`.dsh-pi-sheet` → `bg-base`；`-sheet-head` → `border-l2`；`-sheet-title` → `font-base-strong-16` + `label-primary`；`-search` → `border-l4` + `radius-sm` + `bg-layer-3` + `label-primary` + `font-xxs-12-*`；`-sess` → `radius-md` + `bg-layer-1` + 内描边 `border-l2`，hover 转 `bg-layer-2` + `border-l4`，`[data-current="1"]` 内描边转 `state-business-primary`；`-mono` → `--ds-font-family-code` + `font-xxxs-11-*` + `label-tertiary`；`-kv` → `grid auto 1fr` + `gap:6px 14px`；`-tree` → `--ds-font-family-code` + `font-xxs-12-font-size`；`-tree-kind` → `label-caption` + `font-xxxs-11` + `min-width:56px`。
+**令牌**：`.superpi-sheet` → `bg-base`；`-sheet-head` → `border-l2`；`-sheet-title` → `font-base-strong-16` + `label-primary`；`-search` → `border-l4` + `radius-sm` + `bg-layer-3` + `label-primary` + `font-xxs-12-*`；`-sess` → `radius-md` + `bg-layer-1` + 内描边 `border-l2`，hover 转 `bg-layer-2` + `border-l4`，`[data-current="1"]` 内描边转 `state-business-primary`；`-mono` → `--ds-font-family-code` + `font-xxxs-11-*` + `label-tertiary`；`-kv` → `grid auto 1fr` + `gap:6px 14px`；`-tree` → `--ds-font-family-code` + `font-xxs-12-font-size`；`-tree-kind` → `label-caption` + `font-xxxs-11` + `min-width:56px`。
 
-**几何**：`.dsh-pi-sheet{position:absolute;inset:0;z-index:30;display:flex;flex-direction:column;background:bg-base}` —— **铺满容器，不是浮层卡片**。`-sheet-head{border-bottom:.5px solid border-l2}`；`-sheet-body{padding:12px 14px 16px}`。
+**几何**：`.superpi-sheet{position:absolute;inset:0;z-index:30;display:flex;flex-direction:column;background:bg-base}` —— **铺满容器，不是浮层卡片**。`-sheet-head{border-bottom:.5px solid border-l2}`；`-sheet-body{padding:12px 14px 16px}`。
 
-**这是整套组件里唯一没有 DSH 直接对标物的一处**。`index-lh_YM6sT.css` 里的 `._pane_3oazc_211` 与 `._surface_3oazc_127` 只提供容器骨架（flex + min-height:0 + overflow），没有任何「抽屉外观」的类。DSH 的抽屉由应用层自己组合。所以 `.dsh-pi-sheet` 的配色配方是从多处借的：`bg-base` + `border-l2` 分隔 + `-sess` 卡的 `bg-layer-1` 到 `bg-layer-2` 的 hover 升级。
+**这是整套组件里唯一没有 DSH 直接对标物的一处**。`index-lh_YM6sT.css` 里的 `._pane_3oazc_211` 与 `._surface_3oazc_127` 只提供容器骨架（flex + min-height:0 + overflow），没有任何「抽屉外观」的类。DSH 的抽屉由应用层自己组合。所以 `.superpi-sheet` 的配色配方是从多处借的：`bg-base` + `border-l2` 分隔 + `-sess` 卡的 `bg-layer-1` 到 `bg-layer-2` 的 hover 升级。
 
 `client.js:723`（规则体在 `:724`） 的注释说「DSH `._float` 的配方：bg-layer-2 + radius-panel + elevation-prominent + 局部描边色」，但实际渲染用的是 `bg-base` 铺满。注释与实现不一致——见附录 B 的 D-06。
 
@@ -587,18 +587,18 @@ composer 自 0.6.2 起整体换成宿主主对话区的语言：卡面、圆形 
 **差异**：
 
 1. **无 DSH 对标物**（见上）。判定依据只能到「令牌全部合法」这一层，不能宣称「与 DSH 某组件一致」。
-2. **`.dsh-pi-sess` 的 hover 同时改底色与描边色**（`bg-layer-1 → bg-layer-2`、`border-l2 → border-l4`），这需要两条令牌同时移动。DSH 的 `._item_1p5el_105` hover 只改底色。dsh-pi 的做法信息量更大，属可接受的扩展。
+2. **`.superpi-sess` 的 hover 同时改底色与描边色**（`bg-layer-1 → bg-layer-2`、`border-l2 → border-l4`），这需要两条令牌同时移动。DSH 的 `._item_1p5el_105` hover 只改底色。superpi 的做法信息量更大，属可接受的扩展。
 3. **注释与实现不一致**（`client.js:723`，见上）。
 
 ### 4.11 开关
 
 **来源：index-lh_YM6sT.css 的 ._switch_1ik0f_5 / ._thumb_1ik0f_33**
 
-**令牌**：`.dsh-pi-switch` → `border-l3`（关闭底）、`brand-primary`（开启底）；`.dsh-pi-switch-thumb` → `label-primary-foreground`（开启滑块）、`switch-thumb`（关闭滑块）。
+**令牌**：`.superpi-switch` → `border-l3`（关闭底）、`brand-primary`（开启底）；`.superpi-switch-thumb` → `label-primary-foreground`（开启滑块）、`switch-thumb`（关闭滑块）。
 
 **几何与状态逐条对照**（`client.js:760-767` vs DSH 原文）：
 
-| 属性 | dsh-pi | DSH `._switch_1ik0f_5` | 判定 |
+| 属性 | superpi | DSH `._switch_1ik0f_5` | 判定 |
 | --- | --- | --- | --- |
 | 尺寸 | `36px × 20px` | `36px × 20px` | 一致 |
 | padding | `2px` | `2px` | 一致 |
@@ -613,9 +613,9 @@ composer 自 0.6.2 起整体换成宿主主对话区的语言：卡面、圆形 
 | 滑块过渡 | `transform .12s ease` | `transform .12s ease` | 一致 |
 | 胶囊过渡 | `background-color .16s ease` | **无** | 差异 |
 
-十一项一致、一项差异。这是全套组件里对齐程度最高的一处。**唯一差异**是 dsh-pi 的胶囊多了 `transition:background-color .16s ease`，DSH 的开关底色是瞬变。加上过渡在观感上更柔和，但也意味着关闭瞬间有一帧中间色。
+十一项一致、一项差异。这是全套组件里对齐程度最高的一处。**唯一差异**是 superpi 的胶囊多了 `transition:background-color .16s ease`，DSH 的开关底色是瞬变。加上过渡在观感上更柔和，但也意味着关闭瞬间有一帧中间色。
 
-**状态**：`role="switch"` + `aria-checked` + `aria-labelledby`，React 侧用 `id="dsh-pi-sw-<key>"` 关联标签。`SettingsSheet`（`client.js:4213-4240`）里只有 `autoCompaction` 与 `autoRetry` 两个真开关（`client.js:4231` / `:4232`）；`steeringMode` 与 `followUpMode` 仍是 `.dsh-pi-btn` 文字按钮（`client.js:4233-4238`），与 DSH 的 `._toggle_jrv99_5` 同族但不是开关形态。
+**状态**：`role="switch"` + `aria-checked` + `aria-labelledby`，React 侧用 `id="superpi-sw-<key>"` 关联标签。`SettingsSheet`（`client.js:4213-4240`）里只有 `autoCompaction` 与 `autoRetry` 两个真开关（`client.js:4231` / `:4232`）；`steeringMode` 与 `followUpMode` 仍是 `.superpi-btn` 文字按钮（`client.js:4233-4238`），与 DSH 的 `._toggle_jrv99_5` 同族但不是开关形态。
 
 **差异**：
 
@@ -626,11 +626,11 @@ composer 自 0.6.2 起整体换成宿主主对话区的语言：卡面、圆形 
 
 **来源：index-lh_YM6sT.css 的 ._dialog_14mp3_33 / ._mask_14mp3_18 / @keyframes _modalEnter_14mp3_1**
 
-**令牌**：`.dsh-pi-dialog-wrap` → `bg-mask-1`；`.dsh-pi-dialog` → `radius-panel` + `bg-layer-2` + `elevation-prominent`；`h3` → `font-base-strong-16` + `label-primary`；`-dialog-msg` → `label-secondary` + `--dsh-content-font-size` + `--dsh-content-font-delta`；`-opt` → `radius-md` + `bg-layer-3` + `font-xs-13-*`；`-mini-ta` → `border-l4` + `radius-sm` + `bg-base` + `--ds-font-family-code`；0.7.0 的三个变体：`-dialog-wide` → 只改宽度、`-dialog-content` → 内容区滚动容器、`-dialog-grow` → 可增长区。
+**令牌**：`.superpi-dialog-wrap` → `bg-mask-1`；`.superpi-dialog` → `radius-panel` + `bg-layer-2` + `elevation-prominent`；`h3` → `font-base-strong-16` + `label-primary`；`-dialog-msg` → `label-secondary` + `--dsh-content-font-size` + `--dsh-content-font-delta`；`-opt` → `radius-md` + `bg-layer-3` + `font-xs-13-*`；`-mini-ta` → `border-l4` + `radius-sm` + `bg-base` + `--ds-font-family-code`；0.7.0 的三个变体：`-dialog-wide` → 只改宽度、`-dialog-content` → 内容区滚动容器、`-dialog-grow` → 可增长区。
 
 **几何**：
 
-| 属性 | dsh-pi `.dsh-pi-dialog` | DSH `._dialog_14mp3_33` |
+| 属性 | superpi `.superpi-dialog` | DSH `._dialog_14mp3_33` |
 | --- | --- | --- |
 | 宽度 | `min(440px,100%)` | `min(380px,100%)` |
 | 布局 | `flex column`，无 gap | `flex column`，`gap:20px` |
@@ -638,16 +638,16 @@ composer 自 0.6.2 起整体换成宿主主对话区的语言：卡面、圆形 
 | 圆角 | `radius-panel` | `radius-panel` |
 | 底色 | `bg-layer-2` | `bg-layer-2` |
 | 阴影 | `elevation-prominent` | `elevation-prominent` |
-| 入场动画 | `dsh-pi-modal-in .16s ease-in-out` | `_modalEnter_14mp3_1 var(--ds-transition-duration) var(--ds-ease-in-out)` |
+| 入场动画 | `superpi-modal-in .16s ease-in-out` | `_modalEnter_14mp3_1 var(--ds-transition-duration) var(--ds-ease-in-out)` |
 | 遮罩 | `bg-mask-1` 平铺 | `._mask_14mp3_18` 用 `backdrop-filter:var(--dsw-mask-blur)` + `:after` 铺 `bg-mask-1` |
-| 宽变体 | `.dsh-pi-dialog-wide`（`client.js:869`）`width:min(560px,100%)` | 无对应（DSH 只有一档宽度） |
-| 内容区 | `.dsh-pi-dialog-content`（`client.js:873`）`padding:14px 24px 22px`、`overflow-y:auto` | 由宿主应用层组合 |
-| 可增长区 | `.dsh-pi-dialog-grow`（`client.js:870`）`flex:1 1 auto` + `min-height:0` + `overflow-y:auto` | 无对应 |
+| 宽变体 | `.superpi-dialog-wide`（`client.js:869`）`width:min(560px,100%)` | 无对应（DSH 只有一档宽度） |
+| 内容区 | `.superpi-dialog-content`（`client.js:873`）`padding:14px 24px 22px`、`overflow-y:auto` | 由宿主应用层组合 |
+| 可增长区 | `.superpi-dialog-grow`（`client.js:870`）`flex:1 1 auto` + `min-height:0` + `overflow-y:auto` | 无对应 |
 
 **入场动画逐帧对照**：
 
 ```css
-@keyframes dsh-pi-modal-in{0%{opacity:0}to{opacity:1}}          /* client.js:802 */
+@keyframes superpi-modal-in{0%{opacity:0}to{opacity:1}}          /* client.js:802 */
 @keyframes _modalEnter_14mp3_1{0%{opacity:0}to{opacity:1}}      /* DSH 原文 */
 ```
 
@@ -657,10 +657,10 @@ composer 自 0.6.2 起整体换成宿主主对话区的语言：卡面、圆形 
 
 **差异**：
 
-1. **宽度 440 vs 380**。dsh-pi 的对话框要容纳选项列表与多行输入，宽 60px 是刻意的。
-2. **DSH 用 `gap:20px` 统一间距，dsh-pi 用三段 padding 精确控制**。DSH 的写法更简单，dsh-pi 的写法能做出「标题紧贴顶、按钮区留白大」的层次。
-3. **遮罩少了 `backdrop-filter`**。DSH 的 `._mask_14mp3_18` 有 `backdrop-filter:var(--dsw-mask-blur)`，dsh-pi 直接铺 `bg-mask-1`。查 `tokens.txt`：`--dsw-mask-blur = none`，所以当前两者视觉一致；但若 DSH 将来把 `mask-blur` 改成非 none，dsh-pi 不会跟随。
-4. **`dsh-pi-modal-in` 是全局 keyframes 名字**，不带 hash 前缀，有被宿主同名动画覆盖的理论风险（实际不会，因为面板在同源独立文档流里）。
+1. **宽度 440 vs 380**。superpi 的对话框要容纳选项列表与多行输入，宽 60px 是刻意的。
+2. **DSH 用 `gap:20px` 统一间距，superpi 用三段 padding 精确控制**。DSH 的写法更简单，superpi 的写法能做出「标题紧贴顶、按钮区留白大」的层次。
+3. **遮罩少了 `backdrop-filter`**。DSH 的 `._mask_14mp3_18` 有 `backdrop-filter:var(--dsw-mask-blur)`，superpi 直接铺 `bg-mask-1`。查 `tokens.txt`：`--dsw-mask-blur = none`，所以当前两者视觉一致；但若 DSH 将来把 `mask-blur` 改成非 none，superpi 不会跟随。
+4. **`superpi-modal-in` 是全局 keyframes 名字**，不带 hash 前缀，有被宿主同名动画覆盖的理论风险（实际不会，因为面板在同源独立文档流里）。
 
 > 目录选择器（`DirSheet`）的规格单独放在第 6 章，因为它的交互复杂度远超一般组件，且它是本次改造的核心。
 
@@ -668,21 +668,21 @@ composer 自 0.6.2 起整体换成宿主主对话区的语言：卡面、圆形 
 
 **来源：index-lh_YM6sT.css 的 ._dialog_14mp3_33 / ._mask_14mp3_18 / ._list_1p5el_7 / ._pane_3oazc_211（均为部分对标）**
 
-0.7.0 把此前散落在面板里的三类浮层收成五个可复用的外壳组件。它们全部复用 `.dsh-pi-menu` 的底、阴影与毛玻璃配方（`:663`），只在定位与宽度上覆盖；三处弹层（列表 / 顶栏 `···` / 模型档位）共用同一套外观，差别只有弹出方向。
+0.7.0 把此前散落在面板里的三类浮层收成五个可复用的外壳组件。它们全部复用 `.superpi-menu` 的底、阴影与毛玻璃配方（`:663`），只在定位与宽度上覆盖；三处弹层（列表 / 顶栏 `···` / 模型档位）共用同一套外观，差别只有弹出方向。
 
 | 组件 | 函数 | 角色与语义 | 结构与关键几何 |
 | --- | --- | --- | --- |
-| `Dialog` | `client.js:3148-3156` | `div.dsh-pi-dialog-wrap` → `div.dsh-pi-dialog` + `role="dialog"` + `aria-modal="true"` + `aria-label=<title>` | 根走 `.dsh-pi-dialog-wrap`（`:800`，`bg-mask-1` + `z-index:40` + `padding:20px`）；`.dsh-pi-dialog`（`:801`，`width:min(440px,100%)` + `radius-panel` + `bg-layer-2` + `elevation-prominent` + `dsh-pi-modal-in .16s`）；`props.wide === true` 时类名追加 `dsh-pi-dialog-wide`（`:869`，`min(560px,100%)`）；内部 = `-dialog-head`（`:803`）+ 正文容器 **`-dialog-content`**（`:873`，`padding:14px 24px 22px`，注释 `:872` 说明底部多留 22px 防贴边，依据实拍 p071-04）。**注意是 `-dialog-content` 不是 `-dialog-body`**，两者并存但不是同一条规则 |
-| `SidePanel` | `client.js:3164-3184` | `div.dsh-pi-side-wrap` → `div.dsh-pi-side` + `role="dialog"` + `aria-modal="true"` + `aria-label` | JSDoc `:3158-3163` 记录需求（用户 30427：「从页面左侧向右侧弹出侧边栏」）。`.dsh-pi-side-wrap`（`:842`，`position:absolute;inset:0;z-index:30` + `bg-mask-1`）→ `.dsh-pi-side`（`:843`，`width:min(360px,86%)` + `height:100%` + `bg-base` + `elevation-panel` + `animation:dsh-pi-side-in .18s ease-out`）；`@keyframes dsh-pi-side-in`（`:844`）`translateX(-100%)` → `translateX(0)`，即左滑入场；结构 = `-side-head`（`:845`，含 `-side-title` `:846` 与 `CloseButton`）+ **可选** `-side-actions`（`:850`，仅 `props.actions` 存在时渲染）+ `-side-body`（`:847`，可滚动）。遮罩点击命中自身时关闭 |
-| `ConfirmDialog` | `client.js:3190-3202` | `role="alertdialog"` + `aria-modal="true"`（**不带 `-dialog-wide`**） | JSDoc `:3186-3189` 说明为什么单独做一个：压缩上下文不可撤销、重新连接会打断当前轮，两者都需要二次确认。结构 = `-dialog-head`（h3 + `CloseButton`，`onClick` 直接 `onCancel`）+ `p.dsh-pi-dialog-msg`（`:808`）+ `-dialog-actions`（`:810`，`.dsh-pi-btn` 取消 + `.dsh-pi-btn .dsh-pi-btn-primary` 的 `t('extYes')`）。默认焦点落在取消侧，破坏性动作需要一次显式点击 |
-| `MoreMenu` | `client.js:3205-3249` | `div.dsh-pi-menu dsh-pi-more-menu` + `role="menu"`，Escape → `onClose` | 每项 `button.dsh-pi-more-item` + `role="menuitem"` + `title`；图标 `span.dsh-pi-more-icon`（`h(item.icon,{size:16})`）+ 文本 `span.dsh-pi-more-label`。定位 `-more-menu`（`:836`）`left:auto;right:0;top:calc(100% + 6px);bottom:auto`，从顶栏锚点**向右下**展开，`min-width:184px` |
-| `ModelPicker` | `client.js:3258-3308` | `div.dsh-pi-menu dsh-pi-picker-menu` + `role="menu"`，Escape → `onClose` | 一个弹层两段：先 `-picker-sec`（`t('pickModel')`）+ 模型行，再 `-picker-sec`（`t('pickThinking')`）+ 档位行。每行 `button.dsh-pi-picker-row` + `role="menuitemradio"` + `aria-checked` + `data-current`；模型行 = `-picker-row-name` + `-picker-row-sub`（provider），档位行 = `-picker-row-name`（档位名）。加载中/空列表都渲染 `-picker-empty`（`t('modelsLoading')` / `t('modelsEmpty')`）。`current` 判定：模型走 provider + id 双等，思考档位走 `props.thinking === level`。定位 `-picker-menu`（`:825`）`bottom:calc(100% + 6px)`，**向上弹** |
+| `Dialog` | `client.js:3148-3156` | `div.superpi-dialog-wrap` → `div.superpi-dialog` + `role="dialog"` + `aria-modal="true"` + `aria-label=<title>` | 根走 `.superpi-dialog-wrap`（`:800`，`bg-mask-1` + `z-index:40` + `padding:20px`）；`.superpi-dialog`（`:801`，`width:min(440px,100%)` + `radius-panel` + `bg-layer-2` + `elevation-prominent` + `superpi-modal-in .16s`）；`props.wide === true` 时类名追加 `superpi-dialog-wide`（`:869`，`min(560px,100%)`）；内部 = `-dialog-head`（`:803`）+ 正文容器 **`-dialog-content`**（`:873`，`padding:14px 24px 22px`，注释 `:872` 说明底部多留 22px 防贴边，依据实拍 p071-04）。**注意是 `-dialog-content` 不是 `-dialog-body`**，两者并存但不是同一条规则 |
+| `SidePanel` | `client.js:3164-3184` | `div.superpi-side-wrap` → `div.superpi-side` + `role="dialog"` + `aria-modal="true"` + `aria-label` | JSDoc `:3158-3163` 记录需求（用户 30427：「从页面左侧向右侧弹出侧边栏」）。`.superpi-side-wrap`（`:842`，`position:absolute;inset:0;z-index:30` + `bg-mask-1`）→ `.superpi-side`（`:843`，`width:min(360px,86%)` + `height:100%` + `bg-base` + `elevation-panel` + `animation:superpi-side-in .18s ease-out`）；`@keyframes superpi-side-in`（`:844`）`translateX(-100%)` → `translateX(0)`，即左滑入场；结构 = `-side-head`（`:845`，含 `-side-title` `:846` 与 `CloseButton`）+ **可选** `-side-actions`（`:850`，仅 `props.actions` 存在时渲染）+ `-side-body`（`:847`，可滚动）。遮罩点击命中自身时关闭 |
+| `ConfirmDialog` | `client.js:3190-3202` | `role="alertdialog"` + `aria-modal="true"`（**不带 `-dialog-wide`**） | JSDoc `:3186-3189` 说明为什么单独做一个：压缩上下文不可撤销、重新连接会打断当前轮，两者都需要二次确认。结构 = `-dialog-head`（h3 + `CloseButton`，`onClick` 直接 `onCancel`）+ `p.superpi-dialog-msg`（`:808`）+ `-dialog-actions`（`:810`，`.superpi-btn` 取消 + `.superpi-btn .superpi-btn-primary` 的 `t('extYes')`）。默认焦点落在取消侧，破坏性动作需要一次显式点击 |
+| `MoreMenu` | `client.js:3205-3249` | `div.superpi-menu superpi-more-menu` + `role="menu"`，Escape → `onClose` | 每项 `button.superpi-more-item` + `role="menuitem"` + `title`；图标 `span.superpi-more-icon`（`h(item.icon,{size:16})`）+ 文本 `span.superpi-more-label`。定位 `-more-menu`（`:836`）`left:auto;right:0;top:calc(100% + 6px);bottom:auto`，从顶栏锚点**向右下**展开，`min-width:184px` |
+| `ModelPicker` | `client.js:3258-3308` | `div.superpi-menu superpi-picker-menu` + `role="menu"`，Escape → `onClose` | 一个弹层两段：先 `-picker-sec`（`t('pickModel')`）+ 模型行，再 `-picker-sec`（`t('pickThinking')`）+ 档位行。每行 `button.superpi-picker-row` + `role="menuitemradio"` + `aria-checked` + `data-current`；模型行 = `-picker-row-name` + `-picker-row-sub`（provider），档位行 = `-picker-row-name`（档位名）。加载中/空列表都渲染 `-picker-empty`（`t('modelsLoading')` / `t('modelsEmpty')`）。`current` 判定：模型走 provider + id 双等，思考档位走 `props.thinking === level`。定位 `-picker-menu`（`:825`）`bottom:calc(100% + 6px)`，**向上弹** |
 
 **差异**：
 
 1. **五个组件里只有 `Dialog` / `ConfirmDialog` 有 DSH 的直接对标物**（`._dialog_14mp3_33` / `._mask_14mp3_18`）。`SidePanel` 的滑动抽屉与 `MoreMenu` / `ModelPicker` 的两种弹出方向都靠 `position + transform` 自己表达，DSH 的 `._list_1p5el_7` 只规定外观不规定方向。
 2. **两套 role 混用是刻意的**：一般对话框用 `role="dialog"`，不可逆或会打断当前轮的两处用 `role="alertdialog"`。屏幕阅读器对后者的处理是「立刻播报并抢焦点」，语义正确但干扰更大，所以只有 `ConfirmDialog` 用它。
-3. **`SidePanel` 是唯一带入场动画的外壳**（`.18s ease-out` 左滑）。`Dialog` 只有 opacity 淡入（`dsh-pi-modal-in .16s`），与 DSH 的 `_modalEnter_14mp3_1` 逐帧一致；抽屉的位移入场在 DSH 里没有同源实现。
+3. **`SidePanel` 是唯一带入场动画的外壳**（`.18s ease-out` 左滑）。`Dialog` 只有 opacity 淡入（`superpi-modal-in .16s`），与 DSH 的 `_modalEnter_14mp3_1` 逐帧一致；抽屉的位移入场在 DSH 里没有同源实现。
 4. **`props.actions` 缺失时 `-side-actions` 整段不渲染**，不留空容器。这避免了「有 padding 没内容」的一条空白带。
 
 ### 4.14 过程流排版（父子同为 32 步长）
@@ -693,16 +693,16 @@ composer 自 0.6.2 起整体换成宿主主对话区的语言：卡面、圆形 
 
 | 项 | 值 | 出处 | 说明 |
 | --- | --- | --- | --- |
-| 父行行盒 | `24px` + delta | `.dsh-pi-proc-head,.dsh-pi-tool-head{…line-height:calc(24px + var(--dsh-content-font-delta,0px))…}`（`client.js:564`） | 与 DSH 的 24px 摘要行一致；delta 跟随宿主字号增量 |
-| 父行步长 | `32px` | 24px 行盒 + `.dsh-pi-body` 的 `gap:8px` | 上下都归零 padding，父行与父行之间、父行与子行组之间、组末与下一父行之间都是 32 |
-| 子行组行盒 | `24px` + delta（**不覆盖**） | 子行不写 `line-height`，沿用 `.dsh-pi-proc-head` / `-tool-head` 的规则（`client.js:564`） | 0.7.0 曾把子行压到 18px 行盒、`gap:0`，一行距只剩父行一半，看着像被挤扁 |
-| 子行组间距 | `gap:8px` | `.dsh-pi-sub{display:flex;flex-direction:column;gap:8px;…}`（`client.js:592`；注释 `:585-591`） | 与父层 `.dsh-pi-body` 的 `gap:8px` 同值 ⇒ 子行步长 = 24 + 8 = 32，与父行完全同节奏 |
-| 圆点尺寸与两侧留白 | `2px × 2px`、`margin:0 11px` | `.dsh-pi-sep{…width:2px;height:2px;margin:0 11px;…}`（`client.js:575`；注释 `:572-574`） | 行内三段间距统一 11（图标→label 11、label→圆点 11、圆点→摘要 11）；1px 圆角让它看起来是方块不是圆点，与 DSH 的「·」一致 |
-| 图标列 | 16×16 框 + `margin-right:11px` | `.dsh-pi-proc-icon{…width:16px;height:16px;margin-right:11px;…}`（`client.js:570`） | 父行 label 左缘 = 容器左内边距 16 + 图标 16 + `margin-right:11` = 43，其中图标盒右缘在 32 |
-| 子行左竖线落点 | `margin-left:26px` + `padding-left:12px` | `.dsh-pi-sub{margin:0 0 0 26px;padding:0 0 0 12px;border-left:1px solid var(--dsw-alias-border-l3)}`（`client.js:592`） | 竖线取 26 = 图标 16 + `margin-right:11` − 1（1px 描边的亚像素让位）；`padding-left:12` 让子行图标距竖线 12（≈参考图 15 图 px ÷ 1.23）；子行图标相对父行整体右移 38（参考图 46 图 px ÷ 1.23 ≈ 37，同量级） |
+| 父行行盒 | `24px` + delta | `.superpi-proc-head,.superpi-tool-head{…line-height:calc(24px + var(--dsh-content-font-delta,0px))…}`（`client.js:564`） | 与 DSH 的 24px 摘要行一致；delta 跟随宿主字号增量 |
+| 父行步长 | `32px` | 24px 行盒 + `.superpi-body` 的 `gap:8px` | 上下都归零 padding，父行与父行之间、父行与子行组之间、组末与下一父行之间都是 32 |
+| 子行组行盒 | `24px` + delta（**不覆盖**） | 子行不写 `line-height`，沿用 `.superpi-proc-head` / `-tool-head` 的规则（`client.js:564`） | 0.7.0 曾把子行压到 18px 行盒、`gap:0`，一行距只剩父行一半，看着像被挤扁 |
+| 子行组间距 | `gap:8px` | `.superpi-sub{display:flex;flex-direction:column;gap:8px;…}`（`client.js:592`；注释 `:585-591`） | 与父层 `.superpi-body` 的 `gap:8px` 同值 ⇒ 子行步长 = 24 + 8 = 32，与父行完全同节奏 |
+| 圆点尺寸与两侧留白 | `2px × 2px`、`margin:0 11px` | `.superpi-sep{…width:2px;height:2px;margin:0 11px;…}`（`client.js:575`；注释 `:572-574`） | 行内三段间距统一 11（图标→label 11、label→圆点 11、圆点→摘要 11）；1px 圆角让它看起来是方块不是圆点，与 DSH 的「·」一致 |
+| 图标列 | 16×16 框 + `margin-right:11px` | `.superpi-proc-icon{…width:16px;height:16px;margin-right:11px;…}`（`client.js:570`） | 父行 label 左缘 = 容器左内边距 16 + 图标 16 + `margin-right:11` = 43，其中图标盒右缘在 32 |
+| 子行左竖线落点 | `margin-left:26px` + `padding-left:12px` | `.superpi-sub{margin:0 0 0 26px;padding:0 0 0 12px;border-left:1px solid var(--dsw-alias-border-l3)}`（`client.js:592`） | 竖线取 26 = 图标 16 + `margin-right:11` − 1（1px 描边的亚像素让位）；`padding-left:12` 让子行图标距竖线 12（≈参考图 15 图 px ÷ 1.23）；子行图标相对父行整体右移 38（参考图 46 图 px ÷ 1.23 ≈ 37，同量级） |
 | 展开体缩进 | `margin:2px 0 2px 26px` + `padding-left:14px` + 左 1px 竖线 | `-proc-body`（`client.js:594`）、`-tool-body`（`:595`） | 与子行组同一条竖线语言，让「附着在一行下的补充信息」看起来是一类东西 |
-| 运行中圆点 | `state-business-primary` + `dsh-pi-pulse 1.2s` | `[data-state="running"]` 下的 `-sep`（`client.js:584`） | 只有圆点变色并脉冲，文字不闪 |
-| 过程流末尾状态行 | `.5px` 顶部 hairline + `padding-top:10px` | `.dsh-pi-working`（`client.js:600`） | 与过程行之间用一条 hairline 收口，不额外加 margin |
+| 运行中圆点 | `state-business-primary` + `superpi-pulse 1.2s` | `[data-state="running"]` 下的 `-sep`（`client.js:584`） | 只有圆点变色并脉冲，文字不闪 |
+| 过程流末尾状态行 | `.5px` 顶部 hairline + `padding-top:10px` | `.superpi-working`（`client.js:600`） | 与过程行之间用一条 hairline 收口，不额外加 margin |
 
 **父行 32、子行 32，整段过程流是一张均匀的网格。** 这个结论是逐像素复测把「1px 点线下划线」切出来的细带并回各自的行之后才得到的：参考图里父→父 40 图 px、父→首个子行 40、子→子 40、子行组→下一父行 44，父子节奏一致，不存在「子行比父行紧一半」。比例尺用 CJK 字形 ink 高校准（参考图 label ink 17–18 图 px，本文件 13px 字号的 ink 是 13–14 css px ⇒ ≈1.3），40 ÷ 1.3 ≈ 31，与本文件的 24 行盒 + 8 间距 = 32 对齐。
 
@@ -725,23 +725,23 @@ composer 自 0.6.2 起整体换成宿主主对话区的语言：卡面、圆形 
 | 侧栏 | `SidePanel`，项目层标题取 `t('projectList')`、有 `side-new` 新建按钮；会话层标题取项目别名或 `displayPath`、有 `side-back` 返回键 | `client.js:3572-3595` |
 | 项目行 | `title = renamed === '' ? (displayPath === '' ? cwd : displayPath) : renamed`，带 `data-current` / `data-temporary` / `data-renamed` | `client.js:3488-3511` |
 | 会话行 | 标题优先级 `renamed` → pi 的 `name` → `headline`（`firstMessage` 首行，60 字符截断）→ `lastMessage` → `t('sessionFallbackTitle')` | `client.js:3540-3541`（`sessionHeadline` 见 `:3408-3413`） |
-| 置顶 | `prefPinned(prefs.sessions, path) === true` 时排前，渲染 `span.dsh-pi-pin` + `PinIcon` 12 | `client.js:3526-3534`、`:3558` |
+| 置顶 | `prefPinned(prefs.sessions, path) === true` 时排前，渲染 `span.superpi-pin` + `PinIcon` 12 | `client.js:3526-3534`、`:3558` |
 | 空/错/载 | 加载 → `empty-row` 文案 `projectsLoading`/`sessionsLoading`；错误 → `alert`；空 → `empty-row` 文案 `projectsEmpty`/`sessionsEmpty`；恒在提示行 `projectsHint`/`sessionsHint` | `client.js:3597-3612` |
 | 行内菜单 | `row-more` 22×22 按钮 + `EllipsisIcon` 14，`aria-haspopup="menu"`、`aria-expanded` | `client.js:3453-3478`，CSS `:860-863` |
 
-**0.8.0 的行为改动（会话标题胶囊的显示条件）**：旧式 `var capsule = renamed === '' && headline !== '' && piName !== '' ? headline : null` 要求「既有偏好名、又有 pi 会话名」才显示胶囊，导致只有 `firstMessage` 的会话永远看不到摘要；新式 `var capsule = headline !== '' && title !== headline ? headline : null` 的语义是「只在标题位置已经被名字占据（改过的名或 pi 的 `name`）时，才把原始摘要作为胶囊放到消息数左侧」。胶囊渲染在 `.dsh-pi-sess-top` 内、消息数 `span` 之前（`client.js:3544` 判定、`:3559` 渲染）。
+**0.8.0 的行为改动（会话标题胶囊的显示条件）**：旧式 `var capsule = renamed === '' && headline !== '' && piName !== '' ? headline : null` 要求「既有偏好名、又有 pi 会话名」才显示胶囊，导致只有 `firstMessage` 的会话永远看不到摘要；新式 `var capsule = headline !== '' && title !== headline ? headline : null` 的语义是「只在标题位置已经被名字占据（改过的名或 pi 的 `name`）时，才把原始摘要作为胶囊放到消息数左侧」。胶囊渲染在 `.superpi-sess-top` 内、消息数 `span` 之前（`client.js:3544` 判定、`:3559` 渲染）。
 
 **置顶排序不用 `sort`**：`client.js:3526-3534` 是两遍 partition（`pinnedFirst` / `rest`）再 `concat`。原因写在 `:3526-3527` 的注释里 —— host 给的最近活动降序本身有意义，旧引擎的 `sort` 稳定性没有保证，用 `sort` 等于把「置顶」和「乱序」绑在一起。
 
 **行内菜单必须整容器吞冒泡**：`row-more` 的 `div` 上挂了 `onClick: stopPropagation`（`client.js:3453-3478`）。不吞的话点菜单项等于点整行，重命名弹窗刚打开就被 `onPick` 关掉侧栏 —— 这是实拍抓到过的真缺陷，注释留在 `:3448-3452`。
 
-**`RenameDialog` 不复用 `NameSheet`**：`NameSheet` 挂在 `PiPanel` 的 `drawer` 状态上，而 `drawer` 是单值，改名会把左侧栏自己顶掉；`RenameDialog` 归 `SessionsSheet` 所属，侧栏与弹窗可并存。理由写在 `client.js:3616-3620`。弹窗本体 = `Dialog`（居中、**不带** `dialog-wide`）+ 一个 `dsh-pi-search` 输入框（`autoFocus`、Enter 提交、Escape 关闭）+ 取消 / 提交两键（`client.js:3627-3643`）。
+**`RenameDialog` 不复用 `NameSheet`**：`NameSheet` 挂在 `PiPanel` 的 `drawer` 状态上，而 `drawer` 是单值，改名会把左侧栏自己顶掉；`RenameDialog` 归 `SessionsSheet` 所属，侧栏与弹窗可并存。理由写在 `client.js:3616-3620`。弹窗本体 = `Dialog`（居中、**不带** `dialog-wide`）+ 一个 `superpi-search` 输入框（`autoFocus`、Enter 提交、Escape 关闭）+ 取消 / 提交两键（`client.js:3627-3643`）。
 
 **差异**：
 
-1. **两级列表在 DSH 里没有对应物**，它是把 pi TUI 的「项目 + 会话」两次点击压成一次的自造结构；第 5 章因此把 `side-host` / `side-back` / `sess-sum` / `pin` 四个类归 C 档（无 DSH 依据），`side-new`（复用 `.dsh-pi-btn` 族）与 `row-more`（行内菜单锚点 + 命中区，复用 `-more-menu` 定位）归 B 档。
+1. **两级列表在 DSH 里没有对应物**，它是把 pi TUI 的「项目 + 会话」两次点击压成一次的自造结构；第 5 章因此把 `side-host` / `side-back` / `sess-sum` / `pin` 四个类归 C 档（无 DSH 依据），`side-new`（复用 `.superpi-btn` 族）与 `row-more`（行内菜单锚点 + 命中区，复用 `-more-menu` 定位）归 B 档。
 2. **置顶是面板概念，pi 的 `SessionInfo` 里没有这个字段**，只能落在面板自己的 `ui-prefs.json`（§4.16）。项目别名同理 —— `set_session_name` 只改单个会话的 `session_info`，改不了项目层。
-3. **`.dsh-pi-side-host` 是给「侧栏 + 重命名弹窗并存」专门包的一层**（`position:absolute;inset:0;z-index:30;display:flex`，`client.js:855`，注释 `:853-854`）：`Dialog` 用 `position:absolute` 定位，必须和侧栏同层才能叠在上面而不撑出新的滚动容器。
+3. **`.superpi-side-host` 是给「侧栏 + 重命名弹窗并存」专门包的一层**（`position:absolute;inset:0;z-index:30;display:flex`，`client.js:855`，注释 `:853-854`）：`Dialog` 用 `position:absolute` 定位，必须和侧栏同层才能叠在上面而不撑出新的滚动容器。
 
 ---
 
@@ -751,13 +751,13 @@ composer 自 0.6.2 起整体换成宿主主对话区的语言：卡面、圆形 
 
 **为什么只能由 host 存**：这三件事在 pi 的 RPC 面上都没有通道 —— `set_session_name` 改的是单个会话的 `session_info`（JSONL header），改不了项目层；置顶纯属面板概念；浏览器半区没有 `fs`。所以只能落在本机用户主目录下（`index.js:978-990` 的段注释）。
 
-**落盘**：路径由 `resolveUiPrefsPath()`（`src/ui-prefs.mjs:157`）解析 —— 环境变量 `DSH_PI_UI_PREFS`（`:158-159`）优先，否则 `path.join(homedir(), '.dsh-pi', 'ui-prefs.json')`（`:161`）。文件是单个 JSON，结构 `{ version, updatedAt, projects: {}, sessions: {} }`（`emptyUiPrefs()` `:94-96`，`version = UI_PREFS_VERSION = 1` `:32`）。
+**落盘**：路径由 `resolveUiPrefsPath()`（`src/ui-prefs.mjs:157`）解析 —— 环境变量 `SUPERPI_UI_PREFS`（`:158-159`）优先，否则 `path.join(homedir(), '.superpi', 'ui-prefs.json')`（`:161`）。文件是单个 JSON，结构 `{ version, updatedAt, projects: {}, sessions: {} }`（`emptyUiPrefs()` `:94-96`，`version = UI_PREFS_VERSION = 1` `:32`）。
 
 | 项 | 值 | 出处 | 说明 |
 | --- | --- | --- | --- |
 | 结构版本 | `version: 1` | `:32` / `:95` | 将来改结构靠它迁移 |
-| 路径覆盖 | `DSH_PI_UI_PREFS` | `:34` / `:158-159` | 测试与多套配置共存 |
-| 默认路径 | `<home>/.dsh-pi/ui-prefs.json` | `:36-37` / `:161` | 目录名与文件名各一个常量 |
+| 路径覆盖 | `SUPERPI_UI_PREFS` | `:34` / `:158-159` | 测试与多套配置共存 |
+| 默认路径 | `<home>/.superpi/ui-prefs.json` | `:36-37` / `:161` | 目录名与文件名各一个常量 |
 | 项目名上限 | 120 字符 | `:39` / `:222` | 再长在面板里也只会被截断 |
 | 会话路径上限 | 4096 字符 | `:41` / `:216` | 远超任何真实会话文件路径 |
 | 原子写 | `<file>.tmp-<rand>` → `rename` | `:290-300`（tmp 在 `:294`） | tmp 必须同目录：跨盘 `rename` 会退化成 copy+unlink，不再原子 |
@@ -799,7 +799,7 @@ composer 自 0.6.2 起整体换成宿主主对话区的语言：卡面、圆形 
 
 ## 5 现状 → 目标映射表
 
-逐类列出 CSS 数组里的全部 **174** 个 `.dsh-pi-*`（脚本 `matchAll(/\.dsh-pi-([a-zA-Z0-9-]+)/g)` 去重得到）。判定分四档：
+逐类列出 CSS 数组里的全部 **174** 个 `.superpi-*`（脚本 `matchAll(/\.superpi-([a-zA-Z0-9-]+)/g)` 去重得到）。判定分四档：
 
 | 判定 | 数量 | 判据 |
 | --- | --- | --- |
@@ -809,11 +809,11 @@ composer 自 0.6.2 起整体换成宿主主对话区的语言：卡面、圆形 
 | **D 待确认** | 2 | 引用的 DSH 依据需重采探针才能断言 |
 | 合计 | 174 | — |
 
-四档之和 32 + 55 + 85 + 2 = 174，与实测类数完全吻合，无遗漏无重复。归档规则：**每一版新增的类一律并入「同族已有成员」所在的档**（因为它们的 DSH 参照物就是同族那一条规则），被删掉的类同时从原档移除。0.7.0 新增 22 个类（10 个进 A/B、12 个进 C）、删掉 `picker-native` / `picker-wrap` 两个；0.8.0 新增 6 个类：`side-new` 并入 B 档 `btn` 族（同一枚 `.dsh-pi-btn` 加 `flex:0 0 auto` + `white-space:nowrap` + `gap:6px`），`row-more` 并入 B 档（行内菜单锚点 + 22px 命中区 + 内嵌 `-more-menu` 定位），其余四个 `side-host` / `side-back` / `sess-sum` / `pin` 无 DSH 对应物，进 C 档。**净变化：B 53→55、C 81→85，A 与 D 不动。**
+四档之和 32 + 55 + 85 + 2 = 174，与实测类数完全吻合，无遗漏无重复。归档规则：**每一版新增的类一律并入「同族已有成员」所在的档**（因为它们的 DSH 参照物就是同族那一条规则），被删掉的类同时从原档移除。0.7.0 新增 22 个类（10 个进 A/B、12 个进 C）、删掉 `picker-native` / `picker-wrap` 两个；0.8.0 新增 6 个类：`side-new` 并入 B 档 `btn` 族（同一枚 `.superpi-btn` 加 `flex:0 0 auto` + `white-space:nowrap` + `gap:6px`），`row-more` 并入 B 档（行内菜单锚点 + 22px 命中区 + 内嵌 `-more-menu` 定位），其余四个 `side-host` / `side-back` / `sess-sum` / `pin` 无 DSH 对应物，进 C 档。**净变化：B 53→55、C 81→85，A 与 D 不动。**
 
 ### 5.1 A 档：已对齐（32）
 
-| `.dsh-pi-*` | DSH 依据 | 依据说明 |
+| `.superpi-*` | DSH 依据 | 依据说明 |
 | --- | --- | --- |
 | `add` | Composer `._add`（`GRgSLq_add`） | 28×28 / `999px` / `specific-selector` 底 / `label-primary` / hover `interactive-bg-hover-solid` / `:disabled` opacity .5 六项同；DSH 多一条 `corner-shape:round` |
 | `add-item` | `._item_1p5el_105`（菜单项） | `min-height:34px` / `6px 8px` / `radius-md` / 13px-20px / hover `interactive-bg-hover` 五项同（`gap:10px` 是两列布局所需） |
@@ -822,12 +822,12 @@ composer 自 0.6.2 起整体换成宿主主对话区的语言：卡面、圆形 
 | `chip` | `._tag_brmue_4` | `1px 8px` / `999px` / `corner-shape:round` / 11px / weight 500 逐项同 |
 | `code-inline` | `._language_1mqf1_30` 同族（`markdown-inline-code`） | `radius-xs` + `markdown-inline-code` + `font-markdown-code-block-small` 三项令牌同 |
 | `dialog` | `._dialog_14mp3_33` | `radius-panel` / `bg-layer-2` / `elevation-prominent` + 入场动画同；宽度 440 vs 380 |
-| `dialog-wrap` | `._mask_14mp3_18` | `bg-mask-1` 同；dsh-pi 少 `backdrop-filter:var(--dsw-mask-blur)`（当前 `mask-blur = none`，视觉一致） |
-| `dir-col` | picker `_column` | `flex:1 1 0` / `min-width:0` / `overflow-y:auto` 同；dsh-pi 无 `min-width:256px` |
-| `dir-cols` | picker `_millerRow` | `display:flex` / `gap` / `overflow` 骨架同；dsh-pi 加 `border-l2` + `radius-md` + `bg-layer-1` 包边 |
+| `dialog-wrap` | `._mask_14mp3_18` | `bg-mask-1` 同；superpi 少 `backdrop-filter:var(--dsw-mask-blur)`（当前 `mask-blur = none`，视觉一致） |
+| `dir-col` | picker `_column` | `flex:1 1 0` / `min-width:0` / `overflow-y:auto` 同；superpi 无 `min-width:256px` |
+| `dir-cols` | picker `_millerRow` | `display:flex` / `gap` / `overflow` 骨架同；superpi 加 `border-l2` + `radius-md` + `bg-layer-1` 包边 |
 | `dir-crumb` | picker `_crumb` | `radius-xs` / `label-secondary` / `font-xxs-12-font-size` 同；hover 转 `label-primary` 同 |
 | `dir-dialog` | picker `_dialog` | `min(680px,100%)` × `min(500px,100%)` + `radius-panel` + `bg-layer-2` + `elevation-prominent` 同 |
-| `dir-item` | picker `_row` + `._item_1p5el_105` | `radius-sm` / `padding` / hover / 选中 `interactive-bg-active` 同；dsh-pi 30px vs DSH 28px |
+| `dir-item` | picker `_row` + `._item_1p5el_105` | `radius-sm` / `padding` / hover / 选中 `interactive-bg-active` 同；superpi 30px vs DSH 28px |
 | `dir-name` | picker `_rowName` | 13px / weight 500 / 省略号 三项同 |
 | `fence` | `._card_1mqf1_1` | `margin:16px 0` / `radius-lg` / `markdown-code-block` / `font-markdown-code-block` 四项全同 |
 | `fence-lang` | `._header_1mqf1_10` | `padding:10px 18px 8px 22px` 逐值同；字体 11px/18px 比例字体 vs 11px/14px + `font-family` |
@@ -852,76 +852,76 @@ composer 自 0.6.2 起整体换成宿主主对话区的语言：卡面、圆形 
 
 ### 5.2 B 档：近似（55）
 
-| `.dsh-pi-*` | DSH 依据 | 差在哪 |
+| `.superpi-*` | DSH 依据 | 差在哪 |
 | --- | --- | --- |
-| `add-desc` | `._shortcutKeys_1p5el_221` | 同承担「右侧次要信息」；DSH 11px/16px + `label-caption`，dsh-pi 11px/16px 但用 `label-tertiary`（比 caption 重一档） |
-| `add-icon` | `._itemIcon_1p5el_165` | 同为菜单项图标框 + `label-secondary`；DSH 14×14 + `menu-icon`，dsh-pi 20×20 |
-| `add-key` | `._shortcutKeys_1p5el_221` | 同「英文键名」11px；DSH 比例字体 + `label-caption`，dsh-pi 等宽字族 + `label-caption` |
-| `add-label` | `._itemLabel_1p5el_208` | 同承担主标签；dsh-pi 拆成 `add-label`（不缩）+ `add-key`（可缩）两段，DSH 是单段 `flex:1` |
-| `add-text` | `._itemLabel_1p5el_208` | 同为主标签容器；dsh-pi 用 `baseline` 对齐把键名与说明并排，DSH 把快捷键推到行尾 |
+| `add-desc` | `._shortcutKeys_1p5el_221` | 同承担「右侧次要信息」；DSH 11px/16px + `label-caption`，superpi 11px/16px 但用 `label-tertiary`（比 caption 重一档） |
+| `add-icon` | `._itemIcon_1p5el_165` | 同为菜单项图标框 + `label-secondary`；DSH 14×14 + `menu-icon`，superpi 20×20 |
+| `add-key` | `._shortcutKeys_1p5el_221` | 同「英文键名」11px；DSH 比例字体 + `label-caption`，superpi 等宽字族 + `label-caption` |
+| `add-label` | `._itemLabel_1p5el_208` | 同承担主标签；superpi 拆成 `add-label`（不缩）+ `add-key`（可缩）两段，DSH 是单段 `flex:1` |
+| `add-text` | `._itemLabel_1p5el_208` | 同为主标签容器；superpi 用 `baseline` 对齐把键名与说明并排，DSH 把快捷键推到行尾 |
 | `alert` | `color-mix` 手法同 `._tag_brmue_4` | DSH 无 alert 组件；底罩色用 `color-mix(state-error 10%)`，与 tag 的 danger 档同一手法 |
-| `bar-actions` | Composer `._tools` / `._modes` | 同为左组 `align-items:center` + `gap`；DSH `gap:12px`，dsh-pi `gap:8px` |
-| `bar-right` | Composer `._trailing` | 同为右组 + `margin-left:auto`；DSH `flex:none`，dsh-pi `flex:1 1 auto` + `justify-content:flex-end` |
+| `bar-actions` | Composer `._tools` / `._modes` | 同为左组 `align-items:center` + `gap`；DSH `gap:12px`，superpi `gap:8px` |
+| `bar-right` | Composer `._trailing` | 同为右组 + `margin-left:auto`；DSH `flex:none`，superpi `flex:1 1 auto` + `justify-content:flex-end` |
 | `box` | `._wrap_14sgc_1:focus-within` | 共享 `:focus-within → state-business-primary` 配方；尺寸档不同（多行外壳 vs 32px 单行） |
 | `btn` | `._button_1ulci_2` + `._sm_1ulci_28` + `._outline_1ulci_56` | 28px / `radius-sm` / `0 10px` / hairline 内描边一致；描边色 `border-l4` vs `border-l3`，无 `_md` 36px 档 |
 | `btn-danger` | `._button_1ulci_2` 变体族 | DSH 无 `_danger`；`state-error-primary` 文本 + `interactive-bg-hover-danger` 底，语义色取值一致 |
-| `btn-ghost` | `._ghost_1ulci_46` | 同族；dsh-pi 额外去掉内阴影描边 |
+| `btn-ghost` | `._ghost_1ulci_46` | 同族；superpi 额外去掉内阴影描边 |
 | `btn-icon` | `._button_1ulci_2` | `width:28px` 正方，DSH 无 icon 变体 |
 | `dialog-actions` | `._dialog_14mp3_33` footer | `padding:22px 24px 24px` vs DSH 的 `gap:20px` + `padding:0 0 24px` |
 | `dialog-body` | `._dialog_14mp3_33` 内容区 | `padding:14px 24px 0` vs DSH 的 `gap` |
 | `dialog-content` | `._dialog_14mp3_33` 内容区 | 与 `dialog-body` 同族但语义不同：`dialog-body` 是「对话框正文」（`padding:14px 24px 0`），`dialog-content` 是「可滚动内容容器」（`padding:14px 24px 22px` + `overflow-y:auto`，底部多 22px 防贴边）；`Dialog` 组件用的是后者 |
 | `dialog-grow` | `._dialog_14mp3_33` 内容区 | `flex:1 1 auto` + `min-height:0` + `overflow-y:auto`，DSH 无「可增长区」概念（它靠 `max-height` + `overflow` 交给外层） |
-| `dialog-head` | `._dialog_14mp3_33` 头部 | `padding:22px … 0 24px` 同族；DSH `22px 14px 12px 24px`（带下边距），dsh-pi 下边距移到 body |
+| `dialog-head` | `._dialog_14mp3_33` 头部 | `padding:22px … 0 24px` 同族；DSH `22px 14px 12px 24px`（带下边距），superpi 下边距移到 body |
 | `dialog-msg` | `._dialog_14mp3_33` 内容区 | `--dsh-content-font-size` + `calc(22px + delta)` 与 DSH 气泡同法；DSH 对话框正文无独立类 |
-| `dialog-wide` | `._dialog_14mp3_33` 宽度档 | DSH 只有一档宽度（`min(380px,100%)`）；dsh-pi 的 `-wide` 变体走 `min(560px,100%)`，容纳选项列表与多行输入 |
-| `dir-crumbs` | picker `_crumbBar` | `flex` + `gap` + `flex-wrap` 同；DSH `min-height:24px` + `margin-left:-9px`，dsh-pi `min-height:20px` 无负 margin |
-| `dir-foot` | picker `_footerBar` | `flex` + `gap` + `flex-wrap` 同；DSH `border-top:.5px` + `padding:16px 24px`，dsh-pi 无分隔线 |
-| `dir-head` | picker `_header` | DSH `padding:16px 14px 8px 24px` + `border-bottom:.5px`；dsh-pi `14px 16px 10px 20px` 无分隔线 |
-| `dir-hint` | picker `_status` | 同族提示行；DSH 12px + `padding:4px 120px 4px 4px`，dsh-pi 11px 无 padding |
-| `dir-mark` | picker `_rowIconSelected` | 同色（`button-info-fill` = `deepseek-500` = `state-business-primary`）；dsh-pi 用文字徽标而非图标着色 |
-| `dir-title` | picker `_title` | 同字号族；DSH 16px / weight 510 / `min-height:28px`，dsh-pi 同字号无 min-height |
-| `dot` | `._dot_1i3xo_2` | 同用四状态色；DSH 是空 span + `:after{inset:20%;background:currentColor}`，dsh-pi 是 7px 实心圆写 `background`；状态名不同 |
-| `empty` | `._empty_1j4y1_104` | `label-secondary` 同；dsh-pi 是整页空态（`padding:48px 24px` + 标题 + 引导），DSH 的 empty 只是行内文本 |
-| `empty-row` | `._empty_1j4y1_104` | 同族「无内容」行；DSH 13px + `label-secondary`，dsh-pi 12px + `label-dimmed`（更次要） |
-| `fileref` | `MessageItem ._fileCard`（`LOmM4q_fileCard`） | 同为「文件」可点块：`radius` + 内 hairline + `specific-input-major` 同族底；DSH 是 240px 定宽卡片 + `radius-lg` + `border-l2`，dsh-pi 是行内 chip + `radius-sm` + `border-l3` |
-| `fileref-name` | `._fileName`（`LOmM4q`） | 同为文件名 + 省略号；DSH 14px，dsh-pi 11px 等宽（行内 chip 需要更小的字面） |
-| `gate-card` | `._card_u7vgf_24` | 同族「居中卡片」；DSH `flex column` + `gap:16px` 无阴影，dsh-pi `padding:20px` + `elevation-panel` |
-| `item-name` | `._itemLabel_1p5el_208` | 同承担「主名 + 省略号」；DSH 比例字体 + `text-overflow`，dsh-pi 等宽 |
-| `menu` | `._list_1p5el_7` | `padding:4px` + `border-l1` 描边覆盖 同；阴影 dsh-pi `elevation-panel` vs DSH `elevation-prominent` |
-| `menu-add` | `._list_1p5el_7` 的定位族 | 同族弹出层；DSH 由浮层自算位置，dsh-pi 贴 `left:0` 且加宽到 288px（两列布局所需） |
+| `dialog-wide` | `._dialog_14mp3_33` 宽度档 | DSH 只有一档宽度（`min(380px,100%)`）；superpi 的 `-wide` 变体走 `min(560px,100%)`，容纳选项列表与多行输入 |
+| `dir-crumbs` | picker `_crumbBar` | `flex` + `gap` + `flex-wrap` 同；DSH `min-height:24px` + `margin-left:-9px`，superpi `min-height:20px` 无负 margin |
+| `dir-foot` | picker `_footerBar` | `flex` + `gap` + `flex-wrap` 同；DSH `border-top:.5px` + `padding:16px 24px`，superpi 无分隔线 |
+| `dir-head` | picker `_header` | DSH `padding:16px 14px 8px 24px` + `border-bottom:.5px`；superpi `14px 16px 10px 20px` 无分隔线 |
+| `dir-hint` | picker `_status` | 同族提示行；DSH 12px + `padding:4px 120px 4px 4px`，superpi 11px 无 padding |
+| `dir-mark` | picker `_rowIconSelected` | 同色（`button-info-fill` = `deepseek-500` = `state-business-primary`）；superpi 用文字徽标而非图标着色 |
+| `dir-title` | picker `_title` | 同字号族；DSH 16px / weight 510 / `min-height:28px`，superpi 同字号无 min-height |
+| `dot` | `._dot_1i3xo_2` | 同用四状态色；DSH 是空 span + `:after{inset:20%;background:currentColor}`，superpi 是 7px 实心圆写 `background`；状态名不同 |
+| `empty` | `._empty_1j4y1_104` | `label-secondary` 同；superpi 是整页空态（`padding:48px 24px` + 标题 + 引导），DSH 的 empty 只是行内文本 |
+| `empty-row` | `._empty_1j4y1_104` | 同族「无内容」行；DSH 13px + `label-secondary`，superpi 12px + `label-dimmed`（更次要） |
+| `fileref` | `MessageItem ._fileCard`（`LOmM4q_fileCard`） | 同为「文件」可点块：`radius` + 内 hairline + `specific-input-major` 同族底；DSH 是 240px 定宽卡片 + `radius-lg` + `border-l2`，superpi 是行内 chip + `radius-sm` + `border-l3` |
+| `fileref-name` | `._fileName`（`LOmM4q`） | 同为文件名 + 省略号；DSH 14px，superpi 11px 等宽（行内 chip 需要更小的字面） |
+| `gate-card` | `._card_u7vgf_24` | 同族「居中卡片」；DSH `flex column` + `gap:16px` 无阴影，superpi `padding:20px` + `elevation-panel` |
+| `item-name` | `._itemLabel_1p5el_208` | 同承担「主名 + 省略号」；DSH 比例字体 + `text-overflow`，superpi 等宽 |
+| `menu` | `._list_1p5el_7` | `padding:4px` + `border-l1` 描边覆盖 同；阴影 superpi `elevation-panel` vs DSH `elevation-prominent` |
+| `menu-add` | `._list_1p5el_7` 的定位族 | 同族弹出层；DSH 由浮层自算位置，superpi 贴 `left:0` 且加宽到 288px（两列布局所需） |
 | `menu-head` | `._label_1p5el_146` | `11px` / `label-tertiary` / `6px 8px` 同；行高 14px vs 15px |
-| `menu-section` | `._label_1p5el_146` | 同「分组标题」11px + `label-caption`；DSH `padding:6px 8px` + 行高 15px，dsh-pi `8px 8px 4px` + 行高 16px |
-| `mini-ta` | `._input_14sgc_25` | 同族输入控件；DSH 单行无边框，dsh-pi 多行 + `min-height:84px` + `border-l4` |
-| `more-icon` | `._itemIcon_1p5el_165` | 同为菜单项图标框 + `label-secondary`；DSH 14×14，dsh-pi 16×16（`h(item.icon,{size:16})`） |
+| `menu-section` | `._label_1p5el_146` | 同「分组标题」11px + `label-caption`；DSH `padding:6px 8px` + 行高 15px，superpi `8px 8px 4px` + 行高 16px |
+| `mini-ta` | `._input_14sgc_25` | 同族输入控件；DSH 单行无边框，superpi 多行 + `min-height:84px` + `border-l4` |
+| `more-icon` | `._itemIcon_1p5el_165` | 同为菜单项图标框 + `label-secondary`；DSH 14×14，superpi 16×16（`h(item.icon,{size:16})`） |
 | `more-item` | `._item_1p5el_105` | 同族菜单项：`min-height:32px` / `padding:6px 8px` / `radius-md` / 13px / hover `interactive-bg-hover`；DSH `min-height:34px` |
-| `more-menu` | `._list_1p5el_7` 的定位族 | 与 `menu-add` 同性质（定位 + 宽度覆盖）；DSH 由浮层自算位置，dsh-pi 固定从顶栏锚点向右下展开 |
+| `more-menu` | `._list_1p5el_7` 的定位族 | 与 `menu-add` 同性质（定位 + 宽度覆盖）；DSH 由浮层自算位置，superpi 固定从顶栏锚点向右下展开 |
 | `notice` | `color-mix` 手法同 `._tag_brmue_4` | 三 tone 用 10% / 12% / 10%；DSH 无 notice 组件 |
-| `opt` | `._item_1p5el_105` 同族 | `min-height:34px` / `radius-md` / 13px 同；DSH item 底透明，dsh-pi `bg-layer-3` 实底 + `[data-active]` 内描边 |
-| `picker-empty` | `._empty_1j4y1_104` | 同族「无内容」行；DSH 13px + `label-secondary`，dsh-pi 12px + `label-dimmed` + `padding:10px 8px`（比抽屉里的 `empty-row` 更紧） |
-| `picker-menu` | `._list_1p5el_7` 的定位族 | 外观完全复用 `.dsh-pi-menu`，只覆盖定位：`left:0` + `bottom:calc(100% + 6px)`，即从模型名锚点**向上**弹出；DSH 的浮层一律向下 |
+| `opt` | `._item_1p5el_105` 同族 | `min-height:34px` / `radius-md` / 13px 同；DSH item 底透明，superpi `bg-layer-3` 实底 + `[data-active]` 内描边 |
+| `picker-empty` | `._empty_1j4y1_104` | 同族「无内容」行；DSH 13px + `label-secondary`，superpi 12px + `label-dimmed` + `padding:10px 8px`（比抽屉里的 `empty-row` 更紧） |
+| `picker-menu` | `._list_1p5el_7` 的定位族 | 外观完全复用 `.superpi-menu`，只覆盖定位：`left:0` + `bottom:calc(100% + 6px)`，即从模型名锚点**向上**弹出；DSH 的浮层一律向下 |
 | `picker-row` | `._item_1p5el_105` | 同族菜单项：`min-height:32px` / `padding:5px 8px` / `radius-md` / 13px；比 `more-item` 矮 1px、`[data-current="1"]` 内描边 `state-business-primary` |
-| `picker-sec` | `._label_1p5el_146` | 同为「分组标题」11px + `label-caption`；DSH `padding:6px 8px`，dsh-pi `8px 8px 4px` |
-| `proc-body` | `._body_jrv99_22`（过程展开区） | 同族展开区：左 `border-l3` 竖线 + 缩进；DSH 竖线 2px + `markdown-code-block` 底，dsh-pi 1px 无底 |
-| `row-more` | 行内菜单锚点 + `btn-icon`（22px 命中区） | `position:relative` + `flex:0 0 auto` + `margin-left:auto` 把「更多」推到行尾；按钮 22×22 + `radius-xs` 复用图标按钮尺寸；内嵌 `.dsh-pi-more-menu` 用 `min-width:160px` / `max-width:min(220px,calc(100vw - 32px))` 收口（`client.js:860-863`）。DSH 没有「行内菜单锚点」这种结构，但三段全部由既有同族规则拼出：容器定位同 `more-wrap`、按钮尺寸同 `btn-icon`、菜单同 `more-menu`，故按同族归 B 而非 C |
+| `picker-sec` | `._label_1p5el_146` | 同为「分组标题」11px + `label-caption`；DSH `padding:6px 8px`，superpi `8px 8px 4px` |
+| `proc-body` | `._body_jrv99_22`（过程展开区） | 同族展开区：左 `border-l3` 竖线 + 缩进；DSH 竖线 2px + `markdown-code-block` 底，superpi 1px 无底 |
+| `row-more` | 行内菜单锚点 + `btn-icon`（22px 命中区） | `position:relative` + `flex:0 0 auto` + `margin-left:auto` 把「更多」推到行尾；按钮 22×22 + `radius-xs` 复用图标按钮尺寸；内嵌 `.superpi-more-menu` 用 `min-width:160px` / `max-width:min(220px,calc(100vw - 32px))` 收口（`client.js:860-863`）。DSH 没有「行内菜单锚点」这种结构，但三段全部由既有同族规则拼出：容器定位同 `more-wrap`、按钮尺寸同 `btn-icon`、菜单同 `more-menu`，故按同族归 B 而非 C |
 | `search` | `._wrap_14sgc_1` | `border-l4` 同；28px / `radius-sm` / `bg-layer-3` vs 32px / `radius-md` / `bg-layer-1` |
-| `side-new` | `btn` 族（`._add` / 次级按钮） | `.dsh-pi-btn` 加 `flex:0 0 auto` + `white-space:nowrap` + `gap:6px`（`client.js:858`），只固定自身不被压缩、文字不折行；几何与色仍由 `btn` / `btn-ghost` 决定，DSH 无「侧栏新建键」这一具体实例 |
-| `stop` | Composer `._primary[data-sending]` | 同位置换成「停止」语义；DSH 保持 `button-info-fill` 底 + spinner，dsh-pi 换 `interactive-bg-hover-solid` 底 + `StopSquareIcon` |
-| `ta` | `._input_14sgc_25` | 同族输入控件；DSH 无边框 14px/22px，dsh-pi 加 `min-height:52px` / `max-height:220px` |
-| `tool-body` | `._body_jrv99_22` | 同族展开区；DSH 有 `markdown-code-block` 底 + `border-l1` 描边，dsh-pi 只有左侧 `border-l3` + `max-height:340px` |
-| `widget-body` | `._body_jrv99_22` 同族 | 等宽 11px + 可滚动；dsh-pi 无极底色、无描边、`max-height:120px` |
+| `side-new` | `btn` 族（`._add` / 次级按钮） | `.superpi-btn` 加 `flex:0 0 auto` + `white-space:nowrap` + `gap:6px`（`client.js:858`），只固定自身不被压缩、文字不折行；几何与色仍由 `btn` / `btn-ghost` 决定，DSH 无「侧栏新建键」这一具体实例 |
+| `stop` | Composer `._primary[data-sending]` | 同位置换成「停止」语义；DSH 保持 `button-info-fill` 底 + spinner，superpi 换 `interactive-bg-hover-solid` 底 + `StopSquareIcon` |
+| `ta` | `._input_14sgc_25` | 同族输入控件；DSH 无边框 14px/22px，superpi 加 `min-height:52px` / `max-height:220px` |
+| `tool-body` | `._body_jrv99_22` | 同族展开区；DSH 有 `markdown-code-block` 底 + `border-l1` 描边，superpi 只有左侧 `border-l3` + `max-height:340px` |
+| `widget-body` | `._body_jrv99_22` 同族 | 等宽 11px + 可滚动；superpi 无极底色、无描边、`max-height:120px` |
 
-B 档的共同特征是「同族不同档」：要么尺寸差一档（28 vs 32、30 vs 28、440 vs 380），要么描边色差一级（`border-l4` vs `border-l3`），要么阴影差一级（`elevation-panel` vs `elevation-prominent`），要么结构不同（DSH 用按钮 + body，dsh-pi 用左侧竖线块）。**这些都不是错，但都不该被描述成「一致」。**
+B 档的共同特征是「同族不同档」：要么尺寸差一档（28 vs 32、30 vs 28、440 vs 380），要么描边色差一级（`border-l4` vs `border-l3`），要么阴影差一级（`elevation-panel` vs `elevation-prominent`），要么结构不同（DSH 用按钮 + body，superpi 用左侧竖线块）。**这些都不是错，但都不该被描述成「一致」。**
 
 ### 5.3 C 档：无对应物（85）
 
-| `.dsh-pi-*` | DSH 依据 | 说明 |
+| `.superpi-*` | DSH 依据 | 说明 |
 | --- | --- | --- |
 | `add-wrap` | — | `position:relative` + `display:flex`，纯定位容器（给 `menu-add` 当锚点） |
 | `bar` | — | 布局行：`flex` + `gap` |
 | `bar-hint` | — | 11px + `label-caption`，DSH 无可对标 |
 | `body` | — | 消息正文容器，纯布局 |
 | `brand` | — | 品牌行，14px + `label-primary`，纯排版 |
-| `caret` | — | 6×14 光标 + `dsh-pi-pulse`，DSH 无流式光标 |
+| `caret` | — | 6×14 光标 + `superpi-pulse`，DSH 无流式光标 |
 | `center` | — | 居中容器，纯布局 |
 | `chip-name` | — | chip 内文本节点，纯排版 |
 | `composer` | — | `padding:8px 12px 12px` + `bg-base`，纯布局 |
@@ -978,7 +978,7 @@ B 档的共同特征是「同族不同档」：要么尺寸差一档（28 vs 32�
 | `sheet-body` | — | 抽屉主体，纯布局 |
 | `sheet-head` | — | 抽屉头，`border-l2` |
 | `sheet-title` | — | `font-base-strong-16`，DSH 无抽屉标题类 |
-| `side` | — | 左滑侧栏本体：`width:min(360px,86%)` + `height:100%` + `bg-base` + `elevation-panel` + `dsh-pi-side-in .18s ease-out`。DSH `_pane` / `_surface` 只给骨架无外观，与 `sheet` 同属「无对标物」 |
+| `side` | — | 左滑侧栏本体：`width:min(360px,86%)` + `height:100%` + `bg-base` + `elevation-panel` + `superpi-side-in .18s ease-out`。DSH `_pane` / `_surface` 只给骨架无外观，与 `sheet` 同属「无对标物」 |
 | `side-actions` | — | 侧栏操作行（搜索框 + 按钮），`props.actions` 缺失时整段不渲染 |
 | `side-back` | — | 侧栏返回键：`28×28` + `margin-right:0` + `margin-left:-6px`（`client.js:857`），负左距把键光学对齐到侧栏内边距；DSH 无侧栏返回键，用 `btn-ghost` + `btn-icon` 叠加实现 |
 | `side-body` | — | 侧栏主体，可滚动，纯布局 |
@@ -1002,7 +1002,7 @@ B 档的共同特征是「同族不同档」：要么尺寸差一档（28 vs 32�
 | `usage` | — | `tabular-nums`，面板专有 |
 | `widget` | — | 状态 widget 容器 |
 
-85 个类占全部类的 48.9%（旧账 61/114 = 53.5%；0.7.0 新增的 22 个类里 10 个能指到 DSH 依据、12 个进本档，0.8.0 新增的 6 个类里 2 个进 B 档、4 个进本档，C 档占比因此从 0.6.4 的 46.6% 经 0.7.0 的 48.2% 升到 48.9%）。这个比例本身是个重要结论：**dsh-pi 的界面接近一半在 DSH 设计系统里没有对应组件。** 这不是缺陷——面板要做的事（会话卡、token 用量、工具行、目录树、运行时门禁、会话置顶与摘要胶囊）本就不在 DSH 的组件集里。对它们能做的保证只有两条：
+85 个类占全部类的 48.9%（旧账 61/114 = 53.5%；0.7.0 新增的 22 个类里 10 个能指到 DSH 依据、12 个进本档，0.8.0 新增的 6 个类里 2 个进 B 档、4 个进本档，C 档占比因此从 0.6.4 的 46.6% 经 0.7.0 的 48.2% 升到 48.9%）。这个比例本身是个重要结论：**superpi 的界面接近一半在 DSH 设计系统里没有对应组件。** 这不是缺陷——面板要做的事（会话卡、token 用量、工具行、目录树、运行时门禁、会话置顶与摘要胶囊）本就不在 DSH 的组件集里。对它们能做的保证只有两条：
 
 1. **令牌合法**（门禁第 2 条）：只用 `--dsw-*` 与 7 个白名单外部变量；
 2. **无硬色值**（门禁第 1 条）：任何颜色都来自令牌，所以换主题时全会跟着变。
@@ -1011,7 +1011,7 @@ B 档的共同特征是「同族不同档」：要么尺寸差一档（28 vs 32�
 
 ### 5.4 D 档：待确认（2）
 
-| `.dsh-pi-*` | 疑似的 DSH 依据 | 为什么待确认 |
+| `.superpi-*` | 疑似的 DSH 依据 | 为什么待确认 |
 | --- | --- | --- |
 | `thumb` | 未找到附件缩略图类 | 52×52 / `radius-sm` / 内描边 `border-l3` 无法溯源 |
 | `thumbs` | 未找到 | 缩略图行，`flex` + `gap` |
@@ -1024,7 +1024,7 @@ m02100 说「现状 → 目标映射表（`client.js` :305-450）」。当前快
 
 m02100 说「185 段 / 26978 字符 / 295 处 `var()` / 66 个唯一变量」。当前快照实测 **277 段 / 39760 字符 / 382 次 `var(` 文本出现（其中 16 处是「逗号后紧跟 `var(`」的兜底嵌套，顶层引用 366 处）/ 74 个唯一变量**（`node test/css-tokens.mjs --report` 的汇总行按门禁自己的提取口径印「令牌引用: 377 处 / 74 个唯一变量」，字节数与段数在同一块的前两行）。四项都变了：0.6.0–0.6.4 陆续加入文件标签、`CloseButton`、composer 卡面与 `+` 菜单、过程行与工作状态行，0.7.0 又加入 picker 合一弹层、`more` 菜单、`side` 侧栏与三个对话框变体，0.8.0 再加会话两级列表的行内「更多」菜单、置顶徽标、摘要胶囊、侧栏返回键与抽屉宿位，规则数与令牌面都扩大。`var(` 计数在 0.8.0 为 **382**（顶层 366 + 兜底嵌套 16）。
 
-m02100 说「令牌清单」时未指定范围。本文按**实际被引用的 74 个令牌（含 7 个本地兜底令牌）** 收口，而不是照抄 `tokens.txt` 的 414 个——后者是 DSH 的全量令牌表，与 dsh-pi 无关。
+m02100 说「令牌清单」时未指定范围。本文按**实际被引用的 74 个令牌（含 7 个本地兜底令牌）** 收口，而不是照抄 `tokens.txt` 的 414 个——后者是 DSH 的全量令牌表，与 superpi 无关。
 
 ---
 
@@ -1042,7 +1042,7 @@ pi 的 RPC 面没有任何 `fs` 能力（33 条命令里没有目录操作），
 
 ### 6.2 DSH 官方目录选择器对照
 
-DSH 自带 `@deepseek-ai/dsh-client-ui-directory-picker-browse`，源码在探针 `_probe/dsh-picker/client.js`（1138 行）。它的对外能力与限制（`README.zh.md`）：
+DSH 自带 `@deepseek-ai/dsh-client-ui-directory-picker-browse`，源码在探针 `_probe/superpicker/client.js`（1138 行）。它的对外能力与限制（`README.zh.md`）：
 
 | 能力 | 说明 |
 | --- | --- |
@@ -1051,7 +1051,7 @@ DSH 自带 `@deepseek-ai/dsh-client-ui-directory-picker-browse`，源码在探�
 | 新建文件夹 | 嵌套创建对话框 |
 | 无搜索 / 无多选 / 无重命名 / 无删除 | 明确的能力边界 |
 
-关键结构（`_probe/dsh-picker/client.js`）：
+关键结构（`_probe/superpicker/client.js`）：
 
 | 锚点 | 行号 | 语义 |
 | --- | --- | --- |
@@ -1065,9 +1065,9 @@ DSH 自带 `@deepseek-ai/dsh-client-ui-directory-picker-browse`，源码在探�
 | `twoPane = selected !== null` | `:672` | **未选中 = 一整栏；选中后裂成「层级 ｜ 子项」两栏** |
 | `targetPath = selected?.path ?? parent?.path ?? null` | `:565` | 目标优先级 |
 
-三个常量定义了它的手感：`SLOW_SCAN_DELAY_MS = 300`（慢扫描提示延迟）、`PARENT_LEG_WAIT_MS = 200`（父级腿等待）、`DRAFT_PREVIEW_DEBOUNCE_MS = 250`（边打字边预览的防抖）。dsh-pi 一个都没有实现，见 6.4。
+三个常量定义了它的手感：`SLOW_SCAN_DELAY_MS = 300`（慢扫描提示延迟）、`PARENT_LEG_WAIT_MS = 200`（父级腿等待）、`DRAFT_PREVIEW_DEBOUNCE_MS = 250`（边打字边预览的防抖）。superpi 一个都没有实现，见 6.4。
 
-### 6.3 dsh-pi 的 DirSheet 交互规格
+### 6.3 superpi 的 DirSheet 交互规格
 
 `DirSheet`（`client.js:3810-4108`）与纯函数 `dirPickModel`（`client.js:3779-3808`）。把数据模型单独抽成纯函数是为了让门禁能直接断言（`test/client-render.mjs` 的 9.13 / 9.14 / 9.15 三节共 40 条：SSR 首帧 15 条、Miller 分栏与采纳目标 14 条、「此电脑」层 11 条）。
 
@@ -1075,8 +1075,8 @@ DSH 自带 `@deepseek-ai/dsh-client-ui-directory-picker-browse`，源码在探�
 
 | 入口 | 位置 | 渲染条件 | 形态 |
 | --- | --- | --- | --- |
-| 空态按钮 | `EmptyState` `client.js:2585-2596`（判据 `typeof props.onPickDir === 'function'` 在 `:2586`） | 有 `onPickDir` 才渲染 | `.dsh-pi-empty-actions` > `.dsh-pi-btn`：`DirIcon(14)` + 文案 `pickDir` |
-| `+` 菜单项 | `Composer` 的 `addItems`（数组起点 `var addItems = [` 在 `client.js:2960`，条目 `:2961-2970`，数组结束 `:2971`），**目录项 = 第 2 项**，在 `:2962` | 恒定 | `{ key: 'dir', group: 'add', groupLabel: t('addGroupAdd'), label: t('pickDir'), keyName: 'workspace', desc: t('addDirDesc'), icon: DirIcon, run: props.onPickDir }`。**0.7.0 起目录选择器的主入口就是这里（`+` 菜单第 2 项）**：`.dsh-pi-bar` 里只有「圆形 `+` + 模型名/思考档位合一锚点」，没有独立目录按钮。`.dsh-pi-bar` 在 `:658`，`-bar-actions` `:659`，`-add-wrap` `:663`，`.dsh-pi-add` `:664-667`，`AddMenu` `:2635-2671`；注释 `:3027-3028` 写明「附件与目录都收进 `+` 菜单」，`:3052-3054` 写明模型名与思考档位合成一个 `.dsh-pi-picker-box` 锚点。`addItems` 其余 9 项：file `:2961`、sessions `:2963`、compact `:2964`、model `:2965`、thinking `:2966`、stats `:2967`、settings `:2968`、hotkeys `:2969`、new `:2970` |
+| 空态按钮 | `EmptyState` `client.js:2585-2596`（判据 `typeof props.onPickDir === 'function'` 在 `:2586`） | 有 `onPickDir` 才渲染 | `.superpi-empty-actions` > `.superpi-btn`：`DirIcon(14)` + 文案 `pickDir` |
+| `+` 菜单项 | `Composer` 的 `addItems`（数组起点 `var addItems = [` 在 `client.js:2960`，条目 `:2961-2970`，数组结束 `:2971`），**目录项 = 第 2 项**，在 `:2962` | 恒定 | `{ key: 'dir', group: 'add', groupLabel: t('addGroupAdd'), label: t('pickDir'), keyName: 'workspace', desc: t('addDirDesc'), icon: DirIcon, run: props.onPickDir }`。**0.7.0 起目录选择器的主入口就是这里（`+` 菜单第 2 项）**：`.superpi-bar` 里只有「圆形 `+` + 模型名/思考档位合一锚点」，没有独立目录按钮。`.superpi-bar` 在 `:658`，`-bar-actions` `:659`，`-add-wrap` `:663`，`.superpi-add` `:664-667`，`AddMenu` `:2635-2671`；注释 `:3027-3028` 写明「附件与目录都收进 `+` 菜单」，`:3052-3054` 写明模型名与思考档位合成一个 `.superpi-picker-box` 锚点。`addItems` 其余 9 项：file `:2961`、sessions `:2963`、compact `:2964`、model `:2965`、thinking `:2966`、stats `:2967`、settings `:2968`、hotkeys `:2969`、new `:2970` |
 | 弹窗挂载 | `client.js:5996`（`} else if (drawer === 'dir') {` 分支；`var drawerNode = null` 在 `:5952`） | `drawer === 'dir'` | `DirSheet`，`startDir = activeCwd === '' ? runtime.workspace : activeCwd`，`onPick = switchDir` |
 
 挂载点在 `client.js:6017`（EmptyState）与 `client.js:6033`（Composer），都是 `onPickDir: function () { setDrawer('dir') }`。
@@ -1100,22 +1100,22 @@ DSH 自带 `@deepseek-ai/dsh-client-ui-directory-picker-browse`，源码在探�
 首帧的 SSR 实渲染（门禁 `test/client-render.mjs` 抓的样本）：
 
 ```text
-div.dsh-pi-dialog-wrap
-└ div.dsh-pi-dir-dialog[role=dialog][aria-modal=true][aria-label=选择工作区]
-  ├ div.dsh-pi-dir-head
-  │ ├ div.dsh-pi-dir-title  选择工作区
-  │ └ button.dsh-pi-btn.dsh-pi-btn-ghost.dsh-pi-btn-icon[title=关闭][aria-label=关闭]  (16px CloseIcon)
-  └ div.dsh-pi-dir
-    ├ div.dsh-pi-dir-crumbs  C: › Users › PC › pi-workspace  (只有末段 data-last=1)
-    ├ div.dsh-pi-row2  [input 输入绝对路径后回车] [input 筛选]
-    ├ div.dsh-pi-dir-hint  单击选中、双击进入；不存在的路径在开新会话时自动创建
-    ├ div.dsh-pi-dir-cols
-    │ └ div.dsh-pi-dir-col
-    │   └ div.dsh-pi-empty-row  正在读取目录…
-    └ div.dsh-pi-dir-foot
-      ├ span.dsh-pi-dir-target  C:\Users\PC\pi-workspace
-      ├ span.dsh-pi-spacer
-      └ button.dsh-pi-btn.dsh-pi-btn-primary[disabled]  用这个工作区
+div.superpi-dialog-wrap
+└ div.superpi-dir-dialog[role=dialog][aria-modal=true][aria-label=选择工作区]
+  ├ div.superpi-dir-head
+  │ ├ div.superpi-dir-title  选择工作区
+  │ └ button.superpi-btn.superpi-btn-ghost.superpi-btn-icon[title=关闭][aria-label=关闭]  (16px CloseIcon)
+  └ div.superpi-dir
+    ├ div.superpi-dir-crumbs  C: › Users › PC › pi-workspace  (只有末段 data-last=1)
+    ├ div.superpi-row2  [input 输入绝对路径后回车] [input 筛选]
+    ├ div.superpi-dir-hint  单击选中、双击进入；不存在的路径在开新会话时自动创建
+    ├ div.superpi-dir-cols
+    │ └ div.superpi-dir-col
+    │   └ div.superpi-empty-row  正在读取目录…
+    └ div.superpi-dir-foot
+      ├ span.superpi-dir-target  C:\Users\PC\pi-workspace
+      ├ span.superpi-spacer
+      └ button.superpi-btn.superpi-btn-primary[disabled]  用这个工作区
 ```
 
 #### 6.3.3 可见状态机
@@ -1127,7 +1127,7 @@ div.dsh-pi-dialog-wrap
 | **S3 选中一层** | 单击某项 | `col0` 保留、`col1` 滑入装该项目的子项；`col1` 独立加载 | 目标 = `selected` |
 | **S4 选中两层** | 在 `col1` 再单击 | `col1` 内选中，`deep` 记录 | 目标 = `deep` |
 | **S5 此电脑层** | 点「此电脑」入口 | 面包屑只剩一段「此电脑」；`col0` 列盘符（`data-drive=1`）+ 一条「上一级」 | **禁用**（`rootsView` 且无选中时 `target` 为 `null`） |
-| **S6 失败** | `api.directories` 抛错 | `col0`（或 `col1`）内 `.dsh-pi-alert` 显示 message；旧内容不消失 | 沿用 prev 的 `target` |
+| **S6 失败** | `api.directories` 抛错 | `col0`（或 `col1`）内 `.superpi-alert` 显示 message；旧内容不消失 | 沿用 prev 的 `target` |
 
 S5 是 0.4.x 新增的、DSH picker 没有的层。存在的理由写在两处注释（`client.js:3785-3786` 与 `:3835-3836`）：Windows 上从工作目录一路往上只能走到当前盘的根，**别的盘的工程永远进不去**。所以 `index.js` 的 `/directories` 多返回一个 `roots` 数组，面板在「上一级 / 主目录」之后插一个「此电脑」入口。
 
@@ -1154,10 +1154,10 @@ S5 是 0.4.x 新增的、DSH picker 没有的层。存在的理由写在两处�
 
 | 输入框 | 位置 | `Enter` | 其余键 |
 | --- | --- | --- | --- |
-| 绝对路径（`flex:1 1 auto`，占位符 `dirInputHint`） | `:3875-3888`（与筛选同一个 `.dsh-pi-row2`，容器 `:3875`） | `enter(typed.trim())`，空串不动作（`:3882-3887`） | 普通文本输入（onChange `:3881`） |
+| 绝对路径（`flex:1 1 auto`，占位符 `dirInputHint`） | `:3875-3888`（与筛选同一个 `.superpi-row2`，容器 `:3875`） | `enter(typed.trim())`，空串不动作（`:3882-3887`） | 普通文本输入（onChange `:3881`） |
 | 筛选（`width:160px`，占位符 `filter`） | `:3889-3895` | 无绑定 | 驱动 `query`（onChange `:3894`），实时过滤**最后一栏** |
 
-这也是一个缺口，但**不是只剩一条路**：0.6.1 起每个抽屉与弹窗的右上角都是统一的 `CloseButton`（`client.js:2087`，`.dsh-pi-btn-icon` + 16px `CloseIcon`，32×32 命中区），点它等价于取消。仍然缺的是键盘 `Esc`（无全局 keydown 监听）与方向键列表导航；DSH picker 同样没有方向键导航（`README.zh.md` 说无搜索、无多选），所以两边都只有鼠标路径。
+这也是一个缺口，但**不是只剩一条路**：0.6.1 起每个抽屉与弹窗的右上角都是统一的 `CloseButton`（`client.js:2087`，`.superpi-btn-icon` + 16px `CloseIcon`，32×32 命中区），点它等价于取消。仍然缺的是键盘 `Esc`（无全局 keydown 监听）与方向键列表导航；DSH picker 同样没有方向键导航（`README.zh.md` 说无搜索、无多选），所以两边都只有鼠标路径。
 
 #### 6.3.6 过滤语义
 
@@ -1170,7 +1170,7 @@ var match = function (entry) {
 };
 ```
 
-**是子串（contains），不是前缀。** DSH 的 `visibleEntries`（`_probe/dsh-picker/client.js:223`）是 `name.toLowerCase().startsWith(needle)`，而且多一层保护：
+**是子串（contains），不是前缀。** DSH 的 `visibleEntries`（`_probe/superpicker/client.js:223`）是 `name.toLowerCase().startsWith(needle)`，而且多一层保护：
 
 ```js
 const narrowing = needle !== '' && entries.some(matches);
@@ -1179,7 +1179,7 @@ const narrowing = needle !== '' && entries.some(matches);
 
 两条实际后果：
 
-| 场景 | dsh-pi | DSH picker |
+| 场景 | superpi | DSH picker |
 | --- | --- | --- |
 | 输入 `workspace` | 命中 `my-workspace`、`workspace-old` | 只命中 `workspace-old` |
 | 输入 `zzz`（无命中） | **空栏** | **显示全量**（用户能立刻看出「这个过滤没用」而不是「这层没东西」） |
@@ -1232,7 +1232,7 @@ var existing = target !== null ? [] : state.sessions;
 
 按严重度分三档：**中** = 用户能感知的能力缺失；**低** = 视觉或结构差异；**极低** = 几乎不可见。
 
-| # | 维度 | dsh-pi | DSH picker | 严重度 |
+| # | 维度 | superpi | DSH picker | 严重度 |
 | --- | --- | --- | --- | --- |
 | 1 | 过滤算法 | 子串 `indexOf` | 前缀 `startsWith` + 仅在有命中时收窄 | 中 |
 | 2 | 对话尺寸 | 弹窗 `min(680px,100%)` × `min(500px,100%)`，内层 `-dir-cols` 只 `min-height:240px` | `min(680px,100%)` × `min(500px,100dvh-32px)`，`_millerRow` 撑满 | 低 |
@@ -1244,21 +1244,21 @@ var existing = target !== null ? [] : state.sessions;
 | 8 | 隐藏项 | 无开关；宿主只按 `isDirectory` 过滤，`.git` 等点目录照常列出 | 页脚 `Show hidden` 开关（客户端过滤） | 中 |
 | 9 | 新建文件夹 | 无；靠「不存在的路径在开会话时创建」 | 嵌套创建对话框（`createDirectory`） | 中 |
 | 10 | 取消 | 只有右上角 `×` | 页脚显式 `Cancel` 按钮 | 低 |
-| 11 | 页脚布局 | 左 `-dir-target` 文本、右「用这个工作区」 | 左 `New folder` + `Show hidden`、右 `Cancel` + `Open` | 低（dsh-pi **多显示了目标路径**，是优点） |
-| 12 | 容器底 | 抽屉用 `.dsh-pi-sheet`（`bg-base` 铺满）；`DirSheet` 例外，用 `-dir-dialog`（`radius-panel` + `bg-layer-2`） | `_dialog` 恒为 `radius-panel` + `bg-layer-2` | 低 |
+| 11 | 页脚布局 | 左 `-dir-target` 文本、右「用这个工作区」 | 左 `New folder` + `Show hidden`、右 `Cancel` + `Open` | 低（superpi **多显示了目标路径**，是优点） |
+| 12 | 容器底 | 抽屉用 `.superpi-sheet`（`bg-base` 铺满）；`DirSheet` 例外，用 `-dir-dialog`（`radius-panel` + `bg-layer-2`） | `_dialog` 恒为 `radius-panel` + `bg-layer-2` | 低 |
 | 13 | 死键 | **已修复**：0.7.0 已把 `dirMissing` 从 `ZH` / `EN` 两张表里同时删除，`client.js` 全文 0 命中；键集 0.7.0 为 203 / 203、0.8.0 为 215 / 215，两边一致 | 无此问题 | 已修复 |
-| 14 | 分栏分隔 | 相邻兄弟选择器 `.dsh-pi-dir-col + .dsh-pi-dir-col{border-left:.5px}` | 独立 `_divider` span（`.5px` `border-l3`） | 低 |
-| 15 | 开关过渡 | `.dsh-pi-switch` 多一条 `transition:background-color .16s ease` | `._switch_1ik0f_5` 无过渡 | 极低 |
+| 14 | 分栏分隔 | 相邻兄弟选择器 `.superpi-dir-col + .superpi-dir-col{border-left:.5px}` | 独立 `_divider` span（`.5px` `border-l3`） | 低 |
+| 15 | 开关过渡 | `.superpi-switch` 多一条 `transition:background-color .16s ease` | `._switch_1ik0f_5` 无过渡 | 极低 |
 | 16 | 设置项一致性 | 4 个设置项里只有 `autoCompaction` / `autoRetry` 是开关，另两个仍是文字按钮；注释 `client.js:4216` 的措辞会让人以为全改了 | 无对应 | 中 |
 | 17 | home 来源 | `os.homedir()`，由宿主在 `/directories` 响应里给 | `listing` 字段的一部分 | 低 |
 
-补充三条**注释与实现不一致**（不是 dsh-pi 与 DSH 的差异，是 dsh-pi 内部的文档债）：
+补充三条**注释与实现不一致**（不是 superpi 与 DSH 的差异，是 superpi 内部的文档债）：
 
 | 位置 | 注释说什么 | 实际是什么 |
 | --- | --- | --- |
-| `client.js:723` | 「DSH `._float` 的配方：`bg-layer-2` + `radius-panel` + `elevation-prominent` + 局部描边色」 | `:724` 的 `.dsh-pi-sheet` 是 `bg-base` 铺满，没有 `radius`、没有阴影 |
-| `client.js:798-799` | 「header（padding `22px 14px 12px 24px`）」 | `:803` 的 `.dsh-pi-dialog-head` 是 `padding:22px 18px 0 24px`，`:804` 的 `.dsh-pi-dialog-head h3` 是 `padding:0` |
-| `client.js:4216` | 「开关对齐 DSH 的 `._switch_1ik0f_5`……不再是文字按钮」 | 只有两个是开关；`steeringMode` / `followUpMode`（`client.js:4233-4238`）仍是 `.dsh-pi-btn` 文字按钮 |
+| `client.js:723` | 「DSH `._float` 的配方：`bg-layer-2` + `radius-panel` + `elevation-prominent` + 局部描边色」 | `:724` 的 `.superpi-sheet` 是 `bg-base` 铺满，没有 `radius`、没有阴影 |
+| `client.js:798-799` | 「header（padding `22px 14px 12px 24px`）」 | `:803` 的 `.superpi-dialog-head` 是 `padding:22px 18px 0 24px`，`:804` 的 `.superpi-dialog-head h3` 是 `padding:0` |
+| `client.js:4216` | 「开关对齐 DSH 的 `._switch_1ik0f_5`……不再是文字按钮」 | 只有两个是开关；`steeringMode` / `followUpMode`（`client.js:4233-4238`）仍是 `.superpi-btn` 文字按钮 |
 
 三条都属「描述超前于实现」。第六条（筛选无命中出空栏 vs 显示全量）是 0.7.0 以来唯一被用户直接感知的语义差异。
 
@@ -1392,7 +1392,7 @@ store 在 `apply` 作用域里只建一次（`const uiPrefs = createUiPrefsStore
 实跑输出（0.8.1 实测，原样）：
 
 ```text
-css-tokens: C:\Users\PC\Documents\pi-local\dsh-pi\client.js
+css-tokens: C:\Users\PC\Documents\pi-local\superpi\client.js
 client.js 347871 字节 / mtime 2026-11-16T04:58:24.100Z
 CSS 数组 277 段 / 39760 字符
 
@@ -1426,13 +1426,13 @@ PASS (98 checks)
 
 | 断言 | 行号 | 内容 |
 | --- | --- | --- |
-| 空态入口 | `:282` | 有 `onPickDir` 时必须渲染 `.dsh-pi-empty-actions` |
+| 空态入口 | `:282` | 有 `onPickDir` 时必须渲染 `.superpi-empty-actions` |
 | 空态入口条件 | `:310` | 没传 `onPickDir` 时**不得**渲染该容器 |
-| 开关类名 | `:327` | 设置抽屉里必须有 `class="dsh-pi-switch"` |
-| 开关滑块 | `:331` | 必须有 `dsh-pi-switch-thumb` |
-| DirSheet 根 | `:452` | 必须渲染 `.dsh-pi-dir` |
-| 面包屑 | `:454` | 必须有 `.dsh-pi-dir-crumbs` |
-| 首帧单栏 | `:459` | 未选中时 `class="dsh-pi-dir-col"` **恰好 1 个** |
+| 开关类名 | `:327` | 设置抽屉里必须有 `class="superpi-switch"` |
+| 开关滑块 | `:331` | 必须有 `superpi-switch-thumb` |
+| DirSheet 根 | `:452` | 必须渲染 `.superpi-dir` |
+| 面包屑 | `:454` | 必须有 `.superpi-dir-crumbs` |
+| 首帧单栏 | `:459` | 未选中时 `class="superpi-dir-col"` **恰好 1 个** |
 | `dirPickModel` | `:470-522` | 25 条纯函数断言（9.14 Miller 分栏 14 条在 `:470` 起、9.15 盘符层 11 条在 `:505` 起），含 `dirPickModel(undefined).showSub === false`（`:501` 防 null 入参） |
 
 0.8.0 新增的四块断言（行号为本轮实测，文件现 961 行）：
@@ -1479,7 +1479,7 @@ PASS (98 checks)
 | 点卡片不关 | `:887-888` | 内层元素（target ≠ currentTarget）不触发关闭 |
 | 每次调用新函数 | `:889` | 防止把同一个闭包复用给多个弹窗、关闭动作串味 |
 | `isOutsideMenu` 六条 | `:891-900` | 菜单自身与 `anchor`（触发按钮）都放行、别处算外部、`anchor` 为 null/undefined 不抛、`node` 为 null 时算外部 |
-| Dialog 两层结构 | `:904-910` | `dsh-pi-dialog-wrap` 必须包着 `dsh-pi-dialog`（防有人把 onClick 挪到卡片上）、`aria-modal` 恰好 1 处、不是 `alertdialog` |
+| Dialog 两层结构 | `:904-910` | `superpi-dialog-wrap` 必须包着 `superpi-dialog`（防有人把 onClick 挪到卡片上）、`aria-modal` 恰好 1 处、不是 `alertdialog` |
 | ConfirmDialog 两层结构 | `:912-918` | 同上，且 role 必须是 `alertdialog` |
 | ExtensionDialog | `:920-922` | 0.8.1 补的 `aria-modal="true"` 与两层结构 |
 | MoreMenu | `:924-936` | `role="menu"` / `menuitem` / 条目文案；`anchor` 传 null 不抛 |
@@ -1514,10 +1514,10 @@ PASS (98 checks)
 
 ## 附录 A 行号索引
 
-全部基于 **client.js@6275 / 347871 B / sha256 前缀 `570B9EF4B9B0`（dsh-pi 0.8.1）**。`client.js` 在 0.5.0 之后被并发改写十余次（4130 → 4556 → 4789 → 4873 → 5170 → 5572 → 5614 → 5619 → 5872 → 6178 → 6275），**任何行号都会漂移**。定位请用类名 grep：
+全部基于 **client.js@6275 / 347871 B / sha256 前缀 `570B9EF4B9B0`（superpi 0.8.1）**。`client.js` 在 0.5.0 之后被并发改写十余次（4130 → 4556 → 4789 → 4873 → 5170 → 5572 → 5614 → 5619 → 5872 → 6178 → 6275），**任何行号都会漂移**。定位请用类名 grep：
 
 ```powershell
-Select-String -Path client.js -Pattern "\.dsh-pi-dir-cols\{"
+Select-String -Path client.js -Pattern "\.superpi-dir-cols\{"
 Select-String -Path client.js -Pattern "function dirPickModel"
 ```
 
@@ -1596,52 +1596,52 @@ Select-String -Path client.js -Pattern "function dirPickModel"
 | 规则 | 行号 |
 | --- | --- |
 | `var CSS = [`（数组起点，`// ── 基础 ──` 注释在 `:478-482`） | `:477` |
-| `.dsh-pi-root` + 全局三条 | `:483-486` |
-| `.dsh-pi-head` 族 | `:489-491` |
-| `.dsh-pi-dot` 及三态 | `:492-495` |
-| `@keyframes dsh-pi-pulse` | `:496` |
-| `.dsh-pi-chip` 族 | `:500-506` |
-| `.dsh-pi-btn` 族 | `:513-525`（`-primary` `:517` / `-danger` `:520` / `-ghost` `:522` / `-icon` `:524`） |
-| `.dsh-pi-scroll` / `-inner` | `:528` / `:529` |
-| `.dsh-pi-row` / `-row-user` / `-body` | `:530-531` / `:534` |
-| `.dsh-pi-bubble-user` | `:533` |
-| `.dsh-pi-prose` 族 | `:536-541` |
-| `.dsh-pi-code-inline` | `:542` |
-| `.dsh-pi-fence` / `-fence-lang` / `-pre` | `:544-546` |
-| `.dsh-pi-proc` / `.dsh-pi-tool` | `:562` / `:563` |
-| `-proc-head` / `-proc-icon` / `-proc-label` / `-sep` / `-proc-text`（含两 tone）/ `-proc-note`（含两 tone）/ `-proc-path` / 运行中点动画 | `:564-584`（圆点 `.dsh-pi-sep` `:575`、运行中点动画 `:584`） |
-| `.dsh-pi-sub`（子行组）/ `.dsh-pi-proc-body` / `.dsh-pi-tool-body` | `:592` / `:594` / `:595` |
-| `.dsh-pi-working` / `-working-icon` / `-working-text` | `:600-602` |
-| `.dsh-pi-tag` 五条（含四 tone） | `:605-609` |
-| `.dsh-pi-usage` / `-caret` | `:610` / `:611` |
-| `.dsh-pi-img` 族 | `:612-614` |
-| `.dsh-pi-fileref` 族 | `:618-623` |
-| `.dsh-pi-empty` 族 | `:626-630` |
-| `.dsh-pi-center` / `-gate` / `-gate-card` 族 | `:631` / `:632` / `:633-637` |
-| `.dsh-pi-composer` / `-inner` | `:645` / `:646` |
-| `.dsh-pi-box` / `:focus-within` | `:647` / `:649` |
-| `.dsh-pi-widget` / `-body` | `:650` / `:651` |
-| `.dsh-pi-statusbar` 族 | `:654-655` |
-| `.dsh-pi-ta` 族 | `:656-657` |
-| `.dsh-pi-bar` 族 / `-add` 族 / `-picker` 族 / `-send` / `-stop` / `-thumb` 族 | `:658-661` / `:663-667` / `:669-676` / `:679-680` / `:681-682` / `:683-687` |
-| `.dsh-pi-menu` 族（含 `-empty-row`）/ `-menu-add` 族 | `:690-700` / `:704-712` |
-| `.dsh-pi-alert` / `-notice` 族 / `-queue` | `:715` / `:716-719` / `:720` |
-| `.dsh-pi-sheet` 族 | `:724-734` |
-| `.dsh-pi-sess` / `-proj` 族 / `-kv` 族 / `-tree` 族 | `:736-747` / `:748-750` / `:751-757` |
-| `.dsh-pi-switch` 族 | `:760-767` |
-| `.dsh-pi-dir` 族 | `:771-788` |
-| `.dsh-pi-dir-dialog` 族 | `:792-795`（注释 `:789-791`） |
-| `.dsh-pi-dialog-wrap` / `-dialog` / `-dialog-head` 族 | `:800` / `:801` / `:803-807` |
-| `@keyframes dsh-pi-modal-in` | `:802` |
-| `.dsh-pi-opt` 族 / `-mini-ta` / `-row2` / `-spacer` / `-sr` | `:811-813` / `:814-815` / `:816` / `:817` / `:818` |
+| `.superpi-root` + 全局三条 | `:483-486` |
+| `.superpi-head` 族 | `:489-491` |
+| `.superpi-dot` 及三态 | `:492-495` |
+| `@keyframes superpi-pulse` | `:496` |
+| `.superpi-chip` 族 | `:500-506` |
+| `.superpi-btn` 族 | `:513-525`（`-primary` `:517` / `-danger` `:520` / `-ghost` `:522` / `-icon` `:524`） |
+| `.superpi-scroll` / `-inner` | `:528` / `:529` |
+| `.superpi-row` / `-row-user` / `-body` | `:530-531` / `:534` |
+| `.superpi-bubble-user` | `:533` |
+| `.superpi-prose` 族 | `:536-541` |
+| `.superpi-code-inline` | `:542` |
+| `.superpi-fence` / `-fence-lang` / `-pre` | `:544-546` |
+| `.superpi-proc` / `.superpi-tool` | `:562` / `:563` |
+| `-proc-head` / `-proc-icon` / `-proc-label` / `-sep` / `-proc-text`（含两 tone）/ `-proc-note`（含两 tone）/ `-proc-path` / 运行中点动画 | `:564-584`（圆点 `.superpi-sep` `:575`、运行中点动画 `:584`） |
+| `.superpi-sub`（子行组）/ `.superpi-proc-body` / `.superpi-tool-body` | `:592` / `:594` / `:595` |
+| `.superpi-working` / `-working-icon` / `-working-text` | `:600-602` |
+| `.superpi-tag` 五条（含四 tone） | `:605-609` |
+| `.superpi-usage` / `-caret` | `:610` / `:611` |
+| `.superpi-img` 族 | `:612-614` |
+| `.superpi-fileref` 族 | `:618-623` |
+| `.superpi-empty` 族 | `:626-630` |
+| `.superpi-center` / `-gate` / `-gate-card` 族 | `:631` / `:632` / `:633-637` |
+| `.superpi-composer` / `-inner` | `:645` / `:646` |
+| `.superpi-box` / `:focus-within` | `:647` / `:649` |
+| `.superpi-widget` / `-body` | `:650` / `:651` |
+| `.superpi-statusbar` 族 | `:654-655` |
+| `.superpi-ta` 族 | `:656-657` |
+| `.superpi-bar` 族 / `-add` 族 / `-picker` 族 / `-send` / `-stop` / `-thumb` 族 | `:658-661` / `:663-667` / `:669-676` / `:679-680` / `:681-682` / `:683-687` |
+| `.superpi-menu` 族（含 `-empty-row`）/ `-menu-add` 族 | `:690-700` / `:704-712` |
+| `.superpi-alert` / `-notice` 族 / `-queue` | `:715` / `:716-719` / `:720` |
+| `.superpi-sheet` 族 | `:724-734` |
+| `.superpi-sess` / `-proj` 族 / `-kv` 族 / `-tree` 族 | `:736-747` / `:748-750` / `:751-757` |
+| `.superpi-switch` 族 | `:760-767` |
+| `.superpi-dir` 族 | `:771-788` |
+| `.superpi-dir-dialog` 族 | `:792-795`（注释 `:789-791`） |
+| `.superpi-dialog-wrap` / `-dialog` / `-dialog-head` 族 | `:800` / `:801` / `:803-807` |
+| `@keyframes superpi-modal-in` | `:802` |
+| `.superpi-opt` 族 / `-mini-ta` / `-row2` / `-spacer` / `-sr` | `:811-813` / `:814-815` / `:816` / `:817` / `:818` |
 | `@media (prefers-reduced-motion)` | `:821` |
-| **0.7.0 新增** `.dsh-pi-picker-box` / `-picker-menu` / `-picker-sec` / `-picker-row`（含 `:hover` / `[data-current="1"]`）/ `-picker-row-name` / `-picker-row-sub` / `-picker-empty` | `:824` / `:825` / `:826` / `:827`（`:828` / `:829`）/ `:830` / `:831` / `:832` |
-| **0.7.0 新增** `.dsh-pi-more-wrap` / `-more-menu` / `-more-item` / `-more-icon` / `-more-label` | `:835` / `:836` / `:837`（`:hover` `:838`）/ `:839` / `:871` |
-| **0.7.0 新增** `.dsh-pi-side-wrap` / `-side` / `@keyframes dsh-pi-side-in` / `-side-head` / `-side-title` / `-side-body` / `-side-actions` | `:842` / `:843` / `:844` / `:845` / `:846` / `:847` / `:850`（`:848-849` 是 head 内的按钮尺寸覆写，`:851` 是 actions 内的搜索框） |
-| **0.7.0 新增** `.dsh-pi-dialog-wide` / `-dialog-grow` / `-dialog-content` | `:869` / `:870` / `:873`（`:872` 是「底部留 22px」注释） |
-| **0.8.0 新增** `.dsh-pi-side-host`（侧栏 + 弹窗共存容器）/ `.dsh-pi-side-head .dsh-pi-side-back`（返回键 28×28）/ `.dsh-pi-side-new`（新建键） | `:855` / `:857` / `:858`（注释 `:853-854`、`:856`） |
-| **0.8.0 新增** `.dsh-pi-row-more`（行内 ⋯ 容器）/ `> button` / `:hover` / 内嵌 `.dsh-pi-more-menu` 锚定 | `:860` / `:861` / `:862` / `:863`（注释 `:859`） |
-| **0.8.0 新增** `.dsh-pi-sess-sum`（摘要胶囊）/ `.dsh-pi-pin`（置顶图标 12×12） | `:865` / `:866`（注释 `:864`） |
+| **0.7.0 新增** `.superpi-picker-box` / `-picker-menu` / `-picker-sec` / `-picker-row`（含 `:hover` / `[data-current="1"]`）/ `-picker-row-name` / `-picker-row-sub` / `-picker-empty` | `:824` / `:825` / `:826` / `:827`（`:828` / `:829`）/ `:830` / `:831` / `:832` |
+| **0.7.0 新增** `.superpi-more-wrap` / `-more-menu` / `-more-item` / `-more-icon` / `-more-label` | `:835` / `:836` / `:837`（`:hover` `:838`）/ `:839` / `:871` |
+| **0.7.0 新增** `.superpi-side-wrap` / `-side` / `@keyframes superpi-side-in` / `-side-head` / `-side-title` / `-side-body` / `-side-actions` | `:842` / `:843` / `:844` / `:845` / `:846` / `:847` / `:850`（`:848-849` 是 head 内的按钮尺寸覆写，`:851` 是 actions 内的搜索框） |
+| **0.7.0 新增** `.superpi-dialog-wide` / `-dialog-grow` / `-dialog-content` | `:869` / `:870` / `:873`（`:872` 是「底部留 22px」注释） |
+| **0.8.0 新增** `.superpi-side-host`（侧栏 + 弹窗共存容器）/ `.superpi-side-head .superpi-side-back`（返回键 28×28）/ `.superpi-side-new`（新建键） | `:855` / `:857` / `:858`（注释 `:853-854`、`:856`） |
+| **0.8.0 新增** `.superpi-row-more`（行内 ⋯ 容器）/ `> button` / `:hover` / 内嵌 `.superpi-more-menu` 锚定 | `:860` / `:861` / `:862` / `:863`（注释 `:859`） |
+| **0.8.0 新增** `.superpi-sess-sum`（摘要胶囊）/ `.superpi-pin`（置顶图标 12×12） | `:865` / `:866`（注释 `:864`） |
 | 数组结束 `].join('')` | `:874` |
 
 ### A.3 i18n 键（ZH / EN）
@@ -1749,18 +1749,18 @@ Select-String -Path client.js -Pattern "function dirPickModel"
 | D-02 | 无路径输入预览（DSH 有 250ms 防抖预览） | `client.js:3940-3960`（路径输入 `:3941-3953` 只有 `onChange` + Enter 跳转、筛选框 `:3954-3960` 只有 `onChange`，两者都无防抖请求） | 中 | 能力缺失 |
 | D-03 | 无隐藏项开关；`.git` 等点目录照常列出 | `index.js:1304`（`if (!dirent.isDirectory()) continue`，注释在 `:1303`） | 中 | 能力缺失（宿主未给） |
 | D-04 | 无新建文件夹；不存在的路径靠开会话时创建 | — | 中 | 能力缺失（宿主未给） |
-| D-05 | 当前目录标记用文字徽标而非 `aria-current` | `client.js:3964-4019`（目录行的 `makeRow` `:3964-3986`：`data-selected` `:3970` / `data-current` `:3971` / `dsh-pi-dir-mark` 徽标 `:3985`；盘符行 `:4004-4019`：`data-selected` `:4008` / 徽标 `:4019`） | 低 | 无障碍退步 |
-| D-06 | `.dsh-pi-sheet` 注释称用 DSH `_float` 配方，实际是 `bg-base` 铺满 | `client.js:723-724`（注释 `:723`，规则体 `background:var(--dsw-alias-bg-base)` 在 `:724`） | 低 | 注释与实现不符 |
-| D-07 | `.dsh-pi-dialog-head h3` 注释称 `22px 14px 12px 24px`，实际留白在 head（`:803` 的 `padding:22px 18px 0 24px`）、h3 本身 `padding:0` | `client.js:797-807`（注释 `:797-799`、`.dsh-pi-dialog-head` `:803`、`h3` `:804`） | 低 | 注释与实现不符 |
-| D-08 | 菜单阴影 `elevation-panel`，DSH 同级菜单用 `elevation-prominent` | `client.js:690`（`.dsh-pi-menu` 的 `box-shadow`；`:689` 注释写着 `elevation-panel`） | 低 | 令牌等级偏差 |
-| D-09 | 按钮描边 `border-l4`，DSH `_outline` 用 `border-l3` | `client.js:513`（`.dsh-pi-btn` 的 `border:1px solid var(--dsw-alias-border-l4)`） | 低 | 令牌等级偏差 |
+| D-05 | 当前目录标记用文字徽标而非 `aria-current` | `client.js:3964-4019`（目录行的 `makeRow` `:3964-3986`：`data-selected` `:3970` / `data-current` `:3971` / `superpi-dir-mark` 徽标 `:3985`；盘符行 `:4004-4019`：`data-selected` `:4008` / 徽标 `:4019`） | 低 | 无障碍退步 |
+| D-06 | `.superpi-sheet` 注释称用 DSH `_float` 配方，实际是 `bg-base` 铺满 | `client.js:723-724`（注释 `:723`，规则体 `background:var(--dsw-alias-bg-base)` 在 `:724`） | 低 | 注释与实现不符 |
+| D-07 | `.superpi-dialog-head h3` 注释称 `22px 14px 12px 24px`，实际留白在 head（`:803` 的 `padding:22px 18px 0 24px`）、h3 本身 `padding:0` | `client.js:797-807`（注释 `:797-799`、`.superpi-dialog-head` `:803`、`h3` `:804`） | 低 | 注释与实现不符 |
+| D-08 | 菜单阴影 `elevation-panel`，DSH 同级菜单用 `elevation-prominent` | `client.js:690`（`.superpi-menu` 的 `box-shadow`；`:689` 注释写着 `elevation-panel`） | 低 | 令牌等级偏差 |
+| D-09 | 按钮描边 `border-l4`，DSH `_outline` 用 `border-l3` | `client.js:513`（`.superpi-btn` 的 `border:1px solid var(--dsw-alias-border-l4)`） | 低 | 令牌等级偏差 |
 | D-10 | 开关胶囊多一条 `transition:background-color .16s ease` | `client.js:760` | 极低 | 动效差异 |
 | D-11 | ~~`dirMissing` 死键~~ **已修复**：0.7.0 已把该键从 ZH / EN 两张 i18n 表同时删除，`client.js` 全文 0 命中 | — | 已修复 | 未使用键（已清理） |
 
 另有两条**不是差异但值得记录**的实现选择：
 
-- `-tool` 平铺行（无框无底）：`client.js:562-569` 有对应规则（`.dsh-pi-proc` `:562`、`.dsh-pi-tool` `:563`），注释块在 `:547-561`、其中 `:552` 写着「框套框的噪音墙（用户 18994 明确要求去掉圆角框）」，是刻意决定，不是漏做；
-- `-bubble-user` 的 `max-width:82%`：DSH 是 100%，dsh-pi 按 IM 惯例收窄，属合理分歧。
+- `-tool` 平铺行（无框无底）：`client.js:562-569` 有对应规则（`.superpi-proc` `:562`、`.superpi-tool` `:563`），注释块在 `:547-561`、其中 `:552` 写着「框套框的噪音墙（用户 18994 明确要求去掉圆角框）」，是刻意决定，不是漏做；
+- `-bubble-user` 的 `max-width:82%`：DSH 是 100%，superpi 按 IM 惯例收窄，属合理分歧。
 
 ---
 
@@ -1776,13 +1776,13 @@ Select-String -Path client.js -Pattern "function dirPickModel"
 
 **怎么确认**：起一个 pi 子进程，`POST /sessions {"cwd":"<不存在的绝对路径>"}`，看返回是 `ok` 还是 500，再看磁盘上是否出现该目录。
 
-### C-2 `.dsh-pi-box` 的 `:focus-within` 是否对所有目标浏览器都触发
+### C-2 `.superpi-box` 的 `:focus-within` 是否对所有目标浏览器都触发
 
 **为什么没确认**：需要真浏览器矩阵。仓库当前没有浏览器测试依赖（`test/` 全是 Node 单测 + SSR 字符串断言）。
 
-**当前对策**：**只有一条通道** —— `client.js:649` 的 `.dsh-pi-box:focus-within{--dsw-elevation-stroke-color:var(--dsw-alias-state-business-primary)}`。0.4–0.6.1 曾同时维护 `.dsh-pi-box:focus-within` 与 `[data-focus="1"]` 双通道，0.6.2 把卡面换成 `--dsw-elevation-soft` 投影后，显式属性通道连同 JSX 里的 `data-focus` 一起删除（`grep data-focus client.js` = 0 命中）：描边由 elevation 的第一层表达，覆盖 `--dsw-elevation-stroke-color` 就够。0.7.0 起元素级的双通道也不存在了——`:649` 是唯一一处（`:496` 的 `@keyframes dsh-pi-pulse` 与焦点无关）。
+**当前对策**：**只有一条通道** —— `client.js:649` 的 `.superpi-box:focus-within{--dsw-elevation-stroke-color:var(--dsw-alias-state-business-primary)}`。0.4–0.6.1 曾同时维护 `.superpi-box:focus-within` 与 `[data-focus="1"]` 双通道，0.6.2 把卡面换成 `--dsw-elevation-soft` 投影后，显式属性通道连同 JSX 里的 `data-focus` 一起删除（`grep data-focus client.js` = 0 命中）：描边由 elevation 的第一层表达，覆盖 `--dsw-elevation-stroke-color` 就够。0.7.0 起元素级的双通道也不存在了——`:649` 是唯一一处（`:496` 的 `@keyframes superpi-pulse` 与焦点无关）。
 
-**怎么确认**：Playwright 在 Chromium / Firefox / WebKit 三引擎里 `focus()` 内部 `textarea`，断言 `.dsh-pi-box` 的 `box-shadow` 首层色等于 `state-business-primary` 的计算值（不再是 `border-color`）。
+**怎么确认**：Playwright 在 Chromium / Firefox / WebKit 三引擎里 `focus()` 内部 `textarea`，断言 `.superpi-box` 的 `box-shadow` 首层色等于 `state-business-primary` 的计算值（不再是 `border-color`）。
 
 ### C-3 `--dsh-code-font-size` 与 `--dsh-code-font-delta` 是否仍被 DSH 使用
 
@@ -1794,7 +1794,7 @@ Select-String -Path client.js -Pattern "function dirPickModel"
 
 **为什么没确认**：`_float_3oazc_158` 在 `index-lh_YM6sT.css` 里只做变量声明（`--dsh-float-*` 一类），没有实际的 `display` / `background` / `border-radius`。也就是说 DSH 的「抽屉」外观是应用层自己拼的，`index-lh_YM6sT.css` 不提供成品样式。
 
-**为什么重要**：它决定了 `.dsh-pi-sheet`（`bg-base` 铺满）到底是「有依据的选择」还是「自创」。本文的判定是**自创**（见 4.10 与 5.3 的 C 档），因为找不到可指认的规则。如果将来找到 DSH 抽屉的成品样式，`.dsh-pi-sheet` 应重新评估。
+**为什么重要**：它决定了 `.superpi-sheet`（`bg-base` 铺满）到底是「有依据的选择」还是「自创」。本文的判定是**自创**（见 4.10 与 5.3 的 C 档），因为找不到可指认的规则。如果将来找到 DSH 抽屉的成品样式，`.superpi-sheet` 应重新评估。
 
 **怎么确认**：在 DSH 客户端包里找抽屉/浮层的实际使用处（不是在 `index-lh_YM6sT.css` 里找，而是在用到 `_float` 变量的组件里找）。
 
@@ -1806,7 +1806,7 @@ Select-String -Path client.js -Pattern "function dirPickModel"
 
 | 数值 | 采集方式 | 可信度 |
 | --- | --- | --- |
-| 174 个 `.dsh-pi-*` 类 | 脚本 `matchAll` 去重，与门禁同源（0.7.0 起 168 → 0.8.0 增 6 类：`pin` / `row-more` / `sess-sum` / `side-back` / `side-host` / `side-new`；0.8.1 只加 JS 不动 CSS，类数仍 174，`git show HEAD:client.js` 比对 added=[] removed=[]） | A（可复现） |
+| 174 个 `.superpi-*` 类 | 脚本 `matchAll` 去重，与门禁同源（0.7.0 起 168 → 0.8.0 增 6 类：`pin` / `row-more` / `sess-sum` / `side-back` / `side-host` / `side-new`；0.8.1 只加 JS 不动 CSS，类数仍 174，`git show HEAD:client.js` 比对 added=[] removed=[]） | A（可复现） |
 | 70 / 39 / 20 / 6 令牌分层（另 `--dsw-specific-*` 4 + `--dsw-static-*` 1，外部兜底 4） | 脚本统计 + 人工归类 | A（数字可复现，归类是判断） |
 | 277 段 / 39760 字符 / 382 次 `var(` 文本（顶层 366 处 / 兜底嵌套 16 处） | 段数与字符数取门禁输出第 3 行（门禁自身口径印「令牌引用: 377 处 / 74 个唯一变量」，与本文正文的 382 / 366 差在嵌套识别口径，见 §3.1） | A |
 | 32 / 55 / 85 / 2 档位分布 | 174 类逐个人工判定（合计 = 174） | B（判据主观，但每档都列了具体依据） |
@@ -1820,4 +1820,4 @@ Select-String -Path client.js -Pattern "function dirPickModel"
 
 ---
 
-_本文的样式与尺寸取证基于 client.js@4130（sha256 前缀 `06fb24ca5cb7`）与 dsh-pi 0.5.1 起步，1.4 版全部行号重测于 client.js@6275（347871 B，mtime 2026-11-16T04:58:24Z，sha256 前缀 `570B9EF4B9B0`）/ dsh-pi 0.8.1，index.js@1624（76621 B，sha256 前缀 `DDD7C5CD828C`）。所有行号会随后续改动漂移，定位请用类名 grep。_
+_本文的样式与尺寸取证基于 client.js@4130（sha256 前缀 `06fb24ca5cb7`）与 superpi 0.5.1 起步，1.4 版全部行号重测于 client.js@6275（347871 B，mtime 2026-11-16T04:58:24Z，sha256 前缀 `570B9EF4B9B0`）/ superpi 0.8.1，index.js@1624（76621 B，sha256 前缀 `DDD7C5CD828C`）。所有行号会随后续改动漂移，定位请用类名 grep。_

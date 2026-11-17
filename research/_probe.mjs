@@ -14,7 +14,7 @@ child.stdin.write(JSON.stringify({ id: 'r1', type: 'get_state' }) + '\n')
 setTimeout(() => child.stdin.write(JSON.stringify({ id: 'r2', type: 'prompt', message: '用一句话说明你在做什么。' }) + '\n'), 800)
 setTimeout(() => { child.stdin.end() }, 30000)
 child.on('exit', (code) => {
-  fs.writeFileSync('C:\\Users\\PC\\Documents\\pi-local\\dsh-pi\\research\\probe-events.txt',
+  fs.writeFileSync('C:\\Users\\PC\\Documents\\pi-local\\superpi\\research\\probe-events.txt',
     JSON.stringify({ code, ms: Date.now()-t0, err: err.slice(0,4000), lines }, null, 1))
   process.exit(0)
 })

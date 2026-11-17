@@ -65,7 +65,7 @@ async function boot(tempDir, tag) {
   mod.apply(ctx, { args: ['--no-session'] })
   const registered = route()
   assert(registered !== null, 'apply() 没有注册路由')
-  assert(registered.path === '/api/dsh-pi', 'route path 预期 /api/dsh-pi，实际 ' + String(registered.path))
+  assert(registered.path === '/api/superpi', 'route path 预期 /api/superpi，实际 ' + String(registered.path))
   const server = http.createServer((req, res) => { void registered.handler(req, res) })
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
   const base = 'http://127.0.0.1:' + server.address().port + registered.path
@@ -80,7 +80,7 @@ async function getJson(url) {
   return { status: res.status, body }
 }
 
-const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-pi-selfcheck-'))
+const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'superpi-selfcheck-'))
 console.log('temp =', tempDir)
 copyPlugin(tempDir)
 const clientPath = path.join(tempDir, 'client.js')

@@ -82,7 +82,7 @@ function readVersion(dir) {
   return JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8')).version
 }
 
-const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-pi-version-'))
+const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'superpi-version-'))
 console.log('temp =', tempDir)
 copyPlugin(tempDir)
 const pkgPath = path.join(tempDir, 'package.json')
@@ -140,7 +140,7 @@ try {
 
   // ── 4. README 里的 tarball 名跟当前版本对齐 ─────────────────────────
   const readme = fs.readFileSync(path.join(root, 'README.md'), 'utf8')
-  const tarball = 'dsh-pi-' + realVersion + '.tgz'
+  const tarball = 'superpi-' + realVersion + '.tgz'
   console.log('4) README 应含', tarball, '→', readme.includes(tarball))
   assert(readme.includes(tarball), 'README 里没有 ' + tarball + '，照着文档装会找不到文件')
 

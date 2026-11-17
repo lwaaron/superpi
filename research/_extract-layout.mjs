@@ -21,7 +21,7 @@ walk(json, '');
 const want = /@deepseek-ai\/(dsh-client-ui-layout|dsh-client-ui-renderer|dsh-client-ui-conversation)\//;
 const wanted = entries.filter(e => want.test(e.p) && /\.(js|md)$/.test(e.p));
 console.log(wanted.map(e => e.p + ' ' + e.size).slice(0, 80).join('\n'));
-const outDir = 'C:/Users/PC/Documents/pi-local/dsh-pi/research/layout';
+const outDir = 'C:/Users/PC/Documents/pi-local/superpi/research/layout';
 fs.mkdirSync(outDir, { recursive: true });
 for (const e of wanted) {
   const start = dataBase + e.offset;

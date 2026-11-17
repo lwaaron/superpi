@@ -17,6 +17,6 @@ const walk = (node, prefix) => {
   }
 };
 walk(json, '');
-fs.writeFileSync('C:/Users/PC/Documents/pi-local/dsh-pi/research/all-files.txt', names.map(x => x.p).join('\n'));
+fs.writeFileSync('C:/Users/PC/Documents/pi-local/superpi/research/all-files.txt', names.map(x => x.p).join('\n'));
 const want = names.filter(x => /README\.zh\.md$/.test(x.p) && /dsh-(client-web|web|client-ui-slots|client-ui-primitives|client-ui-settings|client-ui-sidebar)\//.test(x.p));
-fs.writeFileSync('C:/Users/PC/Documents/pi-local/dsh-pi/research/readme-list.txt', want.map(x => x.p).join('\n'));
+fs.writeFileSync('C:/Users/PC/Documents/pi-local/superpi/research/readme-list.txt', want.map(x => x.p).join('\n'));

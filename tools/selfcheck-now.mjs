@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
- * 不用启动 DSH，直接问「磁盘上这份 dsh-pi 是什么状态」。
+ * 不用启动 DSH，直接问「磁盘上这份 superpi 是什么状态」。
  *
- * 和 GET /api/dsh-pi/selfcheck 同一份代码路径（buildSelfCheck），区别只有一处：
+ * 和 GET /api/superpi/selfcheck 同一份代码路径（buildSelfCheck），区别只有一处：
  * 这里的 loaded 基线就是「刚刚 import 进本进程的字节」，所以它回答的是
  * 「下次启动 DSH 会加载到哪一版」，而不是「现在内存里跑的是哪一版」。
  *

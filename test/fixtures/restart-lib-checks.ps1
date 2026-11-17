@@ -9,7 +9,7 @@ $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $script = Join-Path (Split-Path -Parent (Split-Path -Parent $here)) 'tools\restart-dsh.ps1'
 if (-not (Test-Path -LiteralPath $script)) { Write-Output "FAIL script missing: $script"; exit 1 }
 
-$env:DSH_PI_RESTART_LIB = '1'
+$env:SUPERPI_RESTART_LIB = '1'
 . $script
 
 $script:failures = 0
@@ -60,17 +60,17 @@ try {
 } catch { $threw2 = $true }
 check $threw2 'empty command line: refuses instead of guessing'
 
-# --- Get-DshHomeFromRoot: <home>\profiles\<name>\node_modules\dsh-pi ----------
-$d1 = Get-DshHomeFromRoot 'C:\Users\PC\.dsh\profiles\desktop\node_modules\dsh-pi'
+# --- Get-DshHomeFromRoot: <home>\profiles\<name>\node_modules\superpi ----------
+$d1 = Get-DshHomeFromRoot 'C:\Users\PC\.dsh\profiles\desktop\node_modules\superpi'
 check ($null -ne $d1 -and $d1.home -eq 'C:\Users\PC\.dsh' -and $d1.name -eq 'desktop') 'root: default home'
-$d2 = Get-DshHomeFromRoot 'C:\Users\PC\Documents\pi-local\_probe\dsh-home-standalone\profiles\pi-standalone\node_modules\dsh-pi'
+$d2 = Get-DshHomeFromRoot 'C:\Users\PC\Documents\pi-local\_probe\dsh-home-standalone\profiles\pi-standalone\node_modules\superpi'
 check ($null -ne $d2 -and $d2.home -eq 'C:\Users\PC\Documents\pi-local\_probe\dsh-home-standalone' -and $d2.name -eq 'pi-standalone') 'root: custom DSH_HOME'
 check ($null -eq (Get-DshHomeFromRoot '')) 'root: empty input rejected'
-check ($null -eq (Get-DshHomeFromRoot 'C:\weird\node_modules\dsh-pi')) 'root: no profiles segment rejected'
+check ($null -eq (Get-DshHomeFromRoot 'C:\weird\node_modules\superpi')) 'root: no profiles segment rejected'
 check ($null -eq (Get-DshHomeFromRoot 'C:\a\profiles\b\node_modules\other')) 'root: other package rejected'
 
 # --- Get-EnvPatch: ELECTRON_RUN_AS_NODE only for script entry points ----------
-$root = 'C:\Users\PC\.dsh\profiles\desktop\node_modules\dsh-pi'
+$root = 'C:\Users\PC\.dsh\profiles\desktop\node_modules\superpi'
 $pScript = Get-EnvPatch $root '' '--expose-internals "C:\x\index.js" --port 5599'
 check ($null -ne $pScript) 'env: patch produced for known root'
 check ($pScript['DSH_HOME'] -eq 'C:\Users\PC\.dsh') 'env: DSH_HOME from root'
@@ -83,7 +83,7 @@ check ($null -eq $pGui['ELECTRON_RUN_AS_NODE']) 'env: ELECTRON_RUN_AS_NODE clear
 
 $pOverride = Get-EnvPatch $root 'D:\custom-home' 'x.js'
 check ($pOverride['DSH_HOME'] -eq 'D:\custom-home') 'env: -DshHome override wins'
-check ($null -eq (Get-EnvPatch 'C:\nope\node_modules\dsh-pi' '' 'x.js')) 'env: unknown root yields no patch'
+check ($null -eq (Get-EnvPatch 'C:\nope\node_modules\superpi' '' 'x.js')) 'env: unknown root yields no patch'
 
 # --- Get-LaunchRootPid / Test-SelfAncestorOf on live processes -----------------
 $self = Get-Process -Id $PID
@@ -99,15 +99,15 @@ check $stops 'launch root: stops at first different executable'
 check ((Test-SelfAncestorOf $PID) -eq $true) 'ancestor: self counts'
 check ((Test-SelfAncestorOf 4) -eq $false) 'ancestor: pid 4 is not an ancestor'
 
-# --- Test-DshPiHealth: HTML 200 must not be mistaken for dsh-pi ---------------
+# --- Test-DshPiHealth: HTML 200 must not be mistaken for superpi ---------------
 if ($HtmlPort -gt 0) {
   $base = "http://127.0.0.1:$HtmlPort"
-  check ((Test-DshPiHealth "$base/html/api/dsh-pi") -eq $false) 'health: HTML 200 rejected'
-  check ((Test-DshPiHealth "$base/ok/api/dsh-pi") -eq $true) 'health: real JSON accepted'
-  check ((Test-DshPiHealth "$base/bad/api/dsh-pi") -eq $false) 'health: ok=false rejected'
-  check ((Test-DshPiHealth "$base/other/api/dsh-pi") -eq $false) 'health: foreign plugin rejected'
-  check ((Test-DshPiHealth "$base/pi/api/dsh-pi") -eq $true) 'health: plugin=dsh-pi accepted'
-  check ((Test-DshPiHealth 'http://127.0.0.1:1/api/dsh-pi') -eq $false) 'health: dead port rejected'
+  check ((Test-DshPiHealth "$base/html/api/superpi") -eq $false) 'health: HTML 200 rejected'
+  check ((Test-DshPiHealth "$base/ok/api/superpi") -eq $true) 'health: real JSON accepted'
+  check ((Test-DshPiHealth "$base/bad/api/superpi") -eq $false) 'health: ok=false rejected'
+  check ((Test-DshPiHealth "$base/other/api/superpi") -eq $false) 'health: foreign plugin rejected'
+  check ((Test-DshPiHealth "$base/pi/api/superpi") -eq $true) 'health: plugin=superpi accepted'
+  check ((Test-DshPiHealth 'http://127.0.0.1:1/api/superpi') -eq $false) 'health: dead port rejected'
 }
 
 if ($script:failures -gt 0) { Write-Output "TOTAL FAILURES: $script:failures"; exit 1 }

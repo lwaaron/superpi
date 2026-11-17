@@ -1,11 +1,11 @@
 /**
- * src/rpc-contract.mjs — dsh-pi 与 pi 命令行的对齐契约（机器可读）
+ * src/rpc-contract.mjs — superpi 与 pi 命令行的对齐契约（机器可读）
  *
  * 为什么存在这个文件：
  * pi 有两种前端（TUI 与 RPC）。TUI 里 27 条内置斜杠命令是在前端自己实现的
  * （packages/coding-agent/src/modes/interactive/interactive-mode.ts:3325-3470 的
  * setupEditorSubmitHandler 巨型 if 链），RPC 模式（modes/rpc/rpc-mode.ts）里
- * 一条都没有。所以 dsh-pi 面板只要漏实现一条，那条命令就会被当成普通文本发给
+ * 一条都没有。所以 superpi 面板只要漏实现一条，那条命令就会被当成普通文本发给
  * 模型 —— 语义直接跑偏（最典型：/compact）。
  *
  * 因此这里把三方事实固化成数据：

@@ -305,7 +305,7 @@ function analyze(css, segments, source) {
   for (const m of css.matchAll(/\b(?:rgba?|hsla?)\(/gi)) {
     hardColors.push(violation(m.index, m[0] + ')'))
   }
-  // 命名色只查颜色类属性的值，避免把 .dsh-pi-gold 这类类名误判
+  // 命名色只查颜色类属性的值，避免把 .superpi-gold 这类类名误判
   for (const m of css.matchAll(/(?:^|[{;])\s*([a-zA-Z-]+)\s*:/g)) {
     const prop = m[1].toLowerCase()
     if (!COLOR_PROPS.has(prop) && !prop.endsWith('-color')) continue

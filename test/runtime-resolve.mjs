@@ -17,7 +17,7 @@ import {
   readSettingString,
 } from '../src/pi-runtime.mjs'
 
-const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-pi-runtime-'))
+const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'superpi-runtime-'))
 let failures = 0
 
 const assert = (ok, message) => {
@@ -46,8 +46,8 @@ const makePiPackage = (moduleDir) => {
 
 const makePluginRoot = name => {
   const root = path.join(tempRoot, name)
-  writeFile(path.join(root, 'package.json'), JSON.stringify({ name: 'dsh-pi', version: '0.2.1', type: 'module' }, null, 2))
-  writeFile(path.join(root, 'index.js'), 'export const name = "dsh-pi"\n')
+  writeFile(path.join(root, 'package.json'), JSON.stringify({ name: 'superpi', version: '0.2.1', type: 'module' }, null, 2))
+  writeFile(path.join(root, 'index.js'), 'export const name = "superpi"\n')
   return root
 }
 
@@ -169,10 +169,10 @@ const makePluginRoot = name => {
   assert(expandPath('~') === home, '~ 应展开为 home')
   assert(expandPath('~/x') === path.join(home, 'x'), '~/x 应展开')
   if (process.platform === 'win32') {
-    process.env.DSH_PI_TEST_VAR = 'abc'
-    const expanded = expandPath('%DSH_PI_TEST_VAR%\\y')
+    process.env.SUPERPI_TEST_VAR = 'abc'
+    const expanded = expandPath('%SUPERPI_TEST_VAR%\\y')
     assert(expanded === path.resolve('abc\\y'), '%VAR% 应展开，实际 ' + expanded)
-    delete process.env.DSH_PI_TEST_VAR
+    delete process.env.SUPERPI_TEST_VAR
   }
   assert(expandPath('') === '', '空字符串应返回空字符串')
   assert(expandPath(undefined) === '', 'undefined 应返回空字符串')

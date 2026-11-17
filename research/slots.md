@@ -1,6 +1,6 @@
 # DSH 客户端 slot / layout 服务 / 宿主路由鉴权 / require 白名单
 
-> 目的：为 dsh-pi（把 pi 编码代理接进 DSH 的插件）确定「完整聊天页」可落在哪个槽、`layout` 服务能做什么、客户端如何安全地调自己的宿主 HTTP 路由、以及客户端 bundle 能 require 到哪些模块。
+> 目的：为 superpi（把 pi 编码代理接进 DSH 的插件）确定「完整聊天页」可落在哪个槽、`layout` 服务能做什么、客户端如何安全地调自己的宿主 HTTP 路由、以及客户端 bundle 能 require 到哪些模块。
 > 方法：自建 asar 解析器直接读取安装包（22102 个 entry），再对运行中的宿主 `http://127.0.0.1:4862` 做 live 探测。
 > 证据路径约定：下文 `C:\Users\PC\AppData\Local\Temp\dshX\<asar 内路径，/ 替换为 __>` 是 app.asar 的解包副本，**行号与原文件一致**；`C:\Users\PC\.dsh\profiles\desktop\node_modules\` 是已安装插件源码。
 
@@ -125,7 +125,7 @@ catalog 对 `main` 的注册约束（原文）：`key` **required** — "Your ce
 | 输入框上方一条（官方最推荐的"体面"位置） | `conversation.composer.dock`（list/session） | 官方 skill `references/ui-plugin.md:5`："prefer a slot with allocated space, such as `conversation.composer.dock` when available" | 只是行程条，不是整页 |
 | **禁止** | `root`（single/root） | "**DO NOT register here.** This is a single slot, so a second entry does not sit beside the frame — it shadows it… the page would render your component alone, with every seat the frame declares gone." | — |
 
-**对 dsh-pi 的判断**：pi 聊天页要独占中央区（自有消息流、输入框、工具卡片），`main` + `sidebar.panellist` 是正确落点；必须自己实现返回会话（`layout.selectPanel(null)`），并接受「进入 pi 页后官方会话头部 / composer 消失」这一既定行为。若产品要求同时可见官方会话，改走 `shell.overlay` 或 `conversation.view`。
+**对 superpi 的判断**：pi 聊天页要独占中央区（自有消息流、输入框、工具卡片），`main` + `sidebar.panellist` 是正确落点；必须自己实现返回会话（`layout.selectPanel(null)`），并接受「进入 pi 页后官方会话头部 / composer 消失」这一既定行为。若产品要求同时可见官方会话，改走 `shell.overlay` 或 `conversation.view`。
 
 ### 2.2 关键候选的完整字段
 
@@ -433,22 +433,22 @@ const fence = (req) => ctx.connection.requestRejection(req) === undefined
 
 ctx.effect(() => ctx.webServer.register({
   kind: 'prefix',
-  path: '/api/dsh-pi',
+  path: '/api/superpi',
   handler: async (req, res) => {
     if (!fence(req)) { writeJson(res, 403, { ok: false, error: { code: 'forbidden' } }); return }
     if (req.method !== 'POST') { writeJson(res, 405, { ok: false, error: { code: 'method' } }); return }
     const pathname = new URL(req.url ?? '/', 'http://dsh.internal').pathname
-    const method = pathname.startsWith('/api/dsh-pi/') ? pathname.slice('/api/dsh-pi/'.length) : ''
+    const method = pathname.startsWith('/api/superpi/') ? pathname.slice('/api/superpi/'.length) : ''
     // …派发 method，写回 writeJson(res, 200, { ok: true, value })
   },
-}), 'dsh-pi: api')
+}), 'superpi: api')
 ```
 
 客户端侧（`client.js`，不传 `credentials`、不拼前导斜杠）：
 
 ```js
 const API = (() => {
-  try { return new URL('api/dsh-pi/', document.baseURI).pathname } catch { return '/api/dsh-pi/' }
+  try { return new URL('api/superpi/', document.baseURI).pathname } catch { return '/api/superpi/' }
 })()
 
 async function call(method, payload, signal) {

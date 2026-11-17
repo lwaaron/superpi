@@ -106,7 +106,7 @@ eq('非数组输入返回空数组', groupSessionsByProject(null, {}), [])
 
 // ── 5. listAllSessions / listSessions：扫全部项目 vs 单项目 ───────────────────
 // 造一棵符合 pi 目录约定的假 sessions 树：<agentDir>/sessions/<slug>/<file>.jsonl
-const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-pi-projects-'))
+const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'superpi-projects-'))
 const agentDir = path.join(tmpRoot, 'agent')
 const sessionsRoot = path.join(agentDir, 'sessions')
 

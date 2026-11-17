@@ -1,13 +1,13 @@
 @echo off
 setlocal EnableExtensions
 chcp 65001
-title dsh-pi one-click start
+title superpi one-click start
 cd /d "%~dp0.."
 
 rem ======================================================================
-rem  dsh-pi : one-click start (tools entry)
+rem  superpi : one-click start (tools entry)
 rem
-rem  Starts a standalone dsh-pi instance (does not touch the desktop profile)
+rem  Starts a standalone superpi instance (does not touch the desktop profile)
 rem  and prints the api url when it is ready.
 rem  First run installs dependencies (network needed, a few minutes).
 rem  Later runs reuse the install and start in seconds.

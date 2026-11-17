@@ -21,7 +21,7 @@ walk(json, '');
 console.log('dataBase', dataBase, 'entries', entries.length);
 const wanted = entries.filter(e => /@deepseek-ai\/dsh-client-ui-sidebar(-files|-documentpreview)?\//.test(e.p) && /\.js$/.test(e.p));
 console.log(wanted.map(e => e.p + ' ' + e.size).join('\n'));
-const outDir = 'C:/Users/PC/Documents/pi-local/dsh-pi/research/sidebar-pkgs';
+const outDir = 'C:/Users/PC/Documents/pi-local/superpi/research/sidebar-pkgs';
 fs.mkdirSync(outDir, { recursive: true });
 for (const e of wanted) {
   const start = dataBase + e.offset;

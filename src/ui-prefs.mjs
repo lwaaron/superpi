@@ -31,9 +31,9 @@ import path from 'node:path'
 /** 落盘结构版本号。将来改结构时靠它做迁移，不靠猜。 */
 export const UI_PREFS_VERSION = 1
 /** 覆盖落盘路径的环境变量名（测试与多套配置共存时用）。 */
-export const UI_PREFS_ENV = 'DSH_PI_UI_PREFS'
-/** 默认目录名与文件名（<home>/.dsh-pi/ui-prefs.json）。 */
-export const UI_PREFS_DIR_NAME = '.dsh-pi'
+export const UI_PREFS_ENV = 'SUPERPI_UI_PREFS'
+/** 默认目录名与文件名（<home>/.superpi/ui-prefs.json）。 */
+export const UI_PREFS_DIR_NAME = '.superpi'
 export const UI_PREFS_FILE_NAME = 'ui-prefs.json'
 /** 项目显示名的长度上限：再长在面板里也只会被截断，且能挡住把文件撑大的输入。 */
 export const MAX_PROJECT_NAME_LENGTH = 120
@@ -149,7 +149,7 @@ export function normalizeUiPrefs(raw, { now = nowIso() } = {}) {
 }
 
 /**
- * 落盘路径：环境变量 DSH_PI_UI_PREFS 优先，否则 <home>/.dsh-pi/ui-prefs.json。
+ * 落盘路径：环境变量 SUPERPI_UI_PREFS 优先，否则 <home>/.superpi/ui-prefs.json。
  *
  * 不写死任何本机绝对路径：插件会被装到别人的机器上，路径只能由 home / 环境变量算出来。
  * 环境变量给相对路径时按进程 cwd 解析（与 repo 里其它路径参数同一套语义）。

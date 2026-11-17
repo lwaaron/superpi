@@ -1,4 +1,4 @@
-# dsh-pi
+# SuperPi
 
 把 [pi](https://github.com/lwaaron/pi) 作为 DSH 的侧栏面板接进来：左侧栏「pi」入口，主区一整页聊天界面，背后是一个常驻的 `pi --mode rpc` 子进程。
 
@@ -79,7 +79,7 @@ assets/icon.svg       插件图标
 首次运行装一次依赖（约几分钟，需联网），之后**直接复用、秒起**；不碰桌面 profile，不影响你正在用的 DSH。
 
 - 端口默认 **25117**，刻意选了罕见值，避开 3000 / 5173 / 8080 这类被开发工具占满的区间。
-- 起完会打印 `api -> http://127.0.0.1:25117/api/dsh-pi`。**面板是 DSH 的侧栏 slot，没有独立的 `/dsh-pi` 网页入口**；要看界面就把这个 profile 接进 DSH 客户端，或用任意 HTTP 客户端打上面这组免 token 接口（`/health`、`/state`、`/sessions`…）。实例的 web 根路径由宿主鉴权层保护，无 token 直接 401 属于预期。
+- 起完会打印 `api -> http://127.0.0.1:25117/api/superpi`。**面板是 DSH 的侧栏 slot，没有独立的 `/superpi` 网页入口**；要看界面就把这个 profile 接进 DSH 客户端，或用任意 HTTP 客户端打上面这组免 token 接口（`/health`、`/state`、`/sessions`…）。实例的 web 根路径由宿主鉴权层保护，无 token 直接 401 属于预期。
 - 已装版本与仓库 `package.json` 版本不一致时自动重装，避免面板跑旧代码。
 - 全部路径从脚本自身位置推导，**换目录、换盘符都不用改脚本**。
 
@@ -95,11 +95,11 @@ pwsh -NoProfile -File .\tools\install-plugin.ps1 -Profile desktop
 
 **必须由包管理器落地，不能手工往 node_modules 里塞副本。** DSH 的插件管理器运行时会跑 pnpm；只要 `package.json` 与 `pnpm-lock.yaml` 对不上，或者 `node_modules/.modules.yaml` 不认识这个包，pnpm 就会把手放的目录当孤儿清掉。脚本因此把三份状态交给 pnpm 一次写一致：
 
-1. `npm pack` 出 `dsh-pi-<ver>.tgz`；
-2. 装到 `%TEMP%\dsh-pi-stage-*`，用**装出来的那份**跑一遍真实 LLM 往返（`test/packed-smoke.mjs`），失败则 profile 一动不动；
-3. tarball 收进 `<profile>\.dsh-local-packages\`，备份 `package.json` / `pnpm-lock.yaml` / 现有 `node_modules\dsh-pi`；
+1. `npm pack` 出 `superpi-<ver>.tgz`；
+2. 装到 `%TEMP%\superpi-stage-*`，用**装出来的那份**跑一遍真实 LLM 往返（`test/packed-smoke.mjs`），失败则 profile 一动不动；
+3. tarball 收进 `<profile>\.dsh-local-packages\`，备份 `package.json` / `pnpm-lock.yaml` / 现有 `node_modules\superpi`；
 4. 用 **DSH 自带的 pnpm** 执行 `add file:<tarball>` —— manifest、lock、node_modules 由 pnpm 一次写一致，`optionalDependencies` 里的 pi 运行时随之落进 profile；
-5. 校验五件事：manifest 的 `dsh-pi` 是 `file:` 依赖、lock 里有 `dsh-pi` 与 `pi-coding-agent`、`node_modules/dsh-pi/index.js` 存在、`.modules.yaml` 认识 `dsh-pi`、**装出来的副本与 tarball 逐字节一致**；任一项不满足即报失败并给回滚命令；
+5. 校验五件事：manifest 的 `superpi` 是 `file:` 依赖、lock 里有 `superpi` 与 `pi-coding-agent`、`node_modules/superpi/index.js` 存在、`.modules.yaml` 认识 `superpi`、**装出来的副本与 tarball 逐字节一致**；任一项不满足即报失败并给回滚命令；
 6. 用 profile 里那份副本再跑一遍真实 LLM 往返；
 
 > 第 5 项里的字节比对不是洁癖：pnpm 对 `file:` 依赖按 lock 里的 integrity 复用 store，**版本号没变但内容变了时，它会把旧内容装回来并且 exit=0**。这时 tarball、manifest、lock 三者自洽，唯独 node_modules 里是旧代码 —— 只能靠内容比对拦住。所以改完代码必须同时升 `version`。
@@ -109,7 +109,7 @@ PATH 上的 `pnpm.ps1` 通常是 corepack shim，直接调用会报 `Cannot find
 
 **装完要重启 DSH 才生效**（插件在 import 时就把代码快照进内存了）。不想保留时运行脚本打印出来的 `rollback-<时间戳>.ps1` 即可原样退回。
 
-重启这一步有现成脚本：它**按原命令行原样重启**（下面「重启分支做对了什么」讲为什么不是 `Start-Process $exe`）、等 `/api/dsh-pi/health` 就绪，再拿运行中 `/state` 报的版本与**该实例自己加载的那份** `package.json` 对比，不一致就 `exit 2`，并把两种成因分开写清楚（磁盘刚装新版本而宿主没重启 / 重启了但旧进程没退干净）。
+重启这一步有现成脚本：它**按原命令行原样重启**（下面「重启分支做对了什么」讲为什么不是 `Start-Process $exe`）、等 `/api/superpi/health` 就绪，再拿运行中 `/state` 报的版本与**该实例自己加载的那份** `package.json` 对比，不一致就 `exit 2`，并把两种成因分开写清楚（磁盘刚装新版本而宿主没重启 / 重启了但旧进程没退干净）。
 
 **最省事的用法：双击 `tools\restart-dsh.bat`**（Windows 上不需要先装 PowerShell 7，见下面「PowerShell 版本」）：
 
@@ -137,9 +137,9 @@ pwsh -NoProfile -File .\tools\restart-dsh.ps1 -Port 5783 -Plan  # 不动任何�
 ```text
 dsh exe = C:\Users\PC\AppData\Local\Programs\DeepSeek Runtime\DeepSeek Runtime.exe
 profile = C:\Users\PC\.dsh\profiles\desktop
-api base = http://127.0.0.1:5783/api/dsh-pi  (匹配依据：profile 归属 C:\Users\PC\.dsh\profiles\desktop)
-本机其它 dsh-pi 实例（不参与本次核对）：
-  port 5599  version 0.4.2  pid 22884  root ...\_probe\dsh-home-standalone\profiles\pi-standalone\node_modules\dsh-pi
+api base = http://127.0.0.1:5783/api/superpi  (匹配依据：profile 归属 C:\Users\PC\.dsh\profiles\desktop)
+本机其它 superpi 实例（不参与本次核对）：
+  port 5599  version 0.4.2  pid 22884  root ...\_probe\dsh-home-standalone\profiles\pi-standalone\node_modules\superpi
 OK: 运行中的插件版本与磁盘一致
 ```
 
@@ -158,13 +158,13 @@ pwsh -NoProfile -File .\tools\restart-dsh.ps1 -SkipRestart `
 
 1. **命令行原样复用。** 桌面实例的宿主命令行带 6 个参数（`--expose-internals`、desktop-host 的 `index.js`、app.asar 里的 `dsh` 目录、profile 目录、`primary-runtime`、`pnpm.mjs`、`runtime\bin`）。旧实现是 `Start-Process -FilePath $exe` —— 一个参数都不带，等于换个东西启动。现在从实例 pid 沿父链找**启动根**，把启动根的命令行原文直接交给子进程（`ProcessStartInfo.Arguments`，引号一个字节不动）；拿不到命令行就拒绝重启，不猜。
 2. **杀的是启动根，不是宿主 pid。** `/selfcheck` 自报的 `process.pid` 在桌面实例里是 GUI 主进程的子进程 —— 杀了它没人负责重新拉起，窗口还在、面板起不来。现在杀启动根，由它把整棵树重新拉起来。
-3. **环境变量按目标实例重算。** 从 DSH 的集成终端或工具里跑时，环境里带 `ELECTRON_RUN_AS_NODE=1`（GUI 会被当纯 node 起，窗口根本不出现），以及别处残留的 `DSH_HOME` / `DSH_PROFILE` / `DSH_PORT`，会把实例顶到错误的 home。现在按目标实例 `/selfcheck` 报的 `root` 反推 `DSH_HOME`（形如 `<home>\profiles\<name>\node_modules\dsh-pi`），`ELECTRON_RUN_AS_NODE` 只在命令行确实是「跑一个 .js」时才设，`DSH_PORT` 一律清掉；反推不出来 `exit 3`。要覆盖用 `-DshHome` / `-WorkingDirectory`。
+3. **环境变量按目标实例重算。** 从 DSH 的集成终端或工具里跑时，环境里带 `ELECTRON_RUN_AS_NODE=1`（GUI 会被当纯 node 起，窗口根本不出现），以及别处残留的 `DSH_HOME` / `DSH_PROFILE` / `DSH_PORT`，会把实例顶到错误的 home。现在按目标实例 `/selfcheck` 报的 `root` 反推 `DSH_HOME`（形如 `<home>\profiles\<name>\node_modules\superpi`），`ELECTRON_RUN_AS_NODE` 只在命令行确实是「跑一个 .js」时才设，`DSH_PORT` 一律清掉；反推不出来 `exit 3`。要覆盖用 `-DshHome` / `-WorkingDirectory`。
 
 `-Plan` 打印的就是这三项的最终决定，先看它再真跑：
 
 ```text
 profile = C:\Users\PC\.dsh\profiles\desktop
-api base = http://127.0.0.1:5783/api/dsh-pi  (匹配依据：指定端口 5783)
+api base = http://127.0.0.1:5783/api/superpi  (匹配依据：指定端口 5783)
 重启计划：
   实例 pid     = 15188（/selfcheck 自报，或端口占用者）
   启动根 pid   = 28720
@@ -206,16 +206,16 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\fix-bom.ps1               
 
 ```powershell
 New-Item -ItemType Junction `
-  -Path   "$env:USERPROFILE\.dsh\profiles\desktop\node_modules\dsh-pi" `
-  -Target "C:\path\to\dsh-pi"
+  -Path   "$env:USERPROFILE\.dsh\profiles\desktop\node_modules\superpi" `
+  -Target "C:\path\to\superpi"
 ```
 
 并在 `%USERPROFILE%\.dsh\profiles\desktop\cordis.patch.yml` 末尾加：
 
 ```yaml
 - insert:
-    - id: dsh-pi
-      name: dsh-pi
+    - id: superpi
+      name: superpi
       config: {}
 ```
 
@@ -224,10 +224,10 @@ New-Item -ItemType Junction `
 ### 方式三：手工 pnpm add（不想跑脚本时）
 
 ```powershell
-npm pack                                        # 得到 dsh-pi-0.8.4.tgz
+npm pack                                        # 得到 superpi-0.9.0.tgz
 cd "$env:USERPROFILE\.dsh\profiles\desktop"
 node "$env:USERPROFILE\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\pnpm\bin\pnpm.cjs" `
-  add "file:C:\path\to\dsh-pi-0.8.4.tgz" --ignore-scripts
+  add "file:C:\path\to\superpi-0.9.0.tgz" --ignore-scripts
 ```
 
 不要在 profile 里用 `npm install`：npm 会另写一份 `package-lock.json`，而宿主插件管理器用的是 pnpm，两套锁文件互相看不见，下次插件安装就会把 node_modules 重建成 pnpm 理解的样子。
@@ -237,14 +237,14 @@ node "$env:USERPROFILE\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\pnpm\b
 装完核对（三条都要有输出）：
 
 ```powershell
-Select-String -LiteralPath pnpm-lock.yaml -Pattern '^\s+dsh-pi:$'          # lock 认识它
-Test-Path node_modules\dsh-pi\index.js                                     # 代码在
-Select-String -LiteralPath node_modules\.modules.yaml -Pattern 'dsh-pi'    # pnpm 认识它
+Select-String -LiteralPath pnpm-lock.yaml -Pattern '^\s+superpi:$'          # lock 认识它
+Test-Path node_modules\superpi\index.js                                     # 代码在
+Select-String -LiteralPath node_modules\.modules.yaml -Pattern 'superpi'    # pnpm 认识它
 ```
 
 ### 方式四：独立运行验证（全新 DSH_HOME，不动现有 profile）
 
-想知道「这东西真的能独立跑吗」，用这个脚本自证。它在你没碰过的临时 `DSH_HOME` 里从零搭一个 profile，只装 dsh-pi，启动、开会话、跑一轮真实 LLM 往返，然后全部删掉：
+想知道「这东西真的能独立跑吗」，用这个脚本自证。它在你没碰过的临时 `DSH_HOME` 里从零搭一个 profile，只装 superpi，启动、开会话、跑一轮真实 LLM 往返，然后全部删掉：
 
 ```powershell
 pwsh -NoProfile -File .\tools\standalone-verify.ps1            # 默认 25119 端口
@@ -254,7 +254,7 @@ pwsh -NoProfile -File .\tools\standalone-verify.ps1 -Keep      # 保留临时目
 它做的每一步都可核对：
 
 1. `npm pack` 出 tarball（已有同版本 tarball 则复用）；
-2. 建 `%TEMP%\dsh-pi-standalone-<6hex>\profiles\pi-standalone`，四份配置文件：`package.json`（bundles 只留 `@deepseek-ai/dsh-base` + `@deepseek-ai/dsh-web-app`）、`cordis.yml`（空列表）、`pnpm-workspace.yaml`（`nodeLinker: hoisted`）、`cordis.patch.yml`（唯一的 insert 就是 dsh-pi）；
+2. 建 `%TEMP%\superpi-standalone-<6hex>\profiles\pi-standalone`，四份配置文件：`package.json`（bundles 只留 `@deepseek-ai/dsh-base` + `@deepseek-ai/dsh-web-app`）、`cordis.yml`（空列表）、`pnpm-workspace.yaml`（`nodeLinker: hoisted`）、`cordis.patch.yml`（唯一的 insert 就是 superpi）；
 3. 用 **DSH 自带的 pnpm** 把 tarball 装进这个 profile —— pi 运行时作为 `optionalDependency` 被提升进来；
 4. 用 **DSH 自己的 Electron 二进制**当 node 启动这个 profile 的 web 服务（`ELECTRON_RUN_AS_NODE=1`，独立端口）；
 5. 打 `/health` → `/state` → `POST /sessions` → `get_state` → prompt「只说两个字：独立」→ 轮询 `snapshot` 等到 `agent_settled` → `DELETE`；
@@ -266,11 +266,11 @@ pwsh -NoProfile -File .\tools\standalone-verify.ps1 -Keep      # 保留临时目
 [standalone] health    = ok (boot 3102 ms)
 [standalone] plugin    = 0.4.2 (installed 0.4.2)
 [standalone] pi source = walk-up 1.5.2
-[standalone] pi cli    = ...\Temp\dsh-pi-standalone-802b49\profiles\pi-standalone\node_modules\@earendil-works\pi-coding-agent\dist\bundle\cli.js
+[standalone] pi cli    = ...\Temp\superpi-standalone-802b49\profiles\pi-standalone\node_modules\@earendil-works\pi-coding-agent\dist\bundle\cli.js
 [standalone] model     = Deepseek-V4.1-Flash / odys-deepseek
 [standalone] session   = d6406878-cc2f-4726-9a5b-fd5c51fac9fa pid=10036
 [standalone] assistant = '独立' (2595 ms)
-[standalone] PASS - dsh-pi runs standalone in a fresh DSH_HOME
+[standalone] PASS - superpi runs standalone in a fresh DSH_HOME
 ```
 
 两条容易踩的：
@@ -297,7 +297,7 @@ pwsh -NoProfile -File .\tools\standalone-verify.ps1 -Keep      # 保留临时目
 
 node 可执行文件的解析同理：`config.nodePath` → `PI_NODE_PATH` → `PATH` 上的 `node.exe` / `node` → 宿主自身 `process.execPath`（最后这条会置 `ELECTRON_RUN_AS_NODE=1`，否则 Electron 宿主里起的子进程解析失败且日志为空）。
 
-一个都找不到时，面板整页变成引导：一句「还没装 pi 运行时」+「一键安装 pi」按钮 + 已搜索位置清单（`✓/✗ source · path`）。按钮打的是 `POST /api/dsh-pi/runtime/install`，内部执行：
+一个都找不到时，面板整页变成引导：一句「还没装 pi 运行时」+「一键安装 pi」按钮 + 已搜索位置清单（`✓/✗ source · path`）。按钮打的是 `POST /api/superpi/runtime/install`，内部执行：
 
 ```
 npm install --prefix <插件>/.runtime --save-exact --no-audit --no-fund --loglevel=error @earendil-works/pi-coding-agent@1.5.2
@@ -333,30 +333,30 @@ npm install --prefix <插件>/.runtime --save-exact --no-audit --no-fund --logle
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| GET | `/api/dsh-pi/state` 或 `/api/dsh-pi/` | `{version, apiPrefix, resolved, runtime, limits, sessions}`；`resolved` 是 node/pi 的解析结果，`sessions` 是当前所有会话的无事件快照 |
-| GET | `/api/dsh-pi/health` | `{ok, version}`，不碰磁盘也不碰子进程 |
-| GET | `/api/dsh-pi/selfcheck` | 自检：内存中加载的代码 vs 磁盘上的代码、pi 构建新鲜度；宿主没注入自检能力时回 501 |
-| GET | `/api/dsh-pi/diagnostics` | `plugin`（id/version/root/apiPrefix/pid/node/execPath）+ `runtime` + `selfcheck`，排障先看这个 |
-| GET | `/api/dsh-pi/runtime` | 运行时解析报告（`ok` / `source` / `cliPath` / `searched` / `install`） |
-| POST | `/api/dsh-pi/runtime/refresh` | 重新解析（手工装好 pi 后不必重启 DSH） |
-| POST | `/api/dsh-pi/runtime/install` | 一键安装 pi 到 `.runtime`（幂等，并发只跑一次）；失败回 500 |
-| GET | `/api/dsh-pi/contract` | RPC 契约原文：`version` / `piVersion` / `rpcCommands`(33) / `events`(25) / `assistantEvents`(12) / `tuiCommands`(27) / `bashShortcuts`(2)，逐字段原样下发 |
-| GET | `/api/dsh-pi/sessions/history?scope=&cwd=&limit=` | 历史会话列表（扫 `~/.pi/agent/sessions`）。`scope=all` 列**全部项目**并额外返回 `projects` 聚合数组；`scope=project`（或只给 `cwd`）只列该项目；两者都不给时按有没有 `cwd` 推断，**不再回落成插件 workspace**（0.4.2 及之前空 `cwd` 会回落，等于面板只能看见一个目录 —— 「历史会话只显示一条」的根因）。`limit` 默认 20、上限 200；宿主没注入时回 501 |
-| GET | `/api/dsh-pi/files?dir=&query=&limit=` | 只读列目录，给 @ 补全与「插入路径」用（RPC 协议没有 fs 能力）；`limit` 默认 50、上限 200；目录不存在回 404 |
-| GET | `/api/dsh-pi/file?path=` | 读单个文件给预览用（面板内 `FileSheet` 回落时用）。返回 `{ok,path,name,dir,size,mtime,kind,mimeType,text?,data?,truncated}`；`kind` = `text`（≤512 KiB，超出截断并置 `truncated`）/ `image`（≤8 MiB，`data` 是 base64）/ `binary`（前 8 KiB 出现 NUL，或图片超出体积上限）；`path` 支持 `~`、`%VAR%` 与相对工作区。目录回 400 `not a file`、不存在回 404 `no such file` |
-| POST | `/api/dsh-pi/reveal` | 在系统文件管理器里定位文件（助手回复里文件标签的右键菜单）：body `{path}`，Windows 走 `explorer.exe /select,<文件>`（macOS `open -R`、其它 `xdg-open` 父目录），回 `{ok:true,path}`。缺 `path` → 400 `path required`，目标不存在 → 404 `no such file`。只等 `spawn` 不等退出码 —— explorer 常把命令转交给已有实例后以非 0 退出 |
-| GET | `/api/dsh-pi/pi/changelog` | 读 pi 包内的 `CHANGELOG.md`（上限 200 KiB）；找不到也回 200 |
-| POST | `/api/dsh-pi/sessions` | 新建会话，body 可带 `cwd` / `label` / `args` |
-| GET | `/api/dsh-pi/sessions/:id` | 单个会话快照（不含事件数组，含 `pendingUi`） |
-| DELETE | `/api/dsh-pi/sessions/:id` | 关闭会话（先关 stdin 再超时 kill） |
-| GET | `/api/dsh-pi/sessions/:id/events?since=N` | SSE 事件流，15s 心跳注释帧 |
-| GET | `/api/dsh-pi/sessions/:id/snapshot?since=N` | 增量快照（重连补数据用），带本轮未应答的 `pendingUi` |
-| POST | `/api/dsh-pi/sessions/:id/command` | 转发一条 pi RPC 命令，body 必须是带 `type` 的 JSON 对象；`new_session` / `switch_session` / `fork` / `clone` 成功后清空事件缓冲并回填会话身份 |
-| POST | `/api/dsh-pi/sessions/:id/respond` | 应答扩展 UI 请求（`{id, value}` / `{id, confirmed}` / `{id, cancelled}` 三选一） |
-| POST | `/api/dsh-pi/sessions/:id/reset` | 清空该会话的事件缓冲，返回新的 `eventSeq` |
-| GET | `/api/dsh-pi/ui-prefs` | 面板偏好（项目显示名 / 会话显示名 / 置顶）的只读快照 `{version, updatedAt, projects, sessions}`；文件还不存在也照常回 200 与空结构；宿主没注入时回 501 |
-| POST | `/api/dsh-pi/ui-prefs/project` | body `{key, name}`：`key` 是项目路径、`name` 是显示名（自动 trim，空串 = 删除覆盖，上限 120 字）。未知键一个都不落盘（白名单），非法值回 400 |
-| POST | `/api/dsh-pi/ui-prefs/session` | body `{path, name?, pinned?}`：**合并式补丁** —— 只给 `name` 不会凭空置顶，只给 `pinned` 不会清掉已有名字；`pinned:false` 删除该条。`path` 上限 4096，非法值回 400 |
+| GET | `/api/superpi/state` 或 `/api/superpi/` | `{version, apiPrefix, resolved, runtime, limits, sessions}`；`resolved` 是 node/pi 的解析结果，`sessions` 是当前所有会话的无事件快照 |
+| GET | `/api/superpi/health` | `{ok, version}`，不碰磁盘也不碰子进程 |
+| GET | `/api/superpi/selfcheck` | 自检：内存中加载的代码 vs 磁盘上的代码、pi 构建新鲜度；宿主没注入自检能力时回 501 |
+| GET | `/api/superpi/diagnostics` | `plugin`（id/version/root/apiPrefix/pid/node/execPath）+ `runtime` + `selfcheck`，排障先看这个 |
+| GET | `/api/superpi/runtime` | 运行时解析报告（`ok` / `source` / `cliPath` / `searched` / `install`） |
+| POST | `/api/superpi/runtime/refresh` | 重新解析（手工装好 pi 后不必重启 DSH） |
+| POST | `/api/superpi/runtime/install` | 一键安装 pi 到 `.runtime`（幂等，并发只跑一次）；失败回 500 |
+| GET | `/api/superpi/contract` | RPC 契约原文：`version` / `piVersion` / `rpcCommands`(33) / `events`(25) / `assistantEvents`(12) / `tuiCommands`(27) / `bashShortcuts`(2)，逐字段原样下发 |
+| GET | `/api/superpi/sessions/history?scope=&cwd=&limit=` | 历史会话列表（扫 `~/.pi/agent/sessions`）。`scope=all` 列**全部项目**并额外返回 `projects` 聚合数组；`scope=project`（或只给 `cwd`）只列该项目；两者都不给时按有没有 `cwd` 推断，**不再回落成插件 workspace**（0.4.2 及之前空 `cwd` 会回落，等于面板只能看见一个目录 —— 「历史会话只显示一条」的根因）。`limit` 默认 20、上限 200；宿主没注入时回 501 |
+| GET | `/api/superpi/files?dir=&query=&limit=` | 只读列目录，给 @ 补全与「插入路径」用（RPC 协议没有 fs 能力）；`limit` 默认 50、上限 200；目录不存在回 404 |
+| GET | `/api/superpi/file?path=` | 读单个文件给预览用（面板内 `FileSheet` 回落时用）。返回 `{ok,path,name,dir,size,mtime,kind,mimeType,text?,data?,truncated}`；`kind` = `text`（≤512 KiB，超出截断并置 `truncated`）/ `image`（≤8 MiB，`data` 是 base64）/ `binary`（前 8 KiB 出现 NUL，或图片超出体积上限）；`path` 支持 `~`、`%VAR%` 与相对工作区。目录回 400 `not a file`、不存在回 404 `no such file` |
+| POST | `/api/superpi/reveal` | 在系统文件管理器里定位文件（助手回复里文件标签的右键菜单）：body `{path}`，Windows 走 `explorer.exe /select,<文件>`（macOS `open -R`、其它 `xdg-open` 父目录），回 `{ok:true,path}`。缺 `path` → 400 `path required`，目标不存在 → 404 `no such file`。只等 `spawn` 不等退出码 —— explorer 常把命令转交给已有实例后以非 0 退出 |
+| GET | `/api/superpi/pi/changelog` | 读 pi 包内的 `CHANGELOG.md`（上限 200 KiB）；找不到也回 200 |
+| POST | `/api/superpi/sessions` | 新建会话，body 可带 `cwd` / `label` / `args` |
+| GET | `/api/superpi/sessions/:id` | 单个会话快照（不含事件数组，含 `pendingUi`） |
+| DELETE | `/api/superpi/sessions/:id` | 关闭会话（先关 stdin 再超时 kill） |
+| GET | `/api/superpi/sessions/:id/events?since=N` | SSE 事件流，15s 心跳注释帧 |
+| GET | `/api/superpi/sessions/:id/snapshot?since=N` | 增量快照（重连补数据用），带本轮未应答的 `pendingUi` |
+| POST | `/api/superpi/sessions/:id/command` | 转发一条 pi RPC 命令，body 必须是带 `type` 的 JSON 对象；`new_session` / `switch_session` / `fork` / `clone` 成功后清空事件缓冲并回填会话身份 |
+| POST | `/api/superpi/sessions/:id/respond` | 应答扩展 UI 请求（`{id, value}` / `{id, confirmed}` / `{id, cancelled}` 三选一） |
+| POST | `/api/superpi/sessions/:id/reset` | 清空该会话的事件缓冲，返回新的 `eventSeq` |
+| GET | `/api/superpi/ui-prefs` | 面板偏好（项目显示名 / 会话显示名 / 置顶）的只读快照 `{version, updatedAt, projects, sessions}`；文件还不存在也照常回 200 与空结构；宿主没注入时回 501 |
+| POST | `/api/superpi/ui-prefs/project` | body `{key, name}`：`key` 是项目路径、`name` 是显示名（自动 trim，空串 = 删除覆盖，上限 120 字）。未知键一个都不落盘（白名单），非法值回 400 |
+| POST | `/api/superpi/ui-prefs/session` | body `{path, name?, pinned?}`：**合并式补丁** —— 只给 `name` 不会凭空置顶，只给 `pinned` 不会清掉已有名字；`pinned:false` 删除该条。`path` 上限 4096，非法值回 400 |
 
 `/sessions/history` 必须排在会话 id 正则 `^/sessions/([^/]+)` **之前**处理，否则 `history` 会被当成会话 id 走进 `requireSession` 拿 404。
 
@@ -370,9 +370,9 @@ npm install --prefix <插件>/.runtime --save-exact --no-audit --no-fund --logle
 - composer 键位与 TUI 的 `keybindings.ts` 对齐：`Enter` 发送、`Shift+Enter` 换行、`Esc` 打断、`Ctrl+P` 下一个模型（`cycle_model`，只正循环）、`Shift+Tab` 切思考档位（`cycle_thinking_level`）、`Alt+Enter` 追加一条 follow-up（`follow_up`）、`Alt+Q` 取回排队中的消息（`clear_queue`）。输入 `/` 弹命令菜单、输入 `@` 弹文件补全（`GET /files`，选中只插入路径文本）。
 - 发送语义随状态变：**空闲时**发 `prompt`；**正在跑时**再发，走 `prompt` + `streamingBehavior: "steer"`（插到当前回合里，不停机）；`Alt+Enter` 才是 `follow_up`（等本轮结束再发）。`/` 开头的 follow-up 仍走 `prompt` + `streamingBehavior: "followUp"` —— 因为 `follow_up` 会按扩展命令规则打回，和 TUI 里 `prompt()` 的行为不一致。
 - `Esc` 按当前状态分四路：重试倒计时中 → `abort_retry`；bash 在跑 → `abort_bash`；空闲 → `abort`；正在跑 → **先 `clear_queue` 把排队文本取回来填进编辑器**，再 `abort`（直接 abort 会让仍留在队列里的消息继续执行，等于没停）。
-- 思考档位（`get_available_thinking_levels` → `set_thinking_level`）与模型（`get_available_models` → `set_model`）共用一个**向上弹层**（`ModelPicker`，`.dsh-pi-picker-menu` 定位在按钮上沿），都在**输入卡的行内左侧**，与宿主主对话区同位置 —— 它们决定「下一条怎么发」，属 composer 语义，不在顶栏；弹层分「切换模型」「思考档位」两段，当前项 `role=menuitemradio` + `aria-checked` 标记，Esc 或点外面关闭。连接状态用圆点表示（ready / busy / dead）。
+- 思考档位（`get_available_thinking_levels` → `set_thinking_level`）与模型（`get_available_models` → `set_model`）共用一个**向上弹层**（`ModelPicker`，`.superpi-picker-menu` 定位在按钮上沿），都在**输入卡的行内左侧**，与宿主主对话区同位置 —— 它们决定「下一条怎么发」，属 composer 语义，不在顶栏；弹层分「切换模型」「思考档位」两段，当前项 `role=menuitemradio` + `aria-checked` 标记，Esc 或点外面关闭。连接状态用圆点表示（ready / busy / dead）。
 - **输入区按宿主主对话区重做（0.6.2 / 0.6.3 补首次填充）**：卡面 `--dsw-radius-panel` 28px + `--dsw-specific-input-major` + `--dsw-elevation-soft`，行内左侧「28px 圆形 `+` + 模型 picker + 推理档位 picker」，右侧「34px 圆形发送键（空闲 `ArrowUpIcon` / 运行中同位 `StopSquareIcon`）」。`+` 弹分组菜单（添加 / 指令），条目只映射面板真实能力。卡下方是统计行：`N 轮 · N 步 · N tok · 缓存命中 N% · 上下文 N%`，数据来自 `get_session_stats`（缓存命中 = `cacheRead/(input+cacheRead+cacheWrite)`，与 pi TUI footer 同公式；tok/s 无可靠来源故不显示），在 `attach` / `reload` / `agent_settled` 三处刷新。
-- **过程行按 DSH 会话过程流重做（0.6.4）**：思考 = 父行 `details.dsh-pi-proc` > `summary.dsh-pi-proc-head`（16px 图标 + 灰标签 + 2×2 中点 + 首行省略摘要，全文在展开区）；工具调用 = 父行下面的子行组 `div.dsh-pi-sub`（`margin-left:26px` 让左侧 1px 竖线落在父行 label 左缘、`padding-left:12px` 让子行图标距竖线 12；0.8.0 起子行行盒与父行同为 24px、组内 `gap:8px`，子行步长 32 与父行同节奏 —— 中途曾把子行压到 16px 行盒 + gap 0，行距只剩父行一半，看着像被挤扁，已被推翻），正文与图片把过程流切段、之后重新起组。**一次调用 = 一行**：`toolResult` 消息按 `toolCallId` 归并进对应调用行的展开区（`── output ──`），孤儿结果仍单独渲染；`── live ──` 段只在 `status === 'running'` 时出现（跑完后它与 output 是同一件事，两段都印等于写两遍 —— 首次实拍就撞上了）。行内词汇全部取自 DSH 官方标题表（思考 / 运行命令 / 读取 / 读取图片 / 写入 / 编辑 / 搜索文件内容 / 查找文件 / 浏览目录 / 工具调用），未知工具兜底「工具调用 · <工具名>」，`read` 命中图片扩展名自动切「读取图片」；图标按工具名静态映射，不按参数猜。整段文字色取 `label-tertiary`（目标图逐像素实测 `rgb(129,133,140)`，`label-secondary` 明显偏深）。末尾工作状态行照抄 DSH `RunningStatus`：`.5px` 上 hairline + 16 网格鲸鱼尾 + `--dsw-alias-label-deep-diving` 蓝字（#345EBA，目标是「正在深度求索」而不是一条灰注释）+ 「深度求索中，用时 X分Y秒 ···」（单位之间无空格）（三个中点，与 DSH `chat.deepDivingFor` 同字），字号 `calc(var(--dsh-content-font-size,14px) - 2px)`、行高 22px 也照 DSH `.running`；时长按 `formatRunDuration` 三段拆（小时 / 分 / 秒，只有 hours>0 才出小时），计时器挂在节点自身（1Hz，不放面板级 repaint，否则每帧只为刷一行字就重算上百行流式 markdown），另配 `role=status` + `aria-live=polite` 只播报不带秒数的「深度求索中」。
+- **过程行按 DSH 会话过程流重做（0.6.4）**：思考 = 父行 `details.superpi-proc` > `summary.superpi-proc-head`（16px 图标 + 灰标签 + 2×2 中点 + 首行省略摘要，全文在展开区）；工具调用 = 父行下面的子行组 `div.superpi-sub`（`margin-left:26px` 让左侧 1px 竖线落在父行 label 左缘、`padding-left:12px` 让子行图标距竖线 12；0.8.0 起子行行盒与父行同为 24px、组内 `gap:8px`，子行步长 32 与父行同节奏 —— 中途曾把子行压到 16px 行盒 + gap 0，行距只剩父行一半，看着像被挤扁，已被推翻），正文与图片把过程流切段、之后重新起组。**一次调用 = 一行**：`toolResult` 消息按 `toolCallId` 归并进对应调用行的展开区（`── output ──`），孤儿结果仍单独渲染；`── live ──` 段只在 `status === 'running'` 时出现（跑完后它与 output 是同一件事，两段都印等于写两遍 —— 首次实拍就撞上了）。行内词汇全部取自 DSH 官方标题表（思考 / 运行命令 / 读取 / 读取图片 / 写入 / 编辑 / 搜索文件内容 / 查找文件 / 浏览目录 / 工具调用），未知工具兜底「工具调用 · <工具名>」，`read` 命中图片扩展名自动切「读取图片」；图标按工具名静态映射，不按参数猜。整段文字色取 `label-tertiary`（目标图逐像素实测 `rgb(129,133,140)`，`label-secondary` 明显偏深）。末尾工作状态行照抄 DSH `RunningStatus`：`.5px` 上 hairline + 16 网格鲸鱼尾 + `--dsw-alias-label-deep-diving` 蓝字（#345EBA，目标是「正在深度求索」而不是一条灰注释）+ 「深度求索中，用时 X分Y秒 ···」（单位之间无空格）（三个中点，与 DSH `chat.deepDivingFor` 同字），字号 `calc(var(--dsh-content-font-size,14px) - 2px)`、行高 22px 也照 DSH `.running`；时长按 `formatRunDuration` 三段拆（小时 / 分 / 秒，只有 hours>0 才出小时），计时器挂在节点自身（1Hz，不放面板级 repaint，否则每帧只为刷一行字就重算上百行流式 markdown），另配 `role=status` + `aria-live=polite` 只播报不带秒数的「深度求索中」。
 - 斜杠命令统一按契约里的 `disposition` 分流：`rpc` 8 条转成 RPC 命令；`client` 8 条在面板内开界面（`/settings` `/session` 是居中弹窗、`/resume` 是左侧栏、`/tree` `/fork` `/hotkeys` 仍是抽屉、`/model` `/thinking` 打开同一个向上弹层）；`local` 1 条（`/changelog`）由 host 代读文件；`cli-only` 9 条与 `unsupported` 1 条各给一条明确提示，**绝不把 `/compact` 之类当普通消息发给模型**（0.2.5 的缺陷）。无法识别的 `/xxx` 保留 pi 的语义：提示一条「没这条命令」，然后原样当 prompt 发出去。
 - 扩展 UI：`select` / `confirm` / `input` / `editor` 四种请求弹窗渲染（一次只显示一个，队列上限 12），应答走 `POST /respond`，`409` 静默吞掉（多半是 pi 已在 `agent_settled` 时丢弃）；`notify` / `setStatus` / `setWidget` / `setTitle` / `set_editor_text` 五种单向请求就地生效。倒计时按 pi 的声明走：扩展给了 `timeout` 就对齐它（`min(声明值, 5 分钟)`），没给就用 5 分钟兜底（`editor` 连 `timeout` 字段都没有），到点自动回 `cancelled: true`，否则那次 prompt 永远等不到 response。**host 侧同时让位**：命令的超时计时器看到还有弹窗挂着就续期，用户答完再重开一整轮窗口 —— 0.2.5 的「`pi command timed out` 红条与对话框并存」就是这两侧各自先超时造成的。
 - 图片：粘贴或选择图片都进 `prompt.images`，composer 里给缩略图、可逐张删除，消息区按图片块渲染并可点开原图 —— 不降级成 `[image png]` 文字。
@@ -383,7 +383,7 @@ npm install --prefix <插件>/.runtime --save-exact --no-audit --no-fund --logle
   跨项目切换后 `meta.sessionCwd` 用会话文件 header 的 `cwd` 校正（`get_state` 不回报 cwd，见 `rpc-types.ts:96-109`），面板里所有「当前工作区」显示点（空态 cwd、统计弹窗、目录弹窗起点）一律读 `sessionCwd` 而不是子进程的 spawn 目录。目标目录已被删除时 `MissingSessionCwdError` 翻成一条中文提示 —— pi 的 RPC 面没有 `cwdOverride` 分支（`rpc-mode.ts:624-630` 只转调 `switchSession`），面板替不了用户选「换目录继续」，只能指路命令行。
   `/fork` 抽屉读 `get_fork_messages`，选中走 `fork` 并把那条用户消息回填进编辑器。
 - **挂载即对账**：`attach` 之后补一次 `get_messages` 整表重建消息列表（`messagesFromHistory`）。原因是 `new_session` / `switch_session` / `fork` / `clone` 成功后 host 会 `resetEvents()` 把事件缓冲清空，历史消息不会再以事件形式重放 —— 只靠 `snapshot` 重放的话，切过去必然是空白（0.4.0 及之前「点开历史会话没有内容」就是这个根因；命令行 pi 从 jsonl 恢复所以不受影响）。两道防线：会话已切走则丢弃响应；`busy` 期间不覆盖列表，改记待办，等 `agent_settled` 那一拍由 `drainHydrate` 补上。
-- **历史会话两级列表、过程流行距与面板偏好（0.8.0）**：三件事都长在既有结构上，没有新开界面。①历史会话（顶栏入口与 `/resume` 共用 `SessionsSheet`）补齐「面板自己的账」：项目层标题固定「项目列表」且只在这一层给「新建项目」按钮，会话层标题换成项目名、返回箭头由 `SidePanel` 的 `onBack` 提供（原「← 全部项目」文字按钮已删）；搜索框占整行，placeholder 分「搜索项目」/「搜索会话」；项目行与会话行各带一个行内 `⋯` 菜单（重命名项目 / 在此新建会话 / 重命名会话 / 置顶或取消置顶）；会话标题按「用户改的名字 → pi 的会话名 → 首条用户消息摘要 → 末条消息 → 占位」取值（`sessionHeadline()` 取 `firstMessage` 首行、超 60 字符截断加 `…`）；置顶用两遍 partition 而不是 `sort`（host 给的顺序本身有意义，是最近活动降序）；改名走独立的 `RenameDialog` 而不是复用 `NameSheet`（`drawer` 是单值，改名会把左侧栏自己顶掉）。偏好不归 pi 的 RPC 面管，读写走 host 新增的 `/ui-prefs` 三条路由（见上方 HTTP 接口），落盘在 `<home>/.dsh-pi/ui-prefs.json`（`DSH_PI_UI_PREFS` 可覆盖路径），文件不存在时按空偏好处理、不报错。②过程流行距按参考图重算：父行与子行同为 24px 行盒，`.dsh-pi-sub` 组内 `gap:8px`、`margin-left:26px`、`padding-left:12px`，子行步长与父行一致；0.6.4 那版把子行压到 16px 行盒 + gap 0，行距只剩父行一半，是被推翻的中间态。③版本 0.8.0：tarball 名 `dsh-pi-0.8.0.tgz`，`CONTRACT_VERSION` 同步 0.8.0。
+- **历史会话两级列表、过程流行距与面板偏好（0.8.0）**：三件事都长在既有结构上，没有新开界面。①历史会话（顶栏入口与 `/resume` 共用 `SessionsSheet`）补齐「面板自己的账」：项目层标题固定「项目列表」且只在这一层给「新建项目」按钮，会话层标题换成项目名、返回箭头由 `SidePanel` 的 `onBack` 提供（原「← 全部项目」文字按钮已删）；搜索框占整行，placeholder 分「搜索项目」/「搜索会话」；项目行与会话行各带一个行内 `⋯` 菜单（重命名项目 / 在此新建会话 / 重命名会话 / 置顶或取消置顶）；会话标题按「用户改的名字 → pi 的会话名 → 首条用户消息摘要 → 末条消息 → 占位」取值（`sessionHeadline()` 取 `firstMessage` 首行、超 60 字符截断加 `…`）；置顶用两遍 partition 而不是 `sort`（host 给的顺序本身有意义，是最近活动降序）；改名走独立的 `RenameDialog` 而不是复用 `NameSheet`（`drawer` 是单值，改名会把左侧栏自己顶掉）。偏好不归 pi 的 RPC 面管，读写走 host 新增的 `/ui-prefs` 三条路由（见上方 HTTP 接口），落盘在 `<home>/.superpi/ui-prefs.json`（`SUPERPI_UI_PREFS` 可覆盖路径），文件不存在时按空偏好处理、不报错。②过程流行距按参考图重算：父行与子行同为 24px 行盒，`.superpi-sub` 组内 `gap:8px`、`margin-left:26px`、`padding-left:12px`，子行步长与父行一致；0.6.4 那版把子行压到 16px 行盒 + gap 0，行距只剩父行一半，是被推翻的中间态。③版本 0.8.0：tarball 名 `superpi-0.8.0.tgz`，`CONTRACT_VERSION` 同步 0.8.0。
 - **弹层交互与顶栏标题（0.8.1）**：三处一起改。①四个居中弹窗（`Dialog` / `ConfirmDialog` / 选择工作区 / 扩展 UI 弹窗）统一成**真模态** —— 点遮罩即关闭，判定式只有一份（`maskHandler(onClose)`，判 `event.target === event.currentTarget`），内层不吞事件、不 `stopPropagation`；语义各自正确：确认框点遮罩等于**取消**而不是确认，扩展 UI 弹窗点遮罩回 `{id, cancelled:true}`（与右上角关闭键同一条路径），并补上原先缺的 `aria-modal`。②`MoreMenu`（顶栏 `⋯` 与历史会话行内 `⋯`）补「点外部关闭」：`isOutsideMenu(node, anchor, target)` 同时放行菜单自身与**触发按钮** —— 少了后半条，同一次点击里 `mousedown` 先关、`click` 又开，表现为「怎么点都关不掉」。③顶栏左上的 `SuperPi` 换成**当前项目标题**：host 侧 `withProjectIdentity()` / `snapshotOf()` 在每份会话快照上补 `displayPath`（`shortenHomePath`，家目录缩成 `~`）与 `projectKey`（`pathComparisonKey`），客户端 `projectTitleOf(prefs, meta)` 按「面板里改过的项目名 → `displayPath` → 原始路径」取值，取不到才回落品牌名；路径缩短的唯一真相留在 host，浏览器侧不复制这套逻辑。`RuntimeGate`（启动期无会话）保留品牌名。面板偏好同时上提到 `PiPanel`，顶栏与历史会话列表读同一份 `prefs`，改名后顶栏立刻跟着变。
 
 ## 自检：现在跑的是不是磁盘上那份代码
@@ -449,7 +449,7 @@ pwsh -NoProfile -File .\tools\standalone-verify.ps1   # 全新 DSH_HOME 里只�
 
 DSH 的插件管理器（dshmarket / 插件详情页）在安装、卸载、升级插件时跑的是 **pnpm**，参数大致是 `add` / `remove` / `install`（含 `--frozen-lockfile` 与 hoist-pattern 漂移后的 `install --no-frozen-lockfile` 重试）。它不做 `prune`，但会按 `pnpm-lock.yaml` 与 `node_modules/.modules.yaml` 判断哪些包该在。
 
-因此装 dsh-pi 的正确姿势只有一种：**让 pnpm 写状态**。手工放目录 + 手改 `package.json` 会造成两种漂移，任一都会让副本在下次插件操作时消失：
+因此装 superpi 的正确姿势只有一种：**让 pnpm 写状态**。手工放目录 + 手改 `package.json` 会造成两种漂移，任一都会让副本在下次插件操作时消失：
 
 | 漂移 | 表现 | 后果 |
 | --- | --- | --- |
@@ -458,9 +458,9 @@ DSH 的插件管理器（dshmarket / 插件详情页）在安装、卸载、升�
 
 已实测的边界：
 
-- `pnpm add dsh-free-model@3.1.0`（manifest 与 lock 都是 dsh-pi 正常运行时的状态）→ dsh-pi 与 pi 运行时都存活；
-- 故意造漂移（manifest 有 dsh-pi、lock 没有）再 `pnpm add` → pnpm 顺手把 dsh-pi 补装回来，锁被重写，仍然可用；
-- 锁里的 `file:.dsh-local-packages/dsh-pi-<ver>.tgz` 是**相对 profile 根**解析的，删掉 `.dsh-local-packages` 会让 `install` 直接报 `ERR_PNPM_TARBALL_READ_LOCAL_TARBALL` —— 想改锁前先确认这个目录还在。
+- `pnpm add dsh-free-model@3.1.0`（manifest 与 lock 都是 superpi 正常运行时的状态）→ superpi 与 pi 运行时都存活；
+- 故意造漂移（manifest 有 superpi、lock 没有）再 `pnpm add` → pnpm 顺手把 superpi 补装回来，锁被重写，仍然可用；
+- 锁里的 `file:.dsh-local-packages/superpi-<ver>.tgz` 是**相对 profile 根**解析的，删掉 `.dsh-local-packages` 会让 `install` 直接报 `ERR_PNPM_TARBALL_READ_LOCAL_TARBALL` —— 想改锁前先确认这个目录还在。
 
 `.dsh-local-packages/` 里的 tarball 是回滚与重装的锚点，不要手动清。
 

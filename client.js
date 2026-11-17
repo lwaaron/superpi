@@ -1,13 +1,13 @@
-// dsh-pi —— 在 DeepSeek Runtime 侧栏里跑 pi 编码代理（client 半区）
+// superpi —— 在 DeepSeek Runtime 侧栏里跑 pi 编码代理（client 半区）
 //
 // 契约（改动前必读，违反会导致宿主启动卡死或面板空白）：
-//   1. sidebar.panellist 的 id 必须与 main slot 的 key 相同（都是 'dsh-pi'），否则点侧栏切不过去。
+//   1. sidebar.panellist 的 id 必须与 main slot 的 key 相同（都是 'superpi'），否则点侧栏切不过去。
 //   2. main 是 root 作用域 keyed slot：register({ name: 'main', key: PANEL_ID })。
 //   3. 所有 slots.inject / locale.register 必须包在 ctx.inject([...]) 里，
 //      否则 entry 永久 pending，会卡死整个 dsh 启动。
 //   4. 客户端 require 白名单只有 react / react-dom / jsx-runtime / @deepseek-ai/dsh-client-ui-primitives，
 //      这个文件只 require('react')，不引任何构建产物。
-//   5. 样式只用 --dsw-* 变量，类名统一 .dsh-pi- 前缀，避免污染宿主。
+//   5. 样式只用 --dsw-* 变量，类名统一 .superpi- 前缀，避免污染宿主。
 //   6. 同源路由用相对路径（不带前导斜杠），插件路由不需要 token。
 //   7. 面板与命令行 pi 必须 100% 对齐（见 AGENTS.md / docs/parity.md）。
 //      单一真相源是 src/rpc-contract.mjs：host 用 GET /contract 原样下发，面板在挂载时取回并按它
@@ -15,7 +15,7 @@
 //      要加能力：改 src/rpc-contract.mjs（契约）→ 改 UI（消费契约）→ 跑 test/parity.mjs 对账。
 /* eslint-disable */
 window.__ModuleLoader__.load({
-  id: 'dsh-pi',
+  id: 'superpi',
   factory: function (require) {
     'use strict'
     var module = { exports: {} }
@@ -28,9 +28,9 @@ window.__ModuleLoader__.load({
     var useCallback = React.useCallback
     var useMemo = React.useMemo
 
-    var NS = 'dsh-pi'
-    var PANEL_ID = 'dsh-pi'
-    var API_PREFIX = 'api/dsh-pi'
+    var NS = 'superpi'
+    var PANEL_ID = 'superpi'
+    var API_PREFIX = 'api/superpi'
 
     // ── 文案（zh / en 必须键集一致，test/client-render.mjs 会断言）─────────────
     var ZH = {
@@ -473,77 +473,77 @@ window.__ModuleLoader__.load({
       sessionFallbackTitle: 'Untitled session',
     }
 
-    // ── 样式（只用 --dsw-* 变量；类名统一 .dsh-pi- 前缀）──────────────────────
+    // ── 样式（只用 --dsw-* 变量；类名统一 .superpi- 前缀）──────────────────────
     var CSS = [
       // ── 基础 ────────────────────────────────────────────────────────────────
       // 只引用 DSH 设计令牌（--dsw-*）；外部变量（--ds-font-family-code / --dsh-*）
       // 一律带兜底。焦点环走 DSH 自己的 --dsw-focus-ring-color 钩子：DSH 默认把它设成
       // transparent（等于不要环），面板在根节点上把它指回 state-business-primary，
       // 这样键盘可达性不打折，且仍由主题决定具体色值。
-      '.dsh-pi-root{display:flex;flex-direction:column;height:100%;min-height:0;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);font-family:var(--dsw-font-family);font-size:var(--dsw-font-s-14-font-size);line-height:var(--dsw-font-s-14-line-height);position:relative;--dsw-focus-ring-color:var(--dsw-alias-state-business-primary);--dsh-scrollbar-thumb:var(--dsw-alias-scrollbar-bg-l2);--dsh-scrollbar-thumb-hover:var(--dsw-alias-scrollbar-hover-l2)}',
-      '.dsh-pi-root *{box-sizing:border-box}',
-      '.dsh-pi-root :is(button,input,select,textarea){font-family:inherit}',
-      '.dsh-pi-root :is(button,input,select,textarea,summary,a,[tabindex]):focus-visible{outline:var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary));outline-offset:2px}',
+      '.superpi-root{display:flex;flex-direction:column;height:100%;min-height:0;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);font-family:var(--dsw-font-family);font-size:var(--dsw-font-s-14-font-size);line-height:var(--dsw-font-s-14-line-height);position:relative;--dsw-focus-ring-color:var(--dsw-alias-state-business-primary);--dsh-scrollbar-thumb:var(--dsw-alias-scrollbar-bg-l2);--dsh-scrollbar-thumb-hover:var(--dsw-alias-scrollbar-hover-l2)}',
+      '.superpi-root *{box-sizing:border-box}',
+      '.superpi-root :is(button,input,select,textarea){font-family:inherit}',
+      '.superpi-root :is(button,input,select,textarea,summary,a,[tabindex]):focus-visible{outline:var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary));outline-offset:2px}',
 
       // ── 头部 ────────────────────────────────────────────────────────────────
-      '.dsh-pi-head{display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:.5px solid var(--dsw-alias-border-l3);flex:0 0 auto;flex-wrap:wrap}',
-      '.dsh-pi-head-main{display:flex;align-items:center;gap:8px;min-width:0;flex:1 1 auto}',
-      '.dsh-pi-brand{display:flex;align-items:center;gap:6px;font-size:var(--dsw-font-s-14-font-size);line-height:var(--dsw-font-s-14-line-height);font-weight:500;color:var(--dsw-alias-label-primary)}',
-      '.dsh-pi-dot{width:7px;height:7px;border-radius:50%;background:var(--dsw-alias-state-idle-primary);flex:0 0 auto}',
-      '.dsh-pi-dot[data-state="ready"]{background:var(--dsw-alias-state-success-primary)}',
-      '.dsh-pi-dot[data-state="busy"]{background:var(--dsw-alias-state-business-primary);animation:dsh-pi-pulse 1.2s ease-in-out infinite}',
-      '.dsh-pi-dot[data-state="dead"]{background:var(--dsw-alias-state-error-primary)}',
-      '@keyframes dsh-pi-pulse{0%,100%{opacity:1}50%{opacity:.35}}',
+      '.superpi-head{display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:.5px solid var(--dsw-alias-border-l3);flex:0 0 auto;flex-wrap:wrap}',
+      '.superpi-head-main{display:flex;align-items:center;gap:8px;min-width:0;flex:1 1 auto}',
+      '.superpi-brand{display:flex;align-items:center;gap:6px;font-size:var(--dsw-font-s-14-font-size);line-height:var(--dsw-font-s-14-line-height);font-weight:500;color:var(--dsw-alias-label-primary)}',
+      '.superpi-dot{width:7px;height:7px;border-radius:50%;background:var(--dsw-alias-state-idle-primary);flex:0 0 auto}',
+      '.superpi-dot[data-state="ready"]{background:var(--dsw-alias-state-success-primary)}',
+      '.superpi-dot[data-state="busy"]{background:var(--dsw-alias-state-business-primary);animation:superpi-pulse 1.2s ease-in-out infinite}',
+      '.superpi-dot[data-state="dead"]{background:var(--dsw-alias-state-error-primary)}',
+      '@keyframes superpi-pulse{0%,100%{opacity:1}50%{opacity:.35}}',
 
       // 胶囊标签：对齐 DSH 的 ._tag（radius 999 / padding 1px 8px / 11px / weight 500），
       // tone 语义与 DSH 的 success(10%) / warning(12%) / danger(10%) color-mix 一致。
-      '.dsh-pi-chip{display:inline-flex;align-items:center;gap:5px;height:20px;padding:1px 8px;border:0;border-radius:999px;corner-shape:round;background:var(--dsw-alias-bg-module-platform);color:var(--dsw-alias-label-secondary);font-size:var(--dsw-font-xxxs-11-font-size);line-height:var(--dsw-font-xxxs-11-line-height);font-weight:500;white-space:nowrap;max-width:220px;overflow:hidden;text-overflow:ellipsis;transition:background-color .16s ease,color .16s ease}',
-      '.dsh-pi-chip[data-clickable="1"]{cursor:pointer}',
-      '.dsh-pi-chip[data-clickable="1"]:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}',
-      '.dsh-pi-chip[data-tone="ok"]{background:color-mix(in srgb,var(--dsw-alias-state-success-primary) 10%,transparent);color:var(--dsw-alias-state-success-primary)}',
-      '.dsh-pi-chip[data-tone="warn"]{background:color-mix(in srgb,var(--dsw-alias-state-warn-primary) 12%,transparent);color:var(--dsw-alias-state-warn-primary)}',
-      '.dsh-pi-chip[data-tone="err"]{background:color-mix(in srgb,var(--dsw-alias-state-error-primary) 10%,transparent);color:var(--dsw-alias-state-error-primary)}',
-      '.dsh-pi-chip-name{overflow:hidden;text-overflow:ellipsis}',
+      '.superpi-chip{display:inline-flex;align-items:center;gap:5px;height:20px;padding:1px 8px;border:0;border-radius:999px;corner-shape:round;background:var(--dsw-alias-bg-module-platform);color:var(--dsw-alias-label-secondary);font-size:var(--dsw-font-xxxs-11-font-size);line-height:var(--dsw-font-xxxs-11-line-height);font-weight:500;white-space:nowrap;max-width:220px;overflow:hidden;text-overflow:ellipsis;transition:background-color .16s ease,color .16s ease}',
+      '.superpi-chip[data-clickable="1"]{cursor:pointer}',
+      '.superpi-chip[data-clickable="1"]:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}',
+      '.superpi-chip[data-tone="ok"]{background:color-mix(in srgb,var(--dsw-alias-state-success-primary) 10%,transparent);color:var(--dsw-alias-state-success-primary)}',
+      '.superpi-chip[data-tone="warn"]{background:color-mix(in srgb,var(--dsw-alias-state-warn-primary) 12%,transparent);color:var(--dsw-alias-state-warn-primary)}',
+      '.superpi-chip[data-tone="err"]{background:color-mix(in srgb,var(--dsw-alias-state-error-primary) 10%,transparent);color:var(--dsw-alias-state-error-primary)}',
+      '.superpi-chip-name{overflow:hidden;text-overflow:ellipsis}',
 
       // 头部下拉（思考档位）：沿用 DSH 输入框的配方（.5px border-l4 + bg-layer-3 + radius-sm）。
 
       // ── 按钮 ────────────────────────────────────────────────────────────────
       // 基线 = DSH ._button + ._sm（28px / radius-sm / 12px）+ ._outline 的 hairline；
       // -ghost 去掉 hairline 与底色，-primary 用 button-primary-fill/hover 令牌。
-      '.dsh-pi-btn{display:inline-flex;align-items:center;justify-content:center;gap:4px;height:28px;padding:0 10px;border:0;border-radius:var(--dsw-radius-sm);box-shadow:inset 0 0 0 .5px var(--dsw-alias-border-l4);background:transparent;color:var(--dsw-alias-label-primary);font-family:inherit;font-size:var(--dsw-font-xxs-12-font-size);line-height:var(--dsw-font-xxs-12-line-height);cursor:pointer;white-space:nowrap;transition:background-color .16s ease,color .16s ease,box-shadow .16s ease}',
-      '.dsh-pi-btn:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover)}',
-      '.dsh-pi-btn:active:not(:disabled){background:var(--dsw-alias-interactive-bg-active)}',
-      '.dsh-pi-btn:disabled{opacity:.4;cursor:not-allowed}',
-      '.dsh-pi-btn-primary{box-shadow:none;background:var(--dsw-alias-button-primary-fill);color:var(--dsw-alias-label-primary-foreground);padding:0 14px}',
-      '.dsh-pi-btn-primary:hover:not(:disabled){background:var(--dsw-alias-button-primary-hover);color:var(--dsw-alias-label-primary-foreground)}',
-      '.dsh-pi-btn-primary:active:not(:disabled){background:var(--dsw-alias-button-primary-hover)}',
-      '.dsh-pi-btn-danger{box-shadow:none;color:var(--dsw-alias-state-error-primary)}',
-      '.dsh-pi-btn-danger:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover-danger);color:var(--dsw-alias-state-error-primary)}',
-      '.dsh-pi-btn-ghost{box-shadow:none;background:transparent;color:var(--dsw-alias-label-secondary)}',
-      '.dsh-pi-btn-ghost:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}',
-      '.dsh-pi-btn-icon{width:28px;padding:0}',
-      '.dsh-pi-btn svg{width:15px;height:15px}',
+      '.superpi-btn{display:inline-flex;align-items:center;justify-content:center;gap:4px;height:28px;padding:0 10px;border:0;border-radius:var(--dsw-radius-sm);box-shadow:inset 0 0 0 .5px var(--dsw-alias-border-l4);background:transparent;color:var(--dsw-alias-label-primary);font-family:inherit;font-size:var(--dsw-font-xxs-12-font-size);line-height:var(--dsw-font-xxs-12-line-height);cursor:pointer;white-space:nowrap;transition:background-color .16s ease,color .16s ease,box-shadow .16s ease}',
+      '.superpi-btn:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover)}',
+      '.superpi-btn:active:not(:disabled){background:var(--dsw-alias-interactive-bg-active)}',
+      '.superpi-btn:disabled{opacity:.4;cursor:not-allowed}',
+      '.superpi-btn-primary{box-shadow:none;background:var(--dsw-alias-button-primary-fill);color:var(--dsw-alias-label-primary-foreground);padding:0 14px}',
+      '.superpi-btn-primary:hover:not(:disabled){background:var(--dsw-alias-button-primary-hover);color:var(--dsw-alias-label-primary-foreground)}',
+      '.superpi-btn-primary:active:not(:disabled){background:var(--dsw-alias-button-primary-hover)}',
+      '.superpi-btn-danger{box-shadow:none;color:var(--dsw-alias-state-error-primary)}',
+      '.superpi-btn-danger:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover-danger);color:var(--dsw-alias-state-error-primary)}',
+      '.superpi-btn-ghost{box-shadow:none;background:transparent;color:var(--dsw-alias-label-secondary)}',
+      '.superpi-btn-ghost:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}',
+      '.superpi-btn-icon{width:28px;padding:0}',
+      '.superpi-btn svg{width:15px;height:15px}',
 
       // ── 消息流 ──────────────────────────────────────────────────────────────
-      '.dsh-pi-scroll{flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden}',
-      '.dsh-pi-inner{display:flex;flex-direction:column;gap:16px;padding:16px 16px 20px}',
-      '.dsh-pi-row{display:flex;gap:8px;min-width:0}',
-      '.dsh-pi-row-user{justify-content:flex-end}',
+      '.superpi-scroll{flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden}',
+      '.superpi-inner{display:flex;flex-direction:column;gap:16px;padding:16px 16px 20px}',
+      '.superpi-row{display:flex;gap:8px;min-width:0}',
+      '.superpi-row-user{justify-content:flex-end}',
       // 用户气泡 = DSH ._bubble（specific-bubble / radius-xl / 10px 16px / 内容字号可调）
-      '.dsh-pi-bubble-user{max-width:82%;padding:10px 16px;border:0;border-radius:var(--dsw-radius-xl);background:var(--dsw-specific-bubble);color:var(--dsw-alias-label-primary);font-size:var(--dsh-content-font-size,var(--dsw-font-s-14-font-size));line-height:calc(22px + var(--dsh-content-font-delta,0px));white-space:pre-wrap;word-break:break-word}',
-      '.dsh-pi-body{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:8px}',
+      '.superpi-bubble-user{max-width:82%;padding:10px 16px;border:0;border-radius:var(--dsw-radius-xl);background:var(--dsw-specific-bubble);color:var(--dsw-alias-label-primary);font-size:var(--dsh-content-font-size,var(--dsw-font-s-14-font-size));line-height:calc(22px + var(--dsh-content-font-delta,0px));white-space:pre-wrap;word-break:break-word}',
+      '.superpi-body{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:8px}',
       // 正文 = DSH markdown base（14px/24px，可用 --dsh-content-font-* 缩放）
-      '.dsh-pi-prose{font-size:var(--dsh-content-font-size,var(--dsw-font-s-14-font-size));line-height:calc(24px + var(--dsh-content-font-delta,0px));word-break:break-word}',
-      '.dsh-pi-prose p{margin:0 0 8px}',
-      '.dsh-pi-prose p:last-child{margin-bottom:0}',
-      '.dsh-pi-prose ul{margin:0 0 8px;padding-left:20px}',
-      '.dsh-pi-prose h3{margin:16px 0 8px;font:var(--dsw-font-markdown-h3)}',
-      '.dsh-pi-prose strong{font-weight:600}',
-      '.dsh-pi-code-inline{padding:1px 4px;border-radius:var(--dsw-radius-xs);background:var(--dsw-alias-markdown-inline-code);font:var(--dsw-font-markdown-code-block-small);color:var(--dsw-alias-label-primary)}',
+      '.superpi-prose{font-size:var(--dsh-content-font-size,var(--dsw-font-s-14-font-size));line-height:calc(24px + var(--dsh-content-font-delta,0px));word-break:break-word}',
+      '.superpi-prose p{margin:0 0 8px}',
+      '.superpi-prose p:last-child{margin-bottom:0}',
+      '.superpi-prose ul{margin:0 0 8px;padding-left:20px}',
+      '.superpi-prose h3{margin:16px 0 8px;font:var(--dsw-font-markdown-h3)}',
+      '.superpi-prose strong{font-weight:600}',
+      '.superpi-code-inline{padding:1px 4px;border-radius:var(--dsw-radius-xs);background:var(--dsw-alias-markdown-inline-code);font:var(--dsw-font-markdown-code-block-small);color:var(--dsw-alias-label-primary)}',
       // 代码块 = DSH ._card / ._header / ._body 三段（banner + body，无边框）
-      '.dsh-pi-fence{margin:16px 0;overflow:hidden;border:0;border-radius:var(--dsw-radius-lg);background:var(--dsw-alias-markdown-code-block);font:var(--dsw-font-markdown-code-block)}',
-      '.dsh-pi-fence-lang{padding:10px 18px 8px 22px;border-bottom:0;background:var(--dsw-alias-markdown-code-block-banner);color:var(--dsw-alias-label-secondary);font-size:var(--dsw-font-xxxs-11-font-size);line-height:18px;font-family:var(--dsw-font-family)}',
-      '.dsh-pi-pre{margin:0;padding:6px 22px 20px;overflow-x:auto;font:var(--dsw-font-markdown-code-block);color:var(--dsw-alias-label-primary)}',
+      '.superpi-fence{margin:16px 0;overflow:hidden;border:0;border-radius:var(--dsw-radius-lg);background:var(--dsw-alias-markdown-code-block);font:var(--dsw-font-markdown-code-block)}',
+      '.superpi-fence-lang{padding:10px 18px 8px 22px;border-bottom:0;background:var(--dsw-alias-markdown-code-block-banner);color:var(--dsw-alias-label-secondary);font-size:var(--dsw-font-xxxs-11-font-size);line-height:18px;font-family:var(--dsw-font-family)}',
+      '.superpi-pre{margin:0;padding:6px 22px 20px;overflow-x:auto;font:var(--dsw-font-markdown-code-block);color:var(--dsw-alias-label-primary)}',
       // ── 过程行（思考 / 工具调用 / 工具结果）──────────────────────────────
       //
       // 对齐 DSH 会话过程流（research/tool-pkg/client.js 的 ToolRow.module.css）：
@@ -558,30 +558,30 @@ window.__ModuleLoader__.load({
       // 紧一半」。早先把下划线当成行，才算出 32:16 这个错结论。
       // 比例尺用 CJK 字形 ink 高校准：参考图 label ink 17-18 图 px，本文件 13px 字号的 ink
       // 是 13-14 css px，故 ≈1.3；40 图 px ÷ 1.3 ≈ 31 css，本文件父行步长 = 24 行盒 + body
-      // 的 8px gap = 32，两者对齐，因此子行也走同一节奏（见 .dsh-pi-sub 的 gap 与行盒）。
-      '.dsh-pi-proc{border:0;border-radius:0;background:transparent;box-shadow:none;display:block;min-width:0}',
-      '.dsh-pi-tool{border:0;border-radius:0;background:transparent;box-shadow:none;display:block;min-width:0}',
-      '.dsh-pi-proc-head,.dsh-pi-tool-head{display:flex;align-items:center;min-width:0;list-style:none;cursor:pointer;font-size:var(--dsh-content-font-size-secondary,13px);line-height:calc(24px + var(--dsh-content-font-delta,0px));color:var(--dsw-alias-label-tertiary)}',
-      '.dsh-pi-proc-head::-webkit-details-marker,.dsh-pi-tool-head::-webkit-details-marker{display:none}',
-      '.dsh-pi-proc-head::marker,.dsh-pi-tool-head::marker{content:""}',
+      // 的 8px gap = 32，两者对齐，因此子行也走同一节奏（见 .superpi-sub 的 gap 与行盒）。
+      '.superpi-proc{border:0;border-radius:0;background:transparent;box-shadow:none;display:block;min-width:0}',
+      '.superpi-tool{border:0;border-radius:0;background:transparent;box-shadow:none;display:block;min-width:0}',
+      '.superpi-proc-head,.superpi-tool-head{display:flex;align-items:center;min-width:0;list-style:none;cursor:pointer;font-size:var(--dsh-content-font-size-secondary,13px);line-height:calc(24px + var(--dsh-content-font-delta,0px));color:var(--dsw-alias-label-tertiary)}',
+      '.superpi-proc-head::-webkit-details-marker,.superpi-tool-head::-webkit-details-marker{display:none}',
+      '.superpi-proc-head::marker,.superpi-tool-head::marker{content:""}',
       // 悬停只提亮文字，不铺底色 —— 没有外框时铺底色会露出一块矩形色斑。
-      '.dsh-pi-proc-head:hover .dsh-pi-proc-text,.dsh-pi-proc-head:hover .dsh-pi-proc-label,.dsh-pi-proc-head:hover .dsh-pi-proc-path,.dsh-pi-tool-head:hover .dsh-pi-proc-text,.dsh-pi-tool-head:hover .dsh-pi-proc-label,.dsh-pi-tool-head:hover .dsh-pi-proc-path{color:var(--dsw-alias-label-primary)}',
-      '.dsh-pi-proc-head:focus-visible,.dsh-pi-tool-head:focus-visible{outline:var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary));outline-offset:2px}',
-      '.dsh-pi-proc-icon{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;width:16px;height:16px;margin-right:11px;color:var(--dsw-alias-label-tertiary)}',
-      '.dsh-pi-proc-label{flex:0 0 auto;font-weight:400;white-space:nowrap;color:var(--dsw-alias-label-tertiary)}',
+      '.superpi-proc-head:hover .superpi-proc-text,.superpi-proc-head:hover .superpi-proc-label,.superpi-proc-head:hover .superpi-proc-path,.superpi-tool-head:hover .superpi-proc-text,.superpi-tool-head:hover .superpi-proc-label,.superpi-tool-head:hover .superpi-proc-path{color:var(--dsw-alias-label-primary)}',
+      '.superpi-proc-head:focus-visible,.superpi-tool-head:focus-visible{outline:var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary));outline-offset:2px}',
+      '.superpi-proc-icon{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;width:16px;height:16px;margin-right:11px;color:var(--dsw-alias-label-tertiary)}',
+      '.superpi-proc-label{flex:0 0 auto;font-weight:400;white-space:nowrap;color:var(--dsw-alias-label-tertiary)}',
       // 行内三段间距统一 11：图标→label（见上一行 margin-right）、label→圆点、圆点→摘要。
       // 参考图里这三段是 15 / 14 / 15 图 px，几乎等宽 —— 等宽才是「整齐」的来源；
       // 11 css 由 CJK 字形 ink 宽 16 图 px = 13 css 定出比例尺 ≈1.23 换算而来。
-      '.dsh-pi-sep{flex:0 0 auto;width:2px;height:2px;margin:0 11px;border-radius:1px;background:var(--dsw-alias-label-caption)}',
-      '.dsh-pi-proc-text{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-tertiary)}',
-      '.dsh-pi-proc-text[data-tone="err"]{color:var(--dsw-alias-state-error-primary)}',
-      '.dsh-pi-proc-text[data-tone="warn"]{color:var(--dsw-alias-state-warn-primary)}',
-      '.dsh-pi-proc-note{flex:0 0 auto;margin-left:8px;color:var(--dsw-alias-label-caption);font-variant-numeric:tabular-nums;white-space:nowrap}',
-      '.dsh-pi-proc-note[data-tone="err"]{color:var(--dsw-alias-state-error-primary)}',
-      '.dsh-pi-proc-note[data-tone="warn"]{color:var(--dsw-alias-state-warn-primary)}',
+      '.superpi-sep{flex:0 0 auto;width:2px;height:2px;margin:0 11px;border-radius:1px;background:var(--dsw-alias-label-caption)}',
+      '.superpi-proc-text{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-tertiary)}',
+      '.superpi-proc-text[data-tone="err"]{color:var(--dsw-alias-state-error-primary)}',
+      '.superpi-proc-text[data-tone="warn"]{color:var(--dsw-alias-state-warn-primary)}',
+      '.superpi-proc-note{flex:0 0 auto;margin-left:8px;color:var(--dsw-alias-label-caption);font-variant-numeric:tabular-nums;white-space:nowrap}',
+      '.superpi-proc-note[data-tone="err"]{color:var(--dsw-alias-state-error-primary)}',
+      '.superpi-proc-note[data-tone="warn"]{color:var(--dsw-alias-state-warn-primary)}',
       // 可点路径：DSH 用 1px 点线下划线 + 3px 偏移，颜色与正文一致，不额外染色。
-      '.dsh-pi-proc-path{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin:0;padding:0;border:0;background:0 0;color:inherit;font:inherit;line-height:inherit;text-align:left;text-decoration:underline 1px dotted;text-underline-offset:3px;cursor:pointer}',
-      '.dsh-pi-proc[data-state="running"] .dsh-pi-sep,.dsh-pi-tool[data-state="running"] .dsh-pi-sep{background:var(--dsw-alias-state-business-primary);animation:dsh-pi-pulse 1.2s ease-in-out infinite}',
+      '.superpi-proc-path{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin:0;padding:0;border:0;background:0 0;color:inherit;font:inherit;line-height:inherit;text-align:left;text-decoration:underline 1px dotted;text-underline-offset:3px;cursor:pointer}',
+      '.superpi-proc[data-state="running"] .superpi-sep,.superpi-tool[data-state="running"] .superpi-sep{background:var(--dsw-alias-state-business-primary);animation:superpi-pulse 1.2s ease-in-out infinite}',
       // 子行组：模型「做了什么」缩进成一组，靠一条左侧竖线归组。
       // 横向：margin-left 26 让竖线落在父行 label 左缘（图标 16 + margin-right 11 = 27，差 1 是给
       // 1px 描边的亚像素让位），padding-left 12 让子行图标距竖线 12（≈参考图 15 图 px ÷ 1.23）；
@@ -589,52 +589,52 @@ window.__ModuleLoader__.load({
       // 纵向：组内 gap 与 body 一样是 8、行盒沿用父行的 24 ⇒ 子行步长 32，与父行完全同节奏；
       // 上下 padding 归零，使「父行→首个子行」和「组末→下一父行」也是 32，整段过程流是一张
       // 均匀的网格。早先子行压到 16px 行盒 + gap 0，行距只剩父行一半，看着像被挤扁。
-      '.dsh-pi-sub{display:flex;flex-direction:column;gap:8px;margin:0 0 0 26px;padding:0 0 0 12px;border-left:1px solid var(--dsw-alias-border-l3)}',
+      '.superpi-sub{display:flex;flex-direction:column;gap:8px;margin:0 0 0 26px;padding:0 0 0 12px;border-left:1px solid var(--dsw-alias-border-l3)}',
       // 展开区：与图标列对齐的 22px 缩进 + 左侧竖线，和 DSH 折叠体同一套语言。
-      '.dsh-pi-proc-body{margin:2px 0 2px 26px;padding:0 0 0 14px;border-left:1px solid var(--dsw-alias-border-l3);white-space:pre-wrap;word-break:break-word;color:var(--dsw-alias-label-tertiary);line-height:calc(22px + var(--dsh-content-font-delta,0px))}',
-      '.dsh-pi-tool-body{margin:2px 0 4px;padding:0 0 0 14px;border-top:0;border-left:1px solid var(--dsw-alias-border-l3);max-height:340px;overflow:auto;font-family:var(--ds-font-family-code,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace);font-size:var(--dsw-font-xxxs-11-font-size);line-height:18px;white-space:pre-wrap;word-break:break-word;color:var(--dsw-alias-label-secondary)}',
+      '.superpi-proc-body{margin:2px 0 2px 26px;padding:0 0 0 14px;border-left:1px solid var(--dsw-alias-border-l3);white-space:pre-wrap;word-break:break-word;color:var(--dsw-alias-label-tertiary);line-height:calc(22px + var(--dsh-content-font-delta,0px))}',
+      '.superpi-tool-body{margin:2px 0 4px;padding:0 0 0 14px;border-top:0;border-left:1px solid var(--dsw-alias-border-l3);max-height:340px;overflow:auto;font-family:var(--ds-font-family-code,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace);font-size:var(--dsw-font-xxxs-11-font-size);line-height:18px;white-space:pre-wrap;word-break:break-word;color:var(--dsw-alias-label-secondary)}',
       // 底部「正在生成」行：DSH 在过程流末尾放一条极淡横线 + 一行状态。
       // 颜色 / 字号 / 行高一律取 DSH running 行（ChatView.module.css）的原式：
       // 文字是 brand 蓝 --dsw-alias-label-deep-diving（= color-mix(#4176e6 70%, #172554) = #345EBA），
       // 字号是正文 - 2px（14-2=12），行高 22px —— 都比过程行（13/24）小一号，视觉上退到过程流之后。
-      '.dsh-pi-working{display:flex;align-items:center;gap:6px;margin-top:2px;padding-top:10px;border-top:.5px solid var(--dsw-alias-border-l3);color:var(--dsw-alias-label-deep-diving);font-size:calc(var(--dsh-content-font-size,14px) - 2px);line-height:calc(22px + var(--dsh-content-font-delta,0px))}',
-      '.dsh-pi-working-icon{flex:0 0 auto;display:inline-flex;width:14px;height:14px;animation:dsh-pi-pulse 1.6s ease-in-out infinite}',
-      '.dsh-pi-working-text{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-variant-numeric:tabular-nums}',
+      '.superpi-working{display:flex;align-items:center;gap:6px;margin-top:2px;padding-top:10px;border-top:.5px solid var(--dsw-alias-border-l3);color:var(--dsw-alias-label-deep-diving);font-size:calc(var(--dsh-content-font-size,14px) - 2px);line-height:calc(22px + var(--dsh-content-font-delta,0px))}',
+      '.superpi-working-icon{flex:0 0 auto;display:inline-flex;width:14px;height:14px;animation:superpi-pulse 1.6s ease-in-out infinite}',
+      '.superpi-working-text{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-variant-numeric:tabular-nums}',
 
       // 状态标签 = DSH ._tag 的四种 tone（run/success/warning/danger）
-      '.dsh-pi-tag{display:inline-flex;align-items:center;height:17px;padding:1px 8px;border:0;border-radius:999px;corner-shape:round;background:var(--dsw-alias-bg-module-platform);color:var(--dsw-alias-label-secondary);font-size:var(--dsw-font-xxxs-11-font-size);line-height:var(--dsw-font-xxxs-11-line-height);font-weight:500;white-space:nowrap}',
-      '.dsh-pi-tag[data-tone="run"]{background:color-mix(in srgb,var(--dsw-alias-state-business-primary) 10%,transparent);color:var(--dsw-alias-state-business-primary)}',
-      '.dsh-pi-tag[data-tone="ok"]{background:color-mix(in srgb,var(--dsw-alias-state-success-primary) 10%,transparent);color:var(--dsw-alias-state-success-primary)}',
-      '.dsh-pi-tag[data-tone="err"]{background:color-mix(in srgb,var(--dsw-alias-state-error-primary) 10%,transparent);color:var(--dsw-alias-state-error-primary)}',
-      '.dsh-pi-tag[data-tone="warn"]{background:color-mix(in srgb,var(--dsw-alias-state-warn-primary) 12%,transparent);color:var(--dsw-alias-state-warn-primary)}',
-      '.dsh-pi-usage{margin-top:2px;font-size:var(--dsw-font-xxxs-11-font-size);line-height:var(--dsw-font-xxxs-11-line-height);color:var(--dsw-alias-label-caption);font-variant-numeric:tabular-nums}',
-      '.dsh-pi-caret{display:inline-block;width:6px;height:14px;margin-left:2px;background:var(--dsw-alias-label-secondary);animation:dsh-pi-pulse 1s steps(2) infinite;vertical-align:text-bottom}',
-      '.dsh-pi-img{max-width:min(100%,360px);max-height:240px;border:0;border-radius:var(--dsw-radius-md);cursor:zoom-in;display:block}',
-      '.dsh-pi-img-open{position:fixed;inset:0;z-index:60;background:var(--dsw-alias-bg-mask-photo);display:flex;align-items:center;justify-content:center;padding:40px;cursor:zoom-out}',
-      '.dsh-pi-img-open img{max-width:100%;max-height:100%;border-radius:var(--dsw-radius-md)}',
+      '.superpi-tag{display:inline-flex;align-items:center;height:17px;padding:1px 8px;border:0;border-radius:999px;corner-shape:round;background:var(--dsw-alias-bg-module-platform);color:var(--dsw-alias-label-secondary);font-size:var(--dsw-font-xxxs-11-font-size);line-height:var(--dsw-font-xxxs-11-line-height);font-weight:500;white-space:nowrap}',
+      '.superpi-tag[data-tone="run"]{background:color-mix(in srgb,var(--dsw-alias-state-business-primary) 10%,transparent);color:var(--dsw-alias-state-business-primary)}',
+      '.superpi-tag[data-tone="ok"]{background:color-mix(in srgb,var(--dsw-alias-state-success-primary) 10%,transparent);color:var(--dsw-alias-state-success-primary)}',
+      '.superpi-tag[data-tone="err"]{background:color-mix(in srgb,var(--dsw-alias-state-error-primary) 10%,transparent);color:var(--dsw-alias-state-error-primary)}',
+      '.superpi-tag[data-tone="warn"]{background:color-mix(in srgb,var(--dsw-alias-state-warn-primary) 12%,transparent);color:var(--dsw-alias-state-warn-primary)}',
+      '.superpi-usage{margin-top:2px;font-size:var(--dsw-font-xxxs-11-font-size);line-height:var(--dsw-font-xxxs-11-line-height);color:var(--dsw-alias-label-caption);font-variant-numeric:tabular-nums}',
+      '.superpi-caret{display:inline-block;width:6px;height:14px;margin-left:2px;background:var(--dsw-alias-label-secondary);animation:superpi-pulse 1s steps(2) infinite;vertical-align:text-bottom}',
+      '.superpi-img{max-width:min(100%,360px);max-height:240px;border:0;border-radius:var(--dsw-radius-md);cursor:zoom-in;display:block}',
+      '.superpi-img-open{position:fixed;inset:0;z-index:60;background:var(--dsw-alias-bg-mask-photo);display:flex;align-items:center;justify-content:center;padding:40px;cursor:zoom-out}',
+      '.superpi-img-open img{max-width:100%;max-height:100%;border-radius:var(--dsw-radius-md)}',
       // 结论里的文件 = 可点标签（用户 m22969：过程里生成的文件要点得开）。
       // 用 button 而不是 span：Tab 能落到它上面、Enter 能打开，焦点环由根选择器统一兜底。
       // 目录段压暗、文件名提亮，长路径只截目录不截名字 —— 名字才是识别依据。
-      '.dsh-pi-fileref{display:inline-flex;align-items:center;gap:4px;max-width:100%;margin:0 1px;padding:0 6px;border:0;border-radius:var(--dsw-radius-sm);box-shadow:inset 0 0 0 .5px var(--dsw-alias-border-l3);background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary);font-family:var(--ds-font-family-code,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace);font-size:var(--dsw-font-xxxs-11-font-size);line-height:20px;vertical-align:baseline;cursor:pointer;transition:background-color .16s ease,box-shadow .16s ease}',
-      '.dsh-pi-fileref:hover{background:var(--dsw-alias-interactive-bg-hover);box-shadow:inset 0 0 0 .5px var(--dsw-alias-state-business-primary)}',
-      '.dsh-pi-fileref svg{flex:0 0 auto;color:var(--dsw-alias-state-business-primary)}',
-      '.dsh-pi-fileref-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
-      '.dsh-pi-fileref-dir{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-tertiary)}',
-      '.dsh-pi-fileref-block{margin:8px 0;padding:0 10px;line-height:26px}',
+      '.superpi-fileref{display:inline-flex;align-items:center;gap:4px;max-width:100%;margin:0 1px;padding:0 6px;border:0;border-radius:var(--dsw-radius-sm);box-shadow:inset 0 0 0 .5px var(--dsw-alias-border-l3);background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary);font-family:var(--ds-font-family-code,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace);font-size:var(--dsw-font-xxxs-11-font-size);line-height:20px;vertical-align:baseline;cursor:pointer;transition:background-color .16s ease,box-shadow .16s ease}',
+      '.superpi-fileref:hover{background:var(--dsw-alias-interactive-bg-hover);box-shadow:inset 0 0 0 .5px var(--dsw-alias-state-business-primary)}',
+      '.superpi-fileref svg{flex:0 0 auto;color:var(--dsw-alias-state-business-primary)}',
+      '.superpi-fileref-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      '.superpi-fileref-dir{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-tertiary)}',
+      '.superpi-fileref-block{margin:8px 0;padding:0 10px;line-height:26px}',
 
       // ── 空态 / 运行时引导 ───────────────────────────────────────────────────
-      '.dsh-pi-empty{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:48px 24px;text-align:center;color:var(--dsw-alias-label-secondary);flex:1 1 auto}',
-      '.dsh-pi-empty h2{margin:4px 0 0;font:var(--dsw-font-base-strong-16);color:var(--dsw-alias-label-primary)}',
-      '.dsh-pi-empty p{margin:0;max-width:420px;font-size:var(--dsw-font-s-14-font-size);line-height:var(--dsw-font-s-14-line-height);color:var(--dsw-alias-label-secondary)}',
-      '.dsh-pi-empty-meta{font-family:var(--ds-font-family-code,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace);font-size:var(--dsw-font-xxs-12-font-size);line-height:var(--dsw-font-xxs-12-line-height);color:var(--dsw-alias-label-caption);word-break:break-all}',
-      '.dsh-pi-empty-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:center;margin-top:4px}',
-      '.dsh-pi-center{flex:1 1 auto;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:32px;color:var(--dsw-alias-label-secondary)}',
-      '.dsh-pi-gate{flex:1 1 auto;display:flex;align-items:center;justify-content:center;padding:24px}',
-      '.dsh-pi-gate-card{max-width:520px;width:100%;display:flex;flex-direction:column;gap:10px;padding:20px;border:0;border-radius:var(--dsw-radius-lg);background:var(--dsw-alias-bg-layer-1);box-shadow:var(--dsw-elevation-panel)}',
-      '.dsh-pi-gate-card h3{margin:0;font:var(--dsw-font-base-strong-16)}',
-      '.dsh-pi-gate-actions{display:flex;gap:8px;flex-wrap:wrap}',
-      '.dsh-pi-gate-path{font-family:var(--ds-font-family-code,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace);font-size:var(--dsw-font-xxxs-11-font-size);line-height:18px;color:var(--dsw-alias-label-tertiary);word-break:break-all}',
-      '.dsh-pi-gate-searched{display:flex;flex-direction:column;gap:2px;font-size:var(--dsw-font-xxxs-11-font-size);line-height:18px;color:var(--dsw-alias-label-dimmed)}',
+      '.superpi-empty{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:48px 24px;text-align:center;color:var(--dsw-alias-label-secondary);flex:1 1 auto}',
+      '.superpi-empty h2{margin:4px 0 0;font:var(--dsw-font-base-strong-16);color:var(--dsw-alias-label-primary)}',
+      '.superpi-empty p{margin:0;max-width:420px;font-size:var(--dsw-font-s-14-font-size);line-height:var(--dsw-font-s-14-line-height);color:var(--dsw-alias-label-secondary)}',
+      '.superpi-empty-meta{font-family:var(--ds-font-family-code,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace);font-size:var(--dsw-font-xxs-12-font-size);line-height:var(--dsw-font-xxs-12-line-height);color:var(--dsw-alias-label-caption);word-break:break-all}',
+      '.superpi-empty-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:center;margin-top:4px}',
+      '.superpi-center{flex:1 1 auto;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:32px;color:var(--dsw-alias-label-secondary)}',
+      '.superpi-gate{flex:1 1 auto;display:flex;align-items:center;justify-content:center;padding:24px}',
+      '.superpi-gate-card{max-width:520px;width:100%;display:flex;flex-direction:column;gap:10px;padding:20px;border:0;border-radius:var(--dsw-radius-lg);background:var(--dsw-alias-bg-layer-1);box-shadow:var(--dsw-elevation-panel)}',
+      '.superpi-gate-card h3{margin:0;font:var(--dsw-font-base-strong-16)}',
+      '.superpi-gate-actions{display:flex;gap:8px;flex-wrap:wrap}',
+      '.superpi-gate-path{font-family:var(--ds-font-family-code,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace);font-size:var(--dsw-font-xxxs-11-font-size);line-height:18px;color:var(--dsw-alias-label-tertiary);word-break:break-all}',
+      '.superpi-gate-searched{display:flex;flex-direction:column;gap:2px;font-size:var(--dsw-font-xxxs-11-font-size);line-height:18px;color:var(--dsw-alias-label-dimmed)}',
 
       // ── 输入区 ──────────────────────────────────────────────────────────────
       // Composer 的卡面与行布局逐条对齐宿主主对话区（dsh-client-ui-conversation 的 composer）：
@@ -642,235 +642,235 @@ window.__ModuleLoader__.load({
       // 行内左侧圆形「+」、右侧圆形发送键。宿主里这些是硬编码的 CSS 变量引用，
       // 这里同样只引用令牌，深浅色与品牌色由主题注入。
       // 容器是 column + 居中：卡与 dock 同宽同心，跟宿主 .GRgSLq_root 一样。
-      '.dsh-pi-composer{flex:0 0 auto;background:var(--dsw-alias-bg-base);display:flex;flex-direction:column;align-items:center;padding:0 12px 4px;position:relative}',
-      '.dsh-pi-composer-inner{display:flex;flex-direction:column;gap:6px;width:100%;min-width:0}',
-      '.dsh-pi-box{position:relative;display:flex;flex-direction:column;gap:12px;padding-top:8px;border:0;border-radius:var(--dsw-radius-panel);background:var(--dsw-specific-input-major);box-shadow:var(--dsw-elevation-soft);transition:box-shadow .16s ease}',
+      '.superpi-composer{flex:0 0 auto;background:var(--dsw-alias-bg-base);display:flex;flex-direction:column;align-items:center;padding:0 12px 4px;position:relative}',
+      '.superpi-composer-inner{display:flex;flex-direction:column;gap:6px;width:100%;min-width:0}',
+      '.superpi-box{position:relative;display:flex;flex-direction:column;gap:12px;padding-top:8px;border:0;border-radius:var(--dsw-radius-panel);background:var(--dsw-specific-input-major);box-shadow:var(--dsw-elevation-soft);transition:box-shadow .16s ease}',
       // 聚焦时把 elevation 的描边层换成品牌色：既保留投影，又给出焦点反馈（宿主同理）。
-      '.dsh-pi-box:focus-within{--dsw-elevation-stroke-color:var(--dsw-alias-state-business-primary)}',
-      '.dsh-pi-widget{display:flex;flex-direction:column;gap:2px;padding:8px 10px 0}',
-      '.dsh-pi-widget-body{margin:0;padding:6px 10px;border:.5px solid var(--dsw-alias-border-l2);border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-secondary);font-size:var(--dsw-font-xxxs-11-font-size);line-height:18px;white-space:pre-wrap;word-break:break-word;font-family:var(--ds-font-family-code,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace);max-height:120px;overflow:auto}',
+      '.superpi-box:focus-within{--dsw-elevation-stroke-color:var(--dsw-alias-state-business-primary)}',
+      '.superpi-widget{display:flex;flex-direction:column;gap:2px;padding:8px 10px 0}',
+      '.superpi-widget-body{margin:0;padding:6px 10px;border:.5px solid var(--dsw-alias-border-l2);border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-secondary);font-size:var(--dsw-font-xxxs-11-font-size);line-height:18px;white-space:pre-wrap;word-break:break-word;font-family:var(--ds-font-family-code,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace);max-height:120px;overflow:auto}',
       // dock：卡下方的统计行（宿主 .GRgSLq_dock）—— 居中、12px 间距、上方 4px。
       // 状态文案（steering / 排队）与统计数字共用一行，中点分隔。
-      '.dsh-pi-statusbar{display:flex;align-items:center;justify-content:center;gap:12px;flex-wrap:wrap;max-width:100%;padding:4px 2px 0;font-size:var(--dsw-font-xxxs-11-font-size);line-height:18px;color:var(--dsw-alias-label-caption);font-variant-numeric:tabular-nums}',
-      '.dsh-pi-statusbar span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:240px}',
-      '.dsh-pi-ta{box-sizing:border-box;width:100%;min-height:52px;max-height:220px;resize:none;border:0;outline:0;background:transparent;color:var(--dsw-alias-label-primary);caret-color:var(--dsw-alias-state-business-primary);padding:4px 8px 0 14px;font-family:inherit;font-size:var(--dsw-font-s-14-font-size);line-height:calc(24px + var(--dsh-content-font-delta,0px))}',
-      '.dsh-pi-ta::placeholder{color:var(--dsw-alias-label-caption)}',
-      '.dsh-pi-bar{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;min-width:0;padding:2px 8px 6px}',
-      '.dsh-pi-bar-actions{display:flex;align-items:center;gap:8px;min-width:0;flex:0 1 auto}',
-      '.dsh-pi-bar-right{display:flex;align-items:center;gap:8px;flex:1 1 auto;min-width:0;justify-content:flex-end}',
-      '.dsh-pi-bar-hint{min-width:0;font-size:var(--dsw-font-xxxs-11-font-size);line-height:18px;color:var(--dsw-alias-label-caption);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      '.superpi-statusbar{display:flex;align-items:center;justify-content:center;gap:12px;flex-wrap:wrap;max-width:100%;padding:4px 2px 0;font-size:var(--dsw-font-xxxs-11-font-size);line-height:18px;color:var(--dsw-alias-label-caption);font-variant-numeric:tabular-nums}',
+      '.superpi-statusbar span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:240px}',
+      '.superpi-ta{box-sizing:border-box;width:100%;min-height:52px;max-height:220px;resize:none;border:0;outline:0;background:transparent;color:var(--dsw-alias-label-primary);caret-color:var(--dsw-alias-state-business-primary);padding:4px 8px 0 14px;font-family:inherit;font-size:var(--dsw-font-s-14-font-size);line-height:calc(24px + var(--dsh-content-font-delta,0px))}',
+      '.superpi-ta::placeholder{color:var(--dsw-alias-label-caption)}',
+      '.superpi-bar{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;min-width:0;padding:2px 8px 6px}',
+      '.superpi-bar-actions{display:flex;align-items:center;gap:8px;min-width:0;flex:0 1 auto}',
+      '.superpi-bar-right{display:flex;align-items:center;gap:8px;flex:1 1 auto;min-width:0;justify-content:flex-end}',
+      '.superpi-bar-hint{min-width:0;font-size:var(--dsw-font-xxxs-11-font-size);line-height:18px;color:var(--dsw-alias-label-caption);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
       // 「+」：宿主 ._add —— 28×28 圆形、selector 底、图标居中。
-      '.dsh-pi-add-wrap{position:relative;flex:0 0 auto;display:flex}',
-      '.dsh-pi-add{display:grid;place-items:center;width:28px;height:28px;padding:0;border:0;border-radius:999px;background:var(--dsw-specific-selector);color:var(--dsw-alias-label-primary);cursor:pointer;transition:background-color .12s ease}',
-      '.dsh-pi-add:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover-solid)}',
-      '.dsh-pi-add:disabled{opacity:.5;cursor:not-allowed}',
-      '.dsh-pi-add[data-open="1"]{background:var(--dsw-alias-interactive-bg-hover-solid)}',
+      '.superpi-add-wrap{position:relative;flex:0 0 auto;display:flex}',
+      '.superpi-add{display:grid;place-items:center;width:28px;height:28px;padding:0;border:0;border-radius:999px;background:var(--dsw-specific-selector);color:var(--dsw-alias-label-primary);cursor:pointer;transition:background-color .12s ease}',
+      '.superpi-add:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover-solid)}',
+      '.superpi-add:disabled{opacity:.5;cursor:not-allowed}',
+      '.superpi-add[data-open="1"]{background:var(--dsw-alias-interactive-bg-hover-solid)}',
       // 模型 / 推理等级选择器：宿主 ._select —— 28 高、透明底、13px 次级色、hover 才出底。
-      '.dsh-pi-picker{display:inline-flex;align-items:center;gap:4px;max-width:220px;height:28px;padding:0 6px 0 8px;border:0;border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-label-secondary);font-family:inherit;font-size:var(--dsw-font-xs-13-font-size);line-height:var(--dsw-font-xs-13-line-height);font-weight:500;cursor:pointer;transition:background-color .12s ease}',
-      '.dsh-pi-picker:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover-solid)}',
-      '.dsh-pi-picker:disabled{opacity:.5;cursor:not-allowed}',
-      '.dsh-pi-picker-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
-  // 档位按钮与模型按钮并排：两者外观同源（.dsh-pi-picker），档位那个只多一点左边距，
+      '.superpi-picker{display:inline-flex;align-items:center;gap:4px;max-width:220px;height:28px;padding:0 6px 0 8px;border:0;border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-label-secondary);font-family:inherit;font-size:var(--dsw-font-xs-13-font-size);line-height:var(--dsw-font-xs-13-line-height);font-weight:500;cursor:pointer;transition:background-color .12s ease}',
+      '.superpi-picker:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover-solid)}',
+      '.superpi-picker:disabled{opacity:.5;cursor:not-allowed}',
+      '.superpi-picker-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+  // 档位按钮与模型按钮并排：两者外观同源（.superpi-picker），档位那个只多一点左边距，
   // 免得两个 28px 胶囊贴在一起看不出边界。
-  '.dsh-pi-picker-level{margin-left:2px;padding:0 6px 0 8px}',
-  '.dsh-pi-picker-label{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+  '.superpi-picker-level{margin-left:2px;padding:0 6px 0 8px}',
+  '.superpi-picker-label{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
       // 发送键：宿主 ._primary —— 34×34 圆形、info-fill 底、上移 2px。
-      '.dsh-pi-send{flex:0 0 auto;display:grid;place-items:center;width:34px;height:34px;padding:0;border:0;border-radius:999px;background:var(--dsw-alias-button-info-fill);color:var(--dsw-alias-label-primary-foreground);cursor:pointer;transform:translateY(-2px);transition:background-color .1s ease}',
-      '.dsh-pi-send:hover:not(:disabled){background:var(--dsw-alias-button-info-hover)}',
-      '.dsh-pi-send:disabled{opacity:.4;cursor:default}',
-      '.dsh-pi-stop{flex:0 0 auto;display:grid;place-items:center;width:34px;height:34px;padding:0;border:0;border-radius:999px;background:var(--dsw-alias-interactive-bg-hover-solid);color:var(--dsw-alias-label-primary);cursor:pointer;transform:translateY(-2px);transition:background-color .1s ease}',
-      '.dsh-pi-stop:hover{background:var(--dsw-alias-interactive-bg-hover-danger)}',
-      '.dsh-pi-thumbs{display:flex;flex-wrap:wrap;gap:6px;padding:8px 10px 0}',
-      '.dsh-pi-thumb{position:relative;width:52px;height:52px;border-radius:var(--dsw-radius-sm);overflow:hidden;box-shadow:inset 0 0 0 .5px var(--dsw-alias-border-l3)}',
-      '.dsh-pi-thumb img{width:100%;height:100%;object-fit:cover;display:block}',
-      '.dsh-pi-thumb-x{position:absolute;top:2px;right:2px;width:16px;height:16px;line-height:16px;text-align:center;border:0;border-radius:var(--dsw-radius-xs);background:var(--dsw-alias-bg-mask-1);color:var(--dsw-static-neutral-bluish-00);font-size:11px;cursor:pointer;padding:0}',
-      '.dsh-pi-thumb-x:hover{background:var(--dsw-alias-bg-mask-2)}',
+      '.superpi-send{flex:0 0 auto;display:grid;place-items:center;width:34px;height:34px;padding:0;border:0;border-radius:999px;background:var(--dsw-alias-button-info-fill);color:var(--dsw-alias-label-primary-foreground);cursor:pointer;transform:translateY(-2px);transition:background-color .1s ease}',
+      '.superpi-send:hover:not(:disabled){background:var(--dsw-alias-button-info-hover)}',
+      '.superpi-send:disabled{opacity:.4;cursor:default}',
+      '.superpi-stop{flex:0 0 auto;display:grid;place-items:center;width:34px;height:34px;padding:0;border:0;border-radius:999px;background:var(--dsw-alias-interactive-bg-hover-solid);color:var(--dsw-alias-label-primary);cursor:pointer;transform:translateY(-2px);transition:background-color .1s ease}',
+      '.superpi-stop:hover{background:var(--dsw-alias-interactive-bg-hover-danger)}',
+      '.superpi-thumbs{display:flex;flex-wrap:wrap;gap:6px;padding:8px 10px 0}',
+      '.superpi-thumb{position:relative;width:52px;height:52px;border-radius:var(--dsw-radius-sm);overflow:hidden;box-shadow:inset 0 0 0 .5px var(--dsw-alias-border-l3)}',
+      '.superpi-thumb img{width:100%;height:100%;object-fit:cover;display:block}',
+      '.superpi-thumb-x{position:absolute;top:2px;right:2px;width:16px;height:16px;line-height:16px;text-align:center;border:0;border-radius:var(--dsw-radius-xs);background:var(--dsw-alias-bg-mask-1);color:var(--dsw-static-neutral-bluish-00);font-size:11px;cursor:pointer;padding:0}',
+      '.superpi-thumb-x:hover{background:var(--dsw-alias-bg-mask-2)}',
 
       // 弹出菜单 = DSH ._list（padding 4 / radius-lg / specific-menu / 毛玻璃 / elevation-panel）
-      '.dsh-pi-menu{position:absolute;left:0;right:0;bottom:calc(100% + 4px);z-index:20;display:flex;flex-direction:column;max-height:min(46vh,360px);overflow:hidden;padding:4px;border:0;border-radius:var(--dsw-radius-lg);background:var(--dsw-specific-menu);backdrop-filter:var(--dsw-menu-backdrop-filter);box-shadow:var(--dsw-elevation-panel);--dsw-elevation-stroke-color:var(--dsw-alias-border-l1)}',
-      '.dsh-pi-menu-head{display:flex;align-items:center;gap:6px;padding:6px 8px;border-bottom:0;font-size:var(--dsw-font-xxxs-11-font-size);line-height:var(--dsw-font-xxxs-11-line-height);color:var(--dsw-alias-label-tertiary)}',
-      '.dsh-pi-menu-list{overflow-y:auto;min-height:0;padding:0}',
-      '.dsh-pi-item{display:flex;align-items:center;gap:6px;width:100%;min-height:34px;padding:6px 8px;border:0;border-radius:var(--dsw-radius-md);background:transparent;cursor:pointer;font-size:var(--dsw-font-xs-13-font-size);line-height:var(--dsw-font-xs-13-line-height);color:var(--dsw-alias-label-primary);text-align:left}',
-      '.dsh-pi-item[data-active="1"]{background:var(--dsw-alias-interactive-bg-hover)}',
-      '.dsh-pi-item[data-disabled="1"]{opacity:.4;cursor:not-allowed}',
-      '.dsh-pi-item-main{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:0}',
-      '.dsh-pi-item-name{font-family:var(--ds-font-family-code,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
-      '.dsh-pi-item-desc{font-size:var(--dsw-font-xxxs-11-font-size);line-height:var(--dsw-font-xxxs-11-line-height);color:var(--dsw-alias-label-tertiary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
-      '.dsh-pi-item-side{flex:0 0 auto;font-size:var(--dsw-font-xxxs-11-font-size);line-height:var(--dsw-font-xxxs-11-line-height);color:var(--dsw-alias-label-caption)}',
-      '.dsh-pi-empty-row{padding:12px;text-align:center;color:var(--dsw-alias-label-dimmed);font-size:var(--dsw-font-xxs-12-font-size);line-height:var(--dsw-font-xxs-12-line-height)}',
+      '.superpi-menu{position:absolute;left:0;right:0;bottom:calc(100% + 4px);z-index:20;display:flex;flex-direction:column;max-height:min(46vh,360px);overflow:hidden;padding:4px;border:0;border-radius:var(--dsw-radius-lg);background:var(--dsw-specific-menu);backdrop-filter:var(--dsw-menu-backdrop-filter);box-shadow:var(--dsw-elevation-panel);--dsw-elevation-stroke-color:var(--dsw-alias-border-l1)}',
+      '.superpi-menu-head{display:flex;align-items:center;gap:6px;padding:6px 8px;border-bottom:0;font-size:var(--dsw-font-xxxs-11-font-size);line-height:var(--dsw-font-xxxs-11-line-height);color:var(--dsw-alias-label-tertiary)}',
+      '.superpi-menu-list{overflow-y:auto;min-height:0;padding:0}',
+      '.superpi-item{display:flex;align-items:center;gap:6px;width:100%;min-height:34px;padding:6px 8px;border:0;border-radius:var(--dsw-radius-md);background:transparent;cursor:pointer;font-size:var(--dsw-font-xs-13-font-size);line-height:var(--dsw-font-xs-13-line-height);color:var(--dsw-alias-label-primary);text-align:left}',
+      '.superpi-item[data-active="1"]{background:var(--dsw-alias-interactive-bg-hover)}',
+      '.superpi-item[data-disabled="1"]{opacity:.4;cursor:not-allowed}',
+      '.superpi-item-main{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:0}',
+      '.superpi-item-name{font-family:var(--ds-font-family-code,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+      '.superpi-item-desc{font-size:var(--dsw-font-xxxs-11-font-size);line-height:var(--dsw-font-xxxs-11-line-height);color:var(--dsw-alias-label-tertiary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+      '.superpi-item-side{flex:0 0 auto;font-size:var(--dsw-font-xxxs-11-font-size);line-height:var(--dsw-font-xxxs-11-line-height);color:var(--dsw-alias-label-caption)}',
+      '.superpi-empty-row{padding:12px;text-align:center;color:var(--dsw-alias-label-dimmed);font-size:var(--dsw-font-xxs-12-font-size);line-height:var(--dsw-font-xxs-12-line-height)}',
 
       // 「+」菜单：宿主是两列（左图标 + 主标签 + 英文键，右灰色说明）。宽度按内容走，
       // 不再像 slash 补全那样撑满卡片。
-      '.dsh-pi-menu-add{left:0;right:auto;min-width:288px;max-width:min(360px,calc(100vw - 48px))}',
-      '.dsh-pi-menu-section{padding:8px 8px 4px;font-size:var(--dsw-font-xxxs-11-font-size);line-height:var(--dsw-font-xxxs-11-line-height);color:var(--dsw-alias-label-caption)}',
-      '.dsh-pi-add-item{display:flex;align-items:center;gap:10px;width:100%;min-height:34px;padding:6px 8px;border:0;border-radius:var(--dsw-radius-md);background:transparent;cursor:pointer;font-size:var(--dsw-font-xs-13-font-size);line-height:var(--dsw-font-xs-13-line-height);color:var(--dsw-alias-label-primary);text-align:left}',
-      '.dsh-pi-add-item[data-active="1"]{background:var(--dsw-alias-interactive-bg-hover)}',
-      '.dsh-pi-add-icon{display:grid;place-items:center;flex:0 0 auto;width:20px;height:20px;color:var(--dsw-alias-label-secondary)}',
-      '.dsh-pi-add-text{display:flex;align-items:baseline;gap:6px;min-width:0;flex:1 1 auto}',
-      '.dsh-pi-add-label{flex:0 0 auto;white-space:nowrap}',
-      '.dsh-pi-add-key{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--ds-font-family-code,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace);font-size:var(--dsw-font-xxxs-11-font-size);line-height:var(--dsw-font-xxxs-11-line-height);color:var(--dsw-alias-label-caption)}',
-      '.dsh-pi-add-desc{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--dsw-font-xxxs-11-font-size);line-height:var(--dsw-font-xxxs-11-line-height);color:var(--dsw-alias-label-tertiary)}',
+      '.superpi-menu-add{left:0;right:auto;min-width:288px;max-width:min(360px,calc(100vw - 48px))}',
+      '.superpi-menu-section{padding:8px 8px 4px;font-size:var(--dsw-font-xxxs-11-font-size);line-height:var(--dsw-font-xxxs-11-line-height);color:var(--dsw-alias-label-caption)}',
+      '.superpi-add-item{display:flex;align-items:center;gap:10px;width:100%;min-height:34px;padding:6px 8px;border:0;border-radius:var(--dsw-radius-md);background:transparent;cursor:pointer;font-size:var(--dsw-font-xs-13-font-size);line-height:var(--dsw-font-xs-13-line-height);color:var(--dsw-alias-label-primary);text-align:left}',
+      '.superpi-add-item[data-active="1"]{background:var(--dsw-alias-interactive-bg-hover)}',
+      '.superpi-add-icon{display:grid;place-items:center;flex:0 0 auto;width:20px;height:20px;color:var(--dsw-alias-label-secondary)}',
+      '.superpi-add-text{display:flex;align-items:baseline;gap:6px;min-width:0;flex:1 1 auto}',
+      '.superpi-add-label{flex:0 0 auto;white-space:nowrap}',
+      '.superpi-add-key{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--ds-font-family-code,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace);font-size:var(--dsw-font-xxxs-11-font-size);line-height:var(--dsw-font-xxxs-11-line-height);color:var(--dsw-alias-label-caption)}',
+      '.superpi-add-desc{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--dsw-font-xxxs-11-font-size);line-height:var(--dsw-font-xxxs-11-line-height);color:var(--dsw-alias-label-tertiary)}',
 
       // ── 提示 ────────────────────────────────────────────────────────────────
-      '.dsh-pi-alert{padding:8px 12px;border:0;border-radius:var(--dsw-radius-sm);background:color-mix(in srgb,var(--dsw-alias-state-error-primary) 10%,transparent);color:var(--dsw-alias-state-error-primary);font-size:var(--dsw-font-xxs-12-font-size);line-height:var(--dsw-font-xxs-12-line-height);white-space:pre-wrap;word-break:break-word}',
-      '.dsh-pi-notice{padding:8px 12px;border:0;border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-secondary);font-size:var(--dsw-font-xxs-12-font-size);line-height:var(--dsw-font-xxs-12-line-height)}',
-      '.dsh-pi-notice[data-tone="err"]{background:color-mix(in srgb,var(--dsw-alias-state-error-primary) 10%,transparent);color:var(--dsw-alias-state-error-primary)}',
-      '.dsh-pi-notice[data-tone="warn"]{background:color-mix(in srgb,var(--dsw-alias-state-warn-primary) 12%,transparent);color:var(--dsw-alias-state-warn-primary)}',
-      '.dsh-pi-notice[data-tone="ok"]{background:color-mix(in srgb,var(--dsw-alias-state-success-primary) 10%,transparent);color:var(--dsw-alias-state-success-primary)}',
-      '.dsh-pi-queue{display:flex;align-items:center;gap:8px;font-size:var(--dsw-font-xxxs-11-font-size);line-height:18px;color:var(--dsw-alias-label-tertiary)}',
+      '.superpi-alert{padding:8px 12px;border:0;border-radius:var(--dsw-radius-sm);background:color-mix(in srgb,var(--dsw-alias-state-error-primary) 10%,transparent);color:var(--dsw-alias-state-error-primary);font-size:var(--dsw-font-xxs-12-font-size);line-height:var(--dsw-font-xxs-12-line-height);white-space:pre-wrap;word-break:break-word}',
+      '.superpi-notice{padding:8px 12px;border:0;border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-secondary);font-size:var(--dsw-font-xxs-12-font-size);line-height:var(--dsw-font-xxs-12-line-height)}',
+      '.superpi-notice[data-tone="err"]{background:color-mix(in srgb,var(--dsw-alias-state-error-primary) 10%,transparent);color:var(--dsw-alias-state-error-primary)}',
+      '.superpi-notice[data-tone="warn"]{background:color-mix(in srgb,var(--dsw-alias-state-warn-primary) 12%,transparent);color:var(--dsw-alias-state-warn-primary)}',
+      '.superpi-notice[data-tone="ok"]{background:color-mix(in srgb,var(--dsw-alias-state-success-primary) 10%,transparent);color:var(--dsw-alias-state-success-primary)}',
+      '.superpi-queue{display:flex;align-items:center;gap:8px;font-size:var(--dsw-font-xxxs-11-font-size);line-height:18px;color:var(--dsw-alias-label-tertiary)}',
 
       // ── 抽屉 ────────────────────────────────────────────────────────────────
       // DSH ._float 的配方：bg-layer-2 + radius-panel + elevation-prominent + 局部描边色。
-      '.dsh-pi-sheet{position:absolute;inset:0;z-index:30;display:flex;flex-direction:column;background:var(--dsw-alias-bg-base)}',
-      '.dsh-pi-sheet-head{display:flex;align-items:center;gap:8px;padding:12px 14px;border-bottom:.5px solid var(--dsw-alias-border-l2);flex:0 0 auto}',
-      // 关闭按钮：28x28 命中区与 .dsh-pi-btn 基线对齐，图标 16px（覆盖 .dsh-pi-btn svg 的 15px），
+      '.superpi-sheet{position:absolute;inset:0;z-index:30;display:flex;flex-direction:column;background:var(--dsw-alias-bg-base)}',
+      '.superpi-sheet-head{display:flex;align-items:center;gap:8px;padding:12px 14px;border-bottom:.5px solid var(--dsw-alias-border-l2);flex:0 0 auto}',
+      // 关闭按钮：28x28 命中区与 .superpi-btn 基线对齐，图标 16px（覆盖 .superpi-btn svg 的 15px），
       // 右边距收紧 4px，视觉上与 14px 内边距的标题栏同宽。
-      '.dsh-pi-sheet-head .dsh-pi-btn-icon,.dsh-pi-dir-head .dsh-pi-btn-icon{width:32px;height:32px;margin-right:-4px}',
-      '.dsh-pi-sheet-head .dsh-pi-btn-icon svg,.dsh-pi-dir-head .dsh-pi-btn-icon svg{width:16px;height:16px}',
-      '.dsh-pi-sheet-title{flex:1 1 auto;min-width:0;font:var(--dsw-font-base-strong-16);color:var(--dsw-alias-label-primary)}',
-      '.dsh-pi-search{height:28px;padding:0 10px;border:.5px solid var(--dsw-alias-border-l4);border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-primary);font-family:inherit;font-size:var(--dsw-font-xxs-12-font-size);line-height:var(--dsw-font-xxs-12-line-height);outline:0;min-width:0;transition:border-color .16s ease}',
-      '.dsh-pi-search:focus{border-color:var(--dsw-alias-state-business-primary)}',
-      '.dsh-pi-search::placeholder{color:var(--dsw-alias-label-dimmed)}',
-      '.dsh-pi-sheet-body{flex:1 1 auto;min-height:0;overflow-y:auto;padding:12px 14px 16px;display:flex;flex-direction:column;gap:8px}',
-      // 项目层与会话层共用一套行视觉（.dsh-pi-proj 只是语义钩子，样式与 .dsh-pi-sess 完全一致）。
-      '.dsh-pi-sess,.dsh-pi-proj{display:flex;flex-direction:column;gap:4px;padding:10px 12px;border:0;border-radius:var(--dsw-radius-md);background:var(--dsw-alias-bg-layer-1);box-shadow:inset 0 0 0 .5px var(--dsw-alias-border-l2);cursor:pointer;transition:background-color .16s ease,box-shadow .16s ease}',
-      '.dsh-pi-sess:hover,.dsh-pi-proj:hover{background:var(--dsw-alias-bg-layer-2);box-shadow:inset 0 0 0 .5px var(--dsw-alias-border-l4)}',
-      '.dsh-pi-sess[data-current="1"],.dsh-pi-proj[data-current="1"]{box-shadow:inset 0 0 0 .5px var(--dsw-alias-state-business-primary)}',
-      '.dsh-pi-proj[data-temporary="1"] .dsh-pi-sess-title{color:var(--dsw-alias-label-secondary)}',
-      '.dsh-pi-sess-top{display:flex;align-items:center;gap:6px;font-size:var(--dsw-font-xxs-12-font-size);line-height:var(--dsw-font-xxs-12-line-height);color:var(--dsw-alias-label-secondary)}',
+      '.superpi-sheet-head .superpi-btn-icon,.superpi-dir-head .superpi-btn-icon{width:32px;height:32px;margin-right:-4px}',
+      '.superpi-sheet-head .superpi-btn-icon svg,.superpi-dir-head .superpi-btn-icon svg{width:16px;height:16px}',
+      '.superpi-sheet-title{flex:1 1 auto;min-width:0;font:var(--dsw-font-base-strong-16);color:var(--dsw-alias-label-primary)}',
+      '.superpi-search{height:28px;padding:0 10px;border:.5px solid var(--dsw-alias-border-l4);border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-primary);font-family:inherit;font-size:var(--dsw-font-xxs-12-font-size);line-height:var(--dsw-font-xxs-12-line-height);outline:0;min-width:0;transition:border-color .16s ease}',
+      '.superpi-search:focus{border-color:var(--dsw-alias-state-business-primary)}',
+      '.superpi-search::placeholder{color:var(--dsw-alias-label-dimmed)}',
+      '.superpi-sheet-body{flex:1 1 auto;min-height:0;overflow-y:auto;padding:12px 14px 16px;display:flex;flex-direction:column;gap:8px}',
+      // 项目层与会话层共用一套行视觉（.superpi-proj 只是语义钩子，样式与 .superpi-sess 完全一致）。
+      '.superpi-sess,.superpi-proj{display:flex;flex-direction:column;gap:4px;padding:10px 12px;border:0;border-radius:var(--dsw-radius-md);background:var(--dsw-alias-bg-layer-1);box-shadow:inset 0 0 0 .5px var(--dsw-alias-border-l2);cursor:pointer;transition:background-color .16s ease,box-shadow .16s ease}',
+      '.superpi-sess:hover,.superpi-proj:hover{background:var(--dsw-alias-bg-layer-2);box-shadow:inset 0 0 0 .5px var(--dsw-alias-border-l4)}',
+      '.superpi-sess[data-current="1"],.superpi-proj[data-current="1"]{box-shadow:inset 0 0 0 .5px var(--dsw-alias-state-business-primary)}',
+      '.superpi-proj[data-temporary="1"] .superpi-sess-title{color:var(--dsw-alias-label-secondary)}',
+      '.superpi-sess-top{display:flex;align-items:center;gap:6px;font-size:var(--dsw-font-xxs-12-font-size);line-height:var(--dsw-font-xxs-12-line-height);color:var(--dsw-alias-label-secondary)}',
       // 会话数/标签不许换行：0.7.0 实拍里「1 个会话」被挤成两行（「话」掉到第二行），卡片从 60px 涨到 96px。
-      '.dsh-pi-sess-top > span{flex:0 0 auto;white-space:nowrap}',
-      '.dsh-pi-sess-title{flex:1 1 auto;min-width:0;font-weight:500;color:var(--dsw-alias-label-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
-      '.dsh-pi-sess-line{font-size:var(--dsw-font-xxs-12-font-size);line-height:var(--dsw-font-xxs-12-line-height);color:var(--dsw-alias-label-secondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
-      '.dsh-pi-mono{font-family:var(--ds-font-family-code,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace);font-size:var(--dsw-font-xxxs-11-font-size);line-height:18px;color:var(--dsw-alias-label-tertiary);word-break:break-all}',
+      '.superpi-sess-top > span{flex:0 0 auto;white-space:nowrap}',
+      '.superpi-sess-title{flex:1 1 auto;min-width:0;font-weight:500;color:var(--dsw-alias-label-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+      '.superpi-sess-line{font-size:var(--dsw-font-xxs-12-font-size);line-height:var(--dsw-font-xxs-12-line-height);color:var(--dsw-alias-label-secondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+      '.superpi-mono{font-family:var(--ds-font-family-code,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace);font-size:var(--dsw-font-xxxs-11-font-size);line-height:18px;color:var(--dsw-alias-label-tertiary);word-break:break-all}',
       // 侧栏/侧栏式列表里的路径行只占一行：break-all 会让长路径折成两三行、把卡片高度撑到 96px。
-      '.dsh-pi-sess .dsh-pi-mono,.dsh-pi-proj .dsh-pi-mono{word-break:normal;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
-      '.dsh-pi-kv{display:grid;grid-template-columns:auto 1fr;gap:6px 14px;font-size:var(--dsw-font-xxs-12-font-size);line-height:var(--dsw-font-xxs-12-line-height)}',
-      '.dsh-pi-kv-k{color:var(--dsw-alias-label-tertiary)}',
-      '.dsh-pi-kv-v{color:var(--dsw-alias-label-primary);word-break:break-word;font-variant-numeric:tabular-nums}',
-      '.dsh-pi-tree{display:flex;flex-direction:column;gap:1px;font-size:var(--dsw-font-xxs-12-font-size);font-family:var(--ds-font-family-code,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace)}',
-      '.dsh-pi-tree-node{display:flex;align-items:center;gap:6px;padding:4px 6px;border-radius:var(--dsw-radius-sm);cursor:default}',
-      '.dsh-pi-tree-node[data-clickable="1"]{cursor:pointer}',
-      '.dsh-pi-tree-node[data-clickable="1"]:hover{background:var(--dsw-alias-interactive-bg-hover)}',
-      '.dsh-pi-tree-node[data-leaf="1"]{background:var(--dsw-alias-interactive-bg-hover)}',
-      '.dsh-pi-tree-kind{flex:0 0 auto;color:var(--dsw-alias-label-caption);font-size:var(--dsw-font-xxxs-11-font-size);min-width:56px}',
-      '.dsh-pi-tree-text{flex:1 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--dsw-alias-label-secondary)}',
+      '.superpi-sess .superpi-mono,.superpi-proj .superpi-mono{word-break:normal;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+      '.superpi-kv{display:grid;grid-template-columns:auto 1fr;gap:6px 14px;font-size:var(--dsw-font-xxs-12-font-size);line-height:var(--dsw-font-xxs-12-line-height)}',
+      '.superpi-kv-k{color:var(--dsw-alias-label-tertiary)}',
+      '.superpi-kv-v{color:var(--dsw-alias-label-primary);word-break:break-word;font-variant-numeric:tabular-nums}',
+      '.superpi-tree{display:flex;flex-direction:column;gap:1px;font-size:var(--dsw-font-xxs-12-font-size);font-family:var(--ds-font-family-code,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace)}',
+      '.superpi-tree-node{display:flex;align-items:center;gap:6px;padding:4px 6px;border-radius:var(--dsw-radius-sm);cursor:default}',
+      '.superpi-tree-node[data-clickable="1"]{cursor:pointer}',
+      '.superpi-tree-node[data-clickable="1"]:hover{background:var(--dsw-alias-interactive-bg-hover)}',
+      '.superpi-tree-node[data-leaf="1"]{background:var(--dsw-alias-interactive-bg-hover)}',
+      '.superpi-tree-kind{flex:0 0 auto;color:var(--dsw-alias-label-caption);font-size:var(--dsw-font-xxxs-11-font-size);min-width:56px}',
+      '.superpi-tree-text{flex:1 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--dsw-alias-label-secondary)}',
 
       // 开关 = DSH ._switch（36x20 胶囊 + 20px 滑块 + aria-checked 驱动）
-      '.dsh-pi-switch{position:relative;flex:0 0 auto;width:36px;height:20px;padding:2px;border:0;border-radius:999px;corner-shape:round;background:var(--dsw-alias-border-l3);cursor:pointer;transition:background-color .16s ease}',
-      '.dsh-pi-switch[aria-checked="true"]{background:var(--dsw-alias-brand-primary)}',
-      '.dsh-pi-switch:disabled{cursor:default;opacity:.5}',
-      '.dsh-pi-switch-thumb{display:block;width:16px;height:16px;border-radius:50%;corner-shape:round;background:var(--dsw-alias-label-primary-foreground);transition:transform .12s ease}',
-      '.dsh-pi-switch[aria-checked="false"] .dsh-pi-switch-thumb{background:var(--dsw-alias-switch-thumb)}',
-      '.dsh-pi-switch[aria-checked="true"] .dsh-pi-switch-thumb{transform:translate(16px)}',
-      '.dsh-pi-switch-row{display:grid;grid-template-columns:1fr auto;align-items:center;gap:12px}',
-      '.dsh-pi-switch-label{font-size:var(--dsw-font-s-14-font-size);line-height:var(--dsw-font-s-14-line-height);color:var(--dsw-alias-label-primary)}',
+      '.superpi-switch{position:relative;flex:0 0 auto;width:36px;height:20px;padding:2px;border:0;border-radius:999px;corner-shape:round;background:var(--dsw-alias-border-l3);cursor:pointer;transition:background-color .16s ease}',
+      '.superpi-switch[aria-checked="true"]{background:var(--dsw-alias-brand-primary)}',
+      '.superpi-switch:disabled{cursor:default;opacity:.5}',
+      '.superpi-switch-thumb{display:block;width:16px;height:16px;border-radius:50%;corner-shape:round;background:var(--dsw-alias-label-primary-foreground);transition:transform .12s ease}',
+      '.superpi-switch[aria-checked="false"] .superpi-switch-thumb{background:var(--dsw-alias-switch-thumb)}',
+      '.superpi-switch[aria-checked="true"] .superpi-switch-thumb{transform:translate(16px)}',
+      '.superpi-switch-row{display:grid;grid-template-columns:1fr auto;align-items:center;gap:12px}',
+      '.superpi-switch-label{font-size:var(--dsw-font-s-14-font-size);line-height:var(--dsw-font-s-14-line-height);color:var(--dsw-alias-label-primary)}',
 
       // ── 工作目录选择（DirSheet）────────────────────────────────────────────
       // 对齐 DSH directory-picker：头部面包屑 + 可编辑路径，主体左「层级」右「子项」两栏。
-      '.dsh-pi-dir{display:flex;flex-direction:column;gap:8px;flex:1 1 auto;min-height:0}',
-      '.dsh-pi-dir-crumbs{display:flex;align-items:center;gap:2px;flex-wrap:wrap;min-height:20px}',
-      '.dsh-pi-dir-crumb{padding:1px 6px;border:0;border-radius:var(--dsw-radius-xs);background:transparent;color:var(--dsw-alias-label-secondary);font-family:inherit;font-size:var(--dsw-font-xxs-12-font-size);line-height:18px;cursor:pointer}',
-      '.dsh-pi-dir-crumb:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}',
-      '.dsh-pi-dir-crumb[data-last="1"]{color:var(--dsw-alias-label-primary);font-weight:500}',
-      '.dsh-pi-dir-sep{color:var(--dsw-alias-label-dimmed);font-size:var(--dsw-font-xxs-12-font-size);line-height:18px}',
-      '.dsh-pi-dir-cols{display:flex;gap:1px;flex:1 1 auto;min-height:240px;overflow:hidden;border:.5px solid var(--dsw-alias-border-l2);border-radius:var(--dsw-radius-md);background:var(--dsw-alias-bg-layer-1)}',
-      '.dsh-pi-dir-col{display:flex;flex-direction:column;min-width:0;flex:1 1 0;overflow-y:auto;padding:4px}',
-      '.dsh-pi-dir-col+.dsh-pi-dir-col{border-left:.5px solid var(--dsw-alias-border-l2)}',
-      '.dsh-pi-dir-item{display:flex;align-items:center;gap:6px;width:100%;min-height:30px;padding:4px 8px;border:0;border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-label-primary);font-family:inherit;font-size:var(--dsw-font-xs-13-font-size);line-height:var(--dsw-font-xs-13-line-height);text-align:left;cursor:pointer}',
-      '.dsh-pi-dir-item:hover{background:var(--dsw-alias-interactive-bg-hover)}',
-      '.dsh-pi-dir-item[data-selected="1"]{background:var(--dsw-alias-interactive-bg-active)}',
-      '.dsh-pi-dir-item[data-current="1"]{color:var(--dsw-alias-state-business-primary)}',
-      '.dsh-pi-dir-name{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
-      '.dsh-pi-dir-mark{flex:0 0 auto;color:var(--dsw-alias-state-business-primary);font-size:var(--dsw-font-xxxs-11-font-size)}',
-      '.dsh-pi-dir-foot{display:flex;align-items:center;gap:8px;flex-wrap:wrap}',
-      '.dsh-pi-dir-hint{flex:0 0 auto;min-width:0;font-size:var(--dsw-font-xxxs-11-font-size);line-height:18px;color:var(--dsw-alias-label-caption);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
-      '.dsh-pi-dir-target{flex:1 1 auto;min-width:0;font-family:var(--ds-font-family-code,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace);font-size:var(--dsw-font-xxxs-11-font-size);line-height:18px;color:var(--dsw-alias-label-caption);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
-      // 弹窗外壳：对齐 DSH directory-picker 的 680x500，用 .dsh-pi-dialog-wrap 提供的遮罩层居中。
+      '.superpi-dir{display:flex;flex-direction:column;gap:8px;flex:1 1 auto;min-height:0}',
+      '.superpi-dir-crumbs{display:flex;align-items:center;gap:2px;flex-wrap:wrap;min-height:20px}',
+      '.superpi-dir-crumb{padding:1px 6px;border:0;border-radius:var(--dsw-radius-xs);background:transparent;color:var(--dsw-alias-label-secondary);font-family:inherit;font-size:var(--dsw-font-xxs-12-font-size);line-height:18px;cursor:pointer}',
+      '.superpi-dir-crumb:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}',
+      '.superpi-dir-crumb[data-last="1"]{color:var(--dsw-alias-label-primary);font-weight:500}',
+      '.superpi-dir-sep{color:var(--dsw-alias-label-dimmed);font-size:var(--dsw-font-xxs-12-font-size);line-height:18px}',
+      '.superpi-dir-cols{display:flex;gap:1px;flex:1 1 auto;min-height:240px;overflow:hidden;border:.5px solid var(--dsw-alias-border-l2);border-radius:var(--dsw-radius-md);background:var(--dsw-alias-bg-layer-1)}',
+      '.superpi-dir-col{display:flex;flex-direction:column;min-width:0;flex:1 1 0;overflow-y:auto;padding:4px}',
+      '.superpi-dir-col+.superpi-dir-col{border-left:.5px solid var(--dsw-alias-border-l2)}',
+      '.superpi-dir-item{display:flex;align-items:center;gap:6px;width:100%;min-height:30px;padding:4px 8px;border:0;border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-label-primary);font-family:inherit;font-size:var(--dsw-font-xs-13-font-size);line-height:var(--dsw-font-xs-13-line-height);text-align:left;cursor:pointer}',
+      '.superpi-dir-item:hover{background:var(--dsw-alias-interactive-bg-hover)}',
+      '.superpi-dir-item[data-selected="1"]{background:var(--dsw-alias-interactive-bg-active)}',
+      '.superpi-dir-item[data-current="1"]{color:var(--dsw-alias-state-business-primary)}',
+      '.superpi-dir-name{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      '.superpi-dir-mark{flex:0 0 auto;color:var(--dsw-alias-state-business-primary);font-size:var(--dsw-font-xxxs-11-font-size)}',
+      '.superpi-dir-foot{display:flex;align-items:center;gap:8px;flex-wrap:wrap}',
+      '.superpi-dir-hint{flex:0 0 auto;min-width:0;font-size:var(--dsw-font-xxxs-11-font-size);line-height:18px;color:var(--dsw-alias-label-caption);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      '.superpi-dir-target{flex:1 1 auto;min-width:0;font-family:var(--ds-font-family-code,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace);font-size:var(--dsw-font-xxxs-11-font-size);line-height:18px;color:var(--dsw-alias-label-caption);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      // 弹窗外壳：对齐 DSH directory-picker 的 680x500，用 .superpi-dialog-wrap 提供的遮罩层居中。
       // 高度固定（而不是靠内容撑）是刻意的：Miller 两栏切换时列表高度必须稳定，
       // 否则用户点中一个目录、第二栏冒出来，整个弹窗会跳一下。
-      '.dsh-pi-dir-dialog{display:flex;flex-direction:column;width:min(680px,100%);height:min(500px,100%);overflow:hidden;border:0;border-radius:var(--dsw-radius-panel);background:var(--dsw-alias-bg-layer-2);box-shadow:var(--dsw-elevation-prominent);animation:dsh-pi-modal-in .16s ease-in-out}',
-      '.dsh-pi-dir-head{display:flex;align-items:center;gap:8px;flex:0 0 auto;padding:14px 16px 10px 20px}',
-      '.dsh-pi-dir-title{flex:1 1 auto;min-width:0;font:var(--dsw-font-base-strong-16);color:var(--dsw-alias-label-primary)}',
-      '.dsh-pi-dir-dialog .dsh-pi-dir{flex:1 1 auto;min-height:0;padding:0 20px 16px}',
+      '.superpi-dir-dialog{display:flex;flex-direction:column;width:min(680px,100%);height:min(500px,100%);overflow:hidden;border:0;border-radius:var(--dsw-radius-panel);background:var(--dsw-alias-bg-layer-2);box-shadow:var(--dsw-elevation-prominent);animation:superpi-modal-in .16s ease-in-out}',
+      '.superpi-dir-head{display:flex;align-items:center;gap:8px;flex:0 0 auto;padding:14px 16px 10px 20px}',
+      '.superpi-dir-title{flex:1 1 auto;min-width:0;font:var(--dsw-font-base-strong-16);color:var(--dsw-alias-label-primary)}',
+      '.superpi-dir-dialog .superpi-dir{flex:1 1 auto;min-height:0;padding:0 20px 16px}',
 
       // ── 对话框 ──────────────────────────────────────────────────────────────
       // 对齐 DSH ._dialog：radius-panel + bg-layer-2 + elevation-prominent +
       // header(padding 22px 14px 12px 24px) / body / footer(24px) 三段留白。
-      '.dsh-pi-dialog-wrap{position:absolute;inset:0;z-index:40;display:flex;align-items:center;justify-content:center;background:var(--dsw-alias-bg-mask-1);padding:20px}',
-      '.dsh-pi-dialog{display:flex;flex-direction:column;width:min(440px,100%);max-height:100%;overflow:hidden;border:0;border-radius:var(--dsw-radius-panel);background:var(--dsw-alias-bg-layer-2);box-shadow:var(--dsw-elevation-prominent);animation:dsh-pi-modal-in .16s ease-in-out}',
-      '@keyframes dsh-pi-modal-in{0%{opacity:0}to{opacity:1}}',
-      '.dsh-pi-dialog-head{display:flex;align-items:flex-start;gap:8px;padding:22px 18px 0 24px}',
-      '.dsh-pi-dialog-head h3{flex:1 1 auto;min-width:0;margin:0;padding:0;font:var(--dsw-font-base-strong-16);color:var(--dsw-alias-label-primary)}',
-      '.dsh-pi-dialog-head .dsh-pi-btn-icon{width:32px;height:32px;margin-top:-6px}',
-      '.dsh-pi-dialog-head .dsh-pi-btn-icon svg{width:16px;height:16px}',
-      '.dsh-pi-dialog .dsh-pi-mono{margin:6px 24px 0}',
-      '.dsh-pi-dialog-msg{margin:0;padding:10px 24px 0;color:var(--dsw-alias-label-secondary);font-size:var(--dsh-content-font-size,var(--dsw-font-s-14-font-size));line-height:calc(22px + var(--dsh-content-font-delta,0px));white-space:pre-wrap;word-break:break-word}',
-      '.dsh-pi-dialog-body{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;gap:6px;overflow-y:auto;padding:14px 24px 0}',
-      '.dsh-pi-dialog-actions{display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap;padding:22px 24px 24px}',
-      '.dsh-pi-opt{display:flex;align-items:center;gap:8px;width:100%;min-height:34px;padding:6px 10px;border:0;border-radius:var(--dsw-radius-md);background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-primary);font-family:inherit;font-size:var(--dsw-font-xs-13-font-size);line-height:var(--dsw-font-xs-13-line-height);text-align:left;cursor:pointer;transition:background-color .16s ease,box-shadow .16s ease}',
-      '.dsh-pi-opt:hover{background:var(--dsw-alias-interactive-bg-hover)}',
-      '.dsh-pi-opt[data-active="1"]{box-shadow:inset 0 0 0 .5px var(--dsw-alias-state-business-primary)}',
-      '.dsh-pi-mini-ta{width:100%;min-height:84px;max-height:180px;padding:6px 10px;border:.5px solid var(--dsw-alias-border-l4);border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);font:var(--dsw-font-xs-13);font-family:var(--ds-font-family-code,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace);resize:vertical;outline:0;transition:border-color .16s ease}',
-      '.dsh-pi-mini-ta:focus{border-color:var(--dsw-alias-state-business-primary)}',
-      '.dsh-pi-row2{display:flex;align-items:center;gap:8px;flex-wrap:wrap}',
-      '.dsh-pi-spacer{flex:1 1 auto}',
-      '.dsh-pi-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}',
+      '.superpi-dialog-wrap{position:absolute;inset:0;z-index:40;display:flex;align-items:center;justify-content:center;background:var(--dsw-alias-bg-mask-1);padding:20px}',
+      '.superpi-dialog{display:flex;flex-direction:column;width:min(440px,100%);max-height:100%;overflow:hidden;border:0;border-radius:var(--dsw-radius-panel);background:var(--dsw-alias-bg-layer-2);box-shadow:var(--dsw-elevation-prominent);animation:superpi-modal-in .16s ease-in-out}',
+      '@keyframes superpi-modal-in{0%{opacity:0}to{opacity:1}}',
+      '.superpi-dialog-head{display:flex;align-items:flex-start;gap:8px;padding:22px 18px 0 24px}',
+      '.superpi-dialog-head h3{flex:1 1 auto;min-width:0;margin:0;padding:0;font:var(--dsw-font-base-strong-16);color:var(--dsw-alias-label-primary)}',
+      '.superpi-dialog-head .superpi-btn-icon{width:32px;height:32px;margin-top:-6px}',
+      '.superpi-dialog-head .superpi-btn-icon svg{width:16px;height:16px}',
+      '.superpi-dialog .superpi-mono{margin:6px 24px 0}',
+      '.superpi-dialog-msg{margin:0;padding:10px 24px 0;color:var(--dsw-alias-label-secondary);font-size:var(--dsh-content-font-size,var(--dsw-font-s-14-font-size));line-height:calc(22px + var(--dsh-content-font-delta,0px));white-space:pre-wrap;word-break:break-word}',
+      '.superpi-dialog-body{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;gap:6px;overflow-y:auto;padding:14px 24px 0}',
+      '.superpi-dialog-actions{display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap;padding:22px 24px 24px}',
+      '.superpi-opt{display:flex;align-items:center;gap:8px;width:100%;min-height:34px;padding:6px 10px;border:0;border-radius:var(--dsw-radius-md);background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-primary);font-family:inherit;font-size:var(--dsw-font-xs-13-font-size);line-height:var(--dsw-font-xs-13-line-height);text-align:left;cursor:pointer;transition:background-color .16s ease,box-shadow .16s ease}',
+      '.superpi-opt:hover{background:var(--dsw-alias-interactive-bg-hover)}',
+      '.superpi-opt[data-active="1"]{box-shadow:inset 0 0 0 .5px var(--dsw-alias-state-business-primary)}',
+      '.superpi-mini-ta{width:100%;min-height:84px;max-height:180px;padding:6px 10px;border:.5px solid var(--dsw-alias-border-l4);border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);font:var(--dsw-font-xs-13);font-family:var(--ds-font-family-code,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace);resize:vertical;outline:0;transition:border-color .16s ease}',
+      '.superpi-mini-ta:focus{border-color:var(--dsw-alias-state-business-primary)}',
+      '.superpi-row2{display:flex;align-items:center;gap:8px;flex-wrap:wrap}',
+      '.superpi-spacer{flex:1 1 auto}',
+      '.superpi-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}',
 
       // ── 动效偏好 ────────────────────────────────────────────────────────────
-      '@media (prefers-reduced-motion: reduce){.dsh-pi-root *,.dsh-pi-root *::before,.dsh-pi-root *::after{animation-duration:.01ms !important;animation-iteration-count:1 !important;transition-duration:.01ms !important}}',
+      '@media (prefers-reduced-motion: reduce){.superpi-root *,.superpi-root *::before,.superpi-root *::after{animation-duration:.01ms !important;animation-iteration-count:1 !important;transition-duration:.01ms !important}}',
       // 模型 / 推理档位合一弹层：点左下角模型名向上弹出，两段同屏（用户 30427）。
-      // 复用 .dsh-pi-menu 的底/阴影/毛玻璃，只改锚定与宽度。
-      '.dsh-pi-picker-box{position:relative;display:flex;align-items:center;min-width:0;flex:0 1 auto}',
-      '.dsh-pi-picker-menu{left:0;right:auto;bottom:calc(100% + 6px);min-width:260px;max-width:min(380px,calc(100vw - 48px))}',
-      '.dsh-pi-picker-sec{padding:8px 8px 4px;font-size:var(--dsw-font-xxxs-11-font-size);line-height:var(--dsw-font-xxxs-11-line-height);color:var(--dsw-alias-label-caption)}',
-      '.dsh-pi-picker-row{display:flex;align-items:center;gap:8px;width:100%;min-height:32px;padding:5px 8px;border:0;border-radius:var(--dsw-radius-md);background:transparent;color:var(--dsw-alias-label-primary);font-family:inherit;font-size:var(--dsw-font-xs-13-font-size);line-height:var(--dsw-font-xs-13-line-height);text-align:left;cursor:pointer}',
-      '.dsh-pi-picker-row:hover{background:var(--dsw-alias-interactive-bg-hover)}',
-      '.dsh-pi-picker-row[data-current="1"]{box-shadow:inset 0 0 0 .5px var(--dsw-alias-state-business-primary)}',
-      '.dsh-pi-picker-row-name{min-width:0;flex:1 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
-      '.dsh-pi-picker-row-sub{flex:0 0 auto;font-size:var(--dsw-font-xxxs-11-font-size);line-height:16px;color:var(--dsw-alias-label-tertiary)}',
-      '.dsh-pi-picker-empty{padding:10px 8px;font-size:var(--dsw-font-xxs-12-font-size);color:var(--dsw-alias-label-dimmed)}',
+      // 复用 .superpi-menu 的底/阴影/毛玻璃，只改锚定与宽度。
+      '.superpi-picker-box{position:relative;display:flex;align-items:center;min-width:0;flex:0 1 auto}',
+      '.superpi-picker-menu{left:0;right:auto;bottom:calc(100% + 6px);min-width:260px;max-width:min(380px,calc(100vw - 48px))}',
+      '.superpi-picker-sec{padding:8px 8px 4px;font-size:var(--dsw-font-xxxs-11-font-size);line-height:var(--dsw-font-xxxs-11-line-height);color:var(--dsw-alias-label-caption)}',
+      '.superpi-picker-row{display:flex;align-items:center;gap:8px;width:100%;min-height:32px;padding:5px 8px;border:0;border-radius:var(--dsw-radius-md);background:transparent;color:var(--dsw-alias-label-primary);font-family:inherit;font-size:var(--dsw-font-xs-13-font-size);line-height:var(--dsw-font-xs-13-line-height);text-align:left;cursor:pointer}',
+      '.superpi-picker-row:hover{background:var(--dsw-alias-interactive-bg-hover)}',
+      '.superpi-picker-row[data-current="1"]{box-shadow:inset 0 0 0 .5px var(--dsw-alias-state-business-primary)}',
+      '.superpi-picker-row-name{min-width:0;flex:1 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      '.superpi-picker-row-sub{flex:0 0 auto;font-size:var(--dsw-font-xxxs-11-font-size);line-height:16px;color:var(--dsw-alias-label-tertiary)}',
+      '.superpi-picker-empty{padding:10px 8px;font-size:var(--dsw-font-xxs-12-font-size);color:var(--dsw-alias-label-dimmed)}',
 
       // 顶栏「更多」：与「+」菜单同一套面板配方，锚在按钮右下、向下展开。
-      '.dsh-pi-more-wrap{position:relative;display:flex}',
-      '.dsh-pi-more-menu{left:auto;right:0;top:calc(100% + 6px);bottom:auto;min-width:184px;max-width:min(260px,calc(100vw - 32px))}',
-      '.dsh-pi-more-item{display:flex;align-items:center;gap:8px;width:100%;min-height:32px;padding:6px 8px;border:0;border-radius:var(--dsw-radius-md);background:transparent;color:var(--dsw-alias-label-primary);font-family:inherit;font-size:var(--dsw-font-xs-13-font-size);line-height:var(--dsw-font-xs-13-line-height);text-align:left;cursor:pointer}',
-      '.dsh-pi-more-item:hover{background:var(--dsw-alias-interactive-bg-hover)}',
-      '.dsh-pi-more-icon{display:grid;place-items:center;flex:0 0 auto;width:16px;height:16px;color:var(--dsw-alias-label-secondary)}',
+      '.superpi-more-wrap{position:relative;display:flex}',
+      '.superpi-more-menu{left:auto;right:0;top:calc(100% + 6px);bottom:auto;min-width:184px;max-width:min(260px,calc(100vw - 32px))}',
+      '.superpi-more-item{display:flex;align-items:center;gap:8px;width:100%;min-height:32px;padding:6px 8px;border:0;border-radius:var(--dsw-radius-md);background:transparent;color:var(--dsw-alias-label-primary);font-family:inherit;font-size:var(--dsw-font-xs-13-font-size);line-height:var(--dsw-font-xs-13-line-height);text-align:left;cursor:pointer}',
+      '.superpi-more-item:hover{background:var(--dsw-alias-interactive-bg-hover)}',
+      '.superpi-more-icon{display:grid;place-items:center;flex:0 0 auto;width:16px;height:16px;color:var(--dsw-alias-label-secondary)}',
 
       // 历史会话：从左侧滑出的侧栏（不再铺满面板）。
-      '.dsh-pi-side-wrap{position:absolute;inset:0;z-index:30;display:flex;background:var(--dsw-alias-bg-mask-1)}',
-      '.dsh-pi-side{display:flex;flex-direction:column;width:min(360px,86%);height:100%;background:var(--dsw-alias-bg-base);box-shadow:var(--dsw-elevation-panel);animation:dsh-pi-side-in .18s ease-out}',
-      '@keyframes dsh-pi-side-in{0%{transform:translateX(-100%)}to{transform:translateX(0)}}',
-      '.dsh-pi-side-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap;flex:0 0 auto;padding:12px 10px 12px 16px;border-bottom:.5px solid var(--dsw-alias-border-l2)}',
-      '.dsh-pi-side-title{flex:1 1 auto;min-width:0;font:var(--dsw-font-base-strong-16);color:var(--dsw-alias-label-primary)}',
-      '.dsh-pi-side-body{flex:1 1 auto;min-height:0;overflow-y:auto;padding:12px 14px 16px;display:flex;flex-direction:column;gap:8px}',
-      '.dsh-pi-side-head .dsh-pi-btn-icon{width:32px;height:32px;margin-right:-4px}',
-      '.dsh-pi-side-head .dsh-pi-btn-icon svg{width:16px;height:16px}',
-      '.dsh-pi-side-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;flex:0 0 auto;padding:0 16px 10px}',
-      '.dsh-pi-side-actions .dsh-pi-search{flex:1 1 auto;min-width:0}',
+      '.superpi-side-wrap{position:absolute;inset:0;z-index:30;display:flex;background:var(--dsw-alias-bg-mask-1)}',
+      '.superpi-side{display:flex;flex-direction:column;width:min(360px,86%);height:100%;background:var(--dsw-alias-bg-base);box-shadow:var(--dsw-elevation-panel);animation:superpi-side-in .18s ease-out}',
+      '@keyframes superpi-side-in{0%{transform:translateX(-100%)}to{transform:translateX(0)}}',
+      '.superpi-side-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap;flex:0 0 auto;padding:12px 10px 12px 16px;border-bottom:.5px solid var(--dsw-alias-border-l2)}',
+      '.superpi-side-title{flex:1 1 auto;min-width:0;font:var(--dsw-font-base-strong-16);color:var(--dsw-alias-label-primary)}',
+      '.superpi-side-body{flex:1 1 auto;min-height:0;overflow-y:auto;padding:12px 14px 16px;display:flex;flex-direction:column;gap:8px}',
+      '.superpi-side-head .superpi-btn-icon{width:32px;height:32px;margin-right:-4px}',
+      '.superpi-side-head .superpi-btn-icon svg{width:16px;height:16px}',
+      '.superpi-side-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;flex:0 0 auto;padding:0 16px 10px}',
+      '.superpi-side-actions .superpi-search{flex:1 1 auto;min-width:0}',
 
       // 侧栏 + 行内 ⋯ 菜单（0.8.0）：宿主包一层是为了让「侧栏 + 重命名弹窗」能并存 ——
       // RenameDialog 走 Dialog（position:absolute 相对最近的定位祖先），必须在同一层里挂。
-      '.dsh-pi-side-host{position:absolute;inset:0;z-index:30;display:flex}',
+      '.superpi-side-host{position:absolute;inset:0;z-index:30;display:flex}',
       // 返回键在标题左侧：不能被右侧关闭键的 -4px 负边距规则带偏。
-      '.dsh-pi-side-head .dsh-pi-side-back{width:28px;height:28px;margin-right:0;margin-left:-6px}',
-      '.dsh-pi-side-new{flex:0 0 auto;white-space:nowrap;gap:6px}',
-      // 行内「⋯」：靠右、22px 命中区；菜单锚在按钮上（.dsh-pi-more-menu 的 left:auto/right:0 正好接住）。
-      '.dsh-pi-row-more{position:relative;display:flex;flex:0 0 auto;margin-left:auto}',
-      '.dsh-pi-row-more > button{display:grid;place-items:center;width:22px;height:22px;padding:0;border:0;border-radius:var(--dsw-radius-xs);background:transparent;color:var(--dsw-alias-label-tertiary);cursor:pointer}',
-      '.dsh-pi-row-more > button:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}',
-      '.dsh-pi-row-more .dsh-pi-more-menu{min-width:160px;max-width:min(220px,calc(100vw - 32px))}',
+      '.superpi-side-head .superpi-side-back{width:28px;height:28px;margin-right:0;margin-left:-6px}',
+      '.superpi-side-new{flex:0 0 auto;white-space:nowrap;gap:6px}',
+      // 行内「⋯」：靠右、22px 命中区；菜单锚在按钮上（.superpi-more-menu 的 left:auto/right:0 正好接住）。
+      '.superpi-row-more{position:relative;display:flex;flex:0 0 auto;margin-left:auto}',
+      '.superpi-row-more > button{display:grid;place-items:center;width:22px;height:22px;padding:0;border:0;border-radius:var(--dsw-radius-xs);background:transparent;color:var(--dsw-alias-label-tertiary);cursor:pointer}',
+      '.superpi-row-more > button:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}',
+      '.superpi-row-more .superpi-more-menu{min-width:160px;max-width:min(220px,calc(100vw - 32px))}',
       // 会话标题（首条用户消息）单独占一格，压在消息数左侧；标题已是它时不再重复。
-      '.dsh-pi-sess-sum{flex:0 1 auto;max-width:44%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-tertiary)}',
-      '.dsh-pi-pin{display:grid;place-items:center;flex:0 0 auto;width:12px;height:12px;color:var(--dsw-alias-state-business-primary)}',
+      '.superpi-sess-sum{flex:0 1 auto;max-width:44%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-tertiary)}',
+      '.superpi-pin{display:grid;place-items:center;flex:0 0 auto;width:12px;height:12px;color:var(--dsw-alias-state-business-primary)}',
 
       // 居中弹窗的加宽变体：会话统计 / 设置的行数比通用 440px 多。
-      '.dsh-pi-dialog-wide{width:min(560px,100%)}',
-      '.dsh-pi-dialog-grow{flex:1 1 auto;min-height:0;overflow-y:auto}',
-      '.dsh-pi-more-label{min-width:0;flex:1 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      '.superpi-dialog-wide{width:min(560px,100%)}',
+      '.superpi-dialog-grow{flex:1 1 auto;min-height:0;overflow-y:auto}',
+      '.superpi-more-label{min-width:0;flex:1 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
       // 底部留 22px：内容滚动到底时最后一行不能贴住卡片圆角（实拍 p071-04 发现贴边）。
-      '.dsh-pi-dialog-content{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;gap:8px;overflow-y:auto;padding:14px 24px 22px}',
+      '.superpi-dialog-content{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;gap:8px;overflow-y:auto;padding:14px 24px 22px}',
     ].join('')
 
 
@@ -1257,7 +1257,7 @@ window.__ModuleLoader__.load({
      * 文件标签 = 一个真正的按钮。
      *
      * 用 button 而不是 span：键盘 Tab 能落到它上面，回车能打开 —— 这条由
-     * .dsh-pi-root :is(button,…):focus-visible 的焦点环统一兜底。
+     * .superpi-root :is(button,…):focus-visible 的焦点环统一兜底。
      *
      * 标签只显示「类型图标 + 文件名（含后缀）」：完整路径信息量太大，一段回复里
      * 三个同目录文件就会把正文挤爆。路径仍然保留在 title 与 data-path 上 ——
@@ -1270,12 +1270,12 @@ window.__ModuleLoader__.load({
       var acts = normalizeFileActions(actions)
       var parts = [
         fileIconElement(base, 'i', 12),
-        h('span', { key: 'n', className: 'dsh-pi-fileref-name' }, base),
+        h('span', { key: 'n', className: 'superpi-fileref-name' }, base),
       ]
       return h('button', {
         key: key,
         type: 'button',
-        className: inline === true ? 'dsh-pi-fileref dsh-pi-fileref-block' : 'dsh-pi-fileref',
+        className: inline === true ? 'superpi-fileref superpi-fileref-block' : 'superpi-fileref',
         title: target,
         'data-path': target,
         'data-kind': fileKindOf(base),
@@ -1377,7 +1377,7 @@ window.__ModuleLoader__.load({
           // 行内 code 里如果整段就是一条路径，也让它可点 —— 助手常把路径包在反引号里。
           var inner = match[1].slice(1, -1)
           if (isFilePathToken(inner)) nodes.push(renderFileChip(inner, prefix + '-c' + String(index), onOpenFile))
-          else nodes.push(h('code', { key: prefix + '-c' + String(index), className: 'dsh-pi-code-inline' }, inner))
+          else nodes.push(h('code', { key: prefix + '-c' + String(index), className: 'superpi-code-inline' }, inner))
         } else {
           nodes.push(h('strong', { key: prefix + '-b' + String(index) }, match[2].slice(2, -2)))
         }
@@ -1418,9 +1418,9 @@ window.__ModuleLoader__.load({
             key += 1
             continue
           }
-          blocks.push(h('div', { key: 'f' + String(key), className: 'dsh-pi-fence' },
-            lang === '' ? null : h('div', { className: 'dsh-pi-fence-lang' }, lang),
-            h('pre', { className: 'dsh-pi-pre' }, h('code', null, code.join('\n')))))
+          blocks.push(h('div', { key: 'f' + String(key), className: 'superpi-fence' },
+            lang === '' ? null : h('div', { className: 'superpi-fence-lang' }, lang),
+            h('pre', { className: 'superpi-pre' }, h('code', null, code.join('\n')))))
           key += 1
           continue
         }
@@ -2082,13 +2082,13 @@ window.__ModuleLoader__.load({
      * 之前是纯文本 '×'（11px 字高、没有 -icon 类），在 16px 标题旁又小又轻，
      * 而且 Sheet 带 type="button"、DirSheet 不带，两处已经分叉。现在所有关闭
      * 入口共用这一个组件：28x28 命中区 + 16px 描边图标 + aria-label，
-     * 与 .dsh-pi-btn 基线的 28px 高度完全对齐。
+     * 与 .superpi-btn 基线的 28px 高度完全对齐。
      */
     function CloseButton(props) {
       var label = props.t('close')
       return h('button', {
         type: 'button',
-        className: 'dsh-pi-btn dsh-pi-btn-ghost dsh-pi-btn-icon',
+        className: 'superpi-btn superpi-btn-ghost superpi-btn-icon',
         title: label,
         'aria-label': label,
         onClick: props.onClick,
@@ -2316,12 +2316,12 @@ window.__ModuleLoader__.load({
       var acts = normalizeFileActions(props.actions)
       var text = String(props.path)
       if (acts.open === null && acts.reveal === null) {
-        return h('span', { key: 'p', className: 'dsh-pi-proc-text', title: text }, text)
+        return h('span', { key: 'p', className: 'superpi-proc-text', title: text }, text)
       }
       return h('button', {
         key: 'p',
         type: 'button',
-        className: 'dsh-pi-proc-path',
+        className: 'superpi-proc-path',
         title: text,
         onClick: function (event) {
           event.preventDefault()
@@ -2341,13 +2341,13 @@ window.__ModuleLoader__.load({
     function procSummary(props) {
       var primary = props.primary
       if (primary === null) {
-        return h('span', { key: 'p', className: 'dsh-pi-proc-text' }, props.fallback)
+        return h('span', { key: 'p', className: 'superpi-proc-text' }, props.fallback)
       }
       var text = firstLineOf(primary.text)
       if (primary.field === 'path' || primary.field === 'file_path') {
         return h(ProcPath, { key: 'p', path: text, actions: props.actions })
       }
-      return h('span', { key: 'p', className: 'dsh-pi-proc-text', title: text }, text)
+      return h('span', { key: 'p', className: 'superpi-proc-text', title: text }, text)
     }
 
     /**
@@ -2358,14 +2358,14 @@ window.__ModuleLoader__.load({
     function procHead(parts) {
       var Icon = parts.Icon
       var cells = [
-        h('span', { key: 'i', className: 'dsh-pi-proc-icon' }, h(Icon, { size: 15 })),
-        h('span', { key: 'l', className: 'dsh-pi-proc-label' }, parts.label),
-        h('span', { key: 's', className: 'dsh-pi-sep', 'aria-hidden': 'true' }),
+        h('span', { key: 'i', className: 'superpi-proc-icon' }, h(Icon, { size: 15 })),
+        h('span', { key: 'l', className: 'superpi-proc-label' }, parts.label),
+        h('span', { key: 's', className: 'superpi-sep', 'aria-hidden': 'true' }),
         parts.summary,
       ]
       var note = parts.note === null || parts.note === undefined ? '' : String(parts.note)
       if (note !== '') {
-        cells.push(h('span', { key: 'n', className: 'dsh-pi-proc-note', 'data-tone': parts.noteTone === undefined ? '' : parts.noteTone }, note))
+        cells.push(h('span', { key: 'n', className: 'superpi-proc-note', 'data-tone': parts.noteTone === undefined ? '' : parts.noteTone }, note))
       }
       return cells
     }
@@ -2373,13 +2373,13 @@ window.__ModuleLoader__.load({
     function ThinkingBlock(props) {
       if (props.text === '') return null
       var summary = firstLineOf(props.text)
-      return h('details', { className: 'dsh-pi-proc', 'data-kind': 'thinking' },
-        h('summary', { className: 'dsh-pi-proc-head' }, procHead({
+      return h('details', { className: 'superpi-proc', 'data-kind': 'thinking' },
+        h('summary', { className: 'superpi-proc-head' }, procHead({
           Icon: ThinkIcon,
           label: props.t('procThink'),
-          summary: h('span', { key: 'p', className: 'dsh-pi-proc-text' }, summary),
+          summary: h('span', { key: 'p', className: 'superpi-proc-text' }, summary),
         })),
-        h('div', { className: 'dsh-pi-proc-body' }, props.text))
+        h('div', { className: 'superpi-proc-body' }, props.text))
     }
 
     function ToolBlock(props) {
@@ -2398,19 +2398,19 @@ window.__ModuleLoader__.load({
       if (resultText !== '') body = body + '\n\n── output ──\n' + resultText
       // 调用名本身只在「没有结构化参数」时才需要露出来（DSH 的 generic 行同此语义）。
       var fallback = primary === null && view.label === 'procGeneric' ? view.name : ''
-      // 根 className 必须**恰好**是 dsh-pi-tool：门禁用 includes('class="dsh-pi-tool"') 精确匹配。
-      var attrs = { className: 'dsh-pi-tool' }
+      // 根 className 必须**恰好**是 superpi-tool：门禁用 includes('class="superpi-tool"') 精确匹配。
+      var attrs = { className: 'superpi-tool' }
       if (props.status === 'running') attrs['data-state'] = 'running'
       if (props.status === 'error') attrs['data-state'] = 'error'
       return h('details', attrs,
-        h('summary', { className: 'dsh-pi-proc-head' }, procHead({
+        h('summary', { className: 'superpi-proc-head' }, procHead({
           Icon: view.Icon,
           label: t(view.label),
           summary: procSummary({ primary: primary, fallback: fallback, actions: props.onOpenFile }),
           note: props.status === 'error' ? t('failed') : '',
           noteTone: 'err',
         })),
-        h('pre', { className: 'dsh-pi-tool-body' }, body))
+        h('pre', { className: 'superpi-tool-body' }, body))
     }
 
     function ToolResultRow(props) {
@@ -2418,19 +2418,19 @@ window.__ModuleLoader__.load({
       var text = textOfMessage(message)
       var view = toolViewOf(message.toolName, null)
       var summary = firstLineOf(text)
-      return h('details', { className: 'dsh-pi-tool', 'data-role': 'toolResult' },
-        h('summary', { className: 'dsh-pi-proc-head' }, procHead({
+      return h('details', { className: 'superpi-tool', 'data-role': 'toolResult' },
+        h('summary', { className: 'superpi-proc-head' }, procHead({
           Icon: view.Icon,
           label: props.t('procResult'),
           summary: h('span', {
             key: 'p',
-            className: 'dsh-pi-proc-text',
+            className: 'superpi-proc-text',
             'data-tone': message.isError ? 'err' : '',
           }, summary === '' ? props.t('procResult') : summary),
           note: message.isError ? props.t('failed') : '',
           noteTone: 'err',
         })),
-        h('pre', { className: 'dsh-pi-tool-body' }, text === '' ? '{}' : text))
+        h('pre', { className: 'superpi-tool-body' }, text === '' ? '{}' : text))
     }
 
     /**
@@ -2457,10 +2457,10 @@ window.__ModuleLoader__.load({
       }, [since, known])
       var label = props.t('deepDiving')
       var text = known === false ? label : props.t('working').replace('{duration}', fmtDuration(Math.max(1000, Date.now() - since), props.t))
-      return h('div', { className: 'dsh-pi-working' },
-        h('span', { className: 'dsh-pi-sr', role: 'status', 'aria-live': 'polite', key: 'sr' }, label),
-        h('span', { className: 'dsh-pi-working-icon', key: 'icon' }, h(WhaleTailIcon, null)),
-        h('span', { className: 'dsh-pi-working-text', key: 'text' }, text))
+      return h('div', { className: 'superpi-working' },
+        h('span', { className: 'superpi-sr', role: 'status', 'aria-live': 'polite', key: 'sr' }, label),
+        h('span', { className: 'superpi-working-icon', key: 'icon' }, h(WhaleTailIcon, null)),
+        h('span', { className: 'superpi-working-text', key: 'text' }, text))
     }
 
     function usageLine(usage, t) {
@@ -2471,14 +2471,14 @@ window.__ModuleLoader__.load({
       if (typeof usage.cacheRead === 'number' && usage.cacheRead > 0) parts.push('cache ' + String(usage.cacheRead))
       if (typeof usage.totalTokens === 'number') parts.push(String(usage.totalTokens) + ' ' + t('tokens'))
       if (parts.length === 0) return null
-      return h('div', { className: 'dsh-pi-usage' }, parts.join(' · '))
+      return h('div', { className: 'superpi-usage' }, parts.join(' · '))
     }
 
     /** 图片块：pi 把图片以 base64 交给模型，面板必须同样显示，不能降级成 "[image png]" 文字。 */
     function ImageBlock(props) {
       var open = props.onOpen
       return h('img', {
-        className: 'dsh-pi-img',
+        className: 'superpi-img',
         alt: props.mimeType,
         src: 'data:' + String(props.mimeType) + ';base64,' + String(props.data),
         onClick: function () { if (open !== undefined) open({ data: props.data, mimeType: props.mimeType }) },
@@ -2505,8 +2505,8 @@ window.__ModuleLoader__.load({
       if (message.role === 'user') {
         var userText = textOfMessage(message)
         var userImages = message.blocks.filter(function (block) { return block.type === 'image' })
-        return h('div', { className: 'dsh-pi-row dsh-pi-row-user' },
-          h('div', { className: 'dsh-pi-bubble-user' },
+        return h('div', { className: 'superpi-row superpi-row-user' },
+          h('div', { className: 'superpi-bubble-user' },
             userImages.length === 0 ? null : h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: userText === '' ? '0' : '6px' } },
               userImages.map(function (block, index) { return h(ImageBlock, { key: 'ui' + String(index), data: block.data, mimeType: block.mimeType, onOpen: props.onOpenImage }) })),
             userText === '' ? null : userText))
@@ -2516,7 +2516,7 @@ window.__ModuleLoader__.load({
         return h(ToolResultRow, { message: message, t: t })
       }
       if (message.role === 'bashExecution') {
-        return h('div', { className: 'dsh-pi-row' }, h('div', { className: 'dsh-pi-body' }, h(BashBlock, { t: t, message: message })))
+        return h('div', { className: 'superpi-row' }, h('div', { className: 'superpi-body' }, h(BashBlock, { t: t, message: message })))
       }
       if (message.role !== 'assistant') return null
 
@@ -2524,7 +2524,7 @@ window.__ModuleLoader__.load({
       var openTools = null
       var flushTools = function () {
         if (openTools !== null && openTools.length > 0) {
-          nodes.push(h('div', { key: 'g' + String(groupCount), className: 'dsh-pi-sub' }, openTools))
+          nodes.push(h('div', { key: 'g' + String(groupCount), className: 'superpi-sub' }, openTools))
           groupCount += 1
         }
         openTools = null
@@ -2565,15 +2565,15 @@ window.__ModuleLoader__.load({
           nodes.push(h(ImageBlock, { key: 'k' + String(i), data: block.data, mimeType: block.mimeType, onOpen: props.onOpenImage }))
         } else if (block.type === 'text' && block.text.trim() !== '') {
           flushTools()
-          nodes.push(h('div', { key: 'k' + String(i), className: 'dsh-pi-prose' }, renderMarkdown(block.text, props.onOpenFile)))
+          nodes.push(h('div', { key: 'k' + String(i), className: 'superpi-prose' }, renderMarkdown(block.text, props.onOpenFile)))
         }
       }
       flushTools()
-      if (message.streaming) nodes.push(h('span', { key: 'caret', className: 'dsh-pi-caret' }))
-      if (message.stopReason === 'error') nodes.push(h('div', { key: 'stop', className: 'dsh-pi-alert' }, t('error')))
+      if (message.streaming) nodes.push(h('span', { key: 'caret', className: 'superpi-caret' }))
+      if (message.stopReason === 'error') nodes.push(h('div', { key: 'stop', className: 'superpi-alert' }, t('error')))
       var usage = usageLine(message.usage, t)
       if (usage !== null) nodes.push(h('div', { key: 'usage' }, usage))
-      return h('div', { className: 'dsh-pi-row' }, h('div', { className: 'dsh-pi-body' }, nodes))
+      return h('div', { className: 'superpi-row' }, h('div', { className: 'superpi-body' }, nodes))
     }
 
     /**
@@ -2583,15 +2583,15 @@ window.__ModuleLoader__.load({
      * 「新建工作目录」的等价物。
      */
     function EmptyState(props) {
-      var actions = typeof props.onPickDir !== 'function' ? null : h('div', { className: 'dsh-pi-empty-actions' },
-        h('button', { type: 'button', className: 'dsh-pi-btn', title: props.t('dirTitle'), onClick: props.onPickDir },
+      var actions = typeof props.onPickDir !== 'function' ? null : h('div', { className: 'superpi-empty-actions' },
+        h('button', { type: 'button', className: 'superpi-btn', title: props.t('dirTitle'), onClick: props.onPickDir },
           h(DirIcon, { size: 14 }),
           h('span', null, props.t('pickDir'))))
-      return h('div', { className: 'dsh-pi-empty' },
+      return h('div', { className: 'superpi-empty' },
         h(PiIcon, { size: 30 }),
         h('h2', null, props.t('emptyTitle')),
         h('p', null, props.t('emptyHint')),
-        props.meta === null ? null : h('div', { className: 'dsh-pi-empty-meta' }, props.meta),
+        props.meta === null ? null : h('div', { className: 'superpi-empty-meta' }, props.meta),
         actions)
     }
 
@@ -2607,21 +2607,21 @@ window.__ModuleLoader__.load({
       var items = props.items
       if (items.length === 0) return null
       var active = Math.max(0, Math.min(props.active, items.length - 1))
-      return h('div', { className: 'dsh-pi-menu' },
-        h('div', { className: 'dsh-pi-menu-head' }, props.title),
-        h('div', { className: 'dsh-pi-menu-list' },
+      return h('div', { className: 'superpi-menu' },
+        h('div', { className: 'superpi-menu-head' }, props.title),
+        h('div', { className: 'superpi-menu-list' },
           items.map(function (item, index) {
             return h('div', {
               key: item.key,
-              className: 'dsh-pi-item',
+              className: 'superpi-item',
               'data-active': index === active ? 'true' : 'false',
               onMouseDown: function (event) { event.preventDefault(); props.onPick(item) },
               onMouseEnter: function () { props.onHover(index) },
             },
-              h('div', { className: 'dsh-pi-item-main' },
-                h('div', { className: 'dsh-pi-item-name' }, item.name),
-                item.desc === '' ? null : h('div', { className: 'dsh-pi-item-desc' }, item.desc)),
-              item.side === '' ? null : h('div', { className: 'dsh-pi-item-side', 'data-tone': item.tone === undefined ? '' : item.tone }, item.side))
+              h('div', { className: 'superpi-item-main' },
+                h('div', { className: 'superpi-item-name' }, item.name),
+                item.desc === '' ? null : h('div', { className: 'superpi-item-desc' }, item.desc)),
+              item.side === '' ? null : h('div', { className: 'superpi-item-side', 'data-tone': item.tone === undefined ? '' : item.tone }, item.side))
           })))
     }
 
@@ -2644,25 +2644,25 @@ window.__ModuleLoader__.load({
         var item = items[i]
         if (item.group !== lastGroup) {
           lastGroup = item.group
-          children.push(h('div', { key: 'g:' + item.group, className: 'dsh-pi-menu-section' }, item.groupLabel))
+          children.push(h('div', { key: 'g:' + item.group, className: 'superpi-menu-section' }, item.groupLabel))
         }
         children.push(h('button', {
           key: 'i:' + item.key,
           type: 'button',
-          className: 'dsh-pi-add-item',
+          className: 'superpi-add-item',
           'data-active': active === i ? '1' : '0',
           role: 'menuitem',
           onMouseEnter: function (index) { return function () { setActive(index) } }(i),
           onMouseDown: function (pick) { return function (event) { event.preventDefault(); props.onPick(pick) } }(item),
         },
-          h('span', { className: 'dsh-pi-add-icon' }, item.icon === null ? null : h(item.icon, { size: 16 })),
-          h('span', { className: 'dsh-pi-add-text' },
-            h('span', { className: 'dsh-pi-add-label' }, item.label),
-            h('span', { className: 'dsh-pi-add-key' }, item.keyName)),
-          item.desc === '' ? null : h('span', { className: 'dsh-pi-add-desc' }, item.desc)))
+          h('span', { className: 'superpi-add-icon' }, item.icon === null ? null : h(item.icon, { size: 16 })),
+          h('span', { className: 'superpi-add-text' },
+            h('span', { className: 'superpi-add-label' }, item.label),
+            h('span', { className: 'superpi-add-key' }, item.keyName)),
+          item.desc === '' ? null : h('span', { className: 'superpi-add-desc' }, item.desc)))
       }
       return h('div', {
-        className: 'dsh-pi-menu dsh-pi-menu-add',
+        className: 'superpi-menu superpi-menu-add',
         role: 'menu',
         onKeyDown: function (event) {
           if (event.key === 'Escape') { event.preventDefault(); props.onClose() }
@@ -2979,34 +2979,34 @@ window.__ModuleLoader__.load({
       var sendButton = busy === true
         ? h('button', {
           type: 'button',
-          className: 'dsh-pi-stop',
+          className: 'superpi-stop',
           title: t('stop') + ' (Esc)',
           'aria-label': t('stop'),
           onClick: props.onStop,
         }, h(StopSquareIcon, { size: 14 }))
         : h('button', {
           type: 'button',
-          className: 'dsh-pi-send',
+          className: 'superpi-send',
           disabled: canSend === false,
           title: t('send') + ' (Enter)',
           'aria-label': t('send'),
           onClick: submit,
         }, h(ArrowUpIcon, { size: 16 }))
 
-      return h('div', { className: 'dsh-pi-composer' },
-        h('div', { className: 'dsh-pi-composer-inner' },
-          props.widgets.length === 0 ? null : h('div', { className: 'dsh-pi-widget' },
-            props.widgets.map(function (widget, index) { return h('pre', { key: 'w' + String(index), className: 'dsh-pi-widget-body' }, widget.lines.join('\n')) })),
-          h('div', { className: 'dsh-pi-box' },
-            props.images.length === 0 ? null : h('div', { className: 'dsh-pi-thumbs' },
+      return h('div', { className: 'superpi-composer' },
+        h('div', { className: 'superpi-composer-inner' },
+          props.widgets.length === 0 ? null : h('div', { className: 'superpi-widget' },
+            props.widgets.map(function (widget, index) { return h('pre', { key: 'w' + String(index), className: 'superpi-widget-body' }, widget.lines.join('\n')) })),
+          h('div', { className: 'superpi-box' },
+            props.images.length === 0 ? null : h('div', { className: 'superpi-thumbs' },
               props.images.map(function (image, index) {
-                return h('div', { key: 't' + String(index), className: 'dsh-pi-thumb' },
+                return h('div', { key: 't' + String(index), className: 'superpi-thumb' },
                   h('img', { alt: image.name, src: 'data:' + image.mimeType + ';base64,' + image.data }),
-                  h('button', { type: 'button', className: 'dsh-pi-thumb-x', title: t('imageRemove'), onClick: function () { props.onRemoveImage(index) } }, '×'))
+                  h('button', { type: 'button', className: 'superpi-thumb-x', title: t('imageRemove'), onClick: function () { props.onRemoveImage(index) } }, '×'))
               })),
             h('textarea', {
               ref: taRef,
-              className: 'dsh-pi-ta',
+              className: 'superpi-ta',
               rows: 1,
               value: text,
               placeholder: placeholder,
@@ -3023,14 +3023,14 @@ window.__ModuleLoader__.load({
               onHover: setActive,
               onPick: insertToken,
             }),
-            h('div', { className: 'dsh-pi-bar' },
+            h('div', { className: 'superpi-bar' },
               // 左：宿主是「圆形 + / 模型 / 推理等级」。附件与目录都收进 + 菜单，
               // 否则行里会挤五个控件，跟宿主的样子就差远了。
-              h('div', { className: 'dsh-pi-bar-actions' },
-                h('span', { className: 'dsh-pi-add-wrap', ref: addRef },
+              h('div', { className: 'superpi-bar-actions' },
+                h('span', { className: 'superpi-add-wrap', ref: addRef },
                   h('button', {
                     type: 'button',
-                    className: 'dsh-pi-add',
+                    className: 'superpi-add',
                     'data-open': addOpen === true ? '1' : '0',
                     title: t('addMenu'),
                     'aria-label': t('addMenu'),
@@ -3052,26 +3052,26 @@ window.__ModuleLoader__.load({
                 // 模型名与思考档位合成一个锚点，点开的是同一张向上弹层（用户 30427）：
                 // 原来模型名是按钮、档位是原生 select 叠在自绘外壳里，同一个位置两种交互；
                 // 而且换档位要铺开整个抽屉，选完再收起，来回四拍。
-                modelName === '' && thinkingLevels.length === 0 ? null : h('span', { className: 'dsh-pi-picker-box', ref: pickerRef },
+                modelName === '' && thinkingLevels.length === 0 ? null : h('span', { className: 'superpi-picker-box', ref: pickerRef },
                   modelName === '' ? null : h('button', {
                     type: 'button',
-                    className: 'dsh-pi-picker',
+                    className: 'superpi-picker',
                     title: t('modelHint') + ' · ' + String(props.model.provider) + '/' + String(props.model.id),
                     'aria-haspopup': 'menu',
                     'aria-expanded': props.pickerOpen === true ? 'true' : 'false',
                     onClick: props.onOpenPicker,
                   },
-                    h('span', { className: 'dsh-pi-picker-name' }, modelName),
+                    h('span', { className: 'superpi-picker-name' }, modelName),
                     h(ChevronDownIcon, { size: 12 })),
                   thinkingLevels.length === 0 ? null : h('button', {
                     type: 'button',
-                    className: 'dsh-pi-picker dsh-pi-picker-level',
+                    className: 'superpi-picker superpi-picker-level',
                     title: t('thinkingHint'),
                     'aria-haspopup': 'menu',
                     'aria-expanded': props.pickerOpen === true ? 'true' : 'false',
                     onClick: props.onOpenPicker,
                   },
-                    h('span', { className: 'dsh-pi-picker-label' }, String(props.thinking)),
+                    h('span', { className: 'superpi-picker-label' }, String(props.thinking)),
                     h(ChevronDownIcon, { size: 12 })),
                   props.pickerOpen === true ? h(ModelPicker, {
                     t: t,
@@ -3086,10 +3086,10 @@ window.__ModuleLoader__.load({
                   }) : null)),
               // 右：快捷键提示 + 圆形发送键。提示语是两套完整语义（空闲 / 运行中），
               // 不借用 slashHint（那讲的是菜单导航，只在菜单弹出时才成立）。
-              h('div', { className: 'dsh-pi-bar-right' },
-                h('span', { className: 'dsh-pi-bar-hint', title: tip }, tip),
+              h('div', { className: 'superpi-bar-right' },
+                h('span', { className: 'superpi-bar-hint', title: tip }, tip),
                 sendButton)),
-            h('div', { className: 'dsh-pi-sr' }, placeholder))),
+            h('div', { className: 'superpi-sr' }, placeholder))),
         // dock：宿主的统计行在输入卡下方、同一个 composer 容器里（.GRgSLq_dock）。
         // 放在这里而不是面板根部，背景、左右内缩、随 composer 一起贴底，才跟宿主一致。
         props.footer === null || props.footer === undefined ? null : props.footer)
@@ -3100,12 +3100,12 @@ window.__ModuleLoader__.load({
 
     /** 所有抽屉共用外壳：标题栏 + 关闭，body 负责滚动。 */
     function Sheet(props) {
-      return h('div', { className: 'dsh-pi-sheet', role: 'dialog', 'aria-label': props.title },
-        h('div', { className: 'dsh-pi-sheet-head' },
-          h('div', { className: 'dsh-pi-sheet-title' }, props.title),
+      return h('div', { className: 'superpi-sheet', role: 'dialog', 'aria-label': props.title },
+        h('div', { className: 'superpi-sheet-head' },
+          h('div', { className: 'superpi-sheet-title' }, props.title),
           props.actions === undefined ? null : props.actions,
           h(CloseButton, { t: props.t, onClick: props.onClose })),
-        h('div', { className: 'dsh-pi-sheet-body' }, props.children))
+        h('div', { className: 'superpi-sheet-body' }, props.children))
     }
 
     /**
@@ -3143,16 +3143,16 @@ window.__ModuleLoader__.load({
      * 与抽屉（Sheet）的分界是**语义**：抽屉是「进到另一个空间去挑东西」（历史会话、树、
      * fork、目录），弹窗是「在当前对话上盖一层、处理完就回到原位」。统计与设置属于后者 ——
      * 用户 30427 的原话是「弹出弹窗，不要使用页面」。
-     * 配方照抄 DirSheet / ExtensionDialog：遮罩 dsh-pi-dialog-wrap + 卡片 dsh-pi-dialog。
+     * 配方照抄 DirSheet / ExtensionDialog：遮罩 superpi-dialog-wrap + 卡片 superpi-dialog。
      */
     function Dialog(props) {
-      var className = props.wide === true ? 'dsh-pi-dialog dsh-pi-dialog-wide' : 'dsh-pi-dialog'
-      return h('div', { className: 'dsh-pi-dialog-wrap', onClick: maskHandler(props.onClose) },
+      var className = props.wide === true ? 'superpi-dialog superpi-dialog-wide' : 'superpi-dialog'
+      return h('div', { className: 'superpi-dialog-wrap', onClick: maskHandler(props.onClose) },
         h('div', { className: className, role: 'dialog', 'aria-modal': 'true', 'aria-label': props.title },
-          h('div', { className: 'dsh-pi-dialog-head' },
+          h('div', { className: 'superpi-dialog-head' },
             h('h3', null, props.title),
             h(CloseButton, { t: props.t, onClick: props.onClose })),
-          h('div', { className: 'dsh-pi-dialog-content' }, props.children)))
+          h('div', { className: 'superpi-dialog-content' }, props.children)))
     }
 
     /**
@@ -3165,22 +3165,22 @@ window.__ModuleLoader__.load({
       // onBack 给了才出返回箭头：历史会话的会话层要能退回项目层，其它侧栏没有上一层。
       var back = props.onBack === undefined ? null : h('button', {
         type: 'button',
-        className: 'dsh-pi-btn dsh-pi-btn-ghost dsh-pi-btn-icon dsh-pi-side-back',
+        className: 'superpi-btn superpi-btn-ghost superpi-btn-icon superpi-side-back',
         title: props.backTitle === undefined ? props.t('allProjects') : props.backTitle,
         'aria-label': props.backTitle === undefined ? props.t('allProjects') : props.backTitle,
         onClick: props.onBack,
       }, h(ChevronLeftIcon, { size: 16 }))
       return h('div', {
-        className: 'dsh-pi-side-wrap',
+        className: 'superpi-side-wrap',
         onClick: maskHandler(props.onClose),
       },
-        h('div', { className: 'dsh-pi-side', role: 'dialog', 'aria-modal': 'true', 'aria-label': props.title },
-          h('div', { className: 'dsh-pi-side-head' },
+        h('div', { className: 'superpi-side', role: 'dialog', 'aria-modal': 'true', 'aria-label': props.title },
+          h('div', { className: 'superpi-side-head' },
             back,
-            h('div', { className: 'dsh-pi-side-title' }, props.title),
+            h('div', { className: 'superpi-side-title' }, props.title),
             h(CloseButton, { t: props.t, onClick: props.onClose })),
-          props.actions === undefined ? null : h('div', { className: 'dsh-pi-side-actions' }, props.actions),
-          h('div', { className: 'dsh-pi-side-body' }, props.children)))
+          props.actions === undefined ? null : h('div', { className: 'superpi-side-actions' }, props.actions),
+          h('div', { className: 'superpi-side-body' }, props.children)))
     }
 
     /**
@@ -3190,15 +3190,15 @@ window.__ModuleLoader__.load({
     function ConfirmDialog(props) {
       var t = props.t
       // 点遮罩 = 取消，绝不等于确认：确认是一次不可逆动作，只能由按钮或 Enter 触发。
-      return h('div', { className: 'dsh-pi-dialog-wrap', onClick: maskHandler(props.onCancel) },
-        h('div', { className: 'dsh-pi-dialog', role: 'alertdialog', 'aria-modal': 'true', 'aria-label': props.title },
-          h('div', { className: 'dsh-pi-dialog-head' },
+      return h('div', { className: 'superpi-dialog-wrap', onClick: maskHandler(props.onCancel) },
+        h('div', { className: 'superpi-dialog', role: 'alertdialog', 'aria-modal': 'true', 'aria-label': props.title },
+          h('div', { className: 'superpi-dialog-head' },
             h('h3', null, props.title),
             h(CloseButton, { t: t, onClick: props.onCancel })),
-          h('p', { className: 'dsh-pi-dialog-msg' }, props.body),
-          h('div', { className: 'dsh-pi-dialog-actions' },
-            h('button', { type: 'button', className: 'dsh-pi-btn', onClick: props.onCancel }, t('cancel')),
-            h('button', { type: 'button', className: 'dsh-pi-btn dsh-pi-btn-primary', onClick: props.onConfirm }, t('extYes')))))
+          h('p', { className: 'superpi-dialog-msg' }, props.body),
+          h('div', { className: 'superpi-dialog-actions' },
+            h('button', { type: 'button', className: 'superpi-btn', onClick: props.onCancel }, t('cancel')),
+            h('button', { type: 'button', className: 'superpi-btn superpi-btn-primary', onClick: props.onConfirm }, t('extYes')))))
     }
 
     /** 顶栏「更多」的下拉：锚在按钮右下，向下展开，项 = 图标 + 文案。 */
@@ -3228,23 +3228,23 @@ window.__ModuleLoader__.load({
         }
       }, [onCloseMenu])
       return h('div', {
-        className: 'dsh-pi-menu dsh-pi-more-menu',
+        className: 'superpi-menu superpi-more-menu',
         role: 'menu',
         ref: menuRef,
         onKeyDown: function (event) {
           if (event.key === 'Escape') { event.preventDefault(); props.onClose() }
         },
-      }, h('div', { className: 'dsh-pi-menu-list' }, props.items.map(function (item) {
+      }, h('div', { className: 'superpi-menu-list' }, props.items.map(function (item) {
         return h('button', {
           key: item.key,
           type: 'button',
           role: 'menuitem',
-          className: 'dsh-pi-more-item',
+          className: 'superpi-more-item',
           title: item.title === undefined ? item.label : item.title,
           onClick: function () { props.onPick(item) },
         },
-          h('span', { className: 'dsh-pi-more-icon' }, h(item.icon, { size: 16 })),
-          h('span', { className: 'dsh-pi-more-label' }, item.label))
+          h('span', { className: 'superpi-more-icon' }, h(item.icon, { size: 16 })),
+          h('span', { className: 'superpi-more-label' }, item.label))
       })))
     }
 
@@ -3260,11 +3260,11 @@ window.__ModuleLoader__.load({
       var models = Array.isArray(props.models) ? props.models : []
       var levels = Array.isArray(props.levels) ? props.levels : []
       var rows = []
-      rows.push(h('div', { key: 'sec-model', className: 'dsh-pi-picker-sec' }, t('pickModel')))
+      rows.push(h('div', { key: 'sec-model', className: 'superpi-picker-sec' }, t('pickModel')))
       if (props.loading === true) {
-        rows.push(h('div', { key: 'loading', className: 'dsh-pi-picker-empty' }, t('modelsLoading')))
+        rows.push(h('div', { key: 'loading', className: 'superpi-picker-empty' }, t('modelsLoading')))
       } else if (models.length === 0) {
-        rows.push(h('div', { key: 'empty', className: 'dsh-pi-picker-empty' }, t('modelsEmpty')))
+        rows.push(h('div', { key: 'empty', className: 'superpi-picker-empty' }, t('modelsEmpty')))
       } else {
         models.forEach(function (model, index) {
           var current = props.current !== null && props.current !== undefined && props.current.provider === model.provider && props.current.id === model.id
@@ -3274,16 +3274,16 @@ window.__ModuleLoader__.load({
             role: 'menuitemradio',
             'aria-checked': current ? 'true' : 'false',
             'data-current': current ? '1' : '0',
-            className: 'dsh-pi-picker-row',
+            className: 'superpi-picker-row',
             onClick: function (pick) { return function () { props.onPickModel(pick) } }(model),
           },
-            h('span', { className: 'dsh-pi-picker-row-name' }, String(model.name === undefined || model.name === '' ? model.id : model.name)),
-            h('span', { className: 'dsh-pi-picker-row-sub' }, String(model.provider === undefined ? '' : model.provider))))
+            h('span', { className: 'superpi-picker-row-name' }, String(model.name === undefined || model.name === '' ? model.id : model.name)),
+            h('span', { className: 'superpi-picker-row-sub' }, String(model.provider === undefined ? '' : model.provider))))
         })
       }
-      rows.push(h('div', { key: 'sec-thinking', className: 'dsh-pi-picker-sec' }, t('pickThinking')))
+      rows.push(h('div', { key: 'sec-thinking', className: 'superpi-picker-sec' }, t('pickThinking')))
       if (levels.length === 0) {
-        rows.push(h('div', { key: 'level-empty', className: 'dsh-pi-picker-empty' }, t('modelsEmpty')))
+        rows.push(h('div', { key: 'level-empty', className: 'superpi-picker-empty' }, t('modelsEmpty')))
       } else {
         levels.forEach(function (level) {
           var current = props.thinking === level
@@ -3293,18 +3293,18 @@ window.__ModuleLoader__.load({
             role: 'menuitemradio',
             'aria-checked': current ? 'true' : 'false',
             'data-current': current ? '1' : '0',
-            className: 'dsh-pi-picker-row',
+            className: 'superpi-picker-row',
             onClick: function () { props.onPickThinking(level) },
-          }, h('span', { className: 'dsh-pi-picker-row-name' }, String(level))))
+          }, h('span', { className: 'superpi-picker-row-name' }, String(level))))
         })
       }
       return h('div', {
-        className: 'dsh-pi-menu dsh-pi-picker-menu',
+        className: 'superpi-menu superpi-picker-menu',
         role: 'menu',
         onKeyDown: function (event) {
           if (event.key === 'Escape') { event.preventDefault(); props.onClose() }
         },
-      }, h('div', { className: 'dsh-pi-menu-list' }, rows))
+      }, h('div', { className: 'superpi-menu-list' }, rows))
     }
 
     /** 数值兜底：RPC 回来的用量字段可能缺省，缺省按 0 算，别让 NaN 漏进百分比。 */
@@ -3453,7 +3453,7 @@ window.__ModuleLoader__.load({
       var rowMore = function (key, items) {
         var open = menuKey === key
         return h('div', {
-          className: 'dsh-pi-row-more',
+          className: 'superpi-row-more',
           ref: open ? rowMenuAnchor : null,
           onClick: function (event) { event.stopPropagation() },
         },
@@ -3492,22 +3492,22 @@ window.__ModuleLoader__.load({
           var key = 'proj:' + String(entry.key)
           return h('div', {
             key: key,
-            className: 'dsh-pi-proj',
+            className: 'superpi-proj',
             'data-current': entry.isCurrent === true ? '1' : '0',
             'data-temporary': entry.isTemporary === true ? '1' : '0',
             'data-renamed': renamed === '' ? '0' : '1',
             onClick: function () { props.onOpenProject(entry) },
           },
-            h('div', { className: 'dsh-pi-sess-top' },
-              h('div', { className: 'dsh-pi-sess-title' }, title),
-              entry.isCurrent === true ? h('span', { className: 'dsh-pi-tag', 'data-tone': 'ok' }, t('current')) : null,
-              entry.isTemporary === true ? h('span', { className: 'dsh-pi-tag', 'data-tone': 'warn' }, t('tempTag')) : null,
+            h('div', { className: 'superpi-sess-top' },
+              h('div', { className: 'superpi-sess-title' }, title),
+              entry.isCurrent === true ? h('span', { className: 'superpi-tag', 'data-tone': 'ok' }, t('current')) : null,
+              entry.isTemporary === true ? h('span', { className: 'superpi-tag', 'data-tone': 'warn' }, t('tempTag')) : null,
               h('span', null, t('projectSessions').replace('{n}', String(entry.sessionCount))),
               rowMore(key, [
                 { key: 'rename', label: t('renameProject'), icon: PencilIcon, run: function () { onRowMenu(null); props.onRenameProject(String(entry.key), title) } },
                 { key: 'new', label: t('newSessionHere'), icon: PlusIcon, run: function () { onRowMenu(null); props.onNewSessionAt(String(entry.cwd)) } },
               ])),
-            h('div', { className: 'dsh-pi-mono', title: fmtTime(entry.lastActivity) + ' · ' + String(entry.cwd) }, fmtTime(entry.lastActivity) + ' · ' + String(entry.cwd)))
+            h('div', { className: 'superpi-mono', title: fmtTime(entry.lastActivity) + ' · ' + String(entry.cwd) }, fmtTime(entry.lastActivity) + ' · ' + String(entry.cwd)))
         })
       } else {
         var sessions = info.sessions
@@ -3546,17 +3546,17 @@ window.__ModuleLoader__.load({
           var key = 'sess:' + session.path
           return h('div', {
             key: key,
-            className: 'dsh-pi-sess',
+            className: 'superpi-sess',
             'data-current': current ? '1' : '0',
             'data-renamed': renamed === '' ? '0' : '1',
             'data-pinned': pinned ? '1' : '0',
             onClick: function () { props.onPick(session) },
           },
-            h('div', { className: 'dsh-pi-sess-top' },
-              h('div', { className: 'dsh-pi-sess-title', title: title }, title),
-              current ? h('span', { className: 'dsh-pi-tag', 'data-tone': 'ok' }, t('current')) : null,
-              pinned ? h('span', { className: 'dsh-pi-pin', title: t('pinSession') }, h(PinIcon, { size: 12 })) : null,
-              capsule === null ? null : h('span', { className: 'dsh-pi-sess-sum', title: capsule }, capsule),
+            h('div', { className: 'superpi-sess-top' },
+              h('div', { className: 'superpi-sess-title', title: title }, title),
+              current ? h('span', { className: 'superpi-tag', 'data-tone': 'ok' }, t('current')) : null,
+              pinned ? h('span', { className: 'superpi-pin', title: t('pinSession') }, h(PinIcon, { size: 12 })) : null,
+              capsule === null ? null : h('span', { className: 'superpi-sess-sum', title: capsule }, capsule),
               h('span', null, String(session.messageCount) + ' ' + t('messages')),
               rowMore(key, [
                 { key: 'rename', label: t('renameSession'), icon: PencilIcon, run: function () { onRowMenu(null); props.onRenameSession(session.path, title) } },
@@ -3564,8 +3564,8 @@ window.__ModuleLoader__.load({
                   ? { key: 'pin', label: t('unpinSession'), icon: PinIcon, run: function () { onRowMenu(null); props.onTogglePin(session.path, false) } }
                   : { key: 'pin', label: t('pinSession'), icon: PinIcon, run: function () { onRowMenu(null); props.onTogglePin(session.path, true) } },
               ])),
-            h('div', { className: 'dsh-pi-sess-line' }, session.lastMessage === '' || session.lastMessage === undefined ? t('sessionFallbackTitle') : String(session.lastMessage)),
-            h('div', { className: 'dsh-pi-mono', title: fmtTime(session.modified) + ' · ' + session.path }, fmtTime(session.modified) + ' · ' + session.path))
+            h('div', { className: 'superpi-sess-line' }, session.lastMessage === '' || session.lastMessage === undefined ? t('sessionFallbackTitle') : String(session.lastMessage)),
+            h('div', { className: 'superpi-mono', title: fmtTime(session.modified) + ' · ' + session.path }, fmtTime(session.modified) + ' · ' + session.path))
         })
       }
 
@@ -3580,14 +3580,14 @@ window.__ModuleLoader__.load({
         actions.push(h('button', {
           key: 'newp',
           type: 'button',
-          className: 'dsh-pi-btn dsh-pi-side-new',
+          className: 'superpi-btn superpi-side-new',
           title: t('newProjectHint'),
           onClick: function () { props.onNewProject() },
         }, h(PlusIcon, { size: 14 }), t('newProject')))
       }
       actions.push(h('input', {
         key: 'q',
-        className: 'dsh-pi-search',
+        className: 'superpi-search',
         value: query,
         placeholder: isProjects ? t('searchProjects') : t('searchSessions'),
         'aria-label': isProjects ? t('searchProjects') : t('searchSessions'),
@@ -3606,10 +3606,10 @@ window.__ModuleLoader__.load({
         onBack: isProjects ? undefined : props.onBack,
         backTitle: t('allProjects'),
       },
-        info.loading ? h('div', { className: 'dsh-pi-empty-row' }, loadingText) : null,
-        info.error === null ? null : h('div', { className: 'dsh-pi-alert' }, info.error),
-        info.loading === false && info.error === null && rows.length === 0 ? h('div', { className: 'dsh-pi-empty-row' }, emptyText) : null,
-        h('div', { className: 'dsh-pi-sess-line' }, hintText),
+        info.loading ? h('div', { className: 'superpi-empty-row' }, loadingText) : null,
+        info.error === null ? null : h('div', { className: 'superpi-alert' }, info.error),
+        info.loading === false && info.error === null && rows.length === 0 ? h('div', { className: 'superpi-empty-row' }, emptyText) : null,
+        h('div', { className: 'superpi-sess-line' }, hintText),
         rows)
     }
 
@@ -3627,7 +3627,7 @@ window.__ModuleLoader__.load({
       return h(Dialog, { t: t, title: props.title, onClose: props.onClose },
         h('input', {
           key: 'v',
-          className: 'dsh-pi-search',
+          className: 'superpi-search',
           value: value,
           placeholder: t('renamePrompt'),
           'aria-label': t('renamePrompt'),
@@ -3638,9 +3638,9 @@ window.__ModuleLoader__.load({
             if (event.key === 'Escape') { event.preventDefault(); props.onClose() }
           },
         }),
-        h('div', { className: 'dsh-pi-dialog-actions' },
-          h('button', { key: 'c', type: 'button', className: 'dsh-pi-btn', onClick: props.onClose }, t('cancel')),
-          h('button', { key: 'o', type: 'button', className: 'dsh-pi-btn dsh-pi-btn-primary', onClick: submit }, t('extSubmit'))))
+        h('div', { className: 'superpi-dialog-actions' },
+          h('button', { key: 'c', type: 'button', className: 'superpi-btn', onClick: props.onClose }, t('cancel')),
+          h('button', { key: 'o', type: 'button', className: 'superpi-btn superpi-btn-primary', onClick: submit }, t('extSubmit'))))
     }
 
     /**
@@ -3650,7 +3650,7 @@ window.__ModuleLoader__.load({
      * client-render 可以直接喂假数据断言项目层／会话层两套 DOM，倒计时类断言仍归真浏览器。
      *
      * 0.8.0 起这里还承担 ui-prefs（项目名 / 会话名 / 置顶）与行内菜单的开关状态：
-     * 偏好是「面板自己的账」，不归 pi 的 RPC 面管，读写都走 /api/dsh-pi/ui-prefs。
+     * 偏好是「面板自己的账」，不归 pi 的 RPC 面管，读写都走 /api/superpi/ui-prefs。
      *
      * 0.8.1 起 prefs **不再由这里持有**，改由 PiPanel 单点持有后经 props 下传：顶栏标题要显示
      * 当前项目名（renamed 优先），若两处各拉一次 /ui-prefs，改名后就会出现「列表已更新、顶栏还是旧名」。
@@ -3735,7 +3735,7 @@ window.__ModuleLoader__.load({
         onClose: function () { setRename(null) },
       })
 
-      return h('div', { className: 'dsh-pi-side-host' },
+      return h('div', { className: 'superpi-side-host' },
         h(SessionsList, {
           t: t,
           level: level,
@@ -3914,16 +3914,16 @@ window.__ModuleLoader__.load({
 
       var body = []
       // 面包屑：每一段都可点，最后一段是当前目录（加粗、不可回退到同一处）。
-      body.push(h('div', { key: 'crumbs', className: 'dsh-pi-dir-crumbs' }, (function () {
+      body.push(h('div', { key: 'crumbs', className: 'superpi-dir-crumbs' }, (function () {
         var nodes = []
         for (var i = 0; i < crumbs.length; i += 1) {
-          if (i > 0) nodes.push(h('span', { key: 'sep' + String(i), className: 'dsh-pi-dir-sep' }, '›'))
+          if (i > 0) nodes.push(h('span', { key: 'sep' + String(i), className: 'superpi-dir-sep' }, '›'))
           var crumb = crumbs[i]
           var isLast = i === crumbs.length - 1
           nodes.push(h('button', {
             key: 'c' + String(i),
             type: 'button',
-            className: 'dsh-pi-dir-crumb',
+            className: 'superpi-dir-crumb',
             'data-last': isLast ? '1' : '0',
             title: crumb.path,
             onClick: (function (node) {
@@ -3937,9 +3937,9 @@ window.__ModuleLoader__.load({
         return nodes
       })()))
       // 可编辑路径（等价 DSH picker 头部的路径输入区）：回车即跳转，支持不存在的路径（开会话时创建）。
-      body.push(h('div', { key: 'typed', className: 'dsh-pi-row2' },
+      body.push(h('div', { key: 'typed', className: 'superpi-row2' },
         h('input', {
-          className: 'dsh-pi-search',
+          className: 'superpi-search',
           style: { flex: '1 1 auto', minWidth: '0' },
           value: typed,
           placeholder: t('dirInputHint'),
@@ -3952,13 +3952,13 @@ window.__ModuleLoader__.load({
           },
         }),
         h('input', {
-          className: 'dsh-pi-search',
+          className: 'superpi-search',
           style: { width: '160px', flex: '0 0 auto' },
           value: query,
           placeholder: t('filter'),
           onChange: function (event) { setQuery(event.target.value) },
         })))
-      body.push(h('div', { key: 'hint', className: 'dsh-pi-dir-hint' },
+      body.push(h('div', { key: 'hint', className: 'superpi-dir-hint' },
         rootsView === true ? t('dirPickDrive') : (listing.writable === true ? t('dirHint') : t('dirNotWritable'))))
 
       var makeRow = function (item, currentPath, activePath, markable) {
@@ -3966,7 +3966,7 @@ window.__ModuleLoader__.load({
         var active = target !== '' && target === String(activePath)
         return h('button', {
           type: 'button',
-          className: 'dsh-pi-dir-item',
+          className: 'superpi-dir-item',
           'data-selected': active ? '1' : '0',
           'data-current': target !== '' && target === String(currentPath) ? '1' : '0',
           title: target,
@@ -3981,8 +3981,8 @@ window.__ModuleLoader__.load({
             enter(target)
           },
         }, h(DirIcon, { size: 14 }),
-          h('span', { className: 'dsh-pi-dir-name' }, String(item.name === undefined ? '' : item.name)),
-          markable === true && active ? h('span', { className: 'dsh-pi-dir-mark' }, t('dirPickMark')) : null)
+          h('span', { className: 'superpi-dir-name' }, String(item.name === undefined ? '' : item.name)),
+          markable === true && active ? h('span', { className: 'superpi-dir-mark' }, t('dirPickMark')) : null)
       }
 
       var rows = []
@@ -3992,10 +3992,10 @@ window.__ModuleLoader__.load({
           rows.push(h('button', {
             key: 'back',
             type: 'button',
-            className: 'dsh-pi-dir-item',
+            className: 'superpi-dir-item',
             title: listing.dir,
             onClick: function () { setDeep(null); setSelected(null); setRootsView(false) },
-          }, h(DirIcon, { size: 14 }), h('span', { className: 'dsh-pi-dir-name' }, '..  ' + t('dirUp'))))
+          }, h(DirIcon, { size: 14 }), h('span', { className: 'superpi-dir-name' }, '..  ' + t('dirUp'))))
         }
         for (var r = 0; r < mainEntries.length; r += 1) {
           var drive = mainEntries[r]
@@ -4004,7 +4004,7 @@ window.__ModuleLoader__.load({
           rows.push(h('button', {
             key: 'root' + String(r),
             type: 'button',
-            className: 'dsh-pi-dir-item',
+            className: 'superpi-dir-item',
             'data-selected': driveActive ? '1' : '0',
             'data-drive': '1',
             title: drivePath,
@@ -4015,18 +4015,18 @@ window.__ModuleLoader__.load({
               return function () { setQuery(''); setDeep(null); enter(path) }
             })(drivePath),
           }, h(DriveIcon, { size: 14 }),
-            h('span', { className: 'dsh-pi-dir-name' }, String(drive.name === undefined ? '' : drive.name)),
-            driveActive ? h('span', { className: 'dsh-pi-dir-mark' }, t('dirPickMark')) : null))
+            h('span', { className: 'superpi-dir-name' }, String(drive.name === undefined ? '' : drive.name)),
+            driveActive ? h('span', { className: 'superpi-dir-mark' }, t('dirPickMark')) : null))
         }
       }
       if (rootsView !== true && listing.parent !== null && listing.parent !== undefined) {
         rows.push(h('button', {
           key: 'up',
           type: 'button',
-          className: 'dsh-pi-dir-item',
+          className: 'superpi-dir-item',
           title: String(listing.parent),
           onClick: function () { setDeep(null); enter(String(listing.parent)) },
-        }, h(DirIcon, { size: 14 }), h('span', { className: 'dsh-pi-dir-name' }, '..  ' + t('dirUp'))))
+        }, h(DirIcon, { size: 14 }), h('span', { className: 'superpi-dir-name' }, '..  ' + t('dirUp'))))
       }
       if (rootsView !== true && listing.roots.length > 0) {
         // 「此电脑」入口：切到盘符列表。放在「上一级 / 主目录」之后、子目录之前，
@@ -4034,20 +4034,20 @@ window.__ModuleLoader__.load({
         rows.push(h('button', {
           key: 'pc',
           type: 'button',
-          className: 'dsh-pi-dir-item',
+          className: 'superpi-dir-item',
           'data-pc': '1',
           title: t('dirThisPc'),
           onClick: function () { setDeep(null); setSelected(null); setRootsView(true) },
-        }, h(DriveIcon, { size: 14 }), h('span', { className: 'dsh-pi-dir-name' }, t('dirThisPc'))))
+        }, h(DriveIcon, { size: 14 }), h('span', { className: 'superpi-dir-name' }, t('dirThisPc'))))
       }
       if (rootsView !== true && listing.home !== '' && listing.home !== listing.dir) {
         rows.push(h('button', {
           key: 'home',
           type: 'button',
-          className: 'dsh-pi-dir-item',
+          className: 'superpi-dir-item',
           title: listing.home,
           onClick: function () { setDeep(null); enter(listing.home) },
-        }, h(DirIcon, { size: 14 }), h('span', { className: 'dsh-pi-dir-name' }, '~  ' + t('dirHome'))))
+        }, h(DirIcon, { size: 14 }), h('span', { className: 'superpi-dir-name' }, '~  ' + t('dirHome'))))
       }
       // 盘符层已经由上面的专有分支渲染过（盘符要用 DriveIcon + 双击进盘语义，
       // 与普通目录行不同）。这里必须跳过，否则 mainEntries 会在同一层被画第二遍。
@@ -4059,34 +4059,34 @@ window.__ModuleLoader__.load({
       }
 
       var listBody = rows
-      if (listing.loading === true) listBody = [h('div', { key: 'ld', className: 'dsh-pi-empty-row' }, t('dirLoading'))]
-      else if (listing.error !== null) listBody = [h('div', { key: 'er', className: 'dsh-pi-alert' }, String(listing.error))]
-      else if (rows.length === 0) listBody = [h('div', { key: 'em', className: 'dsh-pi-empty-row' }, t('dirEmpty'))]
+      if (listing.loading === true) listBody = [h('div', { key: 'ld', className: 'superpi-empty-row' }, t('dirLoading'))]
+      else if (listing.error !== null) listBody = [h('div', { key: 'er', className: 'superpi-alert' }, String(listing.error))]
+      else if (rows.length === 0) listBody = [h('div', { key: 'em', className: 'superpi-empty-row' }, t('dirEmpty'))]
 
-      var cols = [h('div', { key: 'col0', className: 'dsh-pi-dir-col' }, listBody)]
+      var cols = [h('div', { key: 'col0', className: 'superpi-dir-col' }, listBody)]
       if (model.showSub === true) {
         var subRows = []
         for (var j = 0; j < subEntries.length; j += 1) {
           subRows.push(h('span', { key: 's' + String(j), style: { display: 'contents' } }, makeRow(subEntries[j], currentCwd, deep, true)))
         }
         var subBody = subRows
-        if (sub.loading === true) subBody = [h('div', { key: 'sld', className: 'dsh-pi-empty-row' }, t('dirLoading'))]
-        else if (sub.error !== null) subBody = [h('div', { key: 'ser', className: 'dsh-pi-alert' }, String(sub.error))]
-        else if (subRows.length === 0) subBody = [h('div', { key: 'sem', className: 'dsh-pi-empty-row' }, t('dirEmpty'))]
-        cols.push(h('div', { key: 'col1', className: 'dsh-pi-dir-col' }, subBody))
+        if (sub.loading === true) subBody = [h('div', { key: 'sld', className: 'superpi-empty-row' }, t('dirLoading'))]
+        else if (sub.error !== null) subBody = [h('div', { key: 'ser', className: 'superpi-alert' }, String(sub.error))]
+        else if (subRows.length === 0) subBody = [h('div', { key: 'sem', className: 'superpi-empty-row' }, t('dirEmpty'))]
+        cols.push(h('div', { key: 'col1', className: 'superpi-dir-col' }, subBody))
       }
 
-      body.push(h('div', { key: 'cols', className: 'dsh-pi-dir-cols' }, cols))
+      body.push(h('div', { key: 'cols', className: 'superpi-dir-cols' }, cols))
 
       // 「此电脑」层未选盘时 target 为 null：脚注留空、按钮禁用，避免把上一层的目录当成本层目标。
       var targetDir = model.target === null || model.target === undefined ? '' : String(model.target)
       var canAccept = targetDir !== '' && busy !== true && listing.loading !== true
-      body.push(h('div', { key: 'foot', className: 'dsh-pi-dir-foot' },
-        h('span', { key: 'target', className: 'dsh-pi-dir-target', title: targetDir }, targetDir),
-        h('span', { className: 'dsh-pi-spacer' }),
+      body.push(h('div', { key: 'foot', className: 'superpi-dir-foot' },
+        h('span', { key: 'target', className: 'superpi-dir-target', title: targetDir }, targetDir),
+        h('span', { className: 'superpi-spacer' }),
         h('button', {
           type: 'button',
-          className: 'dsh-pi-btn dsh-pi-btn-primary',
+          className: 'superpi-btn superpi-btn-primary',
           disabled: canAccept !== true,
           onClick: function () { accept() },
         }, busy === true ? t('dirSwitching') : t('dirHere'))))
@@ -4094,17 +4094,17 @@ window.__ModuleLoader__.load({
       // 居中弹窗（不是整块抽屉）：选择工作区是一次会打断当前会话的决策，
       // 用模态把面板其余部分压暗，用户不会误以为还能一边聊天一边挑目录。
       // 尺寸对齐 DSH directory-picker 的 680x500。
-      return h('div', { className: 'dsh-pi-dialog-wrap', onClick: maskHandler(props.onClose) },
+      return h('div', { className: 'superpi-dialog-wrap', onClick: maskHandler(props.onClose) },
         h('div', {
-          className: 'dsh-pi-dir-dialog',
+          className: 'superpi-dir-dialog',
           role: 'dialog',
           'aria-modal': 'true',
           'aria-label': t('dirTitle'),
         },
-          h('div', { className: 'dsh-pi-dir-head' },
-            h('div', { className: 'dsh-pi-dir-title' }, t('dirTitle')),
+          h('div', { className: 'superpi-dir-head' },
+            h('div', { className: 'superpi-dir-title' }, t('dirTitle')),
             h(CloseButton, { t: t, onClick: props.onClose })),
-          h('div', { className: 'dsh-pi-dir' }, body)))
+          h('div', { className: 'superpi-dir' }, body)))
     }
 
     /**
@@ -4126,9 +4126,9 @@ window.__ModuleLoader__.load({
       }
       walk(Array.isArray(props.tree) ? props.tree : [], 0)
       return h(Sheet, { t: t, title: t('tree'), onClose: props.onClose },
-        h('div', { className: 'dsh-pi-sess-line' }, t('treeHint')),
-        rows.length === 0 ? h('div', { className: 'dsh-pi-empty-row' }, t('treeEmpty')) : null,
-        h('div', { className: 'dsh-pi-tree' }, rows.map(function (row, index) {
+        h('div', { className: 'superpi-sess-line' }, t('treeHint')),
+        rows.length === 0 ? h('div', { className: 'superpi-empty-row' }, t('treeEmpty')) : null,
+        h('div', { className: 'superpi-tree' }, rows.map(function (row, index) {
           var entry = row.node.entry === undefined ? {} : row.node.entry
           var isLeaf = entry.id !== undefined && entry.id === props.leafId
           var label = entry.type === 'message' && entry.message !== undefined
@@ -4136,13 +4136,13 @@ window.__ModuleLoader__.load({
             : String(entry.type === undefined ? '' : entry.type) + (typeof entry.name === 'string' ? ' · ' + entry.name : '')
           return h('div', {
             key: 'n' + String(index),
-            className: 'dsh-pi-tree-node',
+            className: 'superpi-tree-node',
             'data-leaf': isLeaf ? '1' : '0',
             style: { paddingLeft: String(6 + row.depth * 14) + 'px' },
           },
-            h('span', { className: 'dsh-pi-tree-kind' }, String(entry.type === undefined ? '' : entry.type)),
-            h('span', { className: 'dsh-pi-tree-text' }, label),
-            isLeaf ? h('span', { className: 'dsh-pi-tag', 'data-tone': 'ok' }, t('current')) : null)
+            h('span', { className: 'superpi-tree-kind' }, String(entry.type === undefined ? '' : entry.type)),
+            h('span', { className: 'superpi-tree-text' }, label),
+            isLeaf ? h('span', { className: 'superpi-tag', 'data-tone': 'ok' }, t('current')) : null)
         })))
     }
 
@@ -4151,16 +4151,16 @@ window.__ModuleLoader__.load({
       var t = props.t
       var items = Array.isArray(props.items) ? props.items : []
       return h(Sheet, { t: t, title: t('fork'), onClose: props.onClose },
-        h('div', { className: 'dsh-pi-sess-line' }, t('forkHint')),
-        items.length === 0 ? h('div', { className: 'dsh-pi-empty-row' }, t('forkEmpty')) : null,
+        h('div', { className: 'superpi-sess-line' }, t('forkHint')),
+        items.length === 0 ? h('div', { className: 'superpi-empty-row' }, t('forkEmpty')) : null,
         items.map(function (item, index) {
           return h('div', {
             key: item.entryId === undefined ? 'f' + String(index) : item.entryId,
-            className: 'dsh-pi-sess',
+            className: 'superpi-sess',
             onClick: function () { props.onPick(item) },
           },
-            h('div', { className: 'dsh-pi-sess-line' }, String(item.text === undefined ? '' : item.text).slice(0, 400)),
-            h('div', { className: 'dsh-pi-mono' }, String(item.entryId === undefined ? '' : item.entryId)))
+            h('div', { className: 'superpi-sess-line' }, String(item.text === undefined ? '' : item.text).slice(0, 400)),
+            h('div', { className: 'superpi-mono' }, String(item.entryId === undefined ? '' : item.entryId)))
         }))
     }
 
@@ -4203,9 +4203,9 @@ window.__ModuleLoader__.load({
       }
       }
       return h(Dialog, { t: t, title: t('stats'), onClose: props.onClose, wide: true },
-        stats === null ? h('div', { className: 'dsh-pi-empty-row' }, t('loading')) : null,
-        stats === null ? null : h('div', { className: 'dsh-pi-kv' }, rows.map(function (row, index) {
-          return [h('div', { key: 'k' + String(index), className: 'dsh-pi-kv-k' }, row[0]), h('div', { key: 'v' + String(index), className: 'dsh-pi-kv-v' }, row[1])]
+        stats === null ? h('div', { className: 'superpi-empty-row' }, t('loading')) : null,
+        stats === null ? null : h('div', { className: 'superpi-kv' }, rows.map(function (row, index) {
+          return [h('div', { key: 'k' + String(index), className: 'superpi-kv-k' }, row[0]), h('div', { key: 'v' + String(index), className: 'superpi-kv-v' }, row[1])]
         })))
     }
 
@@ -4216,33 +4216,33 @@ window.__ModuleLoader__.load({
       /** 开关：对齐 DSH 的 ._switch_1ik0f_5（36x20 胶囊 + 16px 滑块），不再是文字按钮。 */
       function toggle(key, label, value, onChange) {
         var checked = value === true
-        return h('div', { className: 'dsh-pi-switch-row' },
-          h('span', { className: 'dsh-pi-switch-label', id: 'dsh-pi-sw-' + key }, label),
+        return h('div', { className: 'superpi-switch-row' },
+          h('span', { className: 'superpi-switch-label', id: 'superpi-sw-' + key }, label),
           h('button', {
             type: 'button',
-            className: 'dsh-pi-switch',
+            className: 'superpi-switch',
             role: 'switch',
             'aria-checked': checked ? 'true' : 'false',
-            'aria-labelledby': 'dsh-pi-sw-' + key,
+            'aria-labelledby': 'superpi-sw-' + key,
             onClick: function () { onChange(checked !== true) },
-          }, h('span', { className: 'dsh-pi-switch-thumb' })))
+          }, h('span', { className: 'superpi-switch-thumb' })))
       }
       return h(Dialog, { t: t, title: t('settings'), onClose: props.onClose, wide: true },
         toggle('autoCompaction', t('autoCompact'), state.autoCompactionEnabled, function (next) { props.onAutoCompaction(next) }),
         toggle('autoRetry', t('autoRetry'), state.autoRetryEnabled, function (next) { props.onAutoRetry(next) }),
-        h('div', { className: 'dsh-pi-row2' },
-          h('span', { className: 'dsh-pi-kv-k', style: { minWidth: '180px' } }, t('steeringMode')),
-          h('button', { type: 'button', className: 'dsh-pi-btn', onClick: function () { props.onSteering(state.steeringMode === 'all' ? 'one-at-a-time' : 'all') } }, String(state.steeringMode === undefined ? 'all' : state.steeringMode))),
-        h('div', { className: 'dsh-pi-row2' },
-          h('span', { className: 'dsh-pi-kv-k', style: { minWidth: '180px' } }, t('followUpMode')),
-          h('button', { type: 'button', className: 'dsh-pi-btn', onClick: function () { props.onFollowUp(state.followUpMode === 'all' ? 'one-at-a-time' : 'all') } }, String(state.followUpMode === undefined ? 'all' : state.followUpMode))),
-        h('div', { className: 'dsh-pi-sess-line' }, t('autoApprove')))
+        h('div', { className: 'superpi-row2' },
+          h('span', { className: 'superpi-kv-k', style: { minWidth: '180px' } }, t('steeringMode')),
+          h('button', { type: 'button', className: 'superpi-btn', onClick: function () { props.onSteering(state.steeringMode === 'all' ? 'one-at-a-time' : 'all') } }, String(state.steeringMode === undefined ? 'all' : state.steeringMode))),
+        h('div', { className: 'superpi-row2' },
+          h('span', { className: 'superpi-kv-k', style: { minWidth: '180px' } }, t('followUpMode')),
+          h('button', { type: 'button', className: 'superpi-btn', onClick: function () { props.onFollowUp(state.followUpMode === 'all' ? 'one-at-a-time' : 'all') } }, String(state.followUpMode === undefined ? 'all' : state.followUpMode))),
+        h('div', { className: 'superpi-sess-line' }, t('autoApprove')))
     }
 
     /** changelog 抽屉：pi 的 CHANGELOG.md 由 host 代读（RPC 面无文件系统能力）。 */
     function TextSheet(props) {
       return h(Sheet, { t: props.t, title: props.title, onClose: props.onClose },
-        props.text === '' ? h('div', { className: 'dsh-pi-empty-row' }, props.t('loading')) : h('pre', { className: 'dsh-pi-pre', style: { whiteSpace: 'pre-wrap' } }, props.text))
+        props.text === '' ? h('div', { className: 'superpi-empty-row' }, props.t('loading')) : h('pre', { className: 'superpi-pre', style: { whiteSpace: 'pre-wrap' } }, props.text))
     }
 
     /**
@@ -4260,19 +4260,19 @@ window.__ModuleLoader__.load({
       var view = props.view
       var body = null
       if (view.loading === true) {
-        body = h('div', { className: 'dsh-pi-empty-row' }, t('loading'))
+        body = h('div', { className: 'superpi-empty-row' }, t('loading'))
       } else if (view.error !== null && view.error !== undefined && view.error !== '') {
-        body = h('div', { className: 'dsh-pi-alert' }, String(view.error))
+        body = h('div', { className: 'superpi-alert' }, String(view.error))
       } else if (view.kind === 'image') {
-        body = h('img', { className: 'dsh-pi-img', alt: String(view.mimeType), src: 'data:' + String(view.mimeType) + ';base64,' + String(view.data) })
+        body = h('img', { className: 'superpi-img', alt: String(view.mimeType), src: 'data:' + String(view.mimeType) + ';base64,' + String(view.data) })
       } else if (view.kind === 'binary') {
-        body = h('div', { className: 'dsh-pi-empty-row' }, t('binaryFile').replace('{size}', String(view.size)))
+        body = h('div', { className: 'superpi-empty-row' }, t('binaryFile').replace('{size}', String(view.size)))
       } else {
-        body = h('pre', { className: 'dsh-pi-pre', style: { whiteSpace: 'pre-wrap' } },
+        body = h('pre', { className: 'superpi-pre', style: { whiteSpace: 'pre-wrap' } },
           String(view.text === undefined || view.text === null ? '' : view.text) + (view.truncated === true ? '\n' + t('fileTruncated') : ''))
       }
       return h(Sheet, { t: t, title: t('filePreview'), onClose: props.onClose },
-        h('div', { className: 'dsh-pi-mono' }, String(view.path)),
+        h('div', { className: 'superpi-mono' }, String(view.path)),
         body)
     }
 
@@ -4312,61 +4312,61 @@ window.__ModuleLoader__.load({
       var title = request.title === '' ? t('extSelect') : request.title
       var body = []
       if (request.method === 'confirm') {
-        body.push(h('p', { key: 'msg', className: 'dsh-pi-dialog-msg' }, request.message === null ? '' : request.message))
-        body.push(h('div', { key: 'act', className: 'dsh-pi-dialog-actions' },
-          h('button', { type: 'button', className: 'dsh-pi-btn', onClick: function () { props.onRespond({ id: request.id, confirmed: false }) } }, t('extNo')),
-          h('button', { type: 'button', className: 'dsh-pi-btn dsh-pi-btn-primary', onClick: function () { props.onRespond({ id: request.id, confirmed: true }) } }, t('extYes'))))
+        body.push(h('p', { key: 'msg', className: 'superpi-dialog-msg' }, request.message === null ? '' : request.message))
+        body.push(h('div', { key: 'act', className: 'superpi-dialog-actions' },
+          h('button', { type: 'button', className: 'superpi-btn', onClick: function () { props.onRespond({ id: request.id, confirmed: false }) } }, t('extNo')),
+          h('button', { type: 'button', className: 'superpi-btn superpi-btn-primary', onClick: function () { props.onRespond({ id: request.id, confirmed: true }) } }, t('extYes'))))
       } else if (request.method === 'select') {
-        body.push(h('div', { key: 'opts', className: 'dsh-pi-dialog-body' }, request.options.map(function (option, index) {
+        body.push(h('div', { key: 'opts', className: 'superpi-dialog-body' }, request.options.map(function (option, index) {
           return h('button', {
             key: 'o' + String(index),
             type: 'button',
-            className: 'dsh-pi-opt',
+            className: 'superpi-opt',
             onClick: function () { props.onRespond({ id: request.id, value: option }) },
           }, option)
         })))
-        body.push(h('div', { key: 'act', className: 'dsh-pi-dialog-actions' },
-          h('button', { type: 'button', className: 'dsh-pi-btn', onClick: function () { props.onRespond({ id: request.id, cancelled: true }) } }, t('cancel'))))
+        body.push(h('div', { key: 'act', className: 'superpi-dialog-actions' },
+          h('button', { type: 'button', className: 'superpi-btn', onClick: function () { props.onRespond({ id: request.id, cancelled: true }) } }, t('cancel'))))
       } else if (request.method === 'input') {
         body.push(h('input', {
           key: 'input',
-          className: 'dsh-pi-search',
+          className: 'superpi-search',
           value: value,
           placeholder: request.placeholder === null ? '' : request.placeholder,
           onChange: function (event) { setValue(event.target.value) },
           onKeyDown: function (event) { if (event.key === 'Enter') props.onRespond({ id: request.id, value: value }) },
         }))
-        body.push(h('div', { key: 'act', className: 'dsh-pi-dialog-actions' },
-          h('button', { type: 'button', className: 'dsh-pi-btn', onClick: function () { props.onRespond({ id: request.id, cancelled: true }) } }, t('cancel')),
-          h('button', { type: 'button', className: 'dsh-pi-btn dsh-pi-btn-primary', onClick: function () { props.onRespond({ id: request.id, value: value }) } }, t('extSubmit'))))
+        body.push(h('div', { key: 'act', className: 'superpi-dialog-actions' },
+          h('button', { type: 'button', className: 'superpi-btn', onClick: function () { props.onRespond({ id: request.id, cancelled: true }) } }, t('cancel')),
+          h('button', { type: 'button', className: 'superpi-btn superpi-btn-primary', onClick: function () { props.onRespond({ id: request.id, value: value }) } }, t('extSubmit'))))
       } else {
         body.push(h('textarea', {
           key: 'ta',
-          className: 'dsh-pi-mini-ta',
+          className: 'superpi-mini-ta',
           value: value,
           onChange: function (event) { setValue(event.target.value) },
         }))
-        body.push(h('div', { key: 'act', className: 'dsh-pi-dialog-actions' },
-          h('button', { type: 'button', className: 'dsh-pi-btn', onClick: function () { props.onRespond({ id: request.id, cancelled: true }) } }, t('cancel')),
-          h('button', { type: 'button', className: 'dsh-pi-btn dsh-pi-btn-primary', onClick: function () { props.onRespond({ id: request.id, value: value }) } }, t('extSubmit'))))
+        body.push(h('div', { key: 'act', className: 'superpi-dialog-actions' },
+          h('button', { type: 'button', className: 'superpi-btn', onClick: function () { props.onRespond({ id: request.id, cancelled: true }) } }, t('cancel')),
+          h('button', { type: 'button', className: 'superpi-btn superpi-btn-primary', onClick: function () { props.onRespond({ id: request.id, value: value }) } }, t('extSubmit'))))
       }
       var label = request.method === 'confirm' ? t('extConfirm') : request.method === 'input' ? t('extInput') : request.method === 'editor' ? t('extEditor') : t('extSelect')
       // 点遮罩 = 取消（回 cancelled:true），与右上角 CloseButton、pi 侧 Esc 同一语义。
       // 卡片同时补 aria-modal：这类弹窗会阻塞 pi 的整轮等待，不声明模态读屏会以为面板其余部分仍可操作。
       var cancel = function () { props.onRespond({ id: request.id, cancelled: true }) }
-      return h('div', { className: 'dsh-pi-dialog-wrap', onClick: maskHandler(cancel) },
-        h('div', { className: 'dsh-pi-dialog', role: 'dialog', 'aria-modal': 'true', 'aria-label': label },
+      return h('div', { className: 'superpi-dialog-wrap', onClick: maskHandler(cancel) },
+        h('div', { className: 'superpi-dialog', role: 'dialog', 'aria-modal': 'true', 'aria-label': label },
           // 扩展弹窗以前只有底部「取消 / 提交」，没有右上角关闭；这里补一个与抽屉同款的 CloseButton，
           // 语义等于取消（回 cancelled:true），跟 pi 的 Esc 取消一致。
-          h('div', { className: 'dsh-pi-dialog-head' },
+          h('div', { className: 'superpi-dialog-head' },
             h('h3', null, label + ' · ' + title),
             h(CloseButton, { t: t, onClick: function () { props.onRespond({ id: request.id, cancelled: true }) } })),
-          left === null ? null : h('div', { className: 'dsh-pi-mono' }, t('extTimeout').replace('{n}', String(left))),
+          left === null ? null : h('div', { className: 'superpi-mono' }, t('extTimeout').replace('{n}', String(left))),
           body))
     }
 
     function ImageOverlay(props) {
-      return h('div', { className: 'dsh-pi-img-open', onClick: props.onClose },
+      return h('div', { className: 'superpi-img-open', onClick: props.onClose },
         h('img', { alt: props.image.mimeType, src: 'data:' + String(props.image.mimeType) + ';base64,' + String(props.image.data) }))
     }
 
@@ -4496,12 +4496,12 @@ window.__ModuleLoader__.load({
       detail.push('点一下重新检查')
       return h('button', {
         type: 'button',
-        className: 'dsh-pi-chip',
+        className: 'superpi-chip',
         'data-clickable': '1',
         'data-tone': tone,
         title: detail.join('\n'),
         onClick: function () { if (typeof props.onClick === 'function') props.onClick() },
-      }, h('span', { className: 'dsh-pi-chip-name' }, label))
+      }, h('span', { className: 'superpi-chip-name' }, label))
     }
 
     /** 运行时缺失时的整页引导：一键从公共 npm 装到插件目录。 */
@@ -4529,22 +4529,22 @@ window.__ModuleLoader__.load({
         })
       }
 
-      return h('div', { className: 'dsh-pi-root' },
-        h('div', { className: 'dsh-pi-head' },
-          h('div', { className: 'dsh-pi-head-main' },
+      return h('div', { className: 'superpi-root' },
+        h('div', { className: 'superpi-head' },
+          h('div', { className: 'superpi-head-main' },
             h(PiIcon, { size: 16 }),
-            h('span', { className: 'dsh-pi-brand' }, t('panelTitle')))),
-        h('div', { className: 'dsh-pi-gate' },
-          h('div', { className: 'dsh-pi-gate-card' },
+            h('span', { className: 'superpi-brand' }, t('panelTitle')))),
+        h('div', { className: 'superpi-gate' },
+          h('div', { className: 'superpi-gate-card' },
             h(PiIcon, { size: 30 }),
             h('h3', null, t('runtimeMissing')),
-            h('p', { className: 'dsh-pi-empty p' }, t('runtimeMissingHint')),
-            failure === null ? null : h('div', { className: 'dsh-pi-alert' }, t('installFailed') + '：' + failure),
-            h('div', { className: 'dsh-pi-gate-actions' },
-              h('button', { type: 'button', className: 'dsh-pi-btn dsh-pi-btn-primary', disabled: busy, onClick: run }, busy ? t('installing') : t('installRuntime')),
-              h('button', { type: 'button', className: 'dsh-pi-btn', onClick: function () { if (typeof props.onRecheck === 'function') props.onRecheck() } }, t('recheck'))),
-            install.target === undefined ? null : h('div', { className: 'dsh-pi-gate-path' }, String(install.target)),
-            h('div', { className: 'dsh-pi-gate-searched' },
+            h('p', { className: 'superpi-empty p' }, t('runtimeMissingHint')),
+            failure === null ? null : h('div', { className: 'superpi-alert' }, t('installFailed') + '：' + failure),
+            h('div', { className: 'superpi-gate-actions' },
+              h('button', { type: 'button', className: 'superpi-btn superpi-btn-primary', disabled: busy, onClick: run }, busy ? t('installing') : t('installRuntime')),
+              h('button', { type: 'button', className: 'superpi-btn', onClick: function () { if (typeof props.onRecheck === 'function') props.onRecheck() } }, t('recheck'))),
+            install.target === undefined ? null : h('div', { className: 'superpi-gate-path' }, String(install.target)),
+            h('div', { className: 'superpi-gate-searched' },
               h('div', null, t('searchedAt') + '：'),
               h('ul', { style: { margin: '0', paddingLeft: '16px' } }, searched.map(function (item, index) {
                 var ok = item !== null && item !== undefined && item.ok === true
@@ -4560,15 +4560,15 @@ window.__ModuleLoader__.load({
       var setValue = stateValue[1]
       return h(Sheet, { t: t, title: t('namePrompt'), onClose: props.onClose },
         h('input', {
-          className: 'dsh-pi-search',
+          className: 'superpi-search',
           value: value,
           placeholder: t('namePrompt'),
           onChange: function (event) { setValue(event.target.value) },
           onKeyDown: function (event) { if (event.key === 'Enter') props.onSet(value) },
         }),
-        h('div', { className: 'dsh-pi-dialog-actions' },
-          h('button', { type: 'button', className: 'dsh-pi-btn', onClick: props.onClose }, t('cancel')),
-          h('button', { type: 'button', className: 'dsh-pi-btn dsh-pi-btn-primary', onClick: function () { props.onSet(value) } }, t('extSubmit'))))
+        h('div', { className: 'superpi-dialog-actions' },
+          h('button', { type: 'button', className: 'superpi-btn', onClick: props.onClose }, t('cancel')),
+          h('button', { type: 'button', className: 'superpi-btn superpi-btn-primary', onClick: function () { props.onSet(value) } }, t('extSubmit'))))
     }
 
     /**
@@ -4591,17 +4591,17 @@ window.__ModuleLoader__.load({
         : typeof bash.exitCode === 'number' && bash.exitCode !== 0
           ? 'exit ' + String(bash.exitCode)
           : bash.truncated === true ? 'truncated' : ''
-      var attrs = { className: 'dsh-pi-tool' }
+      var attrs = { className: 'superpi-tool' }
       if (failed === true) attrs['data-state'] = 'error'
       return h('details', attrs,
-        h('summary', { className: 'dsh-pi-proc-head' }, procHead({
+        h('summary', { className: 'superpi-proc-head' }, procHead({
           Icon: TerminalIcon,
           label: props.t('procBash'),
-          summary: h('span', { key: 'p', className: 'dsh-pi-proc-text', title: bash.command }, firstLineOf(bash.command)),
+          summary: h('span', { key: 'p', className: 'superpi-proc-text', title: bash.command }, firstLineOf(bash.command)),
           note: note,
           noteTone: failed === true || bash.cancelled === true ? (failed === true ? 'err' : 'warn') : 'warn',
         })),
-        h('pre', { className: 'dsh-pi-tool-body' }, bash.output === '' ? '' : bash.output))
+        h('pre', { className: 'superpi-tool-body' }, bash.output === '' ? '' : bash.output))
     }
 
     // ── 主面板 ──────────────────────────────────────────────────────────────
@@ -5726,27 +5726,27 @@ window.__ModuleLoader__.load({
           onConfirm: function () { setConfirm(null); endSession() },
         })
       }
-      var head = h('div', { className: 'dsh-pi-head' },
-        h('div', { className: 'dsh-pi-head-main' },
+      var head = h('div', { className: 'superpi-head' },
+        h('div', { className: 'superpi-head-main' },
           h(PiIcon, null),
           // 标题 = 当前项目（用户 35984）。title 给完整路径，窄面板里被 ellipsis 截断时还能悬停看全。
-          h('span', { className: 'dsh-pi-brand', title: projectTitle === '' ? null : projectTitle }, projectTitle === '' ? t('panelTitle') : projectTitle),
-          h('span', { className: 'dsh-pi-dot', 'data-state': state, title: state }),
-          sessionName === null || sessionName === '' ? null : h('span', { className: 'dsh-pi-chip', title: t('sessionName') }, String(sessionName))),
+          h('span', { className: 'superpi-brand', title: projectTitle === '' ? null : projectTitle }, projectTitle === '' ? t('panelTitle') : projectTitle),
+          h('span', { className: 'superpi-dot', 'data-state': state, title: state }),
+          sessionName === null || sessionName === '' ? null : h('span', { className: 'superpi-chip', title: t('sessionName') }, String(sessionName))),
         // 模型与推理等级不在这里：它们跟宿主一样落在输入框下沿（见 Composer 的 picker）。
         // 头部的职责是「这是哪个 pi 进程、什么状态」，混进发送相关的开关会让两个区域语义打架。
         h(SelfCheckChip, { t: t, report: verify, onClick: runSelfCheck }),
-        h('button', { type: 'button', className: 'dsh-pi-btn dsh-pi-btn-ghost', title: t('stats'), onClick: openStats }, t('stats')),
-        h('button', { type: 'button', className: 'dsh-pi-btn dsh-pi-btn-ghost', title: t('sessions'), onClick: function () { setDrawer('sessions') } }, t('sessions')),
-        h('button', { type: 'button', className: 'dsh-pi-btn dsh-pi-btn-ghost', title: t('settings'), onClick: openSettings }, t('settings')),
+        h('button', { type: 'button', className: 'superpi-btn superpi-btn-ghost', title: t('stats'), onClick: openStats }, t('stats')),
+        h('button', { type: 'button', className: 'superpi-btn superpi-btn-ghost', title: t('sessions'), onClick: function () { setDrawer('sessions') } }, t('sessions')),
+        h('button', { type: 'button', className: 'superpi-btn superpi-btn-ghost', title: t('settings'), onClick: openSettings }, t('settings')),
         // 「下一个模型 / 下一个思考档位」两个按钮已删（用户 30427）：顶栏放的是「这是哪个进程、
         // 什么状态」以及不常用的全局动作，切换档位属于 composer 的语义，Ctrl+P / Shift+Tab
         // 两个快捷键照旧保留（见 hotkeyText），按钮只是同一件事的第二种入口，占地方且与
         // 左下角的模型名重复。压缩上下文与重新连接收进「更多」，两者都要二次确认。
-        h('span', { className: 'dsh-pi-more-wrap', ref: moreRef },
+        h('span', { className: 'superpi-more-wrap', ref: moreRef },
           h('button', {
             type: 'button',
-            className: 'dsh-pi-btn dsh-pi-btn-ghost',
+            className: 'superpi-btn superpi-btn-ghost',
             title: t('moreActions'),
             'aria-haspopup': 'menu',
             'aria-expanded': moreOpen === true ? 'true' : 'false',
@@ -5758,10 +5758,10 @@ window.__ModuleLoader__.load({
         // 子进程再起一个），代价是丢掉进程内一切状态，并且与 /new 的行为不一致 —— 同一件事
         // 有两个入口、两种结果，是 D-03 的实质。换进程的能力单独留成「重连」，它才该被当成
         // 恢复手段（进程卡死、host 侧残留时用）—— 它已收进上方的「更多」，并要过二次确认。
-        h('button', { type: 'button', className: 'dsh-pi-btn', title: t('newSessionHint'), onClick: runNewSession }, t('newSession')))
+        h('button', { type: 'button', className: 'superpi-btn', title: t('newSessionHint'), onClick: runNewSession }, t('newSession')))
 
       if (phase === 'loading') {
-        return h('div', { className: 'dsh-pi-root' }, h('div', { className: 'dsh-pi-center' }, t('loading')))
+        return h('div', { className: 'superpi-root' }, h('div', { className: 'superpi-center' }, t('loading')))
       }
 
       if (phase === 'missing') {
@@ -5774,14 +5774,14 @@ window.__ModuleLoader__.load({
       }
 
       if (phase === 'error') {
-        return h('div', { className: 'dsh-pi-root' },
+        return h('div', { className: 'superpi-root' },
           head,
-          h('div', { className: 'dsh-pi-scroll' },
-            h('div', { className: 'dsh-pi-inner' },
-              h('div', { className: 'dsh-pi-alert' }, String(error)),
-              h('div', { className: 'dsh-pi-row2' },
-                h('button', { type: 'button', className: 'dsh-pi-btn dsh-pi-btn-primary', onClick: function () { startSession() } }, t('retry')),
-                h('button', { type: 'button', className: 'dsh-pi-btn', onClick: function () { startSession() } }, t('reconnect'))))))
+          h('div', { className: 'superpi-scroll' },
+            h('div', { className: 'superpi-inner' },
+              h('div', { className: 'superpi-alert' }, String(error)),
+              h('div', { className: 'superpi-row2' },
+                h('button', { type: 'button', className: 'superpi-btn superpi-btn-primary', onClick: function () { startSession() } }, t('retry')),
+                h('button', { type: 'button', className: 'superpi-btn', onClick: function () { startSession() } }, t('reconnect'))))))
       }
 
       /**
@@ -5881,20 +5881,20 @@ window.__ModuleLoader__.load({
       }
 
       var notices = []
-      if (error !== null) notices.push(h('div', { key: 'err', className: 'dsh-pi-alert' }, String(error)))
-      if (broken === true) notices.push(h('div', { key: 'broken', className: 'dsh-pi-notice', 'data-tone': 'warn' }, t('reconnect')))
+      if (error !== null) notices.push(h('div', { key: 'err', className: 'superpi-alert' }, String(error)))
+      if (broken === true) notices.push(h('div', { key: 'broken', className: 'superpi-notice', 'data-tone': 'warn' }, t('reconnect')))
       if (view.notice !== null && view.notice !== undefined) {
         var raw = view.notice
         var text = typeof raw === 'string' ? raw : String(raw.text === undefined ? '' : raw.text)
         var detail = typeof raw === 'string' ? '' : String(raw.detail === undefined ? '' : raw.detail)
         var tone = typeof raw === 'string' ? 'err' : String(raw.tone === undefined ? 'warn' : raw.tone)
-        notices.push(h('div', { key: 'notice', className: 'dsh-pi-notice', 'data-tone': tone }, detail === '' ? text : text + ' · ' + detail))
+        notices.push(h('div', { key: 'notice', className: 'superpi-notice', 'data-tone': tone }, detail === '' ? text : text + ' · ' + detail))
       }
-      if (view.compacting === true) notices.push(h('div', { key: 'compact', className: 'dsh-pi-notice', 'data-tone': 'warn' }, t('compacting')))
-      if (view.retrying === true) notices.push(h('div', { key: 'retry', className: 'dsh-pi-notice', 'data-tone': 'warn' }, t('retrying')))
+      if (view.compacting === true) notices.push(h('div', { key: 'compact', className: 'superpi-notice', 'data-tone': 'warn' }, t('compacting')))
+      if (view.retrying === true) notices.push(h('div', { key: 'retry', className: 'superpi-notice', 'data-tone': 'warn' }, t('retrying')))
       for (var n = 0; n < view.notices.length; n += 1) {
         var item = view.notices[n]
-        notices.push(h('div', { key: item.id, className: 'dsh-pi-notice', 'data-tone': String(item.tone === undefined ? 'info' : item.tone) }, String(item.text)))
+        notices.push(h('div', { key: item.id, className: 'superpi-notice', 'data-tone': String(item.tone === undefined ? 'info' : item.tone) }, String(item.text)))
       }
 
       // 状态栏：扩展 setStatus 的内容（等价于 TUI 底部状态行）。
@@ -5937,7 +5937,7 @@ window.__ModuleLoader__.load({
 
       // 状态文案（steering / 排队 / 会话文件）+ 统计数字合成 composer 的 footer：
       // 同一条行里两套语义，靠中点分隔（宿主的 dock 也是一行）。
-      var footerNode = statusRow.length === 0 && dock.length === 0 ? null : h('div', { className: 'dsh-pi-statusbar' },
+      var footerNode = statusRow.length === 0 && dock.length === 0 ? null : h('div', { className: 'superpi-statusbar' },
         statusRow,
         statusRow.length === 0 || dock.length === 0 ? null : h('span', { key: 'd-sep', 'aria-hidden': 'true' }, '·'),
         dock)
@@ -6009,10 +6009,10 @@ window.__ModuleLoader__.load({
         })
       }
 
-      return h('div', { className: 'dsh-pi-root' },
+      return h('div', { className: 'superpi-root' },
         head,
-        h('div', { className: 'dsh-pi-scroll', ref: scrollRef, onScroll: onScroll },
-          h('div', { className: 'dsh-pi-inner' },
+        h('div', { className: 'superpi-scroll', ref: scrollRef, onScroll: onScroll },
+          h('div', { className: 'superpi-inner' },
             notices.length === 0 ? null : notices,
             view.messages.length === 0 ? h(EmptyState, { t: t, meta: emptyMeta, onPickDir: function () { setDrawer('dir') } }) : rows)),
         h(Composer, {

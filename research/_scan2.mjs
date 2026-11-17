@@ -18,6 +18,6 @@ const walk = (node, prefix) => {
   }
 };
 walk(json, '');
-fs.writeFileSync('C:/Users/PC/Documents/pi-local/dsh-pi/research/out.txt',
+fs.writeFileSync('C:/Users/PC/Documents/pi-local/superpi/research/out.txt',
   'pickle=' + headerPickleSize + ' jsonSize=' + jsonSize + ' dataBase=' + dataBase + ' total=' + out.length + '\n' +
   out.filter(p => /ui-slots|ui-layout|ui-renderer|client-modules|ui-sidebar/.test(p)).filter(p=>!p.includes('.map')).slice(0, 80).join('\n'));

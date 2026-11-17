@@ -16,7 +16,7 @@ $pack = $packJson | ConvertFrom-Json
 Write-Output ("tarball = " + $pack[0].filename + "  size = " + $pack[0].size + "  files = " + $pack[0].entryCount)
 $tgz = Join-Path $root $pack[0].filename
 
-$tmp = Join-Path $env:TEMP ("dsh-pi-packed-" + [guid]::NewGuid().ToString("N").Substring(0, 6))
+$tmp = Join-Path $env:TEMP ("superpi-packed-" + [guid]::NewGuid().ToString("N").Substring(0, 6))
 New-Item -ItemType Directory -Path $tmp | Out-Null
 Set-Location $tmp
 '{ "name": "packed-probe", "private": true, "type": "module" }' | Set-Content -Path package.json -Encoding utf8
@@ -25,7 +25,7 @@ Write-Output "=== install into $tmp ==="
 npm install $tgz --no-audit --no-fund --loglevel=error 2>&1 | Select-Object -Last 5
 Write-Output ("installExit=$LASTEXITCODE")
 
-$installed = Join-Path $tmp "node_modules\dsh-pi"
+$installed = Join-Path $tmp "node_modules\superpi"
 Write-Output ("shipped files  = " + (Get-ChildItem $installed -Recurse -File | Measure-Object).Count)
 Write-Output ("hoisted pi     = " + (Test-Path (Join-Path $tmp "node_modules\@earendil-works\pi-coding-agent\dist\bundle\cli.js")))
 Write-Output ("plugin .runtime= " + (Test-Path (Join-Path $installed ".runtime")))

@@ -60,7 +60,7 @@ export async function runSmoke(options = {}) {
 
   log('entry = ' + entry)
   const mod = await import(entry)
-  if (mod.name !== 'dsh-pi') { console.error('FAIL: 插件 name 应为 dsh-pi，实际 ' + String(mod.name)); return 1 }
+  if (mod.name !== 'superpi') { console.error('FAIL: 插件 name 应为 superpi，实际 ' + String(mod.name)); return 1 }
   if (typeof mod.apply !== 'function') { console.error('FAIL: 插件没有导出 apply()'); return 1 }
   log('plugin = ' + mod.name + ' / inject = ' + JSON.stringify(mod.inject) + ' / Config = ' + (mod.Config === undefined ? 'undefined(兜底)' : 'present'))
 

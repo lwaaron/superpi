@@ -77,7 +77,7 @@ function Get-ListeningPid([int]$p) {
 }
 
 function Test-WebHealth([int]$p) {
-  try { return [bool](Invoke-RestMethod -Uri ('http://127.0.0.1:' + $p + '/api/dsh-pi/health') -TimeoutSec 3).ok }
+  try { return [bool](Invoke-RestMethod -Uri ('http://127.0.0.1:' + $p + '/api/superpi/health') -TimeoutSec 3).ok }
   catch { return $false }
 }
 
@@ -144,7 +144,7 @@ const pi = resolvePiRuntime({ pluginRoot: root })
 const node = resolveNodeRuntime({ pluginRoot: root })
 process.stdout.write(JSON.stringify({ pi, node }))
 "@
-  $tmp = Join-Path $env:TEMP ('dsh-pi-launch-probe-' + [Guid]::NewGuid().ToString('N').Substring(0, 8) + '.mjs')
+  $tmp = Join-Path $env:TEMP ('superpi-launch-probe-' + [Guid]::NewGuid().ToString('N').Substring(0, 8) + '.mjs')
   Set-Content -LiteralPath $tmp -Value $probe -Encoding utf8
   try {
     $raw = & node $tmp $PluginRoot 2>&1
@@ -293,7 +293,7 @@ if ($results.tui -like 'launched*') { Ok ('tui  ' + $results.tui) }
 elseif ($results.tui -eq 'skipped') { Warn2 ('tui  skipped (' + $reasons['tui'] + ')') }
 else { Bad ('tui  ' + $results.tui + ' :: ' + $reasons['tui']) }
 
-if ($results.web -like 'ready*') { Ok ('web  ' + $results.web + '  -> http://127.0.0.1:' + $Port + '/api/dsh-pi') }
+if ($results.web -like 'ready*') { Ok ('web  ' + $results.web + '  -> http://127.0.0.1:' + $Port + '/api/superpi') }
 elseif ($results.web -eq 'skipped') { Warn2 ('web  skipped (' + $reasons['web'] + ')') }
 else { Bad ('web  ' + $results.web + ' :: ' + $reasons['web']) }
 

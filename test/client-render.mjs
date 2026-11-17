@@ -7,7 +7,7 @@
  *  1. 组件抛异常（读 undefined 的属性、拼错 props）；
  *  2. 文案键缺失 / 中英文键集不一致。
  *
- * 依赖位置：react 与 react-dom 从 pi 的 node_modules 借（dsh-pi 自己刻意不带 node_modules）。
+ * 依赖位置：react 与 react-dom 从 pi 的 node_modules 借（superpi 自己刻意不带 node_modules）。
  * 借不到就 skip —— 不是失败，因为这不是插件运行时需要的依赖。
  *
  * 跑法：node test/client-render.mjs
@@ -61,7 +61,7 @@ globalThis.document = undefined
 await import(pathToFileURL(path.join(root, 'client.js')).href)
 
 assert(definition !== null, 'client.js 没有调用 window.__ModuleLoader__.load')
-assert(definition.id === 'dsh-pi', 'loader id 应为 dsh-pi，实际 ' + String(definition && definition.id))
+assert(definition.id === 'superpi', 'loader id 应为 superpi，实际 ' + String(definition && definition.id))
 if (definition === null) process.exit(1)
 
 // 只允许 require('react')，其余模块直接报错——守住「零依赖」这条约束。
@@ -93,7 +93,7 @@ assert(html({ t: zh, report: null, onRecheck() {} }) === '', 'report=null 时应
 
 const clean = {
   ok: true,
-  plugin: 'dsh-pi',
+  plugin: 'superpi',
   version: '0.1.0',
   git: { available: true, branch: 'master', commit: 'fcb6188012345678', detached: false },
   summary: { stale: false, changed: [], missing: [], hint: '内存中的插件代码与磁盘一致' },
@@ -156,10 +156,10 @@ const gateHtml = renderToStaticMarkup(React.createElement(Gate, {
     source: 'missing',
     cliPath: '',
     searched: [
-      { source: 'plugin-node-modules', path: 'C:\\x\\dsh-pi\\node_modules', ok: false, reason: 'package not installed' },
+      { source: 'plugin-node-modules', path: 'C:\\x\\superpi\\node_modules', ok: false, reason: 'package not installed' },
       { source: 'config', path: 'C:\\y\\cli.js', ok: false, reason: 'not found' },
     ],
-    install: { available: true, target: 'C:\\x\\dsh-pi\\.runtime', package: '@earendil-works/pi-coding-agent', version: '1.5.2', running: false },
+    install: { available: true, target: 'C:\\x\\superpi\\.runtime', package: '@earendil-works/pi-coding-agent', version: '1.5.2', running: false },
   },
   onRecheck() {},
   onInstalled() {},
@@ -168,7 +168,7 @@ console.log('gate =', gateHtml.slice(0, 320))
 assert(gateHtml.includes(zh('runtimeMissing')), '引导页该显示「' + zh('runtimeMissing') + '」')
 assert(gateHtml.includes(zh('installRuntime')), '引导页该有「' + zh('installRuntime') + '」按钮')
 assert(gateHtml.includes(zh('runtimeMissingHint')), '引导页该有说明文案')
-assert(gateHtml.includes('dsh-pi-gate-card'), '引导页该用 dsh-pi-gate-card 外壳')
+assert(gateHtml.includes('superpi-gate-card'), '引导页该用 superpi-gate-card 外壳')
 assert(gateHtml.includes('.runtime'), '引导页该显示安装落点')
 assert(gateHtml.includes('plugin-node-modules') && gateHtml.includes('config'), '引导页该列出所有查过的位置')
 assert(gateHtml.includes('✗ '), '未命中的候选该标 ✗')
@@ -224,16 +224,16 @@ assert(confirmHtml.includes('All messages will be lost.'), 'confirm 该显示 me
 assert(confirmHtml.includes('>' + zh('extNo') + '<') && confirmHtml.includes('>' + zh('extYes') + '<'), 'confirm 该有「' + zh('extNo') + '」「' + zh('extYes') + '」两个按钮')
 assert(confirmHtml.includes('>' + zh('off') + '<') === false, 'confirm 不该再出现开关态的「' + zh('off') + '」')
 assert(confirmHtml.includes('<input') === false && confirmHtml.includes('<textarea') === false, 'confirm 不该有输入控件')
-assert(confirmHtml.includes('dsh-pi-btn-primary') === true, 'confirm 的肯定按钮该是 primary')
+assert(confirmHtml.includes('superpi-btn-primary') === true, 'confirm 的肯定按钮该是 primary')
 
 // 9.3 select：每个选项一个按钮 + 取消
 const selectHtml = dialogHtml({ method: 'select', title: 'Pick an option', options: ['Option A', 'Option B', 'Option C'] })
 console.log('select =', selectHtml)
-assert(selectHtml.includes('dsh-pi-opt'), 'select 该用 dsh-pi-opt 渲染选项')
+assert(selectHtml.includes('superpi-opt'), 'select 该用 superpi-opt 渲染选项')
 for (const option of ['Option A', 'Option B', 'Option C']) assert(selectHtml.includes('>' + option + '<'), 'select 该渲染选项 ' + option)
-assert((selectHtml.match(/dsh-pi-opt/g) ?? []).length === 3, 'select 的选项按钮数应等于 options 长度')
+assert((selectHtml.match(/superpi-opt/g) ?? []).length === 3, 'select 的选项按钮数应等于 options 长度')
 assert(selectHtml.includes('>' + zh('cancel') + '<'), 'select 该有「' + zh('cancel') + '」按钮')
-assert(selectHtml.includes('dsh-pi-btn-primary') === false, 'select 的选项不该是 primary（用户还没选）')
+assert(selectHtml.includes('superpi-btn-primary') === false, 'select 的选项不该是 primary（用户还没选）')
 
 // 9.4 input：回填 prefill 进 value、placeholder 透传、取消 / 提交
 const inputHtml = dialogHtml({ method: 'input', title: 'Enter a value', placeholder: 'type something...', prefill: 'pre-filled' })
@@ -279,7 +279,7 @@ const EmptyState = internals.EmptyState
 assert(typeof EmptyState === 'function', 'client.js 应导出 EmptyState 以便测试')
 const emptyHtml = renderToStaticMarkup(React.createElement(EmptyState, { t: zh, meta: 'C:\\Users\\PC\\pi-workspace', onPickDir() {} }))
 console.log('empty =', emptyHtml)
-assert(emptyHtml.includes('dsh-pi-empty-actions'), '空态该有动作行 dsh-pi-empty-actions')
+assert(emptyHtml.includes('superpi-empty-actions'), '空态该有动作行 superpi-empty-actions')
 assert(emptyHtml.includes(zh('pickDir')), '空态该显示「' + zh('pickDir') + '」按钮，实际 ' + emptyHtml)
 assert(emptyHtml.includes(zh('dirTitle')), '空态按钮的 title 该用 dirTitle')
 assert(emptyHtml.indexOf(zh('pickDir')) > emptyHtml.indexOf('C:\\Users\\PC\\pi-workspace'), '入口必须排在 cwd 之后（用户红框位置）')
@@ -295,19 +295,19 @@ function cssRule(selector) {
   const end = clientSource.indexOf("}',", at)
   return clientSource.slice(at + 1, end + 1)
 }
-const toolRule = cssRule('.dsh-pi-tool')
-const toolBodyRule = cssRule('.dsh-pi-tool-body')
-assert(toolRule !== null, 'client.js 里该有 .dsh-pi-tool 规则')
-assert(toolBodyRule !== null, 'client.js 里该有 .dsh-pi-tool-body 规则')
-assert(toolRule.includes('border-radius:0'), '.dsh-pi-tool 不该有圆角（用户要求过程行不加圆角框），实际 ' + toolRule)
-assert(toolRule.includes('background:transparent'), '.dsh-pi-tool 不该有底色，实际 ' + toolRule)
-assert(toolRule.includes('box-shadow:none'), '.dsh-pi-tool 不该有 hairline 外框，实际 ' + toolRule)
-assert(toolBodyRule.includes('border-left:1px solid var(--dsw-alias-border-l3)'), '.dsh-pi-tool-body 展开区该用左侧竖线区隔（与思考过程同一套语言），实际 ' + toolBodyRule)
+const toolRule = cssRule('.superpi-tool')
+const toolBodyRule = cssRule('.superpi-tool-body')
+assert(toolRule !== null, 'client.js 里该有 .superpi-tool 规则')
+assert(toolBodyRule !== null, 'client.js 里该有 .superpi-tool-body 规则')
+assert(toolRule.includes('border-radius:0'), '.superpi-tool 不该有圆角（用户要求过程行不加圆角框），实际 ' + toolRule)
+assert(toolRule.includes('background:transparent'), '.superpi-tool 不该有底色，实际 ' + toolRule)
+assert(toolRule.includes('box-shadow:none'), '.superpi-tool 不该有 hairline 外框，实际 ' + toolRule)
+assert(toolBodyRule.includes('border-left:1px solid var(--dsw-alias-border-l3)'), '.superpi-tool-body 展开区该用左侧竖线区隔（与思考过程同一套语言），实际 ' + toolBodyRule)
 const enAll = JSON.stringify(strings.en)
 assert(zhAll.indexOf('工作目录') < 0, 'ZH 文案表里不该再有「工作目录」字样：' + zhAll.slice(zhAll.indexOf('工作目录') - 40, zhAll.indexOf('工作目录') + 20))
 assert(enAll.indexOf('working directory') < 0, 'EN 文案表里不该再有 working directory 字样')
 const emptyNoAction = renderToStaticMarkup(React.createElement(EmptyState, { t: zh, meta: null }))
-assert(emptyNoAction.includes('dsh-pi-empty-actions') === false, '没传 onPickDir 时不该渲染动作行')
+assert(emptyNoAction.includes('superpi-empty-actions') === false, '没传 onPickDir 时不该渲染动作行')
 const emptyEn = renderToStaticMarkup(React.createElement(EmptyState, { t: en, meta: 'C:\\x', onPickDir() {} }))
 assert(emptyEn.includes(en('pickDir')), '英文空态该显示 ' + en('pickDir'))
 
@@ -324,11 +324,11 @@ const settingsHtml = renderToStaticMarkup(React.createElement(SettingsSheet, {
   onFollowUp() {},
 }))
 console.log('settings =', settingsHtml)
-assert(settingsHtml.includes('class="dsh-pi-switch"'), '开关该用 .dsh-pi-switch（DSH 胶囊样式）')
+assert(settingsHtml.includes('class="superpi-switch"'), '开关该用 .superpi-switch（DSH 胶囊样式）')
 assert(settingsHtml.includes('role="switch"'), '开关该声明 role=switch')
 assert(settingsHtml.includes('aria-checked="true"'), '开启态该 aria-checked=true')
 assert(settingsHtml.includes('aria-checked="false"'), '关闭态该 aria-checked=false')
-assert(settingsHtml.includes('dsh-pi-switch-thumb'), '开关该有滑块元素')
+assert(settingsHtml.includes('superpi-switch-thumb'), '开关该有滑块元素')
 // 文字开关会渲染出 >开< / >关< 的按钮文本；改成胶囊后这段文本必须消失（a11y 由 aria 承载）。
 assert(settingsHtml.includes('>' + zh('on') + '<') === false, '开关不该再把「' + zh('on') + '」当按钮文本')
 assert(settingsHtml.includes('>' + zh('off') + '<') === false, '开关不该再把「' + zh('off') + '」当按钮文本')
@@ -337,7 +337,7 @@ assert(settingsHtml.includes(zh('autoCompact')) && settingsHtml.includes(zh('aut
 // ── 9.11b 工具行：展开区不是圆角卡片（用户 18994 明确要求拆掉圆角框） ────────
 // 过程流里一次任务会连着十几次工具调用。每行都套 border-radius + hairline + 底色，
 // 视觉上就是「框套框」的噪音墙。这里守住三点：无圆角、无背景、无外框，
-// 展开区改用左侧竖线（与 .dsh-pi-think 同一套语言）区分层级。
+// 展开区改用左侧竖线（与 .superpi-think 同一套语言）区分层级。
 const ToolBlock = internals.ToolBlock
 const BashBlockCmp = internals.BashBlock
 const ToolResultRow = internals.ToolResultRow
@@ -348,8 +348,8 @@ const toolHtml = renderToStaticMarkup(React.createElement(ToolBlock, { t: zh, na
 const bashHtml = renderToStaticMarkup(React.createElement(BashBlockCmp, { t: zh, message: { role: 'bashExecution', bash: { command: 'echo hi', output: 'hi', exitCode: 0, cancelled: false, truncated: false } } }))
 const resultHtml = renderToStaticMarkup(React.createElement(ToolResultRow, { t: zh, message: { role: 'toolResult', toolName: 'bash', isError: false, blocks: [{ type: 'text', text: 'hi' }] } }))
 for (const [label, markup] of [['工具调用', toolHtml], ['bash 结果', bashHtml], ['工具结果', resultHtml]]) {
-  assert(markup.includes('class="dsh-pi-tool"'), label + '该用 .dsh-pi-tool 行容器，实际 ' + markup.slice(0, 200))
-  assert(markup.includes('dsh-pi-sheet') === false, label + '不该套抽屉外壳')
+  assert(markup.includes('class="superpi-tool"'), label + '该用 .superpi-tool 行容器，实际 ' + markup.slice(0, 200))
+  assert(markup.includes('superpi-sheet') === false, label + '不该套抽屉外壳')
 }
 // 三处渲染必须共用同一个容器类名，样式改动才不会漏掉某一类过程行。
 assert(toolHtml.includes('echo hi') && bashHtml.includes('echo hi') && resultHtml.includes('hi'), '三类过程行都该渲染出内容')
@@ -357,12 +357,12 @@ assert(toolHtml.includes('echo hi') && bashHtml.includes('echo hi') && resultHtm
 // ── 9.11c 过程行文字色 = label-tertiary（实拍逐像素对过目标图） ──────────────
 // 目标图摘要实心色 rgb(129,133,140) 就是 label-tertiary；label-secondary 的
 // rgb(97,102,107) 肉眼可辨地偏深，0.6.4 首轮实拍就是这么错的。
-const procTextRule = cssRule('.dsh-pi-proc-text')
-assert(procTextRule !== null, 'client.js 里该有 .dsh-pi-proc-text 规则')
-assert(procTextRule.includes('color:var(--dsw-alias-label-tertiary)'), '.dsh-pi-proc-text 该用 label-tertiary（目标图摘要色），实际 ' + procTextRule)
-const procHeadRule = cssRule('.dsh-pi-proc-head,.dsh-pi-tool-head')
-assert(procHeadRule !== null, 'client.js 里该有 .dsh-pi-proc-head 规则')
-assert(procHeadRule.includes('color:var(--dsw-alias-label-tertiary)'), '.dsh-pi-proc-head 继承色该是 label-tertiary（.dsh-pi-proc-path 靠 color:inherit 取它），实际 ' + procHeadRule)
+const procTextRule = cssRule('.superpi-proc-text')
+assert(procTextRule !== null, 'client.js 里该有 .superpi-proc-text 规则')
+assert(procTextRule.includes('color:var(--dsw-alias-label-tertiary)'), '.superpi-proc-text 该用 label-tertiary（目标图摘要色），实际 ' + procTextRule)
+const procHeadRule = cssRule('.superpi-proc-head,.superpi-tool-head')
+assert(procHeadRule !== null, 'client.js 里该有 .superpi-proc-head 规则')
+assert(procHeadRule.includes('color:var(--dsw-alias-label-tertiary)'), '.superpi-proc-head 继承色该是 label-tertiary（.superpi-proc-path 靠 color:inherit 取它），实际 ' + procHeadRule)
 assert(procHeadRule.includes('label-secondary') === false, '过程行不该再用 label-secondary，实际 ' + procHeadRule)
 
 // ── 9.11d 展开区的 live 段只在运行中出现 ─────────────────────────────────
@@ -377,17 +377,17 @@ assert(doneHtml.includes('── output ──') && doneHtml.includes('FINAL-OUT
 // 目标图（DSH 会话过程流截图）里这一行文字与图标同为 rgb(52,94,186) = #345EBA =
 // --dsw-alias-label-deep-diving，末尾是三个中点而不是省略号，图标是鲸鱼尾而不是星形。
 // 0.6.4 首轮实拍三处都错，这里逐条钉死，免得下次「看着差不多」又漂回去。
-const workingRule = cssRule('.dsh-pi-working')
-assert(workingRule !== null, 'client.js 里该有 .dsh-pi-working 规则')
-assert(workingRule.includes('color:var(--dsw-alias-label-deep-diving)'), '.dsh-pi-working 文字色该是 label-deep-diving（目标图 #345EBA），实际 ' + workingRule)
-assert(workingRule.includes('label-tertiary') === false, '.dsh-pi-working 不该再用 label-tertiary（那是过程行的色），实际 ' + workingRule)
-assert(workingRule.includes('font-size:calc(var(--dsh-content-font-size,14px) - 2px)'), '.dsh-pi-working 字号该是正文 - 2px（DSH running 行同式），实际 ' + workingRule)
-assert(workingRule.includes('line-height:calc(22px + var(--dsh-content-font-delta,0px))'), '.dsh-pi-working 行高该是 22px + delta（DSH running 行同式），实际 ' + workingRule)
-const workingIconRule = cssRule('.dsh-pi-working-icon')
-assert(workingIconRule !== null, 'client.js 里该有 .dsh-pi-working-icon 规则')
+const workingRule = cssRule('.superpi-working')
+assert(workingRule !== null, 'client.js 里该有 .superpi-working 规则')
+assert(workingRule.includes('color:var(--dsw-alias-label-deep-diving)'), '.superpi-working 文字色该是 label-deep-diving（目标图 #345EBA），实际 ' + workingRule)
+assert(workingRule.includes('label-tertiary') === false, '.superpi-working 不该再用 label-tertiary（那是过程行的色），实际 ' + workingRule)
+assert(workingRule.includes('font-size:calc(var(--dsh-content-font-size,14px) - 2px)'), '.superpi-working 字号该是正文 - 2px（DSH running 行同式），实际 ' + workingRule)
+assert(workingRule.includes('line-height:calc(22px + var(--dsh-content-font-delta,0px))'), '.superpi-working 行高该是 22px + delta（DSH running 行同式），实际 ' + workingRule)
+const workingIconRule = cssRule('.superpi-working-icon')
+assert(workingIconRule !== null, 'client.js 里该有 .superpi-working-icon 规则')
 assert(workingIconRule.includes('state-business-primary') === false, '图标该随父级 currentColor，不该单独取 business-primary（两个蓝不是同一个），实际 ' + workingIconRule)
 assert(workingIconRule.includes('width:14px') && workingIconRule.includes('height:14px'), '图标盒该是 14x14（DSH .runningIcon），实际 ' + workingIconRule)
-assert(workingIconRule.includes('animation:dsh-pi-pulse'), '图标该保留呼吸动画，实际 ' + workingIconRule)
+assert(workingIconRule.includes('animation:superpi-pulse'), '图标该保留呼吸动画，实际 ' + workingIconRule)
 for (const lang of ['zh', 'en']) {
   const label = strings[lang].working
   assert(label.indexOf('{duration}') >= 0, lang + '.working 该含 {duration} 占位，实际 ' + label)
@@ -419,12 +419,12 @@ assert(whaleHtml.includes('stroke-width="1"'), '鲸鱼尾描边该是 1（24 网
 const WorkingRow = internals.WorkingRow
 assert(typeof WorkingRow === 'function', 'client.js 应导出 WorkingRow 以便测试')
 const workingLive = renderToStaticMarkup(React.createElement(WorkingRow, { t: zh, since: Date.now() - 65000 }))
-assert(workingLive.includes('dsh-pi-working-icon'), '工作状态行该渲染图标位')
+assert(workingLive.includes('superpi-working-icon'), '工作状态行该渲染图标位')
 assert(workingLive.includes('viewBox="0 0 16 16"'), '图标该是鲸鱼尾（16 网格），实际 ' + workingLive.slice(0, 300))
 assert(workingLive.indexOf(zh('durMin').replace('{n}', '1') + zh('durSec').replace('{n}', '5')) > 0, '有起点（65 秒）时该显示「1分5秒」，实际 ' + workingLive)
-assert(workingLive.includes('dsh-pi-working-text') && workingLive.indexOf('···') > 0, '有起点时文字该带 ··· 结尾，实际 ' + workingLive)
+assert(workingLive.includes('superpi-working-text') && workingLive.indexOf('···') > 0, '有起点时文字该带 ··· 结尾，实际 ' + workingLive)
 assert(workingLive.includes('role="status"') && workingLive.includes('aria-live="polite"'), '该给读屏软件一条 live region（只播报「深度求索中」，不带每秒变的秒数）')
-assert(workingLive.includes('class="dsh-pi-sr"'), 'live region 该复用 .dsh-pi-sr 视觉隐藏类，实际 ' + workingLive.slice(0, 300))
+assert(workingLive.includes('class="superpi-sr"'), 'live region 该复用 .superpi-sr 视觉隐藏类，实际 ' + workingLive.slice(0, 300))
 const workingNoSince = renderToStaticMarkup(React.createElement(WorkingRow, { t: zh }))
 assert(workingNoSince.includes(zh('deepDiving')), '没有起点时该只说「' + zh('deepDiving') + '」，实际 ' + workingNoSince)
 assert(workingNoSince.indexOf('用时') < 0, '没有起点时不该编一个用时出来，实际 ' + workingNoSince)
@@ -449,20 +449,20 @@ const DirSheet = internals.DirSheet
 assert(typeof DirSheet === 'function', 'client.js 应导出 DirSheet 以便测试')
 const dirHtml = renderToStaticMarkup(React.createElement(DirSheet, { t: zh, startDir: 'C:\\Users\\PC\\pi-workspace', onPick() {}, onClose() {} }))
 console.log('dirsheet =', dirHtml)
-assert(dirHtml.includes('dsh-pi-dir'), 'DirSheet 该渲染 .dsh-pi-dir 容器')
+assert(dirHtml.includes('superpi-dir'), 'DirSheet 该渲染 .superpi-dir 容器')
 assert(dirHtml.includes(zh('dirTitle')), 'DirSheet 标题该是「' + zh('dirTitle') + '」')
-assert(dirHtml.includes('dsh-pi-dir-crumbs'), 'DirSheet 该渲染面包屑')
+assert(dirHtml.includes('superpi-dir-crumbs'), 'DirSheet 该渲染面包屑')
 assert(dirHtml.includes('pi-workspace'), '面包屑该带最后一级目录名')
 assert(dirHtml.includes(zh('dirLoading')), '首帧该显示读取中文案（effect 尚未跑）')
 assert(dirHtml.includes(zh('dirHere')), '底部该有「' + zh('dirHere') + '」按钮')
 assert(dirHtml.includes(zh('dirInputHint')), '该有可编辑路径输入框（placeholder ' + zh('dirInputHint') + '）')
-assert(dirHtml.split('class="dsh-pi-dir-col"').length - 1 === 1, '未选中时只该有一栏（Miller 分栏的第二栏靠选中触发）')
+assert(dirHtml.split('class="superpi-dir-col"').length - 1 === 1, '未选中时只该有一栏（Miller 分栏的第二栏靠选中触发）')
 // 选择工作区必须是居中模态（不是铺满面板的抽屉）：它是会打断当前会话的决策。
-assert(dirHtml.includes('dsh-pi-dialog-wrap'), '选择工作区该是模态弹窗（.dsh-pi-dialog-wrap）')
-assert(dirHtml.includes('dsh-pi-dir-dialog'), '选择工作区该有 680x500 的弹窗外壳')
+assert(dirHtml.includes('superpi-dialog-wrap'), '选择工作区该是模态弹窗（.superpi-dialog-wrap）')
+assert(dirHtml.includes('superpi-dir-dialog'), '选择工作区该有 680x500 的弹窗外壳')
 assert(dirHtml.includes('role="dialog"'), '弹窗该声明 role=dialog')
 assert(dirHtml.includes('aria-modal="true"'), '弹窗该声明 aria-modal=true（模态语义）')
-assert(dirHtml.includes('dsh-pi-sheet') === false, '选择工作区不该再用铺满面板的 .dsh-pi-sheet 外壳')
+assert(dirHtml.includes('superpi-sheet') === false, '选择工作区不该再用铺满面板的 .superpi-sheet 外壳')
 // 首帧 roots 尚未从 host 取回（空数组）→ 不能凭空画出「此电脑」入口，
 // 否则用户点进去会看到空列表。入口只在真拿到盘符后才出现。
 assert(dirHtml.includes(zh('dirThisPc')) === false, '首帧没有盘符列表时不该渲染「' + zh('dirThisPc') + '」入口')
@@ -574,8 +574,8 @@ const projectLevel = renderToStaticMarkup(React.createElement(internals.Sessions
   info: { loading: false, error: null, projects: projEntries, sessions: [], total: 6 },
   onQuery() {}, onOpenProject() {}, onBack() {}, onPick() {}, onClose() {},
 }))
-assert(projectLevel.includes('class="dsh-pi-proj"'), '项目层该渲染 .dsh-pi-proj 行')
-assert(projectLevel.includes('class="dsh-pi-sess"') === false, '项目层不该混入会话行（项目行复用 sess-top/sess-title 排版，但外层类名必须是 dsh-pi-proj）')
+assert(projectLevel.includes('class="superpi-proj"'), '项目层该渲染 .superpi-proj 行')
+assert(projectLevel.includes('class="superpi-sess"') === false, '项目层不该混入会话行（项目行复用 sess-top/sess-title 排版，但外层类名必须是 superpi-proj）')
 assert(projectLevel.includes('data-current="1"'), '当前项目该打 data-current=1')
 assert(projectLevel.includes('data-temporary="1"'), '临时项目该打 data-temporary=1')
 assert(projectLevel.includes(zh('tempTag')), '临时项目该显示「' + zh('tempTag') + '」标签')
@@ -583,23 +583,23 @@ assert(projectLevel.includes('~\\pi-workspace'), '项目行标题该用 displayP
 assert(projectLevel.includes(zh('projectSessions').replace('{n}', '3')), '项目行该显示会话数：' + zh('projectSessions').replace('{n}', '3'))
 assert(projectLevel.includes(zh('projectList')), '项目层标题该是「' + zh('projectList') + '」')
 assert(projectLevel.includes(zh('searchProjects')), '项目层搜索框 placeholder 该是「' + zh('searchProjects') + '」')
-assert(projectLevel.includes('dsh-pi-side-new') && projectLevel.includes(zh('newProject')), '项目层该有「' + zh('newProject') + '」按钮')
-assert(projectLevel.includes('dsh-pi-side-back') === false, '项目层不该有返回键')
-assert(projectLevel.includes('dsh-pi-row-more'), '每行右侧该有 ⋯ 入口（项目层）')
+assert(projectLevel.includes('superpi-side-new') && projectLevel.includes(zh('newProject')), '项目层该有「' + zh('newProject') + '」按钮')
+assert(projectLevel.includes('superpi-side-back') === false, '项目层不该有返回键')
+assert(projectLevel.includes('superpi-row-more'), '每行右侧该有 ⋯ 入口（项目层）')
 const sessionLevel = renderToStaticMarkup(React.createElement(internals.SessionsList, {
   t: zh, level: 'sessions', project: projEntries[1], query: '', currentPath: 'D:\\proj\\b.jsonl',
   info: { loading: false, error: null, projects: [], sessions: sessEntries, total: 2 },
   onQuery() {}, onOpenProject() {}, onBack() {}, onPick() {}, onClose() {},
 }))
-assert(sessionLevel.includes('class="dsh-pi-sess"'), '会话层该渲染 .dsh-pi-sess 行')
-assert(sessionLevel.includes('class="dsh-pi-proj"') === false, '会话层不该混入项目行')
+assert(sessionLevel.includes('class="superpi-sess"'), '会话层该渲染 .superpi-sess 行')
+assert(sessionLevel.includes('class="superpi-proj"') === false, '会话层不该混入项目行')
 assert(sessionLevel.includes(zh('searchSessions')), '会话层搜索框 placeholder 该是「' + zh('searchSessions') + '」')
-assert(sessionLevel.includes('dsh-pi-side-back'), '会话层该有回项目层的图标返回键')
+assert(sessionLevel.includes('superpi-side-back'), '会话层该有回项目层的图标返回键')
 assert(sessionLevel.includes('← ' + zh('allProjects')) === false, '返回键是图标按钮，不该再渲染「← 全部项目」文字')
 assert(sessionLevel.includes('>q1<'), '没名字的会话该把 firstMessage 当标题')
 assert(sessionLevel.includes('>NAMED<') && sessionLevel.includes('>q2<'), '有会话名的行该显示名字，并把 firstMessage 收进摘要格')
 assert(sessionLevel.includes('D:\\proj'), '会话层标题该是项目路径')
-assert(sessionLevel.includes('dsh-pi-tag'), '会话层该给当前会话打「' + zh('current') + '」标签')
+assert(sessionLevel.includes('superpi-tag'), '会话层该给当前会话打「' + zh('current') + '」标签')
 assert(sessionLevel.includes(zh('sessionsHint')), '会话层该显示会话提示文案')
 // 0.8.0：ui-prefs 的两棵表（项目名 / 会话名 / 置顶）与行内 ⋯ 菜单。
 // 这些是「面板自己的账」——pi 的 RPC 面没有别名与置顶概念，所以只能靠纯渲染层断言锁住。
@@ -610,7 +610,7 @@ const pinnedLevel = renderToStaticMarkup(React.createElement(internals.SessionsL
   menuKey: null, onRowMenu() {}, onRenameProject() {}, onRenameSession() {}, onTogglePin() {},
   onNewProject() {}, onNewSessionAt() {}, onQuery() {}, onOpenProject() {}, onBack() {}, onPick() {}, onClose() {},
 }))
-assert(pinnedLevel.split('class="dsh-pi-sess"').length - 1 === 2, '置顶不该增删行')
+assert(pinnedLevel.split('class="superpi-sess"').length - 1 === 2, '置顶不该增删行')
 assert(pinnedLevel.indexOf('>q1<') < pinnedLevel.indexOf('>NAMED<'), '置顶的会话该排到最前，其余保持 host 给的顺序')
 assert(pinnedLevel.includes('data-pinned="1"'), '置顶行该打 data-pinned=1')
 const prefsLevel = renderToStaticMarkup(React.createElement(internals.SessionsList, {
@@ -633,20 +633,20 @@ const menuLevel = renderToStaticMarkup(React.createElement(internals.SessionsLis
   menuKey: 'sess:D:\\proj\\b.jsonl',
   onQuery() {}, onOpenProject() {}, onBack() {}, onPick() {}, onClose() {},
 }))
-assert(menuLevel.includes('dsh-pi-more-menu'), '点开 ⋯ 该渲染菜单')
+assert(menuLevel.includes('superpi-more-menu'), '点开 ⋯ 该渲染菜单')
 assert(menuLevel.includes(zh('renameSession')) && menuLevel.includes(zh('pinSession')), '会话行菜单该有重命名与置顶')
 assert(menuLevel.includes('aria-expanded="true"'), '展开的 ⋯ 该 aria-expanded=true')
 const renameDlg = renderToStaticMarkup(React.createElement(internals.RenameDialog, {
   t: zh, title: zh('renameSession'), value: '旧名字', onSubmit() {}, onClose() {},
 }))
-assert(renameDlg.includes('class="dsh-pi-dialog"') && renameDlg.includes('dsh-pi-search'), '重命名弹窗该是居中 Dialog + 输入框')
+assert(renameDlg.includes('class="superpi-dialog"') && renameDlg.includes('superpi-search'), '重命名弹窗该是居中 Dialog + 输入框')
 assert(renameDlg.includes(zh('cancel')) && renameDlg.includes(zh('extSubmit')), '重命名弹窗该有取消与提交')
 const filteredLevel = renderToStaticMarkup(React.createElement(internals.SessionsList, {
   t: zh, level: 'projects', project: null, query: 'd:\\proj', currentPath: null,
   info: { loading: false, error: null, projects: projEntries, sessions: [], total: 6 },
   onQuery() {}, onOpenProject() {}, onBack() {}, onPick() {}, onClose() {},
 }))
-assert(filteredLevel.split('class="dsh-pi-proj"').length - 1 === 1, '搜索该把项目层过滤到 1 行（路径也参与匹配）')
+assert(filteredLevel.split('class="superpi-proj"').length - 1 === 1, '搜索该把项目层过滤到 1 行（路径也参与匹配）')
 const loadingLevel = renderToStaticMarkup(React.createElement(internals.SessionsList, {
   t: zh, level: 'projects', project: null, query: '', currentPath: null,
   info: { loading: true, error: null, projects: [], sessions: [], total: 0 },
@@ -667,10 +667,10 @@ assert(emptyLevel.includes(en('projectsHint')), '英文项目层该显示 ' + en
 const NL = String.fromCharCode(10)
 const BS = String.fromCharCode(92)
 const chip = (value) => renderToStaticMarkup(React.createElement('div', null, internals.renderFileChip(value, 'k', null)))
-assert(chip('C:' + BS + 'Users' + BS + 'PC' + BS + 'a.md').includes('class="dsh-pi-fileref"'), '盘符绝对路径该渲染成 dsh-pi-fileref 按钮')
+assert(chip('C:' + BS + 'Users' + BS + 'PC' + BS + 'a.md').includes('class="superpi-fileref"'), '盘符绝对路径该渲染成 superpi-fileref 按钮')
 assert(chip('C:' + BS + 'Users' + BS + 'a.md').includes('type="button"'), '文件标签必须是真正的 button：键盘 Tab 要能落上去')
 assert(chip('C:' + BS + 'a.md').includes('data-path='), '文件标签要把原始路径放在 data-path 上，供点击时取')
-assert(chip('C:' + BS + 'a.md').includes('dsh-pi-fileref-name">a.md'), '文件标签末段该是文件名')
+assert(chip('C:' + BS + 'a.md').includes('superpi-fileref-name">a.md'), '文件标签末段该是文件名')
 assert(internals.isFilePathToken('C:' + BS + 'x' + BS + 'y.json') === true, '盘符路径是真的')
 assert(internals.isFilePathToken('~/notes/todo.md') === true, '~/ 开头的路径是真的')
 assert(internals.isFilePathToken('./src/index.ts') === true, './ 开头的相对路径是真的')
@@ -683,19 +683,19 @@ assert(internals.isFilePathToken('/model') === false, '/model 是斜杠命令，
 assert(internals.isFilePathToken('C:' + BS + 'a.md.') === false, '尾部句号说明它不是一条干净的路径')
 assert(internals.splitFileTokens('见 C:' + BS + 'Users' + BS + 'x' + BS + 'a.md。').length === 1, '中文句号包着的路径该被切出来')
 const prose = renderToStaticMarkup(React.createElement('div', null, internals.renderMarkdown('结论在 C:' + BS + 'out' + BS + 'report.md 里。', null)))
-assert(prose.includes('dsh-pi-fileref'), '段落正文里的路径该变成标签')
+assert(prose.includes('superpi-fileref'), '段落正文里的路径该变成标签')
 assert(prose.includes('结论在'), '标签前后的纯文本必须原样保留（不吞字）')
 assert(prose.includes('里。'), '路径后面的纯文本也要保留')
 assert(prose.includes('data-openable="0"'), '没有 opener 时标签标 data-openable=0，不假装可点')
 const fenced = renderToStaticMarkup(React.createElement('div', null, internals.renderMarkdown('```' + NL + 'D:' + BS + 'work' + BS + 'artifacts' + BS + 'handoff.md' + NL + '```', null)))
-assert(fenced.includes('dsh-pi-fileref-block'), '围栏里整块只有一条路径时整块变成标签（用户截图就是这种）')
-assert(fenced.includes('dsh-pi-fence') === false, '整块变成标签后不该再套一层代码块')
+assert(fenced.includes('superpi-fileref-block'), '围栏里整块只有一条路径时整块变成标签（用户截图就是这种）')
+assert(fenced.includes('superpi-fence') === false, '整块变成标签后不该再套一层代码块')
 const multiFence = renderToStaticMarkup(React.createElement('div', null, internals.renderMarkdown('```' + NL + 'npm run build' + NL + 'npm test' + NL + '```', null)))
-assert(multiFence.includes('dsh-pi-fence'), '多行代码块必须保持代码块，绝不拆成标签')
+assert(multiFence.includes('superpi-fence'), '多行代码块必须保持代码块，绝不拆成标签')
 const inlineCode = renderToStaticMarkup(React.createElement('div', null, internals.renderMarkdown('路径是 `' + 'C:' + BS + 'a' + BS + 'b.md' + '` 别复制', null)))
-assert(inlineCode.includes('dsh-pi-fileref'), '行内反引号里整段是路径时该变成标签（助手常这么写）')
+assert(inlineCode.includes('superpi-fileref'), '行内反引号里整段是路径时该变成标签（助手常这么写）')
 const plainInline = renderToStaticMarkup(React.createElement('div', null, internals.renderMarkdown('`npm test`', null)))
-assert(plainInline.includes('dsh-pi-code-inline'), '行内 code 不是路径时必须保持 code 样式')
+assert(plainInline.includes('superpi-code-inline'), '行内 code 不是路径时必须保持 code 样式')
 const addr = internals.sessionFileAddress('s-1', 'C:' + BS + 'Users' + BS + 'a b' + BS + 'x.md')
 assert(addr.indexOf('dsh-resource://file/session/s-1/') === 0, '文件地址必须是 session 作用域：absolute 作用域没有授权会话，读不出来')
 assert(addr.includes('C:/Users/a%20b/x.md'), '反斜杠要转正斜杠、段内空格要编码、盘符冒号保持字面：' + addr)
@@ -725,21 +725,21 @@ assert(chipWithActions('C:' + BS + 'a.ts', { open() {}, reveal() {} }).includes(
 assert(chipWithActions('C:' + BS + 'a.png', { open() {}, reveal() {} }).includes('data-kind="image"'), '.png 归到 image')
 assert(chipWithActions('C:' + BS + 'a.unknownext', { open() {}, reveal() {} }).includes('data-kind="file"'), '未知扩展名兜底成 file，不能崩')
 // 标签只露文件名（用户要求「只显示图标 + 文件名 + 后缀」），目录不再作为灰字出现。
-assert(bothActions.includes('dsh-pi-fileref-dir') === false, '文件标签不该再显示目录灰字')
+assert(bothActions.includes('superpi-fileref-dir') === false, '文件标签不该再显示目录灰字')
 assert(bothActions.includes('>a.md<'), '文件标签正文就是文件名')
 
 // 关闭按钮：三处入口共用同一个组件，图标是 svg 而不是文本 ×
 const closeHtml = renderToStaticMarkup(React.createElement(internals.CloseButton, { t: zh, onClick() {} }))
-assert(closeHtml.includes('dsh-pi-btn-icon'), '关闭按钮该带 dsh-pi-btn-icon（28px 命中区，与其它按钮同高）')
+assert(closeHtml.includes('superpi-btn-icon'), '关闭按钮该带 superpi-btn-icon（28px 命中区，与其它按钮同高）')
 assert(closeHtml.includes('<svg'), '关闭按钮该用描边图标，不是纯文本 ×')
 assert(closeHtml.includes('aria-label="' + zh('close') + '"'), '关闭按钮要有 aria-label，读屏用户才认得')
 assert(closeHtml.includes('>×<') === false, '关闭按钮不该再输出文本 ×')
-assert(settingsHtml.includes('dsh-pi-btn-icon'), '设置弹窗的关闭按钮该是图标按钮（跟 Dialog 同款）')
+assert(settingsHtml.includes('superpi-btn-icon'), '设置弹窗的关闭按钮该是图标按钮（跟 Dialog 同款）')
 assert(settingsHtml.includes('>×<') === false, '设置弹窗不该再输出文本 ×')
-assert(dirHtml.includes('dsh-pi-btn-icon'), '目录弹窗的关闭按钮该是图标按钮（以前这里连 type=button 都没有）')
+assert(dirHtml.includes('superpi-btn-icon'), '目录弹窗的关闭按钮该是图标按钮（以前这里连 type=button 都没有）')
 assert(dirHtml.includes('>×<') === false, '目录弹窗不该再输出文本 ×')
-assert(dialogHtml({ method: 'confirm', title: 'T', message: 'M' }).includes('dsh-pi-dialog-head'), '扩展弹窗该有带关闭按钮的头部')
-assert(dialogHtml({ method: 'confirm', title: 'T', message: 'M' }).includes('dsh-pi-btn-icon'), '扩展弹窗的关闭按钮与抽屉同款')
+assert(dialogHtml({ method: 'confirm', title: 'T', message: 'M' }).includes('superpi-dialog-head'), '扩展弹窗该有带关闭按钮的头部')
+assert(dialogHtml({ method: 'confirm', title: 'T', message: 'M' }).includes('superpi-btn-icon'), '扩展弹窗的关闭按钮与抽屉同款')
 
 // 提示语：placeholder 只留一句，快捷键进 bar 的固定位置
 assert(zh('composerHint').includes('Enter') === false, 'placeholder 不该再塞快捷键（输入一个字符就消失，窄面板还会被截断），实际 ' + JSON.stringify(zh('composerHint')))
@@ -799,36 +799,36 @@ const composerProps = {
   onPickThinking() {},
 }
 const composerHtml = renderToStaticMarkup(React.createElement(Composer, composerProps))
-assert(composerHtml.includes('dsh-pi-box'), '输入区该有卡面 dsh-pi-box')
-assert(composerHtml.includes('dsh-pi-ta'), '输入区该有 textarea.dsh-pi-ta')
-assert(composerHtml.includes('dsh-pi-add'), '左端该有圆形 + 按钮（宿主同款）')
+assert(composerHtml.includes('superpi-box'), '输入区该有卡面 superpi-box')
+assert(composerHtml.includes('superpi-ta'), '输入区该有 textarea.superpi-ta')
+assert(composerHtml.includes('superpi-add'), '左端该有圆形 + 按钮（宿主同款）')
 assert(composerHtml.includes('aria-expanded="false"'), '+ 按钮该带 aria-expanded，菜单没开时是 false')
-assert(composerHtml.includes('dsh-pi-send'), '右端该有圆形发送键 dsh-pi-send')
+assert(composerHtml.includes('superpi-send'), '右端该有圆形发送键 superpi-send')
 assert(composerHtml.includes('disabled=""'), '空输入时发送键该禁用')
-assert(composerHtml.includes('dsh-pi-bar-hint'), '快捷键提示仍在 bar 里固定位置')
-assert(composerHtml.includes('dsh-pi-picker'), '有模型时该渲染模型下拉')
+assert(composerHtml.includes('superpi-bar-hint'), '快捷键提示仍在 bar 里固定位置')
+assert(composerHtml.includes('superpi-picker'), '有模型时该渲染模型下拉')
 assert(composerHtml.includes('deepseek-v4'), '模型下拉显示模型 id')
-assert(composerHtml.includes('dsh-pi-picker-box'), '模型名与思考档位共用一个锚点 dsh-pi-picker-box')
-assert(composerHtml.includes('dsh-pi-picker-native') === false, '不再用原生 select 叠层：档位也是弹层里的一行')
+assert(composerHtml.includes('superpi-picker-box'), '模型名与思考档位共用一个锚点 superpi-picker-box')
+assert(composerHtml.includes('superpi-picker-native') === false, '不再用原生 select 叠层：档位也是弹层里的一行')
 assert(composerHtml.includes('>medium<'), '档位按钮该显示当前档位')
 assert(composerHtml.includes('aria-haspopup="menu"'), '两个 picker 都该声明弹出菜单')
 // 弹层没开时不该渲染任何菜单项，避免 SSR 里多出一层盖住输入区。
-assert(composerHtml.includes('dsh-pi-picker-menu') === false, '未打开时不该渲染模型弹层')
+assert(composerHtml.includes('superpi-picker-menu') === false, '未打开时不该渲染模型弹层')
 const pickerHtml = renderToStaticMarkup(React.createElement(Composer, Object.assign({}, composerProps, { pickerOpen: true })))
-assert(pickerHtml.includes('dsh-pi-picker-menu'), '打开后该渲染向上弹层 dsh-pi-picker-menu')
+assert(pickerHtml.includes('superpi-picker-menu'), '打开后该渲染向上弹层 superpi-picker-menu')
 assert(pickerHtml.includes(zh('pickModel')) && pickerHtml.includes(zh('pickThinking')), '弹层里模型与思考档位两段标题都要有')
 assert(pickerHtml.includes('role="menu"'), '弹层该是 role=menu')
 assert(pickerHtml.includes('role="menuitemradio"'), '每行都是 menuitemradio（两段都是单选）')
 assert(pickerHtml.includes('aria-checked="true"'), '当前模型 / 档位该是 aria-checked=true')
 assert(pickerHtml.includes('aria-expanded="true"'), '打开后锚点该同步 aria-expanded')
-assert(composerHtml.includes('dsh-pi-btn-icon') === false, 'bar 里不该再有旧的图标文字按钮（都并进 + 菜单了）')
+assert(composerHtml.includes('superpi-btn-icon') === false, 'bar 里不该再有旧的图标文字按钮（都并进 + 菜单了）')
 // 附件与目录收进 + 菜单后，bar 左侧只剩 + / 模型 / 推理等级三个控件。
 assert(composerHtml.includes(zh('attachFile')) === false, '回形针按钮该收进 + 菜单，不再占 bar')
 assert(composerHtml.includes(zh('pickDir')) === false, '目录按钮该收进 + 菜单，不再占 bar')
 
 // 运行中：同一位置换成方形停止键，且不再额外挂「排队 / 停止」文字按钮
 const busyHtml = renderToStaticMarkup(React.createElement(Composer, Object.assign({}, composerProps, { busy: true })))
-assert(busyHtml.includes('dsh-pi-stop'), '运行中右端该变成停止圆钮 dsh-pi-stop')
+assert(busyHtml.includes('superpi-stop'), '运行中右端该变成停止圆钮 superpi-stop')
 assert(busyHtml.includes('Esc'), '停止圆钮 title 该提示 Esc')
 assert(busyHtml.includes('>' + zh('queue') + '<') === false, '排队不再占按钮（Alt+Enter 走键盘），实际 ' + busyHtml.slice(0, 120))
 
@@ -840,12 +840,12 @@ const addItems = [
   { key: 'compact', group: 'cmd', groupLabel: zh('addGroupCommands'), label: zh('compactNow'), keyName: 'compact', desc: zh('addCompactDesc'), icon: internals.CloseIcon, run() {} },
 ]
 const addHtml = renderToStaticMarkup(React.createElement(AddMenu, { t: zh, items: addItems, onPick() {}, onClose() {} }))
-assert(addHtml.includes('dsh-pi-menu-add'), '加号菜单该有自己的定位类（向左展开，不铺满整行）')
+assert(addHtml.includes('superpi-menu-add'), '加号菜单该有自己的定位类（向左展开，不铺满整行）')
 assert(addHtml.includes('role="menu"'), '加号菜单该声明 role=menu')
-assert(addHtml.includes('dsh-pi-menu-section'), '菜单该按「添加 / 指令」分组')
+assert(addHtml.includes('superpi-menu-section'), '菜单该按「添加 / 指令」分组')
 assert(addHtml.includes(zh('addGroupAdd')) && addHtml.includes(zh('addGroupCommands')), '两组标题都该出现')
-assert(addHtml.includes('dsh-pi-add-icon'), '每项左侧该有图标')
-assert(addHtml.includes('dsh-pi-add-key'), '每项该带英文键名（宿主同款两列）')
+assert(addHtml.includes('superpi-add-icon'), '每项左侧该有图标')
+assert(addHtml.includes('superpi-add-key'), '每项该带英文键名（宿主同款两列）')
 assert(addHtml.includes('>file<') && addHtml.includes('>compact<'), '英文键名该渲染出来')
 assert(addHtml.includes(zh('addFileDesc')), '每项右侧该有灰色说明')
 assert(addHtml.includes('role="menuitem"') , '菜单项该声明 role=menuitem')
@@ -853,11 +853,11 @@ assert(addHtml.includes('data-active="-1"') === false, '没有 hover 时不该�
 
 // dock：统计行属于 composer 容器（宿主 .GRgSLq_dock 就在 root 里、卡下方），不是面板根上的另一条
 const withFooter = renderToStaticMarkup(React.createElement(Composer, Object.assign({}, composerProps, {
-  footer: React.createElement('div', { className: 'dsh-pi-statusbar' }, 'x'),
+  footer: React.createElement('div', { className: 'superpi-statusbar' }, 'x'),
 })))
-assert(withFooter.includes('dsh-pi-statusbar'), '传了 footer 就该渲染统计行')
-assert(withFooter.indexOf('dsh-pi-box') < withFooter.indexOf('dsh-pi-statusbar'), '统计行该在输入卡之后（宿主同序）')
-assert(composerHtml.includes('dsh-pi-statusbar') === false, '没传 footer 时不该凭空造一条统计行')
+assert(withFooter.includes('superpi-statusbar'), '传了 footer 就该渲染统计行')
+assert(withFooter.indexOf('superpi-box') < withFooter.indexOf('superpi-statusbar'), '统计行该在输入卡之后（宿主同序）')
+assert(composerHtml.includes('superpi-statusbar') === false, '没传 footer 时不该凭空造一条统计行')
 
 // 统计行：轮 / 步 / token / 缓存命中要有文案键，且数字带千分位
 assert(zh('footerTurns').includes('{n}') && en('footerTurns').includes('{n}'), '轮数文案要带 {n}')
@@ -899,13 +899,13 @@ assert(isOutsideMenu(menuNode, null, { id: 'menu-child' }) === false, '没有 an
 assert(isOutsideMenu(menuNode, undefined, { id: 'elsewhere' }) === true, 'anchor 为 undefined 时不该抛异常')
 assert(isOutsideMenu(null, null, { id: 'elsewhere' }) === true, '菜单还没挂载（node 为 null）时一律算外部，不抛')
 
-// 四条文案在早期版本里都出现过，现在是同一份 <div class="dsh-pi-dialog-wrap"><div class="dsh-pi-dialog"
+// 四条文案在早期版本里都出现过，现在是同一份 <div class="superpi-dialog-wrap"><div class="superpi-dialog"
 // 结构；断言直接锁这个父子顺序，防止有人把 onClick 挪到卡片上（那样点卡片也会关）。
 const centerDialog = internals.Dialog
 assert(typeof centerDialog === 'function', 'client.js 应导出 Dialog 以便测试')
 const centerHtml = renderToStaticMarkup(React.createElement(centerDialog, { t: zh, title: '统计', onClose() {} }, 'body'))
 console.log('dialog =', centerHtml)
-assert(centerHtml.includes('<div class="dsh-pi-dialog-wrap"><div class="dsh-pi-dialog"'), '居中弹窗该是「遮罩 > 卡片」两层，实际 ' + centerHtml)
+assert(centerHtml.includes('<div class="superpi-dialog-wrap"><div class="superpi-dialog"'), '居中弹窗该是「遮罩 > 卡片」两层，实际 ' + centerHtml)
 assert((centerHtml.match(/aria-modal="true"/g) ?? []).length === 1, '居中弹窗的卡片该声明一次 aria-modal=true')
 assert(centerHtml.includes(zh('cancel')) === false && centerHtml.includes('role="alertdialog"') === false, '普通弹窗不该带确认语义')
 
@@ -913,13 +913,13 @@ const confirmCenter = internals.ConfirmDialog
 assert(typeof confirmCenter === 'function', 'client.js 应导出 ConfirmDialog 以便测试')
 const confirmCenterHtml = renderToStaticMarkup(React.createElement(confirmCenter, { t: zh, title: '重连', body: '会断开', onCancel() {}, onConfirm() {} }))
 console.log('confirmDialog =', confirmCenterHtml)
-assert(confirmCenterHtml.includes('<div class="dsh-pi-dialog-wrap"><div class="dsh-pi-dialog"'), '二次确认该是「遮罩 > 卡片」两层')
+assert(confirmCenterHtml.includes('<div class="superpi-dialog-wrap"><div class="superpi-dialog"'), '二次确认该是「遮罩 > 卡片」两层')
 assert(confirmCenterHtml.includes('role="alertdialog"'), '二次确认该是 alertdialog')
 assert(confirmCenterHtml.includes('aria-modal="true"'), '二次确认该声明 aria-modal=true')
 
 // 扩展 UI 弹窗（四种 method 共用一个壳）：0.8.1 补上 aria-modal —— 它会阻塞 pi 整轮等待。
 assert(confirmHtml.includes('aria-modal="true"'), '扩展 UI 弹窗该声明 aria-modal=true（0.8.1 补齐）')
-assert(confirmHtml.includes('<div class="dsh-pi-dialog-wrap"><div class="dsh-pi-dialog"'), '扩展 UI 弹窗该是「遮罩 > 卡片」两层')
+assert(confirmHtml.includes('<div class="superpi-dialog-wrap"><div class="superpi-dialog"'), '扩展 UI 弹窗该是「遮罩 > 卡片」两层')
 
 const MoreMenuExport = internals.MoreMenu
 assert(typeof MoreMenuExport === 'function', 'client.js 应导出 MoreMenu 以便测试')
@@ -948,7 +948,7 @@ assert(projectTitleOf(null, { projectKey: 'x', displayPath: '~\\x' }) === '~\\x'
 assert(projectTitleOf(prefsFixture, {}) === '', '元数据里一个路径都没有时返回空串，不编造标题')
 // ── 10. 整棵面板在 loading 阶段能渲染，不抛异常 ────────────────────────────
 const panelHtml = renderToStaticMarkup(React.createElement(internals.PiPanel, { t: zh }))
-assert(panelHtml.includes('dsh-pi-root'), 'PiPanel 应渲染出 dsh-pi-root')
+assert(panelHtml.includes('superpi-root'), 'PiPanel 应渲染出 superpi-root')
 assert(panelHtml.includes(zh('loading')), 'PiPanel 首帧应是 loading 文案')
 
 if (failed > 0) {
