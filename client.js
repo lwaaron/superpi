@@ -145,6 +145,33 @@ window.__ModuleLoader__.load({
       steerQueued: '排队中（steer）',
       autoCompact: '自动压缩',
       autoRetry: '自动重试',
+      // ── 用户自定义规则（0.10.0）───────────────────────────────────────
+      rulesSection: '用户自定义规则（最高优先级）',
+      rulesSummary: '{lines} 行 · {chars} 字',
+      rulesBadgeTop: '最高优先级',
+      rulesBadgeDefault: '默认',
+      rulesEmptyState: '当前未生效：不会向模型追加任何内容',
+      rulesEmptySave: '保存后将生效：下一轮对话立刻带上这段规则',
+      rulesEdit: '编辑规则',
+      rulesEditHint: '编辑规则（保存后下一轮对话立刻生效）',
+      rulesReset: '恢复默认',
+      rulesResetConfirm: '恢复默认规则？',
+      rulesResetBody: '当前的修改会被替换成内置默认规则，这一步不能撤销。',
+      rulesSaved: '规则已保存',
+      rulesResetDone: '已恢复默认规则',
+      rulesLoadFailed: '规则读取失败',
+      rulesCounter: '{n} / {max} 字',
+      rulesOverLimit: '超出上限，请先删掉 {n} 个字再保存',
+      rulesDiscard: '丢弃未保存的修改？',
+      rulesDiscardBody: '编辑框里还有没保存的内容，关闭就丢了。',
+      rulesDiscardOk: '丢弃',
+      rulesCliMissing: '命令行窗口未生效：运行 npm run pi:editor 安装扩展',
+      rulesCliReady: '命令行窗口与面板同一份，/superpi-rules 可编辑',
+      rulesDelivery: '交付链路',
+      rulesPlaceholder: '在这里写你的规则，每行一条；清空 = 不追加任何内容',
+      rulesSaving: '保存中…',
+      rulesSave: '保存',
+      rulesDrift: '文件被外部修改过（指纹不一致），保存一次即可对齐',
       steeringMode: '插入模式',
       on: '开',
       off: '关',
@@ -365,6 +392,33 @@ window.__ModuleLoader__.load({
       steerQueued: 'Queued (steer)',
       autoCompact: 'Auto-compact',
       autoRetry: 'Auto-retry',
+      // ── User-defined rules (0.10.0) ──────────────────────────────────
+      rulesSection: 'User-defined rules (highest priority)',
+      rulesSummary: '{lines} lines · {chars} chars',
+      rulesBadgeTop: 'Highest priority',
+      rulesBadgeDefault: 'Default',
+      rulesEmptyState: 'Not active: nothing is appended to the model',
+      rulesEmptySave: 'Effective after saving: the next turn carries these rules',
+      rulesEdit: 'Edit rules',
+      rulesEditHint: 'Edit rules (effective on the next turn after saving)',
+      rulesReset: 'Restore default',
+      rulesResetConfirm: 'Restore the default rules?',
+      rulesResetBody: 'Your edits are replaced by the built-in default. This cannot be undone.',
+      rulesSaved: 'Rules saved',
+      rulesResetDone: 'Default rules restored',
+      rulesLoadFailed: 'Cannot read the rules',
+      rulesCounter: '{n} / {max} chars',
+      rulesOverLimit: 'Over the limit — remove {n} more characters before saving',
+      rulesDiscard: 'Discard unsaved changes?',
+      rulesDiscardBody: 'The editor still has unsaved content; closing loses it.',
+      rulesDiscardOk: 'Discard',
+      rulesCliMissing: 'CLI window not covered yet: run npm run pi:editor to install the extension',
+      rulesCliReady: 'The CLI window shares this file; /superpi-rules edits it there',
+      rulesDelivery: 'Delivery',
+      rulesPlaceholder: 'Write your rules here, one per line; empty = nothing is appended',
+      rulesSaving: 'Saving…',
+      rulesSave: 'Save',
+      rulesDrift: 'Changed outside the panel (checksum mismatch); save once to realign',
       steeringMode: 'Steering',
       on: 'on',
       off: 'off',
@@ -732,6 +786,24 @@ window.__ModuleLoader__.load({
       '.superpi-search:focus{border-color:var(--dsw-alias-state-business-primary)}',
       '.superpi-search::placeholder{color:var(--dsw-alias-label-dimmed)}',
       '.superpi-sheet-body{flex:1 1 auto;min-height:0;overflow-y:auto;padding:12px 14px 16px;display:flex;flex-direction:column;gap:8px}',
+      // ── 用户自定义规则（0.10.0）──────────────────────────────────────────
+      // 整区是一张「设置项卡片」：与上面的开关同宽，视觉上属于同一组设置项。
+      '.superpi-rules{display:flex;flex-direction:column;gap:6px;padding:12px;border-radius:var(--dsw-radius-md);background:var(--dsw-alias-bg-layer-2)}',
+      '.superpi-rules[data-empty="1"]{box-shadow:inset 0 0 0 .5px var(--dsw-alias-state-warn-primary)}',
+      '.superpi-rules-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap}',
+      '.superpi-rules-title{flex:1 1 auto;min-width:0;font-size:var(--dsw-font-s-14-font-size);line-height:var(--dsw-font-s-14-line-height);color:var(--dsw-alias-label-primary);font-weight:500}',
+      // 徽标：不靠纯色块传意，文本本身就是内容（无障碍读屏也能读出来）。
+      '.superpi-rules-badge{flex:0 0 auto;padding:1px 6px;border-radius:999px;corner-shape:round;font-size:var(--dsw-font-xxxs-11-font-size);line-height:18px;background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-tertiary);white-space:nowrap}',
+      '.superpi-rules-badge[data-tone="top"]{background:color-mix(in srgb,var(--dsw-alias-brand-primary) 14%,transparent);color:var(--dsw-alias-brand-primary)}',
+      '.superpi-rules-line{font-size:var(--dsw-font-xxs-12-font-size);line-height:var(--dsw-font-xxs-12-line-height);color:var(--dsw-alias-label-secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      '.superpi-rules-line[data-tone="muted"]{color:var(--dsw-alias-label-tertiary)}',
+      '.superpi-rules-line[data-tone="warn"]{color:var(--dsw-alias-state-warn-primary);white-space:normal}',
+      '.superpi-rules-line[data-tone="err"]{color:var(--dsw-alias-state-error-primary);white-space:normal}',
+      '.superpi-rules-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:2px}',
+      // 编辑框：与搜索框同一套 token，但允许多行、可纵向调高；高度固定 14 行以免抽屉高度跳动。
+      '.superpi-rules-textarea{width:100%;box-sizing:border-box;resize:vertical;min-height:220px;padding:10px 12px;border:.5px solid var(--dsw-alias-border-l4);border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-primary);font-family:inherit;font-size:var(--dsw-font-xxs-12-font-size);line-height:1.6;outline:0;transition:border-color .16s ease}',
+      '.superpi-rules-textarea:focus{border-color:var(--dsw-alias-state-business-primary)}',
+      '.superpi-rules-textarea::placeholder{color:var(--dsw-alias-label-dimmed)}',
       // 项目层与会话层共用一套行视觉（.superpi-proj 只是语义钩子，样式与 .superpi-sess 完全一致）。
       '.superpi-sess,.superpi-proj{display:flex;flex-direction:column;gap:4px;padding:10px 12px;border:0;border-radius:var(--dsw-radius-md);background:var(--dsw-alias-bg-layer-1);box-shadow:inset 0 0 0 .5px var(--dsw-alias-border-l2);cursor:pointer;transition:background-color .16s ease,box-shadow .16s ease}',
       '.superpi-sess:hover,.superpi-proj:hover{background:var(--dsw-alias-bg-layer-2);box-shadow:inset 0 0 0 .5px var(--dsw-alias-border-l4)}',
@@ -1005,6 +1077,19 @@ window.__ModuleLoader__.load({
       setSessionPref: function (sessionPath, patch) {
         return requestJson('/ui-prefs/session', { method: 'POST', body: Object.assign({ path: sessionPath }, patch) })
       },
+      /**
+       * 用户自定义规则（最高优先级）。
+       *
+       * 三条都回**全量视图**（text / checksum / empty / rank / isDefault / maxLength /
+       * delivery.extensionInstalled …）。归一与校验在 host 的 extensions/superpi-rules.mjs 里，
+       * 面板不重复一遍规则 —— 复制一份判定就是等它下次分叉。
+       *
+       * 为什么绕 host 而不是直接从浏览器读盘：浏览器没有 fs，而这份文件同时是 pi 扩展
+       * 每轮 `before_agent_start` 读的那一份，走 host 读写才能保证「面板改什么、pi 用什么」。
+       */
+      rules: function () { return requestJson('/rules') },
+      setRules: function (text) { return requestJson('/rules', { method: 'POST', body: { text: text } }) },
+      resetRules: function () { return requestJson('/rules/reset', { method: 'POST', body: {} }) },
     }
 
     /** command 的统一入口：成功返回 data，失败抛出带 command 名的错误。 */
@@ -3644,6 +3729,85 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * 规则编辑弹窗（0.10.0）。
+     *
+     * 三个必须做对的交互（每个都有对应的门禁断言）：
+     *  ① **有改动就要拦一下**：Esc / 取消 / 点遮罩三条路都走同一个 `tryClose()`。
+     *     它只比「当前值 vs 打开时的值」，有差异就叫二次确认 ——
+     *     三条路各自判一次必漏一条（这正是 0.8.1 弹窗叠层里踩过的坑）。
+     *  ② **超限不许提交**：字数实时算，超了直接禁用主按钮并提示还差多少字，
+     *     而不是提交后让 host 回一个 400（那会在弹窗里显示英文，且用户还是丢不掉）。
+     *  ③ **保存中锁住**：`saving` 期间主按钮 disabled，避免双击发两次写。
+     */
+    function RulesSheet(props) {
+      var t = props.t
+      var rules = props.rules === null || props.rules === undefined ? null : props.rules
+      var max = rules !== null && typeof rules.maxLength === 'number' ? rules.maxLength : 20000
+      var initial = rules === null ? '' : String(rules.text === undefined ? '' : rules.text)
+      var stateText = useState(initial)
+      var text = stateText[0]
+      var setText = stateText[1]
+      var stateSaving = useState(false)
+      var saving = stateSaving[0]
+      var setSaving = stateSaving[1]
+      var stateError = useState(props.error === undefined || props.error === null ? '' : String(props.error))
+      var error = stateError[0]
+      var setError = stateError[1]
+      var stateConfirm = useState(false)
+      var confirmDiscard = stateConfirm[0]
+      var setConfirmDiscard = stateConfirm[1]
+      var over = text.length > max
+      var dirty = text !== initial
+      var counts = t('rulesCounter').replace('{n}', String(text.length)).replace('{max}', String(max))
+      var submit = function () {
+        if (saving || over || typeof props.onSave !== 'function') return
+        setSaving(true)
+        setError('')
+        Promise.resolve(props.onSave(text)).then(function () { setSaving(false) }, function (failure) {
+          setSaving(false)
+          setError(String(failure !== null && failure !== undefined && failure.message !== undefined ? failure.message : failure))
+        })
+      }
+      var tryClose = function () {
+        if (saving) return
+        if (dirty) { setConfirmDiscard(true); return }
+        props.onClose()
+      }
+      return h(Dialog, { t: t, title: t('rulesSection'), onClose: tryClose, wide: true },
+        h('div', { key: 'meta', className: 'superpi-rules-line', 'data-tone': 'muted' }, counts),
+        text.trim() === '' ? h('div', { key: 'empty', className: 'superpi-rules-line', 'data-tone': 'warn' }, t('rulesEmptySave')) : null,
+        h('textarea', {
+          key: 'ta',
+          className: 'superpi-rules-textarea',
+          value: text,
+          rows: 14,
+          spellCheck: false,
+          placeholder: t('rulesPlaceholder'),
+          'aria-label': t('rulesSection'),
+          autoFocus: true,
+          onChange: function (event) { setText(event.target.value) },
+          onKeyDown: function (event) {
+            // Ctrl/Cmd+Enter 直接保存（多行 textarea 里 Enter 必须留给换行）。
+            if (event.key === 'Enter' && (event.ctrlKey === true || event.metaKey === true)) { event.preventDefault(); submit() }
+            if (event.key === 'Escape') { event.preventDefault(); tryClose() }
+          },
+        }),
+        over ? h('div', { key: 'over', className: 'superpi-rules-line', 'data-tone': 'err', role: 'alert' }, t('rulesOverLimit').replace('{n}', String(text.length - max))) : null,
+        error === '' ? null : h('div', { key: 'err', className: 'superpi-rules-line', 'data-tone': 'err', role: 'alert' }, error),
+        h('div', { key: 'actions', className: 'superpi-dialog-actions' },
+          h('button', { key: 'c', type: 'button', className: 'superpi-btn', disabled: saving, onClick: tryClose }, t('cancel')),
+          h('button', { key: 's', type: 'button', className: 'superpi-btn superpi-btn-primary', disabled: saving || over, onClick: submit }, saving ? t('rulesSaving') : t('rulesSave'))),
+        confirmDiscard ? h(ConfirmDialog, {
+          t: t,
+          title: t('rulesDiscard'),
+          body: t('rulesDiscardBody'),
+          confirmLabel: t('rulesDiscardOk'),
+          onCancel: function () { setConfirmDiscard(false) },
+          onConfirm: function () { setConfirmDiscard(false); props.onClose() },
+        }) : null)
+    }
+
+    /**
      * 抽屉的**容器**：只管「现在在哪一层、要哪个 cwd 的数据」，把取数结果交给无状态视图。
      * 之所以拆成 SessionsSheet（容器）+ SessionsList（纯渲染），是因为两级抽屉的渲染分支
      * 全靠 host 返回的数据决定，把取数写在渲染里就只能靠真浏览器验证；拆开之后
@@ -4236,7 +4400,80 @@ window.__ModuleLoader__.load({
         h('div', { className: 'superpi-row2' },
           h('span', { className: 'superpi-kv-k', style: { minWidth: '180px' } }, t('followUpMode')),
           h('button', { type: 'button', className: 'superpi-btn', onClick: function () { props.onFollowUp(state.followUpMode === 'all' ? 'one-at-a-time' : 'all') } }, String(state.followUpMode === undefined ? 'all' : state.followUpMode))),
-        h('div', { className: 'superpi-sess-line' }, t('autoApprove')))
+        h('div', { className: 'superpi-sess-line' }, t('autoApprove')),
+        RulesSection({ t: t, rules: props.rules, loadError: props.rulesError, onEdit: props.onEditRules, onReset: props.onResetRules, onRetry: props.onLoadRules }))
+    }
+
+    /**
+     * 设置弹窗里的「用户自定义规则」区（0.10.0）。
+     *
+     * 这是一个**状态机**而不是一行按钮：规则可能正在加载、读失败、默认、已改、空。
+     * 每种状态的最小信息量不同，所以摘要行按状态换文案（而不是统一显示一句「已启用」）：
+     *  - rules 为 null  → 还在路上（按钮禁用，避免拿旧值/空值开编辑框）；
+     *  - loadError 非空 → 失败 + 重试（此时禁用编辑：读不出来就写回去等于毁掉用户的文件）；
+     *  - empty:true     → 告警语气，明说「不会追加任何内容」（静默看起来像故障）；
+     *  - 否则           → 行数/字数 + 首行摘要 + 徽标（最高优先级 / 默认）。
+     *
+     * 「命令行有没有装」单独一行（delivery.extensionInstalled）：它决定规则在 TUI 里到底生效不生效，
+     * 不装就是两端不对等，必须在设置里看得见，而不是让用户去 TUI 里试了才发现。
+     */
+    function RulesSection(props) {
+      var t = props.t
+      var rules = props.rules === undefined ? null : props.rules
+      var error = props.loadError === undefined || props.loadError === null ? null : props.loadError
+      var text = rules === null ? '' : String(rules.text === undefined ? '' : rules.text)
+      var nonEmpty = text.split('\n').filter(function (line) { return line.trim() !== '' })
+      var chars = text.length
+      var head = nonEmpty.length === 0 ? '' : nonEmpty[0]
+      if (head.length > 72) head = head.slice(0, 72) + '…'
+      var summary = t('rulesSummary').replace('{lines}', String(nonEmpty.length)).replace('{chars}', String(chars))
+      var disabled = rules === null || error !== null
+      var children = []
+      children.push(h('div', { key: 'head', className: 'superpi-rules-head' },
+        h('span', { className: 'superpi-rules-title' }, t('rulesSection')),
+        rules === null ? null : h('span', { className: 'superpi-rules-badge', 'data-tone': 'top' }, t('rulesBadgeTop')),
+        rules !== null && rules.isDefault === true ? h('span', { key: 'd', className: 'superpi-rules-badge', 'data-tone': 'default' }, t('rulesBadgeDefault')) : null))
+      if (error !== null) {
+        children.push(h('div', { key: 'err', className: 'superpi-rules-line', 'data-tone': 'err', role: 'alert' }, t('rulesLoadFailed') + ' · ' + String(error)))
+      } else if (rules === null) {
+        children.push(h('div', { key: 'loading', className: 'superpi-rules-line', 'data-tone': 'muted' }, t('loading')))
+      } else if (rules.empty === true) {
+        children.push(h('div', { key: 'empty', className: 'superpi-rules-line', 'data-tone': 'warn' }, t('rulesEmptyState')))
+      } else {
+        children.push(h('div', { key: 'sum', className: 'superpi-rules-line' }, summary))
+        children.push(h('div', { key: 'head-line', className: 'superpi-rules-line', 'data-tone': 'muted' }, head))
+      }
+      if (rules !== null && rules.drift === true) {
+        children.push(h('div', { key: 'drift', className: 'superpi-rules-line', 'data-tone': 'warn' }, t('rulesDrift')))
+      }
+      if (rules !== null && rules.delivery !== undefined && rules.delivery !== null) {
+        children.push(h('div', {
+          key: 'cli',
+          className: 'superpi-rules-line',
+          'data-tone': rules.delivery.extensionInstalled === true ? 'muted' : 'warn',
+        }, rules.delivery.extensionInstalled === true ? t('rulesCliReady') : t('rulesCliMissing')))
+      }
+      var actions = []
+      if (error !== null && typeof props.onRetry === 'function') {
+        actions.push(h('button', { key: 'retry', type: 'button', className: 'superpi-btn', onClick: props.onRetry }, t('retry')))
+      }
+      actions.push(h('button', {
+        key: 'reset',
+        type: 'button',
+        className: 'superpi-btn',
+        disabled: disabled,
+        onClick: function () { props.onReset() },
+      }, t('rulesReset')))
+      actions.push(h('button', {
+        key: 'edit',
+        type: 'button',
+        className: 'superpi-btn superpi-btn-primary',
+        disabled: disabled,
+        title: t('rulesEditHint'),
+        onClick: function () { props.onEdit() },
+      }, t('rulesEdit')))
+      children.push(h('div', { key: 'actions', className: 'superpi-rules-actions' }, actions))
+      return h('div', { className: 'superpi-rules', 'data-empty': rules !== null && rules.empty === true ? '1' : '0' }, children)
     }
 
     /** changelog 抽屉：pi 的 CHANGELOG.md 由 host 代读（RPC 面无文件系统能力）。 */
@@ -4685,6 +4922,25 @@ window.__ModuleLoader__.load({
         }
         setPrefs(next)
       }
+      /**
+       * 用户自定义规则（0.10.0）。
+       *
+       * 三个状态字段而不是一个：rules 是数据（null = 还在路上），rulesError 是**读失败**
+       * （与「清空」完全是两件事，不能都表达为 null），rulesEpoch 只是用来在保存/恢复默认后
+       * 重建编辑弹窗的初始值（弹窗里的 useState 只在首次挂载时取初值）。
+       *
+       * 挂载就拉一次，而不是打开设置才拉：它决定设置弹窗里那一行摘要显示什么，
+       * 而「打开设置 → 等一下才出内容」就是一次白屏跳变。
+       */
+      var rulesState = useState(null)
+      var rules = rulesState[0]
+      var setRules = rulesState[1]
+      var rulesErrorState = useState(null)
+      var rulesError = rulesErrorState[0]
+      var setRulesError = rulesErrorState[1]
+      var rulesEpochState = useState(0)
+      var rulesEpoch = rulesEpochState[0]
+      var setRulesEpoch = rulesEpochState[1]
       var modelsState = useState([])
       var models = modelsState[0]
       var setModels = modelsState[1]
@@ -5045,6 +5301,13 @@ window.__ModuleLoader__.load({
       // 读不到也不该让面板变红 —— 重命名与置顶是增强项，缺了只是回到默认排序。
       useEffect(function () {
         api.uiPrefs().then(applyPrefs).catch(function () {})
+      }, [])
+
+      // 规则也挂载即拉：它决定设置弹窗里那一行摘要显示什么。
+      // 失败不报红（loadRules 已经把错误记进 rulesError，设置弹窗里会显示并给重试），
+      // 原因：规则是设置项，读不到不该让整张面板进入 error 相。
+      useEffect(function () {
+        loadRules().catch(function () {})
       }, [])
 
       useEffect(function () {
@@ -5461,9 +5724,56 @@ window.__ModuleLoader__.load({
 
       var openSettings = function () {
         setDrawer('settings')
+        // 规则是设置弹窗里的一节，而且它不依赖会话 —— 即使还没有会话也要拉。
+        loadRules()
         var id = sessionRef.current
         if (id === null) return
         loadState(id)
+      }
+
+      /**
+       * 读规则。不依赖会话、不设超时（host 只读一个小 JSON）。
+       *
+       * 读失败**保留上一次成功的值**：settings 抽屉开着时点一下重试不该把已经显示的摘要
+       * 清成空白（那是「越重试越瘆人」）。首次失败才会是 null + 错误行。
+       */
+      var loadRules = function () {
+        return api.rules().then(function (body) {
+          setRules(body !== null && typeof body === 'object' ? body : null)
+          setRulesError(null)
+          return body
+        }, function (failure) {
+          var message = String(failure !== null && failure !== undefined && failure.message !== undefined ? failure.message : failure)
+          setRulesError(message)
+          throw failure
+        })
+      }
+
+      /**
+       * 保存规则。**弹窗关闭与 notice 都由调用方决定**，这里只负责写与同步状态：
+       * 失败时把错误抛回去，让 RulesSheet 在弹窗里就地显示（弹窗不能关，否则用户丢内容）。
+       */
+      var saveRules = function (text) {
+        return api.setRules(text).then(function (body) {
+          setRules(body !== null && typeof body === 'object' ? body : null)
+          setRulesError(null)
+          setRulesEpoch(function (value) { return value + 1 })
+          notice(t('rulesSaved'), 'ok')
+          return body
+        })
+      }
+
+      /** 恢复默认：走 host 的 /rules/reset（归一与落盘只有一份实现）。 */
+      var resetRules = function () {
+        return api.resetRules().then(function (body) {
+          setRules(body !== null && typeof body === 'object' ? body : null)
+          setRulesError(null)
+          setRulesEpoch(function (value) { return value + 1 })
+          notice(t('rulesResetDone'), 'ok')
+          return body
+        }, function (failure) {
+          notice(String(failure !== null && failure !== undefined && failure.message !== undefined ? failure.message : failure), 'err')
+        })
       }
 
       var openChangelog = function () {
@@ -5724,6 +6034,15 @@ window.__ModuleLoader__.load({
           body: t('confirmReconnectBody'),
           onCancel: function () { setConfirm(null) },
           onConfirm: function () { setConfirm(null); endSession() },
+        })
+      } else if (confirm === 'rulesReset') {
+        // 「恢复默认」不可撤销（用户的修改会被替掉），所以走与压缩/重连同一套二次确认。
+        confirmNode = h(ConfirmDialog, {
+          t: t,
+          title: t('rulesResetConfirm'),
+          body: t('rulesResetBody'),
+          onCancel: function () { setConfirm(null) },
+          onConfirm: function () { setConfirm(null); resetRules() },
         })
       }
       var head = h('div', { className: 'superpi-head' },
@@ -5988,6 +6307,24 @@ window.__ModuleLoader__.load({
           onAutoRetry: function (next) { runSetting({ type: 'set_auto_retry', enabled: next }) },
           onSteering: function (mode) { runSetting({ type: 'set_steering_mode', mode: mode }) },
           onFollowUp: function (mode) { runSetting({ type: 'set_follow_up_mode', mode: mode }) },
+          rules: rules,
+          rulesError: rulesError,
+          onEditRules: function () { setDrawer('rules') },
+          onResetRules: function () { setConfirm('rulesReset') },
+          onLoadRules: function () { loadRules().catch(function () {}) },
+        })
+      } else if (drawer === 'rules') {
+        // key 带 rulesEpoch：保存 / 恢复默认之后必须重建弹窗，否则它的 useState
+        // 还拿着打开时的初值（React 只在本体变更时重跑 useState）。
+        drawerNode = h(RulesSheet, {
+          key: 'rules-' + String(rulesEpoch),
+          t: t,
+          rules: rules,
+          error: rulesError,
+          onClose: function () { setDrawer('settings') },
+          onSave: function (text) {
+            return saveRules(text).then(function () { setDrawer('settings') })
+          },
         })
       } else if (drawer === 'changelog') {
         drawerNode = h(TextSheet, { t: t, title: 'CHANGELOG', text: sheetText, onClose: function () { setDrawer(null) } })
@@ -6219,6 +6556,8 @@ window.__ModuleLoader__.load({
       dirPickModel: dirPickModel,
       EmptyState: EmptyState,
       SettingsSheet: SettingsSheet,
+      RulesSection: RulesSection,
+      RulesSheet: RulesSheet,
       SessionsList: SessionsList,
       SessionsSheet: SessionsSheet,
       projectTitleOf: projectTitleOf,

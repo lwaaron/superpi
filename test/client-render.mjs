@@ -334,6 +334,152 @@ assert(settingsHtml.includes('>' + zh('on') + '<') === false, '开关不该再�
 assert(settingsHtml.includes('>' + zh('off') + '<') === false, '开关不该再把「' + zh('off') + '」当按钮文本')
 assert(settingsHtml.includes(zh('autoCompact')) && settingsHtml.includes(zh('autoRetry')), '设置项标签该照旧显示')
 
+// ── 9.11d 用户自定义规则区（0.10.0）────────────────────────────────────────
+// 设置弹窗里多了一节「用户自定义规则」：它是一个状态机，不是一行按钮。
+// 这里把五种状态逐个渲染一遍，盯住「每个状态都有对应的可读文本」——
+// 空白或只变颜色都会让用户分不清「默认 / 关掉 / 坏了」。
+const RulesSection = internals.RulesSection
+const RulesSheet = internals.RulesSheet
+assert(typeof RulesSection === 'function', 'client.js 应导出 RulesSection 以便测试')
+assert(typeof RulesSheet === 'function', 'client.js 应导出 RulesSheet 以便测试')
+
+/** 造一个规则视图（字段与 host 的 rulesView() 一致）。 */
+const rulesViewFixture = (overrides = {}) => Object.assign({
+  ok: true,
+  version: 1,
+  text: 'User-defined rules：\n思考过程和最后总结使用简体中文回复；',
+  checksum: 'a'.repeat(64),
+  createdAt: '2026-01-01T00:00:00.000Z',
+  updatedAt: '2026-01-01T00:00:00.000Z',
+  source: 'file',
+  drift: false,
+  isDefault: false,
+  empty: false,
+  rank: 1,
+  maxLength: 20000,
+  filePath: 'C:/x/rules.json',
+  warning: '',
+  delivery: { command: '/superpi-rules', extensionInstalled: true },
+}, overrides)
+const renderSection = (props) => renderToStaticMarkup(React.createElement(RulesSection, Object.assign({ t: zh }, props)))
+
+// ① 加载中：摘要行占位、两个按钮都禁用
+const rulesLoading = renderSection({ rules: null })
+assert(rulesLoading.includes('superpi-rules') === true, '加载中也渲染出规则区容器')
+assert(rulesLoading.includes(zh('rulesSection')), '加载中也显示区标题')
+assert(rulesLoading.includes(zh('loading')), '加载中显示读取占位')
+assert(rulesLoading.includes('disabled'), '加载中按钮禁用（不能拿空值开编辑框）')
+
+// ② 正常：行数/字数 + 首行摘要 + 「最高优先级」徽标 + 命令行已就绪
+const rulesOk = renderSection({ rules: rulesViewFixture() })
+assert(rulesOk.includes(zh('rulesSummary').replace('{lines}', '2').replace('{chars}', String('User-defined rules：\n思考过程和最后总结使用简体中文回复；'.length))), '正常态显示行数/字数')
+assert(rulesOk.includes('User-defined rules：'), '正常态显示首行摘要')
+assert(rulesOk.includes(zh('rulesBadgeTop')), '正常态带「最高优先级」徽标')
+// 用 data-tone="default" 判而不是文本：文本里的「默认」会出现在「恢复默认」按钮上。
+assert(rulesOk.includes('data-tone="default"') === false, '自定义规则不带「默认」徽标')
+assert(rulesOk.includes(zh('rulesCliReady')), '已装扩展时显示「命令行同一份」')
+assert(rulesOk.includes(zh('rulesEdit')) && rulesOk.includes(zh('rulesReset')), '正常态有两个动作')
+assert(rulesOk.includes('superpi-btn-primary'), '编辑是主按钮')
+assert(rulesOk.includes('disabled') === false, '正常态按钮可点')
+
+// ③ 默认文案：多一个「默认」徽标（用户能看出自己没改过）
+const rulesDefault = renderSection({ rules: rulesViewFixture({ isDefault: true, source: 'default' }) })
+assert(rulesDefault.includes('data-tone="default"'), '默认文案带「默认」徽标')
+assert(rulesDefault.includes(zh('rulesBadgeTop')), '默认文案仍有「最高优先级」徽标')
+
+// ④ 空规则：告警语气，明说「不会追加任何内容」
+const rulesEmpty = renderSection({ rules: rulesViewFixture({ text: '', empty: true, rank: 0, isDefault: false }) })
+assert(rulesEmpty.includes(zh('rulesEmptyState')), '空规则明说不会追加内容')
+assert(rulesEmpty.includes('data-tone="warn"'), '空规则用告警色而不是静默')
+assert(rulesEmpty.includes('data-empty="1"'), '空规则在容器上打标记（描边提示）')
+assert(rulesEmpty.includes(zh('rulesEdit')), '空规则仍可点编辑')
+
+// ⑤ 读失败：错误行 role=alert + 重试按钮 + 编辑禁用（读不出来就写回去等于毁文件）
+const rulesFailed = renderSection({ rules: null, loadError: 'boom', onRetry() {} })
+assert(rulesFailed.includes(zh('rulesLoadFailed')), '读失败显示错误标题')
+assert(rulesFailed.includes('role="alert"'), '错误行是 role=alert（读屏会播报）')
+assert(rulesFailed.includes(zh('retry')), '读失败给重试按钮')
+assert(rulesFailed.includes('boom'), '错误详情原样显示')
+assert(/disabled[^>]*>/.test(rulesFailed), '读失败时动作禁用')
+
+// ⑥ 命令行未装：必须看得见「命令行窗口未生效」，不能让用户去 TUI 试
+const rulesNoCli = renderSection({ rules: rulesViewFixture({ delivery: { command: '/superpi-rules', extensionInstalled: false } }) })
+assert(rulesNoCli.includes(zh('rulesCliMissing')), '未装扩展时提示命令行未生效')
+assert(rulesNoCli.includes('data-tone="warn"'), '未装扩展用告警色')
+
+// ⑦ drift：文件被外部改过
+const rulesDrift = renderSection({ rules: rulesViewFixture({ drift: true }) })
+assert(rulesDrift.includes(zh('rulesDrift')), 'drift 时提示文件被外部修改')
+
+// ⑧ 编辑弹窗：textarea 预填全文 + 字数 + 保存/取消
+const rulesSheetHtml = renderToStaticMarkup(React.createElement(RulesSheet, {
+  t: zh,
+  rules: rulesViewFixture({ text: '第一行\n第二行' }),
+  onClose() {},
+  onSave() {},
+}))
+console.log('rulesSheet =', rulesSheetHtml.slice(0, 400))
+assert(rulesSheetHtml.includes('role="dialog"'), '编辑弹窗是 dialog')
+assert(rulesSheetHtml.includes('aria-modal="true"'), '编辑弹窗是模态')
+assert(rulesSheetHtml.includes('superpi-rules-textarea'), '有规则编辑 textarea')
+assert(rulesSheetHtml.includes('aria-label="' + zh('rulesSection') + '"'), 'textarea 有 aria-label')
+assert(rulesSheetHtml.includes('>第一行\n第二行<'), 'textarea 预填当前全文')
+assert(rulesSheetHtml.includes(zh('rulesCounter').replace('{n}', String('第一行\n第二行'.length)).replace('{max}', '20000')), '显示字数计数')
+assert(rulesSheetHtml.includes(zh('rulesSave')), '有保存按钮')
+assert(rulesSheetHtml.includes(zh('cancel')), '有取消按钮')
+
+// ⑨ 编辑弹窗：超长时保存禁用 + 提示还差多少（不让用户提交后才吃 400）
+const overLong = 'x'.repeat(5)
+const rulesOverSheet = renderToStaticMarkup(React.createElement(RulesSheet, {
+  t: zh,
+  rules: rulesViewFixture({ text: overLong, maxLength: 3 }),
+  onClose() {},
+  onSave() {},
+}))
+assert(rulesOverSheet.includes(zh('rulesOverLimit').replace('{n}', '2')), '超长时提示还差多少字')
+assert(rulesOverSheet.includes('disabled'), '超长时保存禁用')
+
+// ⑩ 空文本：先说明「保存后才生效」，不要让人以为现在是关着的
+const rulesEmptySheet = renderToStaticMarkup(React.createElement(RulesSheet, {
+  t: zh,
+  rules: rulesViewFixture({ text: '' }),
+  onClose() {},
+  onSave() {},
+}))
+assert(rulesEmptySheet.includes(zh('rulesEmptySave')), '空文本编辑时说明保存后生效')
+
+// ⑪ 规则区嵌在设置弹窗里（不是独立入口）
+const settingsWithRules = renderToStaticMarkup(React.createElement(SettingsSheet, {
+  t: zh,
+  state: { autoCompactionEnabled: true, autoRetryEnabled: false, steeringMode: 'one-at-a-time', followUpMode: 'one-at-a-time' },
+  rules: rulesViewFixture(),
+  onClose() {},
+  onAutoCompaction() {},
+  onAutoRetry() {},
+  onSteering() {},
+  onFollowUp() {},
+  onEditRules() {},
+  onResetRules() {},
+  onLoadRules() {},
+}))
+assert(settingsWithRules.includes('superpi-rules'), '设置弹窗里嵌了规则区')
+assert(settingsWithRules.includes(zh('rulesSection')), '设置弹窗里有规则区标题')
+assert(settingsWithRules.includes('superpi-switch'), '开关仍在（规则区是追加的，不是替换）')
+// 设置弹窗不传 rules 时（旧调用方 / 测试）不许抛，只显示加载中
+const settingsNoRules = renderToStaticMarkup(React.createElement(SettingsSheet, {
+  t: zh,
+  state: {},
+  onClose() {},
+  onAutoCompaction() {},
+  onAutoRetry() {},
+  onSteering() {},
+  onFollowUp() {},
+  onEditRules() {},
+  onResetRules() {},
+}))
+assert(settingsNoRules.includes(zh('loading')), '缺少 rules 数据时显示加载中而不是抛')
+
+
 // ── 9.11b 工具行：展开区不是圆角卡片（用户 18994 明确要求拆掉圆角框） ────────
 // 过程流里一次任务会连着十几次工具调用。每行都套 border-radius + hairline + 底色，
 // 视觉上就是「框套框」的噪音墙。这里守住三点：无圆角、无背景、无外框，

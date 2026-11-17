@@ -149,15 +149,23 @@ export const EDITOR_ACTIONS = [
 ] as const
 
 /**
- * settings 菜单里的条目 —— **全部是 pi 自己的斜杠命令**，一条都不自造
- * （`interactive-mode.js` 的 setupEditorSubmitHandler 里逐条比对）。
- * 门禁 `test/tui-editor.mjs` 会去 pi 的 dist 里 grep 这些命令，pi 删了就红。
+ * settings 菜单里的条目。
+ *
+ * **同一份菜单两种来源**（`source` 字段），这才是关键：
+ *  - `'pi'`      —— pi 自己的斜杠命令。门禁 `test/tui-editor.mjs` 会去 pi 的 dist 里
+ *                   grep 这些命令，pi 删了就红。一条都不自造。
+ *  - `'superpi'` —— 本仓库自己的扩展命令（由 `extensions/superpi-rules.ts` 注册），
+ *                   同一条门禁改成断言「那个扩展里真的注册了这个名字」。
+ *
+ * 为什么不能把自造的命令混进去当 pi 的：用户点了没反应，而且把"pi 支持 X"这句话变成了假话。
  */
 export const SETTINGS_COMMANDS = [
-  { label: 'settings', command: '/settings' },
-  { label: 'model', command: '/model' },
-  { label: 'thinking', command: '/thinking' },
-  { label: 'scoped-models', command: '/scoped-models' },
+  { label: 'settings', command: '/settings', source: 'pi' },
+  { label: 'model', command: '/model', source: 'pi' },
+  { label: 'thinking', command: '/thinking', source: 'pi' },
+  { label: 'scoped-models', command: '/scoped-models', source: 'pi' },
+  // 用户自定义规则（最高优先级）—— 与面板设置里那一节是同一份文件（<home>/.superpi/rules.json）。
+  { label: 'rules', command: '/superpi-rules', source: 'superpi' },
 ] as const
 
 /** home = 回到刚启动时的界面 —— pi 里唯一对应的动作是 `/new`（起一棵新会话树）。 */

@@ -13,6 +13,7 @@
 *.json text eol=lf
 *.yml text eol=lf
 *.ps1 text eol=lf
+*.ts text eol=lf
 
 # git 钩子没有扩展名，必须显式钉 LF：CRLF 的 sh 脚本会报 "bad interpreter"。
 tools/git-hooks/* text eol=lf

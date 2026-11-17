@@ -824,6 +824,73 @@ try {
     const dirtyName = await sessionStore.read()
     eq('脏 name（超长）被丢弃但 pinned 保留', dirtyName.sessions['C:\\bad\\name.jsonl'], { pinned: true, createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' })
 
+    // 3.14 用户自定义规则（最高优先级）
+    // 这一段打的是**真 apply() 接出来的 store**，而不是手工传进去的假对象：
+    // 它要证明的是「面板写的、pi 扩展读的是同一个文件」这条链路的上半截真的接上了。
+    // 落盘路径由 SUPERPI_RULES 指到临时目录，绝不碰用户真实的 ~/.superpi/rules.json。
+    const rulesMod = await import(pathToFileURL(path.join(root, 'extensions', 'superpi-rules.mjs')).href)
+    const rulesFile = path.join(tmp, 'rules', 'rules.json')
+    const rulesServer = await makeServer({ rulesStore: rulesMod.createRulesStore({ filePath: rulesFile }) })
+    try {
+      // 3.14.1 文件不存在时回默认文案，且 GET 不写盘（打开设置不该产生一次写）。
+      const fresh = await request(rulesServer.base, '/rules')
+      eq('rules GET 200', fresh.status, 200)
+      eq('rules GET 文件不存在时回默认文案', fresh.body.text, rulesMod.DEFAULT_RULES_TEXT)
+      eq('rules GET isDefault', fresh.body.isDefault, true)
+      eq('rules GET empty', fresh.body.empty, false)
+      eq('rules GET rank', fresh.body.rank, 1)
+      eq('rules GET maxLength', fresh.body.maxLength, rulesMod.MAX_RULES_TEXT)
+      eq('rules GET 命令行入口', fresh.body.delivery.command, '/' + rulesMod.RULES_COMMAND)
+      eq('rules GET filePath 是真实落盘路径', fresh.body.filePath, rulesFile)
+      check('rules GET 带 extensionInstalled 布尔', typeof fresh.body.delivery.extensionInstalled === 'boolean')
+      eq('rules GET 不写盘', fs.existsSync(rulesFile), false)
+
+      // 3.14.2 写入 → 归一 → 落盘 → 再读能看到（面板改完，pi 下一轮就读这个文件）。
+      const saved = await request(rulesServer.base, '/rules', { method: 'POST', body: { text: '  面板写的规则\n\n\n第二行 ' } })
+      eq('rules POST 200', saved.status, 200)
+      eq('rules POST 归一后返回', saved.body.text, '面板写的规则\n\n第二行')
+      eq('rules POST isDefault=false', saved.body.isDefault, false)
+      const rulesOnDisk = JSON.parse(fs.readFileSync(rulesFile, 'utf8'))
+      eq('rules POST 真的落盘', rulesOnDisk.text, '面板写的规则\n\n第二行')
+      eq('rules 落盘 checksum 自算', rulesOnDisk.checksum, rulesMod.checksumOf(rulesOnDisk.text))
+      // 扩展侧同步读（每轮 before_agent_start 走的就是这条）：拿到同一个文本。
+      rulesMod.clearRulesCache()
+      eq('扩展同步读到的就是面板写的', rulesMod.readRulesTextSync(rulesFile).text, '面板写的规则\n\n第二行')
+      eq('rules GET 能读到刚写的', (await request(rulesServer.base, '/rules')).body.text, '面板写的规则\n\n第二行')
+
+      // 3.14.3 入参校验与 415（与 /command、/respond 同一套约定）。
+      eq('rules POST text 非字符串 → 400', (await request(rulesServer.base, '/rules', { method: 'POST', body: { text: 42 } })).status, 400)
+      eq('rules POST 缺 text → 400', (await request(rulesServer.base, '/rules', { method: 'POST', body: {} })).status, 400)
+      eq('rules POST 超长 → 400', (await request(rulesServer.base, '/rules', { method: 'POST', body: { text: 'x'.repeat(rulesMod.MAX_RULES_TEXT + 1) } })).status, 400)
+      eq('rules POST 非 JSON → 415', (await request(rulesServer.base, '/rules', { method: 'POST', body: { text: 'x' }, contentType: 'text/plain' })).status, 415)
+      eq('rules/reset 非 JSON → 415', (await request(rulesServer.base, '/rules/reset', { method: 'POST', body: {}, contentType: 'text/plain' })).status, 415)
+      eq('rules/reset 用 GET → 404', (await request(rulesServer.base, '/rules/reset')).status, 404)
+
+      // 3.14.4 清空 = 不追加任何内容（empty 与 rank 必须跟着变，否则 UI 无法区分「默认」与「关掉」）。
+      const cleared = await request(rulesServer.base, '/rules', { method: 'POST', body: { text: '' } })
+      eq('rules POST 空文本 → empty', cleared.body.empty, true)
+      eq('rules POST 空文本 → rank 0', cleared.body.rank, 0)
+      eq('rules 空规则渲染成空串（零痕迹）', rulesMod.renderRulesBlock(cleared.body.text), '')
+
+      // 3.14.5 恢复默认。
+      const restored = await request(rulesServer.base, '/rules/reset', { method: 'POST', body: {} })
+      eq('rules/reset 200', restored.status, 200)
+      eq('rules/reset 回默认文案', restored.body.text, rulesMod.DEFAULT_RULES_TEXT)
+      eq('rules/reset isDefault', restored.body.isDefault, true)
+
+      // 3.14.6 外部手改（checksum 对不上）→ drift 必须被读出来；坏文件 → 仍 200 + warning。
+      fs.writeFileSync(rulesFile, JSON.stringify({ version: 1, text: '手改的', checksum: 'stale', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' }), 'utf8')
+      eq('rules 外部手改 → drift', (await request(rulesServer.base, '/rules')).body.drift, true)
+      fs.writeFileSync(rulesFile, '{坏的', 'utf8')
+      const corrupt = await request(rulesServer.base, '/rules')
+      eq('rules 坏文件仍 200', corrupt.status, 200)
+      eq('rules 坏文件回默认', corrupt.body.text, rulesMod.DEFAULT_RULES_TEXT)
+      check('rules 坏文件带 warning', typeof corrupt.body.warning === 'string' && corrupt.body.warning !== '')
+      eq('rules 保存一次即修好', (await request(rulesServer.base, '/rules', { method: 'POST', body: { text: '修好了' } })).body.warning, '')
+    } finally {
+      await rulesServer.close()
+    }
+
     // 3.11 未知路由仍 404
     const unknown = await request(server.base, '/nope')
     eq('未知路由 404', unknown.status, 404)

@@ -55,6 +55,10 @@ import {
   resolvePiRuntime,
 } from './src/pi-runtime.mjs'
 import { createUiPrefsStore } from './src/ui-prefs.mjs'
+import {
+  createRulesStore,
+  rulesView,
+} from './extensions/superpi-rules.mjs'
 
 export const name = 'superpi'
 export const inject = []
@@ -65,7 +69,7 @@ const API_PREFIX = '/api/' + PLUGIN_ID
 const MAX_SESSIONS = 8
 const MAX_BODY_BYTES = 4 * 1024 * 1024
 /** GET /contract 里 version 字段的取值：本插件对外的契约版本，与 package.json 解耦。 */
-const CONTRACT_VERSION = '0.9.11'
+const CONTRACT_VERSION = '0.10.0'
 /** 历史会话列表的条数窗口（与 src/session-store.mjs 的 DEFAULT_LIMIT/MAX_LIMIT 一致）。 */
 const HISTORY_DEFAULT_LIMIT = 20
 const HISTORY_MAX_LIMIT = 200
@@ -142,6 +146,12 @@ const SELF_FILES = [
   // 面板偏好的落盘层。runtime:true 是因为它参与 /ui-prefs 三条路由的判断逻辑，
   // 改了磁盘上的它而进程里还是旧的那份，就会出现「读到的结构与代码对不上」。
   { rel: 'src/ui-prefs.mjs', runtime: true },
+  // 用户自定义规则的模型/落盘层。它同时被 host（/rules 三条路由）与 pi 扩展
+  // （extensions/superpi-rules.ts，install 时原样复制）引用，改完必须重启 DSH ——
+  // 否则「面板读到的结构」与「进程里那份代码」会对不上。
+  { rel: 'extensions/superpi-rules.mjs', runtime: true },
+  // 规则扩展本体（只随 tarball 分发、由工具装进 pi；面板不加载它）。
+  { rel: 'extensions/superpi-rules.ts', runtime: false },
   { rel: 'package.json', runtime: false },
   { rel: 'cordis.patch.yml', runtime: false },
 ]
@@ -770,6 +780,18 @@ export function apply(ctx, config = {}) {
    */
   const uiPrefs = createUiPrefsStore()
 
+  /**
+   * 用户自定义规则的存储（最高优先级）。
+   *
+   * 与 uiPrefs 同理只建一次：store 内部有串行写队列，每条请求新建一个就等于没有串行化
+   * （并发 read-modify-write 会互相覆盖）。路径由 extensions/superpi-rules.mjs 解析
+   * （`SUPERPI_RULES` 或 `<home>/.superpi/rules.json`）。
+   *
+   * **注意它是面板与 pi 扩展的共享介质**：pi 扩展每轮 `before_agent_start` 读的也是这个文件，
+   * 所以面板保存后下一轮就生效，不需要重启会话、也不需要任何同步协议。
+   */
+  const rulesStore = createRulesStore()
+
   const handler = createHandler({
     log,
     spawnSession,
@@ -784,6 +806,7 @@ export function apply(ctx, config = {}) {
     listHistory,
     listRunningSessions,
     uiPrefs,
+    rulesStore,
     // /files 的 dir 缺省值：走一次指纹比对（没改配置就是常数时间），保证刚改的 workspace 立刻生效。
     workspacePath: () => { refreshRuntime(); return detected.workspace },
   })
@@ -805,6 +828,44 @@ export function apply(ctx, config = {}) {
 }
 
 // ── HTTP 面 ───────────────────────────────────────────────────────────────────
+
+/**
+ * 规则存储的取用器。
+ *
+ * 依赖注入的签名与 `/ui-prefs` 一致（测试里直接传一个临时 store），
+ * 但**永远返回一个可用 store、从不返回 null**，所以路由里不该再写 501 分支
+ * （写了也永远进不去，那就是「看起来已处理」的死代码）。理由：规则是面板的一个普通设置项，缺省就该用默认存储盘，
+ * 而不是「宿主忘了传 deps 就整个设置页报错」。这也是它比 uiPrefs 更适合兜底的原因
+ * —— 后者是纯面板账，规则却有一个「默认文案总是可用」的离线语义。
+ */
+function rulesStoreOf(deps) {
+  const injected = deps === undefined || deps === null ? undefined : deps.rulesStore
+  if (injected !== undefined && injected !== null && typeof injected.read === 'function') return injected
+  if (rulesFallbackStore === null) rulesFallbackStore = createRulesStore()
+  return rulesFallbackStore
+}
+
+/** 模块级兜底 store（只建一次：它内部有一条串行写队列）。 */
+let rulesFallbackStore = null
+
+/**
+ * 命令行扩展是否已经装进 pi 的全局扩展目录。
+ *
+ * 面板据此提示「命令行窗口里还没生效，跑 npm run pi:editor」，而不是让用户
+ * 改了规则、在 TUI 里却发现没变，还以为功能坏了。
+ *
+ * 目录解析与 `tools/install-pi-extension.mjs` 同一套（`PI_CONFIG_DIR` 优先），
+ * 但**不 import tools/**（`tools` 不进 npm 包，装到别处就不存在了）。
+ */
+function rulesExtensionInstalled({ env = process.env, home = os.homedir() } = {}) {
+  try {
+    const configDir = typeof env.PI_CONFIG_DIR === 'string' && env.PI_CONFIG_DIR !== '' ? env.PI_CONFIG_DIR : '.pi'
+    const base = path.isAbsolute(configDir) ? configDir : path.join(home, configDir)
+    return fs.statSync(path.join(base, 'agent', 'extensions', 'superpi-rules.ts')).isFile()
+  } catch {
+    return false
+  }
+}
 
 export function createHandler(deps) {
   return async function handler(req, res) {
@@ -1004,6 +1065,52 @@ export function createHandler(deps) {
         // 面板的两个动作是独立的（行内 ⋯ 的「重命名」与「置顶」），谁改谁提交一个字段就够，
         // 读-改-写留在 store 里做，客户端不必先把现值读回来再整体回传。
         return send(200, await deps.uiPrefs.setSession(body.path, { pinned: body.pinned, name: body.name }))
+      }
+
+      /**
+       * 用户自定义规则（最高优先级）。
+       *
+       * 为什么由 host 落盘、而不是面板发一条 RPC 命令让 pi 自己存：
+       *  ① 面板要**读原文回显**进编辑框，而 pi 的 RPC 面没有「读系统提示」这条命令，
+       *     扩展命令的返回值也不回传 —— 只走命令的话面板得自己再存一份，立刻两份真相；
+       *  ② 设置页可能在**没有任何活着的子进程**时被打开（还没开会话 / 子进程崩了），
+       *     一个设置项不该依赖另一个进程活着；
+       *  ③ 规则同时是 pi 扩展（extensions/superpi-rules.ts）每轮读的那份文件，
+       *     落在这里就等于「面板改什么、pi 下一轮就用什么」，中间不需要任何同步协议。
+       *
+       * 三条路由都回**全量视图**（与 /ui-prefs 同一风格）；归一与校验在
+       * extensions/superpi-rules.mjs 里，那里抛的错带 statusCode:400，由下面的 catch 原样回给客户端。
+       */
+      if (method === 'GET' && routePath === '/rules') {
+        const store = rulesStoreOf(deps)
+        const read = await store.read()
+        return send(200, rulesView(read.state, {
+          filePath: read.filePath,
+          extensionInstalled: rulesExtensionInstalled(),
+          warning: read.warning,
+        }))
+      }
+      if (method === 'POST' && routePath === '/rules') {
+        const store = rulesStoreOf(deps)
+        // 与 /command、/respond 同一套约定：不是 JSON 就不接（不回退成「猜编码」）。
+        const contentType = String(req.headers['content-type'] ?? '')
+        if (contentType.toLowerCase().indexOf('application/json') === -1) return send(415, { error: 'content-type must be application/json' })
+        const body = (await readJsonBody(req)) ?? {}
+        const written = await store.write(body.text)
+        return send(200, rulesView(written.state, {
+          filePath: written.filePath,
+          extensionInstalled: rulesExtensionInstalled(),
+        }))
+      }
+      if (method === 'POST' && routePath === '/rules/reset') {
+        const store = rulesStoreOf(deps)
+        const contentType = String(req.headers['content-type'] ?? '')
+        if (contentType.toLowerCase().indexOf('application/json') === -1) return send(415, { error: 'content-type must be application/json' })
+        const written = await store.reset()
+        return send(200, rulesView(written.state, {
+          filePath: written.filePath,
+          extensionInstalled: rulesExtensionInstalled(),
+        }))
       }
 
       if (method === 'POST' && routePath === '/sessions') {

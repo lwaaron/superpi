@@ -404,6 +404,39 @@ check('messagesFromHistory 用数组下标当 seq，不碰 view.lastSeq', inOrde
 check('bashRef 仍只表示「bash 正在跑」（Esc 要能 abort_bash）', inOrder(clientSource, ['if (bashRef.current === true)', "'abort_bash'"], 200) === true)
 check('history 对账函数已导出给测试', clientSource.includes('messagesFromHistory: messagesFromHistory') === true)
 
+// ── 8. 用户自定义规则（0.10.0）：面板 ↔ host ↔ pi 扩展是同一条链路 ────────
+//
+// 这一节的内容不是「有没有一段代码」，而是「三个环节真的接上了没有」：
+// 面板有没有入口 / host 有没有落盘与回读 / 扩展真的往系统提示里注入了。
+// 任何一环断了，用户都会看到「改了规则但模型没遵守」—— 而这在手工测试时极易被
+// 当成「模型不听话」而不是缺陷。
+const rulesSource = fs.readFileSync(path.join(root, 'extensions', 'superpi-rules.mjs'), 'utf8')
+const rulesExtensionTs = fs.readFileSync(path.join(root, 'extensions', 'superpi-rules.ts'), 'utf8')
+section('8. 用户自定义规则（最高优先级）')
+check('共享模型层存在且导出 store / 归一 / 渲染', rulesSource.includes('export function createRulesStore') && rulesSource.includes('export function normalizeRulesText') && rulesSource.includes('export function renderRulesBlock'))
+check('host 引用共享模型层（单一真相，不复制判定）', hostSource.includes("./extensions/superpi-rules.mjs") === true)
+check('host 注册 GET /rules', hostSource.includes("routePath === '/rules'") === true)
+check('host 注册 POST /rules/reset', hostSource.includes("routePath === '/rules/reset'") === true)
+check('host 把 rulesStore 接进 createHandler（apply 作用域单例，写队列才串行）', hostSource.includes('rulesStore,') === true)
+check('面板有 api.rules / setRules / resetRules 三条', clientSource.includes('rules: function ()') && clientSource.includes('setRules: function (text)') && clientSource.includes('resetRules: function ()'))
+check('面板导入即拉规则（不依赖会话活着）', clientSource.includes('loadRules().catch(function () {})') === true)
+check('设置弹窗嵌了规则区（不是另开一个入口）', clientSource.includes('RulesSection({ t: t, rules: props.rules') === true)
+check('规则编辑弹窗是可重开的（drift/保存后用 key 重建）', clientSource.includes("key: 'rules-' + String(rulesEpoch)") === true)
+check('恢复默认过二次确认（不可撤销的动作）', clientSource.includes("confirm === 'rulesReset'") === true)
+// 扩展侧：注入点与命令名都必须与共享层一致，改一处忘一处就会静默失效。
+check('扩展在 before_agent_start 里注入', rulesExtensionTs.includes("pi.on('before_agent_start'") === true)
+check('扩展用共享层的 section 名', rulesExtensionTs.includes('RULES_SECTION_NAME') === true)
+check('扩展注册 /superpi-rules 命令', rulesExtensionTs.includes('RULES_COMMAND') === true)
+check('扩展每轮重读规则（mtime 缓存，保存后下一轮生效）', rulesExtensionTs.includes('readRulesTextSync') === true)
+// 「最高优先级」不能只写在文档里：块首的覆盖声明必须存在且被渲染。
+check('规则块带显式覆盖声明（压过项目说明）', rulesSource.includes('OVERRIDE_PREFIX') === true && rulesSource.includes('优先级最高') === true)
+// 默认文案只能有一份：面板若也存一份，两边就会慢慢分叉。
+check('client.js 不复制默认规则文案', ['User-defined rules：', 'git revert', '业务编号'].every(sentence => clientSource.includes(sentence) === false))
+// 命令行入口：settings 菜单里的 rules 条必须是「我们自己注册的」，不是冒充 pi 的。
+const editorSource = fs.readFileSync(path.join(root, 'extensions', 'superpi-editor.ts'), 'utf8')
+check('settings 菜单里有 rules 条且标明来源 superpi', editorSource.includes("command: '/superpi-rules', source: 'superpi'") === true)
+check('pi 自带的四条仍标 source pi', (editorSource.match(/source: 'pi'/g) ?? []).length === 4)
+
 // ── 汇总 ──────────────────────────────────────────────────────────────────
 console.log('')
 if (failures.length === 0) {

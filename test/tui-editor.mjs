@@ -523,14 +523,20 @@ const stripAnsi = text => text.replace(/\x1b\[[0-9;:?]*[A-Za-z]/g, '').replace(/
     'resolveExtensionDir 跟随 PI_CONFIG_DIR',
   )
   eq(EXTENSION_FILE_NAME, 'superpi-editor.ts', '扩展文件名固定')
-  const { install, remove, status } = await import('../tools/install-pi-extension.mjs')
+  const { install, remove, status, EXTENSION_FILES } = await import('../tools/install-pi-extension.mjs')
   const dir = path.join(process.env.TEMP ?? process.env.TMPDIR ?? '.', `superpi-ext-test-${process.pid}`)
   const state = status({ dir })
   ok(state.sourceExists, '扩展源文件可读')
+  // 0.10.0 起安装面是三个文件（输入框 + 规则扩展 + 它们共用的模型模块）。
+  eq(EXTENSION_FILES.length, 3, '安装面三个文件')
+  eq(EXTENSION_FILES.map(file => file.name).sort().join(','), 'superpi-editor.ts,superpi-rules.mjs,superpi-rules.ts', '文件清单固定')
   const installed = install({ dir })
   eq(installed.code, 0, 'install 成功')
-  ok(fs.existsSync(path.join(dir, EXTENSION_FILE_NAME)), '安装后目标文件存在')
-  eq(status({ dir }).identical, true, '安装后内容与源一致')
+  for (const file of EXTENSION_FILES) {
+    ok(fs.existsSync(path.join(dir, file.name)), '安装后有 ' + file.name)
+  }
+  eq(status({ dir }).identical, true, '安装后 editor 内容与源一致')
+  eq(status({ dir }).complete, true, '三个文件全部一致 → complete')
   eq(install({ dir }).code, 0, 'install 幂等')
 
   // 真机那一步：装到临时 agentDir 后，用 **pi 自己的扩展加载器**加载一遍。
@@ -544,6 +550,13 @@ const stripAnsi = text => text.replace(/\x1b\[[0-9;:?]*[A-Za-z]/g, '').replace(/
     const found = (result.extensions ?? []).find(entry => String(entry.path).includes(EXTENSION_FILE_NAME))
     ok(Boolean(found), 'pi 的扩展加载器发现了 superpi-editor')
     eq(found?.error ?? null, null, 'pi 加载 superpi-editor 无错误')
+    // 规则扩展也要能被真加载器认（它 import 同目录的 .mjs，路径写错就是一条 extension error）。
+    const rulesFound = (result.extensions ?? []).find(entry => String(entry.path).includes('superpi-rules.ts'))
+    ok(Boolean(rulesFound), 'pi 的扩展加载器发现了 superpi-rules')
+    eq(rulesFound?.error ?? null, null, 'pi 加载 superpi-rules 无错误（含 ./superpi-rules.mjs 的解析）')
+    ok([...(rulesFound?.commands?.keys?.() ?? [])].includes('superpi-rules'), '规则扩展注册了 superpi-rules 命令')
+    ok([...(rulesFound?.eventHandlers?.keys?.() ?? [])].length >= 0, '规则扩展加载后 pi 侧状态可读')
+    eq((result.errors ?? []).length, 0, '整个 agentDir 加载零错误')
     fs.rmSync(agentDir, { recursive: true, force: true })
   } else {
     process.stdout.write('  (skip) 没有 core/extensions/loader.js，跳过 pi 加载器实装验证\n')
@@ -551,7 +564,9 @@ const stripAnsi = text => text.replace(/\x1b\[[0-9;:?]*[A-Za-z]/g, '').replace(/
 
   const removed = remove({ dir })
   eq(removed.code, 0, 'remove 成功')
-  ok(!fs.existsSync(path.join(dir, EXTENSION_FILE_NAME)), '卸载后目标文件消失')
+  for (const file of EXTENSION_FILES) {
+    ok(!fs.existsSync(path.join(dir, file.name)), '卸载后 ' + file.name + ' 消失')
+  }
   eq(remove({ dir }).code, 0, 'remove 幂等（未安装也不报错）')
   fs.rmSync(dir, { recursive: true, force: true })
 }
@@ -978,13 +993,26 @@ const makeFooterData = () => ({
   eq(editor.isMenuOpen(), false, 'Esc 之后 isMenuOpen() 为 false')
 }
 
-// ⑧ settings 菜单里的命令必须仍然存在于 pi（不自造）
+// ⑧ settings 菜单里的命令必须真的有来源：pi 的命令去 pi 的源码里找，
+// superpi 自己的命令去对应扩展里找。混为一谈就是「点了没反应」的前奏。
 {
   const piSource = fs.readFileSync(path.join(pi.packageDir, 'dist', 'modes', 'interactive', 'interactive-mode.js'), 'utf8')
+  const rulesExtensionSource = fs.readFileSync(path.join(root, 'extensions', 'superpi-rules.ts'), 'utf8')
   for (const item of SETTINGS_COMMANDS) {
-    ok(piSource.includes(`text === "${item.command}"`), `pi 里仍然有 ${item.command}`)
+    const source = item.source === undefined ? 'pi' : item.source
+    if (source === 'pi') {
+      ok(piSource.includes(`text === "${item.command}"`), `pi 里仍然有 ${item.command}`)
+    } else {
+      // 自造的命令名去掉前导斜杠，就是 registerCommand 的第一个参数。
+      const name = item.command.slice(1)
+      ok(rulesExtensionSource.includes(`RULES_COMMAND`) || rulesExtensionSource.includes(`'${name}'`), `${item.command} 由 superpi-rules 扩展注册`)
+    }
   }
   ok(piSource.includes('text === "/new"'), 'pi 里仍然有 /new（home 的目标）')
+  // 每一条都要标 source，否则下一个人又把自造命令加进「pi 的命令」那一类。
+  ok(SETTINGS_COMMANDS.every(item => item.source === 'pi' || item.source === 'superpi'), '每一条都标了 source（pi / superpi）')
+  eq(SETTINGS_COMMANDS.filter(item => item.source === 'pi').length, 4, 'pi 自带四条（settings/model/thinking/scoped-models）')
+  eq(SETTINGS_COMMANDS.filter(item => item.source === 'superpi').length, 1, 'superpi 一条（rules）')
 }
 
 // ⑧b 窄宽度 / 多行 / 中文 / 跨行选区下，框线仍然对齐

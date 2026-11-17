@@ -1,6 +1,6 @@
 # superpi 两端能力对齐账本（parity）
 
-> 基线：pi `1.5.2` / superpi `0.8.1` · 唯一权威 = `packages/coding-agent/src/modes/rpc/rpc-types.ts`（303 行）、`src/modes/rpc/rpc-mode.ts`（846 行，`switch` 在 `:404-737`）、`src/core/agent-session.ts`（4714 行，`AgentSessionEvent` 在 `:220-261`）
+> 基线：pi `1.5.2` / superpi `0.10.0` · 唯一权威 = `packages/coding-agent/src/modes/rpc/rpc-types.ts`（303 行）、`src/modes/rpc/rpc-mode.ts`（846 行，`switch` 在 `:404-737`）、`src/core/agent-session.ts`（4714 行，`AgentSessionEvent` 在 `:220-261`）
 > 本文档是 `AGENTS.md` §3「100% 对齐」的账本。任何一行状态变化必须同步改这里，否则视为未完成。**本账本由 `test/parity.mjs` 与 `test/host-parity.mjs` 机器兜底**，人肉维护只是第一道。
 
 ## 0. 怎么读这张表
@@ -31,9 +31,9 @@
 **门禁已经是事实，不是目标态。** `test/parity.mjs`（78 checks）、`test/host-parity.mjs`（291 checks）、`test/tui-editor.mjs`（276 checks，0.9.2 起；0.9.11 起 276）与 `test/session-projects.mjs`（55 checks，0.5.0 起）都已落地，且都在 `npm test` 的 13 项流水线里：
 
 ```
-selfcheck → client-render(831) → css-tokens(98) → runtime-resolve → config-hot
-→ host-parity(291) → session-projects(55) → timeout(28) → parity(78)
-→ tui-editor(276) → restart-lib(31×2 引擎) → github-sync(82) → version
+selfcheck → client-render(926) → css-tokens(98) → runtime-resolve → config-hot
+→ host-parity(325) → session-projects(55) → timeout(28) → rules(193)
+→ parity(96) → tui-editor(293) → restart-lib(31×2 引擎) → github-sync(82) → version
 ```
 
 三套核心门禁都离线跑（不起 pi、不打 LLM）。`npm test` 2026-11-13 实测：加 `restart-lib` 之前 ~5.2 s，加上之后 ~14.3 s —— **`test/restart-lib.mjs` 独占约 9.1 s**（它要起 pwsh 7 与 PowerShell 5.1 两个引擎各跑一遍 fixture，进程启动开销占大头），`test/timeout.mjs` 约 3.1 s（真等若干超时周期），其余各项合计 <1.5 s。`test/parity.mjs` 做的是**三向对账**：`src/rpc-contract.mjs` ↔ pi 的类型声明与官方文档 ↔ `client.js`/`index.js` 的实际覆盖面。任一方向对不上即红：
@@ -305,11 +305,48 @@ npm run pi:editor:remove    # 卸载，pi 下次启动恢复原始输入框
 
 ---
 
+## 5.2 用户自定义规则（0.10.0 · 第四层：不是 RPC 面，也不是输入框，是**系统提示本身**）
+
+需求：用户要一个可以自己改的「规则」设置项，**优先级最高**，初始内容由他给定。
+
+前五轮对齐（RPC / 事件 / 斜杠 / 输入框 / footer）都在补「pi 有什么、另一端没有」；这一条不是缺口，是**两端都没有**的能力：
+pi 只提供 `SYSTEM.md`（整份替换）、`APPEND_SYSTEM.md`（静态文件）与 `--append-system-prompt`（启动参数），三者都不是「面板里能改、改完立刻生效」。
+
+| 维度 | 面板端 | 命令行 TUI | 门禁用例 |
+| --- | --- | --- | --- |
+| 读取当前规则 | `GET /api/superpi/rules`（文件不存在 → 默认文案，**不写盘**） | `/superpi-rules` → `ctx.ui.select` 顶部显示行数/字数/首行 | `test/host-parity.mjs` 3.14、`test/rules.mjs` F 段 |
+| 编辑并保存 | 设置弹窗 → 「编辑规则」→ `RulesSheet`（textarea + 字数 + 超限禁用）→ `POST /rules` | `/superpi-rules` → 「编辑规则」→ `ctx.ui.editor` | `test/client-render.mjs` 9.11d、`test/rules.mjs` G 段 |
+| 恢复默认 | 二次确认 → `POST /rules/reset` | `/superpi-rules` → 「恢复默认文案」→ `ctx.ui.confirm` | 同上（含「取消后文本不动」） |
+| 清空 = 关闭 | 保存空文本 → `empty:true` / `rank:0`，UI 显示「当前未生效」 | 编辑成空 → 通知「已保存：当前没有规则」 | `test/rules.mjs`（`renderRulesBlock('') === ''`） |
+| 生效位置 | 面板子进程同样由扩展注入 —— 两端**同一份文件、同一时点** | `before_agent_start` → `sections.user_defined_rules`，pi 排在 `cwd` 之后 | `test/rules.mjs` G 段 + 真机暗号验证 |
+| 优先级表达 | 块首 `OVERRIDE_PREFIX`：「优先级最高…冲突时一律以本段为准」 | 同左（同一份渲染函数） | `test/rules.mjs` D 段、`test/parity.mjs` §8 |
+| 坏文件 | 回落默认 + `warning`，面板照样打得开 | 回落默认，**异常不外抛**（pi 照常跑一轮） | `test/rules.mjs` D/G 段 |
+| 命令行未装扩展 | `delivery.extensionInstalled:false`，设置里显示「命令行窗口未生效：运行 npm run pi:editor」 | — | `test/client-render.mjs` ⑥ |
+
+**为什么由 host 落盘而不是面板发 RPC**：pi 的 RPC 面没有「读系统提示」命令，扩展命令的返回值也不回传 —— 只走命令的话面板要自己再存一份回显，立刻两份真相；且设置页可能在**没有任何活着的子进程**时被打开（还没开会话 / 子进程崩了），一个设置项不该依赖另一个进程活着。
+
+**为什么规则模型放在 `extensions/` 而不是 `src/`**：它有两个消费者 —— host 的三条路由与 pi 扩展的 `before_agent_start`。扩展会被原样复制到 `<piAgentDir>/extensions/`，把它放在目标目录里意味着 `./superpi-rules.mjs` 这条相对引用在仓库里与安装后指向**同一份内容**（零复制、零分叉）。放进 `src/` 再复制一份，就是「改一处、另一处忘改」的标准开局。
+
+**刻意不做的三种做法**（都会让系统退化一个维度）：
+
+| 做法 | 后果 |
+| --- | --- |
+| 写 `SYSTEM.md` | **整份替换** pi 的默认提示：工具说明、docs 路径、技能列表全没 |
+| 写 `APPEND_SYSTEM.md` | 静态文件，面板改完要重启 pi 会话才生效，且面板没有读原文的通道 |
+| 把规则当用户消息发出去 | 进 transcript、被压缩吃掉、污染历史，而且不是「最高优先级」 |
+
+**实测踩到的缺陷（已修 + 已锁）**：`renderRulesBlock()` 首版自己包了 `<user_defined_rules>` 标签，而 pi 组装 section 时会**再包一层**，于是系统提示里出现同名嵌套两次。现在渲染器只出「覆盖声明 + 原文」，标签的唯一来源是 pi —— `test/rules.mjs` 断言 `renderRulesBlock()` 不含该标签。
+
+**真机证据**（不是推测）：起真 `pi --mode rpc` 子进程 + 装好的扩展 + 真规则文件，规则里埋一个随机暗号，问模型「你现在遵守的最高优先级规则里有一串暗号，只输出暗号」→ 模型逐字吐出暗号。这一步才证明「面板写的规则真的到达了模型」，而不是只到达了某个 options 对象。
+
+---
+
 ## 6. 变更记录
 
 | 日期 | 版本 | 变更 |
 | --- | --- | --- |
 | 2026-11-12 | 0.2.5 | 建立本账本。实测基线：RPC 33 条 / 已实现 5 / 部分 1 / 缺口 27；扩展 UI 9 请求 3 应答全部缺口（host 已就绪）；事件 25 种 / 已实现 12 / 部分 3 / 显式忽略 2 / 缺口 8；TUI 27 条 / 缺口 14 / 部分 3 / 仅命令行 10。登记 `D-01`..`D-06`。（行号为 0.2.5 落地当时的坐标，非当前坐标） |
+| 2026-11-18 | 0.10.0 | **新增第四层对齐：用户自定义规则（最高优先级）** —— 前五节都是「pi 有、另一端没有」，这一条是**两端都没有**的新能力，所以它在 pi 的官方扩展点（`before_agent_start` + `registerCommand`）上实现，**不写 `SYSTEM.md` / `APPEND_SYSTEM.md`、不把规则当消息发**（三者都会让系统退化）。规则写进 `systemPromptOptions.sections.user_defined_rules`（pi 排在 `cwd` 之后 = 提示末尾），块首显式声明覆盖上文与项目说明；空规则返回 `undefined`（零痕迹）。面板走 host `/rules` 三条路由（浏览器无 fs；设置页也不该依赖子进程活着），命令行走 `/superpi-rules` 与每轮 `before_agent_start`，两端共用 `extensions/superpi-rules.mjs` 这一份模型与同一个 `<home>/.superpi/rules.json`。门槛：新增 `test/rules.mjs` 193 checks（含真 `.ts` 扩展层），`host-parity` +34、`client-render` +95、`parity` +18、`tui-editor` +17；`npm test` 13 → **14 项**。设计与 `E2E-01`~`E2E-14` 验收清单见 `docs/rules.md`。 |
 | 2026-11-13 | 0.3.0 | **缺口清零。** RPC 33 条 = 已实现 32 + 部分 1（`steer` 走 `prompt`+`streamingBehavior:'steer'`）+ 缺口 0；扩展 UI 9 请求 3 应答全部已实现（含 5 分钟兜底超时 `DIALOG_FALLBACK_MS`）；事件 25 种 = 已实现 22 + 显式忽略 3 + 缺口 0；TUI 27 条 = 已实现 17 + 仅命令行 9 + `unsupported` 1 + 缺口 0。`D-01`/`D-02`/`D-04`/`D-05`/`D-06` 闭环；新增 `D-07`/`D-08`（均为上游协议面限制，面板侧无解）。门禁落地：`test/parity.mjs` + `test/host-parity.mjs` 进 `npm test`。（行号为 0.3.0 落地当时的坐标，非当前坐标） |
 | 2026-11-13 | 0.3.0 收尾 | **`D-03` 闭环**：顶栏拆成「新会话」（`runNewSession` → `new_session`，与 `/new` 同路径）与「重连」（`endSession`，换子进程）；同一件事不再有两个入口两种结果。**修掉两处在 0.2.5 真实存在的时序缺陷**：① 装了扩展 / 改了 prompt 模板后斜杠菜单不刷新（现于 `agent_settled` 重拉 `get_commands`，未知斜杠先重拉再判定）；② 扩展弹窗等着人点时命令先超时（`timeoutLimitMs` 三态 + `armTimer` 让位 + `respond` 后重开窗口 + 面板 `CHAT_TIMEOUT_MS = 0`）。门禁加强：新增 `test/timeout.mjs`（28 checks，用 `test/fixtures/fake-pi-rpc.mjs` 协议替身把 5 分钟等待压到毫秒级）、`test/host-parity.mjs` 125 checks（+10）、`test/parity.mjs` 65 checks（+16，新增 §6 会话入口与超时语义）。`npm test` 从 7 项变 8 项，耗时 ~1.3 s → ~5.2 s。（行号为 0.3.0 落地当时的坐标，非当前坐标） |
 | 2026-11-13 | 0.3.0 实测 | **扩展 UI 四类弹窗全部端到端取证**（独立实例 5599 + CDP）：select 选项点击回 `value`、confirm 回 `confirmed`、input 透传 `placeholder` 并回 `value`、editor 的 `prefill` 正确回填多行并回改后的 `value`、点「取消」走 `cancelled` —— 9 请求 + 3 应答分支无一纸面声明。**修掉两处文案缺陷**：① 倒计时原来渲染成「扩展请求超时，已自动取消 298s」（读起来像已完成态），现为「还剩 {n}s 后自动取消」/「Auto-cancels in {n}s」，与 pi 侧 `extension-selector.ts:56-63` 的 `Title (Ns)` 剩余秒语义对齐；② confirm 的否定按钮原来借用开关态文案 `off`（中「关」/英 off），现独立成 `extNo`（「否」/`No`），与 pi TUI `interactive-mode.ts:2896-2906` 复用 `["Yes","No"]` 对齐。`t('on')`/`t('off')` 仍归设置抽屉的开关使用。门禁：`test/client-render.mjs` 补第 9 组（38 个断言点 / 展开循环后 43 次执行；四种 method 的按钮集 / prefill 回填 / `dialogBudgetMs` 四类非法值回落 / `extNo ≠ off` / SSR 不渲染倒计时这条硬约束），`npm test` 全绿（行号为 0.3.0 落地当时的坐标，非当前坐标） |
