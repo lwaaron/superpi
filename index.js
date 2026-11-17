@@ -65,7 +65,7 @@ const API_PREFIX = '/api/' + PLUGIN_ID
 const MAX_SESSIONS = 8
 const MAX_BODY_BYTES = 4 * 1024 * 1024
 /** GET /contract 里 version 字段的取值：本插件对外的契约版本，与 package.json 解耦。 */
-const CONTRACT_VERSION = '0.9.2'
+const CONTRACT_VERSION = '0.9.3'
 /** 历史会话列表的条数窗口（与 src/session-store.mjs 的 DEFAULT_LIMIT/MAX_LIMIT 一致）。 */
 const HISTORY_DEFAULT_LIMIT = 20
 const HISTORY_MAX_LIMIT = 200

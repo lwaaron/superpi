@@ -645,7 +645,13 @@ function writeViaPowerShell(text: string): Promise<boolean> {
 export default function superpiEditor(pi: any): void {
   const apply = (ctx: any) => {
     try {
-      ctx?.ui?.setEditorComponent?.((tui: any, theme: any, keybindings: any) => new SuperPiEditor(tui, theme, keybindings))
+      ctx?.ui?.setEditorComponent?.(
+        (tui: any, theme: any, keybindings: any) =>
+          // embedWorkingStatus:true = 工作状态继续画在输入框边框里（与 pi 的
+          // defaultEditor 同选项，interactive-mode.js:416-420）。不传的话 pi 会把
+          // 它降级成面板下方一条独立状态行 —— 功能没差，但视觉会跳。
+          new SuperPiEditor(tui, theme, keybindings, { embedWorkingStatus: true }),
+      )
     } catch (error) {
       // 拿不到 UI（print/json 模式）或 API 变了 → 静默跳过，绝不让 pi 起不来。
       void error

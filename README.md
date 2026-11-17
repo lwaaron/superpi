@@ -224,10 +224,10 @@ New-Item -ItemType Junction `
 ### 方式三：手工 pnpm add（不想跑脚本时）
 
 ```powershell
-npm pack                                        # 得到 superpi-0.9.2.tgz
+npm pack                                        # 得到 superpi-0.9.3.tgz
 cd "$env:USERPROFILE\.dsh\profiles\desktop"
 node "$env:USERPROFILE\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\pnpm\bin\pnpm.cjs" `
-  add "file:C:\path\to\superpi-0.9.2.tgz" --ignore-scripts
+  add "file:C:\path\to\superpi-0.9.3.tgz" --ignore-scripts
 ```
 
 不要在 profile 里用 `npm install`：npm 会另写一份 `package-lock.json`，而宿主插件管理器用的是 pnpm，两套锁文件互相看不见，下次插件安装就会把 node_modules 重建成 pnpm 理解的样子。
@@ -442,7 +442,7 @@ pwsh -NoProfile -File .\tools\standalone-verify.ps1   # 全新 DSH_HOME 里只�
 | `test/session-projects.mjs` | 两级历史列表 55 条：`pathComparisonKey` 大小写归一、`isTemporaryPath` 三条正则逐条对齐 pi（`/tmp`、`appdata/local/temp`、`pi-runtime-*`）、`shortenHomePath` 的 `~` 缩写边界、`groupSessionsByProject` 的「当前项目 → 非临时 → 最近活动降序」与大小写合并、`listAllSessions`/`listSessions` 的「全部项目 vs 单项目」两种语义、`readSessionCwd` 只读 64KB 头行且首行非杂项时返回空、`firstRunningSessionFile` 的「跨项目也算当前会话」与活/死优先级。造一棵符合 pi 目录约定的假 `sessions/` 树来跑，不碰真会话 |
 | `test/host-parity.mjs` | host 侧离线一致性 291 条：`buildSpawnArgs` 19 条（`persist=false` 不吃 `--continue`、用户自带 `--fork`/`--no-session` 不重复生成、空 `--name` 不传）、`pickCurrentSessionFile` 8 条、以及 `/respond` 的 409/400/415/200、`/reset`、四条替换命令的 reset+refresh、`/files` 排序与 404、`/file` 预览 28 条（文本截断 / 二进制探测 / 目录 400 / ENOENT 404 / MIME 映射 / `~` 与 `%VAR%` 展开）、`/pi/changelog` 三情形、未知路由 404、`/ui-prefs` 三条路由 33 条（GET 空文件回落、项目改名 trim 与键白名单、会话置顶与「只给 name 不许凭空置顶」的合并语义、四类 400）。**路由与参数拼错了只会静默跑偏，所以单独立门禁** |
 | `test/parity.mjs` | 与 pi 的三向对账 78 条：以 pi 的 `RpcCommand` 联合类型、`RpcSessionState` 接口、`docs/json.md` 事件表为事实来源，双向比对（我们缺的 = 缺口，我们编的 = 幻觉），再断言契约里 33 条命令 / 25 类事件 / 12 种 assistant 事件 / 27 条斜杠 / 9 个扩展 UI method 在面板里都有落地字面量，且 `CONTRACT_VERSION` 与 `package.json` 同步。0.2.5 时「只发 5/33 命令、只处理 12/25 事件、27 条斜杠一条没接而 `npm test` 全绿」正是这个门禁要拦的事 |
-| `test/tui-editor.mjs` | 输入框扩展门禁 **66 条**（0.9.2）：**用 jiti 加载真 `.ts` 扩展**（与 pi 的 `core/extensions/loader.js` 同一套 alias）+ **pi 真的 `CustomEditor`** + **真终端按键序列**（直接喂原始转义字节的按键序列），断言 Ctrl+A 全选、Shift+方向扩选、Ctrl+C 复制后内容不消失、Ctrl+X 剪切、Backspace/Delete 删选区、可打印字符与括号内粘贴替换选区、Esc 不吞键、空编辑器 Ctrl+C 放行、自动补全打开时不抢方向键、渲染反色开合成对；末组用 **pi 自己的扩展加载器**（`discoverAndLoadExtensions`）把装到临时 `agentDir` 的扩展真加载一遍断言无 error —— 这一步才证明「装完 pi 真的能认」。**不 mock 编辑器**：影子实现会让「测试绿、真机不灵」|
+| `test/tui-editor.mjs` | 输入框扩展门禁 **67 条**（0.9.2）：**用 jiti 加载真 `.ts` 扩展**（与 pi 的 `core/extensions/loader.js` 同一套 alias）+ **pi 真的 `CustomEditor`** + **真终端按键序列**（直接喂原始转义字节的按键序列），断言 Ctrl+A 全选、Shift+方向扩选、Ctrl+C 复制后内容不消失、Ctrl+X 剪切、Backspace/Delete 删选区、可打印字符与括号内粘贴替换选区、Esc 不吞键、空编辑器 Ctrl+C 放行、自动补全打开时不抢方向键、渲染反色开合成对；末组用 **pi 自己的扩展加载器**（`discoverAndLoadExtensions`）把装到临时 `agentDir` 的扩展真加载一遍断言无 error —— 这一步才证明「装完 pi 真的能认」。**不 mock 编辑器**：影子实现会让「测试绿、真机不灵」|
 | `extensions/superpi-editor.ts` | 命令行会话窗口的**输入框增强**：`class SuperPiEditor extends CustomEditor` + `ctx.ui.setEditorComponent()`（pi 官方扩展点），补上 TUI 缺的那套 Windows 输入框语义（全选 / 扩选 / 复制不清空 / 剪切 / 删选区）与「剪贴板里的文件 → 绝对路径」。**不改 pi 任何文件、不打补丁**，卸载就是删一个 `.ts`（`npm run pi:editor:remove`）|
 | `tools/install-pi-extension.mjs` | 把上面的扩展装进 `<piAgentDir>/extensions/`（`--install` / `--remove` / 默认只读状态），`PI_CONFIG_DIR` 跟随；幂等、内容变了先留 `.bak`。`npm run pi:editor` / `pi:editor:status` / `pi:editor:remove` 三个别名|
 | `一键启动.bat`（仓库根） | 一键启动的**根目录入口**，纯 ASCII 转发器：把 `%*` 与退出码原样透传给 `tools/launch-both.ps1`。逻辑不重复实现 |

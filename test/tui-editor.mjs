@@ -355,6 +355,8 @@ const anchorOf = editor => editor.selAnchor
   const tui = { renders: 0, terminal: { rows: 40, columns: 100 }, requestRender() { this.renders += 1 } }
   const built = factories[0](tui, theme, { matches: () => false })
   ok(built instanceof SuperPiEditor, '工厂返回 SuperPiEditor 实例')
+  // 工作状态继续画在输入框边框里，与 pi 的 defaultEditor 同选项；不然 pi 会把它降级成独立状态行。
+  eq(built.embedWorkingStatus, true, '工厂开了 embedWorkingStatus（状态嵌在边框里）')
 }
 
 // 没有 UI 的环境（print/json 模式）不能抛
