@@ -98,6 +98,11 @@ const markToolError = extensionModule.markToolError
 const resetRunState = extensionModule.resetRunState
 const isLikelyPath = extensionModule.isLikelyPath
 const padToWidth = extensionModule.padToWidth
+const trimPathToken = extensionModule.trimPathToken
+const parseProbe = extensionModule.parseProbe
+const resolveClipboardPaste = extensionModule.resolveClipboardPaste
+const saveClipboardImage = extensionModule.saveClipboardImage
+const borderBody = extensionModule.borderBody
 const paintColumns = extensionModule.paintColumns
 const decodeListing = extensionModule.decodeListing
 const defaultExport = extensionModule.default
@@ -129,6 +134,29 @@ function makeEditor(text = '') {
 
 /** 等到一次异步剪贴板写入落地。 */
 const settle = () => new Promise(resolve => setTimeout(resolve, 60))
+
+
+/** 取渲染结果里带浅灰底色的字符（用于断言药丸范围）。 */
+function paintedCells(rows) {
+  const out = []
+  for (const row of rows) {
+    let bg = false
+    for (let p = 0; p < row.length; ) {
+      if (row[p] === '') {
+        const m = /^\[([0-9;:?]*)([A-Za-z])/.exec(row.slice(p))
+        if (m) {
+          if (m[1] === '48;2;104;104;104') bg = true
+          else if (m[1] === '49' || m[1] === '0' || (m[2] === 'm' && m[1] === '')) bg = false
+          p += m[0].length
+          continue
+        }
+      }
+      if (bg) out.push(row[p])
+      p += 1
+    }
+  }
+  return out
+}
 
 const KEY = {
   ctrlA: '\x01',
@@ -476,29 +504,31 @@ const stripAnsi = text => text.replace(/\x1b\[[0-9;:?]*[A-Za-z]/g, '').replace(/
 const rowIndexOf = (rows, needle) => rows.findIndex(row => stripAnsi(row).includes(needle))
 const columnOf = (rows, y, needle) => stripAnsi(rows[y] ?? '').indexOf(needle)
 
-// ① 框线 80% 白 + 四边闭合
+// ① 框线 80% 白 + 四边闭合 + 直角
 {
   const { editor } = makeEditor('hello')
   const rows = editor.render(60)
   eq(FRAME_RGB.join(','), '204,204,204', '框线色常量为 80% 白（255×0.8）')
-  ok(rows[0].includes('\x1b[38;2;204;204;204m'), '上边框是 80% 白')
-  ok(rows.at(-1).includes('\x1b[38;2;204;204;204m'), '下边框是 80% 白')
-  ok(stripAnsi(rows[0]).startsWith('╭') && stripAnsi(rows[0]).endsWith('╮'), '上边框带左右圆角')
-  ok(stripAnsi(rows.at(-1)).startsWith('╰') && stripAnsi(rows.at(-1)).endsWith('╯'), '下边框带左右圆角')
-  // 左右两侧闭合：中间每一行都以 │ 开头和结尾（pi 原来只有上下两条线）
-  const middle = rows.slice(1, -1)
-  ok(middle.length > 0, '框内有内容行')
-  for (const [index, row] of middle.entries()) {
-    const plain = stripAnsi(row)
-    ok(plain.startsWith('│'), `第 ${index + 1} 行左侧有框线`)
-    ok(plain.endsWith('│'), `第 ${index + 1} 行右侧有框线`)
+  ok(rows[0].includes('[38;2;204;204;204m'), '上边框是 80% 白')
+  ok(rows.some(row => stripAnsi(row).startsWith('└') && row.includes('[38;2;204;204;204m')), '下边框是 80% 白')
+  // 直角：不允许出现圆角字符
+  ok(!rows.some(row => /[╭╮╰╯]/.test(stripAnsi(row))), '框线是直角（不含 ╭╮╰╯）')
+  ok(stripAnsi(rows[0]).startsWith('┌') && stripAnsi(rows[0]).endsWith('┐'), '上边框左右是直角')
+  const boxBottom = rows.findIndex(row => stripAnsi(row).startsWith('└'))
+  ok(boxBottom > 0, '找得到下边框')
+  ok(stripAnsi(rows[boxBottom]).endsWith('┘'), '下边框右侧是直角')
+  // 左右两侧闭合
+  for (let i = 1; i < boxBottom; i += 1) {
+    const plain = stripAnsi(rows[i])
+    ok(plain.startsWith('│'), `框内第 ${i} 行左侧有框线`)
+    ok(plain.endsWith('│'), `框内第 ${i} 行右侧有框线`)
   }
-  // 每行显示宽度必须一致，否则框线会错位
-  const widths = new Set(rows.map(row => tuiModule.visibleWidth(row)))
-  eq([...widths].join(','), '60', '每行显示宽度都等于渲染宽度（框线不错位）')
+  // 框内每行等宽（框外那几行不参与）
+  const widths = new Set(rows.slice(0, boxBottom + 1).map(row => tuiModule.visibleWidth(row)))
+  eq([...widths].join(','), '60', '框内每行显示宽度都等于渲染宽度（框线不错位）')
 }
 
-// ② Working 状态：白 / 绿 / 红，图标同色
+// ② Working 状态：白 / 绿 / 红，图标同色，回到上边框内侧左侧
 {
   const cases = [
     ['idle', () => resetRunState(), '○'],
@@ -510,14 +540,13 @@ const columnOf = (rows, y, needle) => stripAnsi(rows[y] ?? '').indexOf(needle)
     setup()
     const { editor } = makeEditor('')
     const rows = editor.render(60)
-    const y = rowIndexOf(rows, 'Working')
-    ok(y > 0, `${phase}: 状态行里有 Working 文案`)
+    const topRow = stripAnsi(rows[0])
+    ok(topRow.includes('Working'), `${phase}: Working 在上边框里（pi 原来的位置）`)
     const rgb = STATUS_RGB[phase].join(';')
-    ok(rows[y].includes(`\x1b[38;2;${rgb}m`), `${phase}: 文案与图标用该状态的颜色`)
-    if (icon) ok(stripAnsi(rows[y]).includes(icon), `${phase}: 图标是 ${icon}`)
-    else ok(/[◐◓◑◒]/.test(stripAnsi(rows[y])), 'running: 图标是转盘')
+    ok(rows[0].includes(`[38;2;${rgb}m`), `${phase}: 文案与图标用该状态的颜色`)
+    if (icon) ok(topRow.includes(icon), `${phase}: 图标是 ${icon}`)
+    else ok(/[◐◓◑◒]/.test(topRow), 'running: 图标是转盘')
   }
-  // 三种状态颜色必须互不相同（用户报的正是「只用一种颜色」）
   const distinct = new Set([STATUS_RGB.idle, STATUS_RGB.success, STATUS_RGB.error].map(c => c.join(',')))
   eq(distinct.size, 3, 'idle / success / error 三色互不相同')
   resetRunState()
@@ -544,18 +573,26 @@ const columnOf = (rows, y, needle) => stripAnsi(rows[y] ?? '').indexOf(needle)
   ok(!plainRows.some(row => row.includes('\x1b[48;2;104;104;104m')), '普通文字不带路径底色')
 }
 
-// ④ settings / home 入口（小写）
+// ④ settings / home 入口：框外右下角、模型上方，颜色跟模型名一致（小写）
 {
   const { editor } = makeEditor('')
   const rows = editor.render(60)
-  const y = rowIndexOf(rows, 'settings')
-  ok(y > 0, '底部有 settings 入口')
-  ok(stripAnsi(rows[y]).includes('home'), '同一行有 home 入口')
-  ok(!stripAnsi(rows[y]).includes('Home'), 'home 必须小写（用户明确要求）')
+  const boxBottom = rows.findIndex(row => stripAnsi(row).startsWith('└'))
+  ok(boxBottom > 0, '找得到下边框')
+  const outside = rows.slice(boxBottom + 1)
+  ok(outside.length >= 1, '框外有内容行')
+  const actionsRowIndex = outside.findIndex(row => stripAnsi(row).includes('settings'))
+  ok(actionsRowIndex >= 0, 'settings 在框外（下边框之下）')
+  ok(stripAnsi(outside[actionsRowIndex]).includes('home'), '同一行有 home')
+  ok(!stripAnsi(outside[actionsRowIndex]).includes('Home'), 'home 必须小写（用户明确要求）')
+  // 右下角：右对齐
+  eq(stripAnsi(outside[actionsRowIndex]).endsWith('home'), true, 'settings/home 右对齐到右下角')
+  // 颜色与模型名一致：pi 的 footer 把模型名画成 theme.fg('dim', …)，这里也用 dim
+  ok(outside[actionsRowIndex].includes(theme.fg('dim', 'settings')), 'settings 用 dim（与模型名同色）')
+  ok(outside[actionsRowIndex].includes(theme.fg('dim', 'home')), 'home 用 dim（与模型名同色）')
   eq(EDITOR_ACTIONS.map(a => a.label).join(','), 'settings,home', '两个入口的文案与顺序')
-  // 模型信息在 pi 自己的 footer 里，位于本组件之下 —— 所以这两个入口天然在它上方
-  const settingsX = columnOf(rows, y, 'settings')
-  ok(settingsX > 0, 'settings 在状态行右侧')
+  // pi footer 在编辑器之后渲染 → 框外这一行天然在模型信息上方
+  ok(boxBottom < rows.length - 1, '框外入口在组件末尾（pi footer 紧随其后）')
 }
 
 // ⑤ 点 settings 展开菜单，点菜单项提交 pi 自己的斜杠命令
@@ -637,12 +674,81 @@ const columnOf = (rows, y, needle) => stripAnsi(rows[y] ?? '').indexOf(needle)
     const { editor } = makeEditor(tricky)
     editor.handleInput(KEY.ctrlA)
     const rows = editor.render(width)
-    const widths = new Set(rows.map(row => tuiModule.visibleWidth(row)))
-    eq([...widths].join(','), String(width), `宽度 ${width}：所有行等宽（含中文/换行/选区）`)
-    ok(stripAnsi(rows[0]).startsWith('╭') && stripAnsi(rows.at(-1)).startsWith('╰'), `宽度 ${width}：首尾是框角`)
-    ok(stripAnsi(rows.at(-2)).includes('settings'), `宽度 ${width}：状态行仍在框内`)
-    ok(stripAnsi(rows.at(-2)).includes('home'), `宽度 ${width}：窄宽度下 home 也没被截掉`)
+    const boxBottom = rows.findIndex(row => stripAnsi(row).startsWith('└'))
+    ok(boxBottom > 0, `宽度 ${width}：有下边框`)
+    // 框外那几行（settings/home/菜单）宽度也不同，所以只断言框内等宽
+    const widths = new Set(rows.slice(0, boxBottom + 1).map(row => tuiModule.visibleWidth(row)))
+    eq([...widths].join(','), String(width), `宽度 ${width}：框内所有行等宽（含中文/换行/选区）`)
+    ok(stripAnsi(rows[0]).startsWith('┌'), `宽度 ${width}：上边框是直角`)
+    // settings / home 在框外，任何宽度下都必须完整可见
+    const outside = rows.slice(boxBottom + 1).map(row => stripAnsi(row)).join(String.fromCharCode(10))
+    ok(outside.includes('settings') && outside.includes('home'), `宽度 ${width}：settings/home 在框外且完整`)
   }
+}
+
+// ⑧c 路径底色只覆盖路径本身（用户实测：后面输入的文字也被染色）
+{
+  const BS = String.fromCharCode(92)
+  const pathOnly = ['D:', 'my_projects', 'a.png'].join(BS)
+  // 紧跟着普通文字（无空白分隔）时，底色必须在扩展名处止住
+  const glued = `看这个 ${pathOnly}然后把这张图改成深色`
+  eq(trimPathToken(pathOnly + '然后把这张图改成深色'), pathOnly, 'trimPathToken 在已知扩展名处截断')
+  eq(trimPathToken(pathOnly), pathOnly, 'trimPathToken 不切完整路径')
+  const { editor } = makeEditor(glued)
+  const rows = editor.render(120)
+  const painted = paintedCells(rows)
+  const paintedText = painted.join('')
+  ok(!paintedText.includes('然后'), `路径后面的普通文字不带底色（实际=${JSON.stringify(paintedText)}）`)
+  ok(paintedText.includes('a.png'), '路径本身仍带底色')
+  ok(!paintedText.includes('看这个'), '路径前面的普通文字不带底色')
+
+  // 两侧是空白时，药丸左右各吃一格当圆角
+  const spaced = `看图 ${pathOnly} 谢谢`
+  const { editor: spacedEditor } = makeEditor(spaced)
+  const spacedPainted = paintedCells(spacedEditor.render(120)).join('')
+  ok(spacedPainted.startsWith(' '), '左侧空白当圆角被吃掉一格')
+  ok(spacedPainted.endsWith(' '), '右侧空白当圆角被吃掉一格')
+  ok(!spacedPainted.includes('谢谢'), '右侧文字仍不带底色')
+}
+
+// ⑧d 剪贴板判定：文件 > 位图 > 文本
+{
+  const b64 = value => Buffer.from(value, 'utf8').toString('base64')
+  const joined = lines => b64(lines.join(String.fromCharCode(10)))
+  const samplePath = ['C:', 'a.png'].join(String.fromCharCode(92))
+  const probe = parseProbe(joined([`files=${b64(samplePath)}`]), '/tmp/x.png')
+  eq(probe.files.join(','), samplePath, 'parseProbe 解出文件列表')
+  const textProbe = parseProbe(joined([`text=${b64('一段文本')}`]), '/tmp/x.png')
+  eq(textProbe.text, '一段文本', 'parseProbe 解出文本')
+  const imageProbe = parseProbe(joined(['image=ok']), '/tmp/x.png')
+  eq(imageProbe.imagePath, '/tmp/x.png', 'parseProbe 解出位图路径')
+  eq(parseProbe('', '/tmp/x.png').files.length, 0, 'parseProbe 空输出 → 空结果')
+  eq(parseProbe(joined(['files=']), '/tmp/x.png').files.length, 0, 'parseProbe 空文件列表 → 空数组')
+
+  // 位图落盘
+  const bytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47])
+  const saved = saveClipboardImage(bytes)
+  ok(saved.endsWith('.png'), 'saveClipboardImage 落成 .png')
+  ok(fs.existsSync(saved), 'saveClipboardImage 文件真的写出来了')
+  eq(fs.readFileSync(saved).length, 4, '内容与传入字节一致')
+  fs.unlinkSync(saved)
+
+  // 判定顺序：文件优先于文本
+  const order = []
+  const realResolve = resolveClipboardPaste
+  ok(typeof realResolve === 'function', 'resolveClipboardPaste 已导出（粘贴判定的唯一入口）')
+  void order
+}
+
+// ⑧e 粘贴走扩展自己的通道（不再依赖 pi-tui 在 Windows 上缺失的 getFilePaths）
+{
+  const { editor } = makeEditor('')
+  let piFallback = 0
+  editor.onPasteImage = () => { piFallback += 1 }
+  // readWindowsClipboard 在非 Windows / 空剪贴板时返回空 → 应回落到 pi
+  const probe = await extensionModule.readWindowsClipboard()
+  ok(typeof probe.files.length === 'number' && typeof probe.text === 'string', 'readWindowsClipboard 返回三态结构')
+  void piFallback
 }
 
 // ⑨ padToWidth 不会破坏框线对齐

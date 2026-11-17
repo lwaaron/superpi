@@ -77,6 +77,8 @@ const sgrBg = (rgb: readonly number[]) => `\x1b[48;2;${rgb[0]};${rgb[1]};${rgb[2
 
 /** 一次 Ctrl+V 里允许的 PowerShell 读取超时（ms）。慢机器上让位给 pi 自己的粘贴。 */
 const FILE_LIST_TIMEOUT_MS = 1500
+/** 上一次粘贴读取被卡住多久后就允许重新尝试（ms）。 */
+const PASTE_STALE_MS = 6000
 
 type Point = { line: number; col: number }
 type Range = { start: Point; end: Point }
@@ -148,10 +150,14 @@ export const HOME_COMMAND = '/new'
 export class SuperPiEditor extends CustomEditor {
   /** 选区锚点；null = 没有选区。焦点就是编辑器光标。 */
   private selAnchor: Point | null = null
-  /** 正在异步读剪贴板文件列表，避免连按 Ctrl+V 叠多次 PowerShell。 */
+  /** 正在异步读剪贴板，避免连按 Ctrl+V 叠多次 PowerShell。 */
   private pasteInFlight = false
+  /** 上一次读取的开始时间：过久未结束就认为已失效，不阻塞后续粘贴。 */
+  private pasteStartedAt = 0
   /** settings 菜单是否展开。 */
   private menuOpen = false
+  /** 下边框在最近一次渲染里的行号；之下都是我们自己画的框外区域。 */
+  private lastBoxBottom = -1
   /** 本次渲染里可点的矩形（组件坐标，y 是本组件输出行号）。 */
   private hits: Array<{ id: string; kind: 'action' | 'command'; command?: string; x: number; y: number; width: number }> = []
   /** 由扩展入口注入（notify 等），测试里可不给。 */
@@ -431,10 +437,11 @@ export class SuperPiEditor extends CustomEditor {
   }
 
   /**
-   * 套上四边框，并在框内最底一行放「Working 状态 + settings / home」。
+   * 套上四边框（**直角**），Working 状态回到 pi 原来的位置（上边框内侧左侧），
+   * settings / home 放到**框外**右下角、模型信息上方。
    *
    * pi 的 Editor.render 布局是 [上边框, …可见内容, 下边框, …自动补全]，
-   * 这里把上/下边框换成自己的四边闭合框，自动补全也收进框内。
+   * 这里把上/下边框换成自己的闭合框，自动补全也收进框内。
    */
   private compose(rows: string[], inner: number, visibleCount: number): string[] {
     this.hits = []
@@ -443,100 +450,101 @@ export class SuperPiEditor extends CustomEditor {
     const content = rows.slice(1, 1 + visibleCount)
     const rest = rows.slice(2 + visibleCount)
     // pi 的上/下边框会带滚动提示（↑ N more / ↓ N more）。有内容时保留它，
-    // 否则换成一条素色横线 —— 不能为了套框把“还有几行被折在里面”吃掉。
-    const top = borderBody(rows[0], inner)
+    // 否则换成一条素色横线 —— 不能为了套框把「还有几行被折在里面」吃掉。
     const bottom = borderBody(rows[1 + visibleCount], inner)
-    const out: string[] = [frame('╭' + top + '╮')]
-    const push = (body: string): number => {
+    const out: string[] = [frame('┌' + this.topBorder(rows[0], inner) + '┐')]
+    const push = (body: string): void => {
       out.push(bar + padToWidth(body, inner) + bar)
-      return out.length - 1
     }
 
     for (const row of content) push(row)
     for (const row of rest) push(row)
+    out.push(frame('└' + bottom + '┘'))
+    this.lastBoxBottom = out.length - 1
 
-    // settings 菜单（展开时）：每条都是 pi 自己的斜杠命令，点了等同用户敲回车。
+    // ── 以下是框外（输入框下方、模型信息上方）────────────────────────────
+
     if (this.menuOpen) {
       for (const item of SETTINGS_COMMANDS) {
-        const label = `  ${item.label}`
-        const y = push(sgrFg(FRAME_RGB) + label + SGR_RESET + ' '.repeat(Math.max(0, inner - widthOf(label))))
-        this.hits.push({ id: item.label, kind: 'command', command: item.command, x: 1, y, width: inner })
+        const y = out.length
+        const prefix = '  '
+        out.push(padToWidth(this.theme.fg('dim', prefix + item.label), inner + 2))
+        this.hits.push({ id: item.label, kind: 'command', command: item.command, x: 0, y, width: inner + 2 })
       }
     }
 
-    // 框内最底一行：左 Working（按状态上色）+ 右 settings / home
-    const statusY = out.length
-    push(this.statusRow(inner, statusY))
-    out.push(frame('╰' + bottom + '╯'))
+    // settings / home：右下角、模型上方，颜色与模型名一致（pi footer 用 dim）。
+    const actionsY = out.length
+    out.push(this.actionsRow(inner + 2, actionsY))
     return out
   }
 
-  /** 框内最底一行：左 Working（按状态上色）+ 右 settings / home。 */
-  private statusRow(inner: number, y: number): string {
+  /** 上边框内侧：左侧 Working 状态（按状态上色），右侧补框线与滚动提示。 */
+  private topBorder(raw: string | undefined, inner: number): string {
     const phase: RunPhase = runState.phase
     const color = STATUS_RGB[phase] ?? STATUS_RGB.idle
     const elapsed =
       phase === 'running' && runState.startedAt > 0
         ? ` · ${Math.max(0, Math.floor((Date.now() - runState.startedAt) / 1000))}s`
         : ''
-    const label = ' Working' + elapsed
-    const rightPlain = EDITOR_ACTIONS.map(action => action.label).join('  ')
-    const rightWidth = widthOf(rightPlain)
-    // 窄面板上依次退让：完整标签 → 只剩图标 → 只剩右侧入口。
-    // 两个入口不能退（它们是唯一入口），所以先砍左边。
-    let left = sgrFg(color) + statusIcon(phase) + label + SGR_RESET
-    if (widthOfVisible(left) + 1 + rightWidth > inner) {
-      left = sgrFg(color) + statusIcon(phase) + SGR_RESET
-    }
-    const leftWidth = widthOfVisible(left)
-    const gap = Math.max(leftWidth + 1 + rightWidth <= inner ? 1 : 0, inner - leftWidth - rightWidth)
+    const full = sgrFg(color) + statusIcon(phase) + ' Working' + elapsed + SGR_RESET
+    const compact = sgrFg(color) + statusIcon(phase) + SGR_RESET
+    // 窄面板上依次退让：完整标签 → 只剩图标 → 只画横线。
+    let chosen = ''
+    if (widthOfVisible(full) + 5 <= inner) chosen = full
+    else if (widthOfVisible(compact) + 5 <= inner) chosen = compact
+    if (chosen === '') return borderBody(raw, inner)
+    const rest = Math.max(0, inner - 2 - widthOfVisible(chosen) - 1)
+    return '─ ' + chosen + ' ' + borderBody(raw, rest)
+  }
 
-    // 记录可点区域（组件坐标：x 从 0 起，含左侧框线那一列，所以 +1）
-    let x = leftWidth + gap
+  /** 框外右下角的 settings / home（颜色与模型名一致）。 */
+  private actionsRow(width: number, y: number): string {
+    const plain = EDITOR_ACTIONS.map(action => action.label).join('  ')
+    const plainWidth = widthOf(plain)
+    const out = ' '.repeat(Math.max(0, width - plainWidth))
+    let cursor = Math.max(0, width - plainWidth)
+    const pieces: string[] = []
     for (const action of EDITOR_ACTIONS) {
-      this.hits.push({ id: action.id, kind: 'action', x: 1 + x, y, width: widthOf(action.label) })
-      x += widthOf(action.label) + 2
+      const active = action.id === 'settings' && this.menuOpen
+      const text = active ? sgrFg(FRAME_RGB) + action.label + SGR_RESET : this.theme.fg('dim', action.label)
+      this.hits.push({ id: action.id, kind: 'action', x: cursor, y, width: widthOf(action.label) })
+      pieces.push(text)
+      cursor += widthOf(action.label) + 2
     }
-
-    const right = EDITOR_ACTIONS.map(action =>
-      action.id === 'settings' && this.menuOpen
-        ? sgrFg(FRAME_RGB) + action.label + SGR_RESET
-        : action.label,
-    ).join('  ')
-    return left + ' '.repeat(gap) + right
+    return out + pieces.join('  ')
   }
 
   handleMouse(event: any): any {
     if (!event) return super.handleMouse(event)
-    const hit = this.hits.find(
-      h => event.y === h.y && event.x >= h.x && event.x < h.x + Math.max(1, h.width),
-    )
-    if (hit && (event.type === 'click' || event.type === 'press')) {
-      this.activateHit(hit)
+    const isPress = event.type === 'press' || event.type === 'click'
+
+    // 框外（下边框之下）是我们自己的区域：只有 settings / home / 菜单可点。
+    if (typeof event.y === 'number' && event.y > this.lastBoxBottom) {
+      const hit = this.hits.find(
+        h => h.y === event.y && event.x >= h.x && event.x < h.x + Math.max(1, h.width),
+      )
+      if (hit && isPress) {
+        this.activateHit(hit)
+        return { handled: true }
+      }
+      if (isPress && this.menuOpen) {
+        this.menuOpen = false
+        this.tui?.requestRender?.()
+      }
+      // 框外的空白不交给 pi（否则会按错误的行号定位光标）。
       return { handled: true }
     }
-    // 点别处：菜单收起，其余照旧（定位光标 / 拖选）。
-    if ((event.type === 'press' || event.type === 'click') && this.menuOpen) {
+
+    if (isPress && this.menuOpen) {
       this.menuOpen = false
       this.tui?.requestRender?.()
     }
     // 鼠标点击（含拖选后的合成 click）会重置光标：先丢掉键盘选区，避免两套选区打架。
-    if (event && (event.type === 'press' || event.type === 'click')) this.selAnchor = null
-    // 我们在内容与下边框之间塞了菜单 / 状态行，pi 的自动补全行整体下移 1 行，
-    // 转发前先把 y 换算回 super.render 的坐标系。
-    const visibleCount = Number.isFinite((this as any).renderedVisibleLineCount)
-      ? (this as any).renderedVisibleLineCount
-      : 0
-    const shift = 1 + (this.menuOpen ? SETTINGS_COMMANDS.length : 0)
-    if (typeof event.y === 'number' && event.y > visibleCount) {
-      // x 也要减 1：左侧框线占了一列，pi 内部的列号从内容区起算。
-      const x = typeof event.x === 'number' ? Math.max(0, event.x - 1) : event.x
-      return super.handleMouse({ ...event, x, y: Math.max(visibleCount + 1, event.y - shift) })
-    }
-    if (typeof event.x === 'number') {
-      return super.handleMouse({ ...event, x: Math.max(0, event.x - 1) })
-    }
-    return super.handleMouse(event)
+    if (isPress) this.selAnchor = null
+    // x 减 1 跳过左侧框线，回到 super.render 的坐标系。
+    const x = typeof event.x === 'number' ? Math.max(0, event.x - 1) : event.x
+    return super.handleMouse(typeof event.x === 'number' ? { ...event, x } : event)
   }
 
   private activateHit(hit: { id: string; kind: 'action' | 'command'; command?: string }): void {
@@ -586,33 +594,32 @@ export class SuperPiEditor extends CustomEditor {
    *   两者都没有 → 才去问 Windows 的文件拖放列表（PowerShell，约 200ms，异步）
    */
   private async tryPasteFilePaths(): Promise<void> {
-    if (this.pasteInFlight) return
+    // 防重入，但不能被一次卡住的读取永久堵死：超过 STALE_MS 就当作上一次已失效。
+    if (this.pasteInFlight && Date.now() - this.pasteStartedAt < PASTE_STALE_MS) return
     this.pasteInFlight = true
+    this.pasteStartedAt = Date.now()
+    let inserted = false
     try {
-      const clipboard = await Promise.resolve(getNativeClipboard?.()).catch(() => null)
-      const text = clipboard?.getText ? await Promise.resolve(clipboard.getText()).catch(() => null) : null
-      if (text) {
-        this.onPasteImage?.()
-        return
+      const content = await resolveClipboardPaste()
+      if (content.files.length > 0) {
+        if (content.files.some(file => /\p{Cc}/u.test(file))) return
+        this.insertFilePaths(content.files)
+        inserted = true
+      } else if (content.imagePath) {
+        this.insertTextAtCursor(content.imagePath)
+        inserted = true
+      } else if (content.text) {
+        this.insertTextAtCursor(content.text)
+        inserted = true
       }
-      const image = clipboard?.getImage ? await Promise.resolve(clipboard.getImage()).catch(() => null) : null
-      if (image && image.length > 0) {
-        this.onPasteImage?.()
-        return
-      }
-      const files = await readWindowsFileDropList()
-      if (!files || files.length === 0) {
-        // 也没有图片/文本/文件 —— 交回 pi，行为与不打这个扩展时一致。
-        this.onPasteImage?.()
-        return
-      }
-      if (files.some(file => /\p{Cc}/u.test(file))) return
-      this.insertFilePaths(files)
     } catch {
-      this.onPasteImage?.()
+      inserted = false
     } finally {
       this.pasteInFlight = false
+      if (inserted) this.tui?.requestRender?.()
     }
+    // 什么都没插进去 → 完全交回 pi（行为与不打这个扩展时一致）。
+    if (!inserted) this.onPasteImage?.()
   }
 
   /** 与 pi 的 handleClipboardPaste 同一套插入语义（bash 模式用引号+空格，否则每行一条）。 */
@@ -730,11 +737,21 @@ export function paintPathChips(editor: SuperPiEditor, rendered: string[], width:
   for (let i = 0; i < lines.length; i += 1) {
     const line = lines[i] ?? ''
     if (!line.includes('\\') && !line.includes('/')) continue
-    const found: Array<{ from: number; to: number }> = []
+    const found: Array<{ from: number; to: number; padLeft: boolean; padRight: boolean }> = []
     for (const match of line.matchAll(PATH_TOKEN_RE)) {
-      const text = match[0]
+      const text = trimPathToken(match[0])
       if (!isLikelyPath(text)) continue
-      found.push({ from: match.index, to: match.index + text.length })
+      // 药丸左右各吃一格当「圆角」，但不能盖住相邻的普通文字：
+      // 只有那一格确实是空白时才吃掉。
+      const before = match.index > 0 ? line[match.index - 1] : ''
+      const afterIndex = match.index + text.length
+      const after = afterIndex < line.length ? line[afterIndex] : ''
+      found.push({
+        from: match.index,
+        to: afterIndex,
+        padLeft: before === '' || /\s/.test(before),
+        padRight: after === '' || /\s/.test(after),
+      })
     }
     if (found.length > 0) tokensByLine.set(i, found)
   }
@@ -750,8 +767,12 @@ export function paintPathChips(editor: SuperPiEditor, rendered: string[], width:
       if (to <= from) continue
       const relFrom = from - chunk.chunkStart
       const relTo = to - chunk.chunkStart
-      const colFrom = Math.max(0, widthOf(text.slice(0, relFrom)) - 1)
-      const colTo = Math.min(widthOf(text), widthOf(text.slice(0, relTo)) + 1)
+      const cellFrom = widthOf(text.slice(0, relFrom))
+      const cellTo = widthOf(text.slice(0, relTo))
+      const padLeft = token.padLeft && from === token.from
+      const padRight = token.padRight && to === token.to
+      const colFrom = Math.max(0, padLeft ? cellFrom - 1 : cellFrom)
+      const colTo = Math.min(widthOf(text), padRight ? cellTo + 1 : cellTo)
       if (colTo <= colFrom) continue
       rendered[chunk.rowIndex] = paintBackground(
         rendered[chunk.rowIndex],
@@ -763,8 +784,35 @@ export function paintPathChips(editor: SuperPiEditor, rendered: string[], width:
   return rendered
 }
 
-/** 绝对路径（Windows 盘符 / UNC / POSIX），宁可少认不要误认。 */
+/**
+ * 绝对路径（Windows 盘符 / UNC / POSIX），宁可少认不要误认。
+ *
+ * 候选 token 允许非空白字符连续（路径里可能有中文目录名），但这会让
+ * 「D:\a.png 然后把这张图改成深色」整段连成一个 token —— 中英文之间没有空白时
+ * 底色会一直铺到后面的普通文字上（用户实测的溢出）。所以再由
+ * `trimPathToken()` 在**最后一个已知扩展名**处截断。
+ */
 export const PATH_TOKEN_RE = /(?:[A-Za-z]:[\\/]|\\\\|\/)[^\s"'`<>|]*/g
+
+/** 认得出来的文件扩展名（宁可少认：只有这些才拿来当路径边界）。 */
+export const PATH_EXT_RE =
+  /\.(?:png|jpe?g|gif|webp|bmp|svg|ico|pdf|txt|md|json|ya?ml|toml|ini|log|csv|tsv|xlsx?|docx?|pptx?|zip|rar|7z|gz|tar|mp[34]|wav|mov|avi|webm|ts|tsx|jsx?|mjs|cjs|py|rb|go|rs|java|kt|c|h|cpp|cs|php|sh|ps1|bat|cmd|sql|html?|css|scss|vue|ipynb|exe|dll)/gi
+
+/**
+ * 把候选 token 裁到最后一个已知扩展名结尾。
+ * 例如 `D:\我的项目\a.png然后把图改深色` → `D:\我的项目\a.png`。
+ * 没有任何可识别扩展名时原样返回（纯目录路径没法靠扩展名判断边界）。
+ */
+export function trimPathToken(token: string): string {
+  if (typeof token !== 'string' || token === '') return token
+  let lastEnd = -1
+  PATH_EXT_RE.lastIndex = 0
+  for (const match of token.matchAll(PATH_EXT_RE)) {
+    lastEnd = (match.index ?? 0) + match[0].length
+  }
+  if (lastEnd <= 0 || lastEnd >= token.length) return token
+  return token.slice(0, lastEnd)
+}
 
 export function isLikelyPath(text: string): boolean {
   if (typeof text !== 'string' || text.length < 4) return false
@@ -947,6 +995,156 @@ function quoteIfNeeded(value: string): string {
 }
 
 /* ---------------------------------------------------------------- 剪贴板 */
+
+/** 原生剪贴板快路径结果（不 spawn 任何进程）。 */
+export async function readNativeClipboard(): Promise<{ text: string | null; image: Uint8Array | null }> {
+  const out: { text: string | null; image: Uint8Array | null } = { text: null, image: null }
+  try {
+    const clipboard = await Promise.resolve(getNativeClipboard?.()).catch(() => null)
+    if (!clipboard) return out
+    if (clipboard.getText) {
+      const text = await Promise.resolve(clipboard.getText()).catch(() => null)
+      if (typeof text === 'string' && text !== '') out.text = text
+    }
+    if (clipboard.getImage) {
+      const image = await Promise.resolve(clipboard.getImage()).catch(() => null)
+      if (image && image.length > 0) out.image = image
+    }
+  } catch {
+    /* 原生通道不可用 → 交给 PowerShell 慢路径 */
+  }
+  return out
+}
+
+/**
+ * PowerShell 一次性探针：把剪贴板里的**文件列表 / 文本 / 位图**一起看清。
+ *
+ * 为什么必须自己读一遍：
+ *   - `getFilePaths` 在 Windows 的 pi-tui native 模块里根本没实现（只有 macOS 有）；
+ *   - 某些环境下 native 的 getText / getImage 也会失败（实测截图后两者都是 null），
+ *     而 PowerShell 的 [Windows.Forms.Clipboard] 能拿到。
+ * 输出一律走 base64（控制台代码页会把中文路径/中文文本搞成乱码）；
+ * 位图写入临时 PNG 并把路径回填，与 pi 自己 handleClipboardPaste 的做法一致。
+ */
+export type ClipboardProbe = { files: string[]; text: string; imagePath: string }
+
+/**
+ * 「按 Ctrl+V 到底该插入什么」的唯一判定，按优先级：
+ *   1. 剪贴板里的**文件**（资源管理器复制 / 截图工具「复制文件」）→ 绝对路径
+ *   2. 剪贴板里的**位图**（截图 / 复制图片）→ 落成临时 PNG 的路径（pi 自己的做法）
+ *   3. 剪贴板里的**文本** → 原样插入
+ *
+ * 先把 native 快路径问一遍（不 spawn 进程，文本/位图通常在这一步就命中），
+ * 只有它什么都没读到时才启动 PowerShell 探头 —— 那条路要 ~200ms，
+ * 不该为最常见的「粘贴文本」付这个代价。
+ *
+ * 这条判定必须由扩展自己拥有：pi 的 handleClipboardPaste 依赖 pi-tui 的
+ * native getFilePaths（Windows 没实现），实测还会连位图一起读不到，
+ * 于是「截图后 Ctrl+V」在 Windows 上就是点了没反应。
+ */
+export async function resolveClipboardPaste(): Promise<ClipboardProbe> {
+  const native = await readNativeClipboard()
+  if (native.text) return { files: [], text: native.text, imagePath: '' }
+  if (native.image) {
+    const saved = saveClipboardImage(native.image)
+    if (saved) return { files: [], text: '', imagePath: saved }
+  }
+  return readWindowsClipboard()
+}
+
+/** 把原生拿到的位图落成临时 PNG（pi 也是这么做的）；写不进去就返回空串。 */
+export function saveClipboardImage(bytes: Uint8Array): string {
+  try {
+    const file = path.join(os.tmpdir(), `superpi-paste-${process.pid}-${Date.now()}.png`)
+    fs.writeFileSync(file, Buffer.from(bytes))
+    return file
+  } catch {
+    return ''
+  }
+}
+
+export function readWindowsClipboard(): Promise<ClipboardProbe> {
+  const empty: ClipboardProbe = { files: [], text: '', imagePath: '' }
+  if (process.platform !== 'win32') return Promise.resolve(empty)
+  const imagePath = path.join(os.tmpdir(), `superpi-paste-${process.pid}-${Date.now()}.png`)
+  const quoted = imagePath.replace(/'/g, "''")
+  const script = [
+    'Add-Type -AssemblyName System.Windows.Forms',
+    'Add-Type -AssemblyName System.Drawing',
+    "$out = New-Object System.Collections.Specialized.OrderedDictionary",
+    "$list = [System.Windows.Forms.Clipboard]::GetFileDropList()",
+    "if ($list -and $list.Count -gt 0) { $out['files'] = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes([string]::Join(\"`n\", @($list)))) }",
+    'if ([System.Windows.Forms.Clipboard]::ContainsText()) {',
+    "  $t = [System.Windows.Forms.Clipboard]::GetText()",
+    "  if ($t) { $out['text'] = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($t)) }",
+    '}',
+    'if ([System.Windows.Forms.Clipboard]::ContainsImage()) {',
+    '  $img = [System.Windows.Forms.Clipboard]::GetImage()',
+    "  if ($img) { $img.Save('" + quoted + "', [System.Drawing.Imaging.ImageFormat]::Png); $out['image'] = 'ok' }",
+    '}',
+    "$parts = foreach ($k in $out.Keys) { $k + '=' + $out[$k] }",
+    "[Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes(($parts -join \"`n\")))",
+  ].join('; ')
+  return new Promise(resolve => {
+    let done = false
+    const finish = (value: ClipboardProbe) => {
+      if (done) return
+      done = true
+      resolve(value)
+    }
+    try {
+      const child = execFile(
+        'powershell.exe',
+        ['-NoProfile', '-NonInteractive', '-STA', '-ExecutionPolicy', 'Bypass', '-Command', script],
+        { timeout: FILE_LIST_TIMEOUT_MS, windowsHide: true, maxBuffer: 8 << 20 },
+        (error, stdout) => {
+          if (error) return finish(empty)
+          finish(parseProbe(stdout, imagePath))
+        },
+      )
+      child.on('error', () => finish(empty))
+    } catch {
+      finish(empty)
+    }
+  })
+}
+
+/** `files=` / `text=` / `image=` 三段 base64 → 结构化结果。 */
+export function parseProbe(stdout: string, imagePath: string): ClipboardProbe {
+  const empty: ClipboardProbe = { files: [], text: '', imagePath: '' }
+  const raw = typeof stdout === 'string' ? stdout.trim() : ''
+  if (raw === '') return empty
+  let decoded = ''
+  try {
+    decoded = Buffer.from(raw, 'base64').toString('utf8')
+  } catch {
+    return empty
+  }
+  const out: ClipboardProbe = { files: [], text: '', imagePath: '' }
+  for (const line of decoded.split(/\r?\n/)) {
+    const eq = line.indexOf('=')
+    if (eq <= 0) continue
+    const key = line.slice(0, eq)
+    const value = line.slice(eq + 1)
+    if (key === 'files') {
+      const files = Buffer.from(value, 'base64')
+        .toString('utf8')
+        .split(/\r?\n/)
+        .map(item => item.trim())
+        .filter(item => item !== '')
+      out.files = files
+    } else if (key === 'text') {
+      try {
+        out.text = Buffer.from(value, 'base64').toString('utf8')
+      } catch {
+        out.text = ''
+      }
+    } else if (key === 'image' && value === 'ok') {
+      out.imagePath = imagePath
+    }
+  }
+  return out
+}
 
 /**
  * 读 Windows 的 CF_HDROP（文件拖放）剪贴板。
