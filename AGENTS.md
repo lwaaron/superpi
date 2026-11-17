@@ -22,6 +22,7 @@ DSH（DeepSeek Runtime）插件：把 pi 编码 agent 装进 DSH 的侧栏面板
 | `client.js` | 浏览器半区：React 面板，零构建、零 JSX，只 `require('react')`。 |
 | `docs/parity.md` | 能力矩阵。两端对齐的唯一账本。 |
 | `src/ui-prefs.mjs` | 面板偏好的落盘层（0.8.0）：项目显示名 / 会话显示名 / 会话置顶的唯一真相，落在 `<home>/.superpi/ui-prefs.json`（`SUPERPI_UI_PREFS` 可覆盖路径，`UI_PREFS_DIR_NAME` = `.superpi`，版本号 `UI_PREFS_VERSION = 1` 供将来迁移）。对外只经 host 的 `/ui-prefs` 三条路由（`index.js:991-1007`：GET 只读、`POST /ui-prefs/project`、`POST /ui-prefs/session` 走合并式补丁），校验与 400 语义都收在这一层（`MAX_PROJECT_NAME_LENGTH` 120 / `MAX_SESSION_PATH_LENGTH` 4096）。**它不归 pi 的 RPC 面管** —— 偏好是「面板自己的账」。 |
+| `extensions/superpi-editor.ts` | 命令行会话窗口（pi TUI）的**输入框增强**（0.9.2）：继承 pi 公开的 `CustomEditor`，通过官方扩展点 `ctx.ui.setEditorComponent()` 替换输入框 —— **不改 pi 任何文件、不打补丁、不碰 `node_modules`**。补的是 TUI 输入框缺的那一套：Ctrl+A 全选、Shift+方向/Home/End 扩选、Ctrl+C 复制（不再清空内容）、Ctrl+X 剪切、Backspace/Delete 删选区、可打印字符与粘贴替换选区、以及 Windows 下 Ctrl+V 粘贴**剪贴板里的文件**时插入绝对路径（文件列表读 PowerShell 的 `GetFileDropList`，因为 pi-tui 的 Windows native 模块没有 `getFilePaths`）。安装面 `tools/install-pi-extension.mjs`（`--install/--remove/--status`）落到 `<piAgentDir>/extensions/`；门禁 `test/tui-editor.mjs` 66 checks。 |
 
 ## 3. 100% 对齐 = 不可协商约束
 
@@ -45,6 +46,7 @@ DSH（DeepSeek Runtime）插件：把 pi 编码 agent 装进 DSH 的侧栏面板
 ## 5. 禁止项
 
 - **禁止在 `tools/restart-dsh.ps1` 里用 `Start-Process -FilePath $exe` 重启**（0.4.2 之前的老实现）。桌面实例的启动命令行带 6 个参数，裸起等于换个东西启动。重启必须走 `Get-LaunchSpec` + `ProcessStartInfo`，参数一个字节都不重排。
+- **禁止给 pi 打补丁（2026-11-17 用户明确禁用）。** 不许改 `node_modules` 里 pi / pi-tui 的任何文件，不许 wrap 它们已打包 chunk 的原型方法，不许替换 bundle 里的函数体 —— 哪怕「可回滚 + 幂等标记 + 备份」也不行。要补能力只能走两条路：① pi 的**官方扩展点**（`pi.on()` / `registerTool` / `registerCommand` / `ctx.ui.setEditorComponent()` / `ctx.ui.custom()`，见 `docs/extensions.md`）；② `docs/parity.md` 记为显式缺口交上游。0.9.2 的教训：先做的补丁版（wrapper chunk）已全部删除回退，最终用 `extensions/superpi-editor.ts` 这个官方扩展实现同一能力。
 - **禁止以「UI 没做」为由在 host 或协议层留缺口。** 缺的是 UI 就说缺 UI，别把能力做成半截。
 - **禁止把斜杠命令当普通文本发给模型。** `/compact` 走的是 `compact` 命令，绝不能当 prompt 发出去——pi 的 RPC prompt 通道只认扩展命令、`/skill:`、prompt template（`agent-session.ts:2410-2445`），TUI 那 27 条内置命令在 RPC 侧一条都没有。输入一律先过 `classifyInput()`，`handleSlash`（`client.js:5667-5673`）按 disposition 五路分流。未知斜杠照发是 pi 的既有语义，不要"顺手修"。
 - **禁止硬编码本机绝对路径。** pi 可执行与 node 必须走 `src/pi-runtime.mjs` 的解析链（config → 环境变量 → 插件 `.runtime` → 插件 `node_modules` → 逐级 walk-up → pnpm store → 全局 npm）。
@@ -66,15 +68,20 @@ DSH（DeepSeek Runtime）插件：把 pi 编码 agent 装进 DSH 的侧栏面板
 ## 7. 验证命令
 
 ```powershell
-npm test                                        # 12 项离线门禁，全程实测 ~20.5 秒：
+npm test                                        # 13 项离线门禁，全程实测 ~21 秒：
                                                 # selfcheck → client-render(831) → css-tokens(98)
                                                 # → runtime-resolve → config-hot → host-parity(291)
                                                 # → session-projects(55) → timeout(28) → parity(78)
-                                                # → restart-lib(31×2 引擎) → github-sync(82) → version
+                                                # → tui-editor(66) → restart-lib(31×2 引擎)
+                                                # → github-sync(82) → version
                                                 # 耗时大头：restart-lib ~9.1 s（起 pwsh 7 + 5.1 各跑一遍 fixture）、
                                                 # github-sync ~6.3 s（临时仓库里用真 git 跑完整同步流程）、
-                                                # timeout ~3.1 s（真等超时周期）；其余合计 <1.5 s
-npm run test:all                                # 上面 12 项 + 真起 pi 子进程跑一轮 LLM
+                                                # timeout ~3.1 s（真等超时周期）、tui-editor ~2.5 s（jiti 加载 .ts + 起两次 PowerShell 读剪贴板）；其余合计 <1.5 s
+npm run test:all                                # 上面 13 项 + 真起 pi 子进程跑一轮 LLM
+npm run test:tui                                # 只跑输入框扩展门禁（jiti 加载真 .ts + pi 真 CustomEditor + 真按键序列）
+npm run pi:editor                               # 把 extensions/superpi-editor.ts 装进 pi（<piAgentDir>/extensions/）
+npm run pi:editor:status                        # 只读：源/目标/内容是否一致/pi 版本
+npm run pi:editor:remove                        # 卸掉，pi 下次启动恢复原始输入框
 npm run test:github                             # 只跑线上同步门禁（临时裸仓库，不联网、不碰 origin）
 npm run sync                                    # 把本地提交同步到 GitHub（0 已同步 / 2 离线待补推 / 3 要人处理）
 npm run sync -- --status                        # 本地 vs 线上差多少提交、钩子装没装
@@ -88,7 +95,7 @@ pwsh -NoProfile -File install-plugin.ps1 -Profile desktop   # 装进 desktop pro
 
 `test/fixtures/` 放两类「不能在门禁里自造」的东西：`fake-pi-rpc.mjs`（pi RPC 协议替身，`FAKE_PI_MODE=dialog|silent` 让超时语义可以在毫秒级被实测，`test/timeout.mjs` 用它）与 `pi-ext-ui-probe.ts`（真扩展，**只能靠真人点击验证**——扩展 UI 的九个 method 没有替身能覆盖「用户到底点了没」。用法写在文件头：复制到 `%USERPROFILE%\.pi\agent\extensions\`、重启 pi 会话、依次跑 `/dsh-ui-probe` 与 `/dsh-ui-notify`、验完删除）。
 
-## 8. 现状快照（2026-11-17 · v0.9.1）
+## 8. 现状快照（2026-11-17 · v0.9.2）
 
 - **RPC 命令**：pi 侧 33 条，面板已实现 32 条 + `steer` 1 条走等价路径（`prompt` + `streamingBehavior:'steer'`，`client.js:5067`），缺口 0。
 - **扩展 UI**：9 种请求全部已实现（`applyExtensionUi()` `client.js:1661-1706`），3 种应答全通（`POST /sessions/:id/respond` `index.js:1083-1102`）。倒计时取 `min(pi 声明值, 5 分钟兜底)`（`dialogBudgetMs()` `client.js:1646`，`DIALOG_FALLBACK_MS` `src/rpc-contract.mjs:260`），且 host 侧命令 timer 会为挂起的弹窗让位（`restartPendingTimers()` `src/pi-rpc.mjs:490`）——**这两侧必须同时成立**，否则就是 0.2.5 那个「红条与对话框并存」的缺陷。
@@ -115,7 +122,8 @@ pwsh -NoProfile -File install-plugin.ps1 -Profile desktop   # 装进 desktop pro
 - **一键启动链路（0.8.2–0.8.4）**：只动 `tools/`，没碰插件运行时。0.8.2 新增 `tools/start-standalone.ps1` / `.bat`（状态落在仓库内 `.standalone\`、默认端口 25117、`-Stop` / `-Status` / `-Reinstall` / `-Port`，首次装依赖之后复用）；0.8.3 加仓库根目录 `一键启动.bat`（**纯 ASCII 转发器**，逻辑不复制）；0.8.4 新增 `tools/launch-both.ps1` —— 一次双击**并行起两个前端**（新控制台窗口里的 pi TUI + 后台 DSH web），根目录 bat 转给它。**关键事实**：pi 不带 `--mode` 时进交互式 TUI，而它在非 TTY 下会静默退出（`exit 0` 零输出），所以 TUI 必须开真实控制台窗口（`wt -d <dir> cmd /c ...`，wt 缺失回落 `start "" /D ...`），后台进程里跑 pi 等于什么都没发生。
 - **改名 SuperPi（0.9.0）**：产品与插件标识全量改为 `superpi` / `SuperPi`，涉及 `client.js`（i18n、面板标题）、`index.js`（`NS` / `apiPrefix` / 自检文案）、`cordis.patch.yml`、README、LICENSE、`docs/*`。**包名与安装链保持不变**：`package.json.name` 仍是 `superpi`，tarball 仍是 `superpi-<version>.tgz`（`test/version.mjs` 写死这个名字）。
 - **线上同步（0.9.1）**：把仓库发布到 <https://github.com/lwaaron/superpi>（private，`origin` / `master`），并落地「提交永远先本地、能连上就同时推线上」的机器约束 —— 见第 9 节。新增 `tools/github-sync.mjs`（同步引擎 + CLI）、`tools/git-hooks/post-commit`（后台自动试推）、`test/github-sync.mjs`（82 条门禁，临时裸仓库当真远端，不联网）、`.gitattributes`（钉死 `*.ps1` LF / `*.bat` CRLF，否则 `core.autocrlf=true` 的克隆会让 `test/restart-lib.mjs` 的「无游离 CR」断言必红）。npm 脚本新增 `sync` / `sync:status` / `hooks`；`npm test` 从 11 项变 **12 项**（耗时 ~15 s → ~20.5 s，github-sync ~6.3 s）。**`tools/` 不进 npm 包**（`files` 不含它），插件运行时与 RPC 契约一行未动。
-- 逐条账本见 `docs/parity.md`；机器保障是 `npm test` 里的 `test/parity.mjs` + `test/host-parity.mjs` + `test/timeout.mjs`。
+- **输入框能力对齐（0.9.2 · 第三层：不是 RPC 面，是输入框本身）**：命令行 TUI 的输入框是 pi-tui 自己实现的 `Editor`，**没有选区模型** —— `tui.input.copy`（ctrl+c）在 `editor.js:597` 直接 `return` 交回上层，pi 的 `CustomEditor` 再交给 `app.clear` → `handleCtrlC()`（`interactive-mode.js:3595-3603`）**清空输入框**，这就是「Ctrl+C 复制后内容消失」；`tui.editor.cursorLineStart` 默认键是 `["home","ctrl+a"]`，所以 Ctrl+A 是「移到行首」；`ctrl+x` 全表无绑定。另一半是 Windows 缺口：`getNativeClipboard()` 只导出 `getText/setText/getImage/enableVirtualTerminalInput/isModifierPressed`，**没有 `getFilePaths`**（只有 macOS 有），因此资源管理器复制文件后 Ctrl+V 三档全空（filePaths / image / text 都是 null）。处置：新增 `extensions/superpi-editor.ts` —— `class SuperPiEditor extends CustomEditor` + `ctx.ui.setEditorComponent()`（pi 官方扩展点，官方示例 `examples/extensions/modal-editor.ts` 同款），**不改 pi 任何文件、不打补丁**；能力 = Ctrl+A 全选 / Shift+方向·Home·End 扩选 / Ctrl+C 复制（有选区复制选区、无选区复制全文，都不清空）/ Ctrl+X 剪切 / Backspace·Delete 删选区 / 可打印字符与括号内粘贴替换选区 / Ctrl+V 在「无文本且无位图」时读 Windows `CF_HDROP`（PowerShell `GetFileDropList`，异步、1.5 s 超时、base64 防中文乱码）插绝对路径；空编辑器 Ctrl+C **刻意放行**以保住 pi 的两次退出，Esc 只清选区不吞键。pi 在 `setEditorComponent` 时会自动接回 `onSubmit`/`onChange`/`borderColor`/`paddingX` 与**全部 `actionHandlers`**（`interactive-mode.js:2336-2385`），所以扩展不重写 app 键位。安装面 `tools/install-pi-extension.mjs`（`--install/--remove/--status`，落到 `<piAgentDir>/extensions/`，`PI_CONFIG_DIR` 跟随）+ `package.json` 的 `pi:editor` / `pi:editor:status` / `pi:editor:remove`；`tools/launch-both.ps1` 起 TUI 前自动装一次（`-NoEditorExtension` 可关，失败只 WARN）；`files` 新增 `extensions` 让它随 tarball 发布。门禁 `test/tui-editor.mjs` **66 checks**（`npm test` 12 → **13 项**）：用 jiti 加载真 `.ts` + pi 真 `CustomEditor` + 真终端按键序列（像 `\x1b[1;2C` 这种原始字节），末组再用 **pi 自己的扩展加载器**（`core/extensions/loader.js` 的 `discoverAndLoadExtensions`）把装到临时 `agentDir` 的扩展真加载一遍断言无 error —— 这才是「装完 pi 真的能认」的机器保证。账本新增 `docs/parity.md` §5.1。**先做的补丁版（wrap 打包 chunk 原型 + 换 `readClipboardFilePaths` 函数体）已被用户禁用并全部删除回退**，pi 运行时从未被修改（`--status` 核验「未应用」）。
+- 逐条账本见 `docs/parity.md`；机器保障是 `npm test` 里的 `test/parity.mjs` + `test/host-parity.mjs` + `test/timeout.mjs` + `test/tui-editor.mjs`。
 
 ## 9. 线上同步（GitHub）
 

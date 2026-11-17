@@ -224,10 +224,10 @@ New-Item -ItemType Junction `
 ### 方式三：手工 pnpm add（不想跑脚本时）
 
 ```powershell
-npm pack                                        # 得到 superpi-0.9.1.tgz
+npm pack                                        # 得到 superpi-0.9.2.tgz
 cd "$env:USERPROFILE\.dsh\profiles\desktop"
 node "$env:USERPROFILE\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\pnpm\bin\pnpm.cjs" `
-  add "file:C:\path\to\superpi-0.9.1.tgz" --ignore-scripts
+  add "file:C:\path\to\superpi-0.9.2.tgz" --ignore-scripts
 ```
 
 不要在 profile 里用 `npm install`：npm 会另写一份 `package-lock.json`，而宿主插件管理器用的是 pnpm，两套锁文件互相看不见，下次插件安装就会把 node_modules 重建成 pnpm 理解的样子。
@@ -385,6 +385,7 @@ npm install --prefix <插件>/.runtime --save-exact --no-audit --no-fund --logle
 - **挂载即对账**：`attach` 之后补一次 `get_messages` 整表重建消息列表（`messagesFromHistory`）。原因是 `new_session` / `switch_session` / `fork` / `clone` 成功后 host 会 `resetEvents()` 把事件缓冲清空，历史消息不会再以事件形式重放 —— 只靠 `snapshot` 重放的话，切过去必然是空白（0.4.0 及之前「点开历史会话没有内容」就是这个根因；命令行 pi 从 jsonl 恢复所以不受影响）。两道防线：会话已切走则丢弃响应；`busy` 期间不覆盖列表，改记待办，等 `agent_settled` 那一拍由 `drainHydrate` 补上。
 - **历史会话两级列表、过程流行距与面板偏好（0.8.0）**：三件事都长在既有结构上，没有新开界面。①历史会话（顶栏入口与 `/resume` 共用 `SessionsSheet`）补齐「面板自己的账」：项目层标题固定「项目列表」且只在这一层给「新建项目」按钮，会话层标题换成项目名、返回箭头由 `SidePanel` 的 `onBack` 提供（原「← 全部项目」文字按钮已删）；搜索框占整行，placeholder 分「搜索项目」/「搜索会话」；项目行与会话行各带一个行内 `⋯` 菜单（重命名项目 / 在此新建会话 / 重命名会话 / 置顶或取消置顶）；会话标题按「用户改的名字 → pi 的会话名 → 首条用户消息摘要 → 末条消息 → 占位」取值（`sessionHeadline()` 取 `firstMessage` 首行、超 60 字符截断加 `…`）；置顶用两遍 partition 而不是 `sort`（host 给的顺序本身有意义，是最近活动降序）；改名走独立的 `RenameDialog` 而不是复用 `NameSheet`（`drawer` 是单值，改名会把左侧栏自己顶掉）。偏好不归 pi 的 RPC 面管，读写走 host 新增的 `/ui-prefs` 三条路由（见上方 HTTP 接口），落盘在 `<home>/.superpi/ui-prefs.json`（`SUPERPI_UI_PREFS` 可覆盖路径），文件不存在时按空偏好处理、不报错。②过程流行距按参考图重算：父行与子行同为 24px 行盒，`.superpi-sub` 组内 `gap:8px`、`margin-left:26px`、`padding-left:12px`，子行步长与父行一致；0.6.4 那版把子行压到 16px 行盒 + gap 0，行距只剩父行一半，是被推翻的中间态。③版本 0.8.0：tarball 名 `superpi-0.8.0.tgz`，`CONTRACT_VERSION` 同步 0.8.0。
 - **弹层交互与顶栏标题（0.8.1）**：三处一起改。①四个居中弹窗（`Dialog` / `ConfirmDialog` / 选择工作区 / 扩展 UI 弹窗）统一成**真模态** —— 点遮罩即关闭，判定式只有一份（`maskHandler(onClose)`，判 `event.target === event.currentTarget`），内层不吞事件、不 `stopPropagation`；语义各自正确：确认框点遮罩等于**取消**而不是确认，扩展 UI 弹窗点遮罩回 `{id, cancelled:true}`（与右上角关闭键同一条路径），并补上原先缺的 `aria-modal`。②`MoreMenu`（顶栏 `⋯` 与历史会话行内 `⋯`）补「点外部关闭」：`isOutsideMenu(node, anchor, target)` 同时放行菜单自身与**触发按钮** —— 少了后半条，同一次点击里 `mousedown` 先关、`click` 又开，表现为「怎么点都关不掉」。③顶栏左上的 `SuperPi` 换成**当前项目标题**：host 侧 `withProjectIdentity()` / `snapshotOf()` 在每份会话快照上补 `displayPath`（`shortenHomePath`，家目录缩成 `~`）与 `projectKey`（`pathComparisonKey`），客户端 `projectTitleOf(prefs, meta)` 按「面板里改过的项目名 → `displayPath` → 原始路径」取值，取不到才回落品牌名；路径缩短的唯一真相留在 host，浏览器侧不复制这套逻辑。`RuntimeGate`（启动期无会话）保留品牌名。面板偏好同时上提到 `PiPanel`，顶栏与历史会话列表读同一份 `prefs`，改名后顶栏立刻跟着变。
+- **输入框能力两端对齐（0.9.2）**：面板的输入框是浏览器的真 `textarea`，粘贴文件路径 / `Ctrl+A` 全选 / `Ctrl+C` 复制 / `Ctrl+X` 剪切 / `Backspace` 删选区都是浏览器原生行为；命令行 TUI 的输入框是 pi-tui 自己实现的 `Editor`，**没有选区模型**（`Ctrl+A` 是移到行首、`Ctrl+C` 被 pi 的 `app.clear` 吃掉去清空输入框、`Ctrl+X` 无绑定），Windows 的 native 剪贴板也没有 `getFilePaths`（只有 macOS 有），所以在资源管理器里复制文件后 `Ctrl+V` 三档全空。这段差异由 `extensions/superpi-editor.ts` 补齐 —— pi 官方扩展点 `ctx.ui.setEditorComponent()`，**不改 pi 任何文件、不打补丁**。装法 `npm run pi:editor`，卸载 `npm run pi:editor:remove`，生效需重启 pi 会话窗口或 `/reload`；一键启动会在起 TUI 前自动装一次（`-NoEditorExtension` 可关）。键位对照表见 `docs/parity.md` §5.1。
 
 ## 自检：现在跑的是不是磁盘上那份代码
 
@@ -403,9 +404,10 @@ npm install --prefix <插件>/.runtime --save-exact --no-audit --no-fund --logle
 ## 测试
 
 ```powershell
-npm test            # 十二项门禁：selfcheck + client-render + css-tokens + runtime-resolve + config-hot
-                    # + host-parity + session-projects + timeout + parity + restart-lib + github-sync + version
-                    # 全离线（不起 pi、不打 LLM、不推 GitHub），全程实测 ~20.5 秒。三个大头：
+npm test            # 十三项门禁：selfcheck + client-render + css-tokens + runtime-resolve + config-hot
+                    # + host-parity + session-projects + timeout + parity + tui-editor + restart-lib
+                    # + github-sync + version
+                    # 全离线（不起 pi、不打 LLM、不推 GitHub），全程实测 ~21 秒。三个大头：
                     #   test/restart-lib.mjs ~9.1 s（pwsh 7 与 PowerShell 5.1 各起一遍跑 fixture）
                     #   test/github-sync.mjs ~6.3 s（临时仓库里用真 git 跑完整同步流程：裸仓库当远端、
                     #                          127.0.0.1:1 拒连当断网、另一个 clone 当分叉的那一方）
@@ -440,6 +442,9 @@ pwsh -NoProfile -File .\tools\standalone-verify.ps1   # 全新 DSH_HOME 里只�
 | `test/session-projects.mjs` | 两级历史列表 55 条：`pathComparisonKey` 大小写归一、`isTemporaryPath` 三条正则逐条对齐 pi（`/tmp`、`appdata/local/temp`、`pi-runtime-*`）、`shortenHomePath` 的 `~` 缩写边界、`groupSessionsByProject` 的「当前项目 → 非临时 → 最近活动降序」与大小写合并、`listAllSessions`/`listSessions` 的「全部项目 vs 单项目」两种语义、`readSessionCwd` 只读 64KB 头行且首行非杂项时返回空、`firstRunningSessionFile` 的「跨项目也算当前会话」与活/死优先级。造一棵符合 pi 目录约定的假 `sessions/` 树来跑，不碰真会话 |
 | `test/host-parity.mjs` | host 侧离线一致性 291 条：`buildSpawnArgs` 19 条（`persist=false` 不吃 `--continue`、用户自带 `--fork`/`--no-session` 不重复生成、空 `--name` 不传）、`pickCurrentSessionFile` 8 条、以及 `/respond` 的 409/400/415/200、`/reset`、四条替换命令的 reset+refresh、`/files` 排序与 404、`/file` 预览 28 条（文本截断 / 二进制探测 / 目录 400 / ENOENT 404 / MIME 映射 / `~` 与 `%VAR%` 展开）、`/pi/changelog` 三情形、未知路由 404、`/ui-prefs` 三条路由 33 条（GET 空文件回落、项目改名 trim 与键白名单、会话置顶与「只给 name 不许凭空置顶」的合并语义、四类 400）。**路由与参数拼错了只会静默跑偏，所以单独立门禁** |
 | `test/parity.mjs` | 与 pi 的三向对账 78 条：以 pi 的 `RpcCommand` 联合类型、`RpcSessionState` 接口、`docs/json.md` 事件表为事实来源，双向比对（我们缺的 = 缺口，我们编的 = 幻觉），再断言契约里 33 条命令 / 25 类事件 / 12 种 assistant 事件 / 27 条斜杠 / 9 个扩展 UI method 在面板里都有落地字面量，且 `CONTRACT_VERSION` 与 `package.json` 同步。0.2.5 时「只发 5/33 命令、只处理 12/25 事件、27 条斜杠一条没接而 `npm test` 全绿」正是这个门禁要拦的事 |
+| `test/tui-editor.mjs` | 输入框扩展门禁 **66 条**（0.9.2）：**用 jiti 加载真 `.ts` 扩展**（与 pi 的 `core/extensions/loader.js` 同一套 alias）+ **pi 真的 `CustomEditor`** + **真终端按键序列**（直接喂原始转义字节的按键序列），断言 Ctrl+A 全选、Shift+方向扩选、Ctrl+C 复制后内容不消失、Ctrl+X 剪切、Backspace/Delete 删选区、可打印字符与括号内粘贴替换选区、Esc 不吞键、空编辑器 Ctrl+C 放行、自动补全打开时不抢方向键、渲染反色开合成对；末组用 **pi 自己的扩展加载器**（`discoverAndLoadExtensions`）把装到临时 `agentDir` 的扩展真加载一遍断言无 error —— 这一步才证明「装完 pi 真的能认」。**不 mock 编辑器**：影子实现会让「测试绿、真机不灵」|
+| `extensions/superpi-editor.ts` | 命令行会话窗口的**输入框增强**：`class SuperPiEditor extends CustomEditor` + `ctx.ui.setEditorComponent()`（pi 官方扩展点），补上 TUI 缺的那套 Windows 输入框语义（全选 / 扩选 / 复制不清空 / 剪切 / 删选区）与「剪贴板里的文件 → 绝对路径」。**不改 pi 任何文件、不打补丁**，卸载就是删一个 `.ts`（`npm run pi:editor:remove`）|
+| `tools/install-pi-extension.mjs` | 把上面的扩展装进 `<piAgentDir>/extensions/`（`--install` / `--remove` / 默认只读状态），`PI_CONFIG_DIR` 跟随；幂等、内容变了先留 `.bak`。`npm run pi:editor` / `pi:editor:status` / `pi:editor:remove` 三个别名|
 | `一键启动.bat`（仓库根） | 一键启动的**根目录入口**，纯 ASCII 转发器：把 `%*` 与退出码原样透传给 `tools/launch-both.ps1`。逻辑不重复实现 |
 | `tools/launch-both.ps1` | **同时起两个前端**：① pi TUI（新开真实控制台窗口，走 `src/pi-runtime.mjs` 解析链拿 pi 与 node）；② DSH web（后台 25117）。互不阻塞，分别报 `OK/WARN/FAIL`；`-Stop` 只关自己起的（TUI pid 记在 `.standalone/tui.json`）。**pi 在非 TTY 下会静默退出，所以 TUI 必须开真实窗口** |
 | `tools/start-standalone.ps1` / `.bat` | **一键启动**常驻实例：状态落在仓库内 `.standalone\`，首次装依赖、之后复用；默认端口 25117；`-Stop` / `-Status` / `-Reinstall` / `-Port`。位置无关，不碰桌面 profile |

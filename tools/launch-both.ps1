@@ -30,6 +30,12 @@
 .PARAMETER NoWeb
   只开 TUI 窗口，不起 web。
 
+.PARAMETER NoEditorExtension
+  不装 superpi 的输入框扩展（extensions/superpi-editor.ts）。默认会装：
+  它用 pi 官方的 ctx.ui.setEditorComponent 换输入框，补上 Ctrl+A 全选、
+  Shift+方向扩选、Ctrl+C 复制不清空、Ctrl+X 剪切、Backspace/Delete 删选区、
+  以及 Windows 下「资源管理器复制文件 → Ctrl+V 得到绝对路径」。
+
 .PARAMETER Stop
   停掉由本脚本起的两个实例：web 走 start-standalone 的 -Stop；
   TUI 窗口按 .standalone/tui.json 记录的 pid 关掉（只关自己起的，不动别人）。
@@ -54,6 +60,7 @@ param(
   [switch]$NoWeb,
   [switch]$Stop,
   [switch]$Status,
+  [switch]$NoEditorExtension,
   [int]$WaitSeconds = 120
 )
 
@@ -184,6 +191,23 @@ if ($NoTui) {
   if ($reasons['tui'] -eq '') { $reasons['tui'] = 'pi 运行时未解析出来' }
 } else {
   Step ('starting pi TUI in a new console, cwd = ' + $WorkDir)
+
+  # 先把 superpi 的输入框扩展装进 pi（官方扩展，不改 pi 任何文件）。
+  # 装在 <piAgentDir>/extensions/，pi 启动时自动加载；失败不阻断 TUI 启动 ——
+  # 扩展只影响输入框的复制/剪切/文件粘贴，pi 本体照跑。
+  if (-not $NoEditorExtension) {
+    $extScript = Join-Path $PluginRoot 'tools\install-pi-extension.mjs'
+    if (Test-Path -LiteralPath $extScript) {
+      try {
+        $nodeExe = 'node'
+        if ($nodePath -ne '') { $nodeExe = $nodePath }
+        $null = & $nodeExe $extScript --install 2>&1
+        Ok 'input-box extension installed (Ctrl+A/Shift-select/Ctrl+C/X/file paste)'
+      } catch {
+        Warn2 ('input-box extension not installed: ' + $_.Exception.Message)
+      }
+    }
+  }
   $respArg = switch ($Resume) {
     'pick' { '--resume' }
     'new' { '--new' }

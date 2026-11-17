@@ -10,6 +10,8 @@
 - **命令行 pi（TUI）**：`packages/coding-agent/src/modes/interactive/`，人肉交互。
 - **superpi 面板**：本仓库 `client.js` + `index.js`，通过 pi 官方 JSONL RPC 协议驱动 `pi --mode rpc` 子进程。
 
+**除了 RPC 面，还有第三层要对齐：输入框本身（0.9.2）。** 面板的输入框是浏览器的真 `textarea`，粘贴文件路径 / Ctrl+A 全选 / Ctrl+C 复制 / Ctrl+X 剪切 / Backspace 删选区全是浏览器原生行为，插件一行代码都不用写；而 TUI 的输入框是 pi-tui 自己实现的 Editor —— **它没有选区模型**，Ctrl+A 是「移到行首」、Ctrl+C 被 pi 的 `app.clear` 吃掉去清空输入框、Ctrl+X 无绑定，读剪贴板文件列表又只有 macOS 有（Windows 的 native 模块没实现 `getFilePaths`）。这段差异由本仓库的 pi 扩展 `extensions/superpi-editor.ts` 补齐（`ctx.ui.setEditorComponent()` 换输入框，pi 官方支持的扩展点），见本节末尾「输入框能力对账」。
+
 **「命令行 pi 的行为」不是「同名命令」。** TUI 的 27 条内置斜杠命令写在 `interactive-mode.ts:3331-3466` 的一条巨型 `if` 链里，RPC 模式（`modes/rpc/rpc-mode.ts:404-737` 的 `switch`）**一条都没有**。所以：
 
 - 有些 TUI 能力在 RPC 侧被拆成更细的命令（`/model` → `get_available_models` + `set_model`；`/resume` → `get_state` + `switch_session`）。
@@ -26,11 +28,12 @@
 | 显式忽略 | 面板端**决定**不消费，且写明理由（不是漏了）。 |
 | 仅命令行 | RPC 面没有等价能力，面板必须**明示**「仅命令行可用」，绝不能静默当 prompt 发出去。 |
 
-**门禁已经是事实，不是目标态。** `test/parity.mjs`（78 checks）、`test/host-parity.mjs`（291 checks）与 `test/session-projects.mjs`（55 checks，0.5.0 起）都已落地，且都在 `npm test` 的 11 项流水线里：
+**门禁已经是事实，不是目标态。** `test/parity.mjs`（78 checks）、`test/host-parity.mjs`（291 checks）、`test/tui-editor.mjs`（66 checks，0.9.2 起）与 `test/session-projects.mjs`（55 checks，0.5.0 起）都已落地，且都在 `npm test` 的 13 项流水线里：
 
 ```
 selfcheck → client-render(831) → css-tokens(98) → runtime-resolve → config-hot
-→ host-parity(291) → session-projects(55) → timeout(28) → parity(78) → restart-lib(31×2 引擎) → version
+→ host-parity(291) → session-projects(55) → timeout(28) → parity(78)
+→ tui-editor(66) → restart-lib(31×2 引擎) → github-sync(82) → version
 ```
 
 三套核心门禁都离线跑（不起 pi、不打 LLM）。`npm test` 2026-11-13 实测：加 `restart-lib` 之前 ~5.2 s，加上之后 ~14.3 s —— **`test/restart-lib.mjs` 独占约 9.1 s**（它要起 pwsh 7 与 PowerShell 5.1 两个引擎各跑一遍 fixture，进程启动开销占大头），`test/timeout.mjs` 约 3.1 s（真等若干超时周期），其余各项合计 <1.5 s。`test/parity.mjs` 做的是**三向对账**：`src/rpc-contract.mjs` ↔ pi 的类型声明与官方文档 ↔ `client.js`/`index.js` 的实际覆盖面。任一方向对不上即红：
@@ -260,6 +263,44 @@ payload 取值优先级 `cancelled` → `confirmed` → `value`（`index.js:1093
 
 ---
 
+## 5.1 输入框能力对账（0.9.2，第三层对齐：不是 RPC 面，是输入框本身）
+
+背景：用户报三件事（都在**命令行 TUI** 上）—— ①在输入框按 Ctrl+C 复制后内容消失；②Ctrl+A 不能全选；③Ctrl+X 不能剪切。加上背景需求：截图后 Ctrl+V 应能把文件路径粘进输入框。
+
+实测（pi 1.5.2，本机）：
+
+- pi-tui 的 `Editor` **没有选区模型** —— `keybindings.js` 里 `tui.input.copy`（ctrl+c）在 `editor.js:597` 直接 `return` 交回上层，pi 的 `CustomEditor` 再交给 `app.clear` → `handleCtrlC()`（`interactive-mode.js:3595-3603`）→ **清空输入框**；`tui.editor.cursorLineStart` 的默认键是 `["home", "ctrl+a"]`，所以 Ctrl+A 是「移到行首」；`ctrl+x` 全表无绑定。
+- Windows 的 `getNativeClipboard()` 只导出 `getText / setText / getImage / enableVirtualTerminalInput / isModifierPressed` —— **没有 `getFilePaths`**（macOS 的实现里才有）。所以资源管理器里复制一个文件后 Ctrl+V：`readClipboardFilePaths()` → null、`readClipboardImage()` → null（CF_HDROP 不是位图）、`readClipboardText()` → null → **三档全空，什么都没发生**。
+
+处置：**不改 pi 的任何文件、不打补丁**（用户 2026-11-17 明确禁用打补丁路线），改走 pi 官方扩展点 `ctx.ui.setEditorComponent()`（官方示例 `examples/extensions/modal-editor.ts` 同款）—— 本仓库新增 `extensions/superpi-editor.ts`：
+
+| 键位 | 面板（浏览器 textarea） | 命令行 TUI（`extensions/superpi-editor.ts`） | 门禁用例 |
+| --- | --- | --- | --- |
+| Ctrl+A 全选 | 原生 | 已实现（覆盖 `cursorLineStart`；Home 仍是行首） | `test/tui-editor.mjs`：Ctrl+A 后光标在行尾 + 锚点在行首 + 不改内容 / Home 仍到行首 |
+| Shift+←/→/↑/↓、Shift+Home/End 扩选 | 原生 | 已实现（`matchesKey` 直接认 `\x1b[1;2<字母>`） | 同上：锚点留起点、光标推到目标列、反向选区归一化 |
+| Ctrl+C 复制 | 原生（浏览器负责，不清内容） | 已实现：有选区复制选区、无选区复制全文，**都不清空** | 同上：`Ctrl+C 之后内容仍在（bug 回归）` / 只复制选中部分 |
+| Ctrl+X 剪切 | 原生 | 已实现：有选区剪切选区、无选区剪切全文 | 同上：两条 Ctrl+X 用例 |
+| Backspace / Delete 删选区 | 原生 | 已实现 | 同上：两条 |
+| 可打印字符 / 粘贴替换选区 | 原生 | 已实现 | 同上：输入 `X` 替换、`\x1b[200~` 括号内粘贴替换 |
+| Ctrl+V 粘贴**剪贴板文件**的路径 | 原生（0.6.0 起走 `window.__DSH_HOST_PATHS__.pathFor`） | 已实现：有文本→交回 pi、有位图→交回 pi、都没有→读 Windows `CF_HDROP`（PowerShell `GetFileDropList`，异步不阻塞）插入绝对路径 | 同上：`decodeListing` 四条 + 安装面 |
+| 空编辑器 Ctrl+C（两次退出） | 不适用 | **刻意放行**给 pi：`app.clear` 仍工作，取消中断仍是 Esc | 同上：`空编辑器 Ctrl+C 不抛错` |
+| Esc 清选区但不吞键 | 不适用 | 已实现：清选区后把键交回 pi（中断/取消补全照旧） | 同上：`Esc 不被扩展消费（pi 仍能中断）` |
+| 鼠标拖选复制 | 原生 | pi 自带（全屏模式 `fullscreenCopyOnSelect`，松手即复制并闪 `Copied!`）；本扩展在点击时清掉键盘选区，避免两套选区打架 | 同上：渲染反色开合成对 + 行数不变 |
+
+安装与回滚（都是 pi 官方路径，不碰 `node_modules`）：
+
+```powershell
+npm run pi:editor          # 装到 <piAgentDir>/extensions/superpi-editor.ts（幂等）
+npm run pi:editor:status    # 只读：源/目标/是否一致/pi 版本
+npm run pi:editor:remove    # 卸载，pi 下次启动恢复原始输入框
+```
+
+生效方式：重启 pi 会话窗口，或在 pi 里 `/reload`。一键启动（`tools/launch-both.ps1`）会在起 TUI 前自动装一次（`-NoEditorExtension` 可关，装失败只 WARN 不阻断 TUI）。
+
+**已知边界（不是缺口，是刻意不做）**：①鼠标拖选复用 pi 自带的实现，本扩展只负责键盘选区 —— 不重写渲染层；②不接管 Ctrl+V 的文本/图片分支（交回 pi 原生 `handleClipboardPaste`），只在它读不到文件时补一刀；③不伪造 pi 没有的能力（无 vim 模式、无多光标）。
+
+---
+
 ## 6. 变更记录
 
 | 日期 | 版本 | 变更 |
@@ -283,4 +324,5 @@ payload 取值优先级 `cancelled` → `confirmed` → `value`（`index.js:1093
 | 2026-11-15 | 0.8.0 | **面板偏好落盘层（host 侧）+ 过程流排版收口**（0.8.0）。①新增 `src/ui-prefs.mjs`（403 行）：落盘在 `~/.superpi/ui-prefs.json`（可用 `SUPERPI_UI_PREFS` 覆盖），原子写（同目录 `.tmp-*` + rename，`renameWithRetry` `:228` 只对 EPERM/EBUSY/EACCES 退避）、写入串行化（队列 `:263`，一次 400 不把后续请求卡死）、读盘坏 JSON 回空结构（`:272-287`）、`setSession` 是**合并语义**（`:321`，`pinned` 与 `name` 是两个独立偏好，`undefined` 表示别动）；校验上限：项目名/会话名 120 字、会话路径 4096 字。②host 三条路由 `GET /ui-prefs`（`index.js:960`）、`POST /ui-prefs/project`（`:964`）、`POST /ui-prefs/session`（`:969`），都返回**全量结构**；store 未注入时回 501 而非静默 200。③过程流排版按参考图收口：父行是 24px 行盒（`.superpi-proc-head` / `.superpi-tool-head`，`client.js:564`），子行容器 `.superpi-sub` 用 `gap:8px`（`client.js:592`）⇒ 子行步长 **32 = 24 + 8**，父子同节奏；注释 `client.js:589` 逐字「组内 gap 与 body 一样是 8、行盒沿用父行的 24 ⇒ 子行步长 32，与父行完全同节奏」。「子行 16px 行盒 + gap 0 / 32:16」是被推翻的中间态（注释 `client.js:591` 逐字「早先子行压到 16px 行盒 + gap 0，行距只剩父行一半，看着像被挤扁」）；注释 `:555-561` 另有「父→父 40、父→首个子行 40、子→子 40、子行组→下一父行 44」的实测节奏。圆点是 `.superpi-sep`（`client.js:575`，`width:2px;height:2px;margin:0 11px`，行内三段间距统一 11）。④项目行与会话行补 `title=`（时间 + cwd/path，`client.js:3429` / `:3487`）；会话标题优先级 `renamed → piName → headline → lastMessage → sessionFallbackTitle`（`:3459-3460`），仍回落 `lastMessage`（`:3486`）。⑤门禁 `host-parity` 204→263：3.12 面板偏好十条（`test/host-parity.mjs:605`）+ 3.13 会话条目合并语义八条（`:727`）。**计数口径提示**：`263` 是本行写入时的值，定稿前该文件又有追加，当前 `node test/host-parity.mjs` 实测 `PASS (276 checks)` —— 当前态一律以第 29 / 33 行的 276 为准。**面板侧本轮已接线，与 host 能力面对齐** —— `api.uiPrefs` / `api.setProjectPref` / `api.setSessionPref`（`client.js:1000` / `:1001-1003` / `:1005-1007`）由 `SessionsSheet` 消费，i18n 词条 `renameProject` `ZH:249` / `renameSession` `:250` / `pinSession` `:251` / `unpinSession` `:252`。（行号为 0.8.0 落地当时的坐标，非当前坐标） |
 | 2026-11-16 | 0.8.1 | **弹层交互与顶栏标题**（0.8.1）。三处一起改，都不新增界面。①四个居中弹窗统一成**真模态** —— 点遮罩即关闭，判定式只留一份 `maskHandler(onClose)`（`client.js:3121-3125`，判 `event.target === event.currentTarget`，内层不吞事件、不 `stopPropagation`）：`Dialog`（`:3148-3156`）、`ConfirmDialog`（`:3190-3202`，点遮罩 = **取消**而不是确认）、选择工作区 `DirSheet`（`:3810-4108`，遮罩用法在 `:4097`）、扩展 UI `ExtensionDialog`（`:4286-4366`，遮罩在 `:4357` 回 `{id, cancelled:true}`，与右上角关闭键同一条路径），并补上原先缺的 `aria-modal`。②`MoreMenu`（`:3205-3249`；顶栏 `⋯` 与历史会话行内 `⋯` 共用）补「点外部关闭」：`isOutsideMenu(node, anchor, target)`（`:3133-3138`）**同时放行菜单自身与触发按钮** —— 少了后半条，同一次点击里 `mousedown` 先关、`click` 又开，表现为「怎么点都关不掉」；顶栏传 `moreRef`（`:4735`）、行内传 `rowMenuAnchor`（`SessionsList` 内 `:3442`，同一时刻只允许一个行内菜单）。③顶栏左上的 `SuperPi` 换成**当前项目标题**（`:5733`）：host 侧新增 `withProjectIdentity(snapshot, projectCwd)`（`index.js:448-455`，`displayPath` `:452` = `shortenHomePath` 把家目录缩成 `~`、`projectKey` `:453` = `pathComparisonKey`）与 `snapshotOf(proc, options)`（`index.js:461-463`），在每份会话快照上补这两个字段，四处调用点 `index.js:672` / `1016` / `1031` / `1035`；客户端 `projectTitleOf(prefs, meta)`（`client.js:3391-3400`）按「面板里改过的项目名 → `displayPath` → 原始路径」取值，全空才回落 `t('panelTitle')`。路径缩短与大小写归一的唯一真相留在 host，浏览器侧不复制这套逻辑。`RuntimeGate`（`:4508-4553`，启动期没有会话）保留品牌名。面板偏好同时从 `SessionsSheet` 上提到 `PiPanel`（`prefsState` `:4676`、`applyPrefs` `:4680`、挂载时 `api.uiPrefs()` `:5047`），顶栏与历史会话列表读同一份 `prefs`。门禁：`client-render` 797→**831**（弹窗遮罩与菜单外部点击的纯函数断言、四个弹窗的 SSR 两层结构、`projectTitleOf` 八条）、`host-parity` 276→**291**（`withProjectIdentity` 9 条 + 会话快照带 `displayPath`/`projectKey` 6 条），`css-tokens` 98 不变。基线：`client.js` 6275 行 / 347871 B / sha256 前 12 位 `570B9EF4B9B0`，`index.js` 1624 行 / 76621 B / sha256 前 12 位 `DDD7C5CD828C`。（行号为 0.8.1 落地当时的坐标，非当前坐标） |
 | 2026-11-17 | 0.9.1 | **发布链路 + 线上同步（不是 pi 能力变更，两端矩阵一行未改）**。①仓库推到 <https://github.com/lwaaron/superpi>（private，`origin` / `master`，19 个 tag 一并上传）。②新增 `tools/github-sync.mjs`：`ls-remote` 比对 → `git push HEAD:refs/heads/<branch>` → 补 `git push --tags`；失败按 stderr 分 `auth` / `rejected` / `offline` / `failed` 四类，退出码 0 已同步 · 2 离线待补推 · 3 要人处理 · 1 其它，`.git/superpi-sync.lock` 防并发、`.git/superpi-sync.log` 留痕，**绝不 force**。③`tools/git-hooks/post-commit` + `npm run hooks`：每次 commit 后台试推一次（`&` 分离、`exit 0`），离线时提交照旧落地、下次 `npm run sync` 补推 —— 即用户要求的「连不上网就先提交本地」。④新增 `test/github-sync.mjs` 82 条并进 `npm test`（11 项 → 12 项，耗时 ~15 s → ~20.5 s）：临时裸仓库当真远端、`127.0.0.1:1` 拒连当断网、另一个 clone 当分叉方，全程不联网。⑤`.gitattributes` 钉死 `*.ps1` LF / `*.bat` CRLF：否则 `core.autocrlf=true` 的机器克隆后 `test/restart-lib.mjs` 的「无游离 CR」断言必红。⑥**`package.json.files` 仍不含 `tools/`**：同步工具是开发期工具，不进插件运行时；`index.js` / `client.js` / `src/*` 一行未动，`CONTRACT_VERSION` 仅随版本号同步。**0.8.2–0.9.0 未在本表登记**：那四个版本只动 `tools/`（一键启动、双前端）与改名 `superpi`，两端能力面无变化（矩阵条目与计数仍是 33 / 25 / 27 / 9，`test/parity.mjs` 全部照旧通过）。 |
+| 2026-11-17 | 0.9.2 | **输入框能力对账（第三层：不是 RPC 面，是 TUI 的输入框本身）**。用户报三件事，全在命令行 TUI 上：Ctrl+C 复制后内容消失、Ctrl+A 不能全选、Ctrl+X 不能剪切；外加「截图/复制文件后 Ctrl+V 应粘出路径」。实测根因两条：①pi-tui 的 `Editor` **没有选区模型** —— `tui.input.copy`（ctrl+c）在 `editor.js:597` 直接 `return` 交回上层，pi 的 `CustomEditor` 再交给 `app.clear` → `handleCtrlC()`（`interactive-mode.js:3595-3603`）清空输入框；`tui.editor.cursorLineStart` 默认键是 `["home","ctrl+a"]`，所以 Ctrl+A 是「移到行首」；`ctrl+x` 全表无绑定。②Windows 的 `getNativeClipboard()` 只导出 `getText/setText/getImage/enableVirtualTerminalInput/isModifierPressed`，**没有 `getFilePaths`**（只有 macOS 有），故资源管理器复制文件后 Ctrl+V 三档全空（filePaths/image/text 都是 null）。**处置路线（关键）**：先按「给 node_modules 里打包好的 chunk 打补丁」做过一版（wrap `Editor.prototype.handleInput` / 替换 `readClipboardFilePaths` 函数体 + 幂等标记 + `--apply/--revert/--status`），**用户 2026-11-17 明确禁用打补丁，已全部回退删除**（pi 运行时从未被修改，已用 `--status` 核验「未应用」）。最终走 **pi 官方扩展点**：新增 `extensions/superpi-editor.ts`（`class SuperPiEditor extends CustomEditor` + `ctx.ui.setEditorComponent()`，官方示例 `examples/extensions/modal-editor.ts` 同款），不改 pi 任何文件、不碰 `node_modules`。能力：Ctrl+A 全选、Shift+方向/Home/End 扩选、Ctrl+C 复制（有选区复制选区、无选区复制全文，**都不清空**）、Ctrl+X 剪切、Backspace/Delete 删选区、可打印字符与括号内粘贴替换选区、Ctrl+V 在「无文本且无位图」时读 Windows `CF_HDROP`（PowerShell `GetFileDropList`，异步、1.5 s 超时、base64 防中文乱码）插入绝对路径；空编辑器 Ctrl+C 刻意放行以保住 pi 的两次退出；Esc 只清选区不吞键。另外 pi 在 `setEditorComponent` 时会自动接回 `onSubmit`/`onChange`/`borderColor`/`paddingX` 与**全部 `actionHandlers`**（`interactive-mode.js:2336-2385`），所以扩展不重写 app 键位。安装面：新增 `tools/install-pi-extension.mjs`（`--install/--remove/--status`，落到 `<piAgentDir>/extensions/`，`PI_CONFIG_DIR` 跟随，`files` 里的 `extensions` 随 tarball 发布），`package.json` 加 `pi:editor` / `pi:editor:status` / `pi:editor:remove` 三个脚本，`tools/launch-both.ps1` 起 TUI 前自动装一次（`-NoEditorExtension` 可关，失败只 WARN）。门禁：新增 `test/tui-editor.mjs` **66 checks** 并进 `npm test`（12 项 → **13 项**）—— **用 jiti 加载真 `.ts` 扩展 + pi 真的 `CustomEditor` + 真终端按键序列**(像 `\x1b[1;2C` 这类序列) 做断言，而不是影子实现；最后一组用**pi 自己的扩展加载器**（`core/extensions/loader.js` 的 `discoverAndLoadExtensions`）把装到临时 `agentDir` 的扩展真加载一遍，断言「无 error」—— 这一步才是「装完 pi 真的能认」的机器保证。账本新增 `## 5.1 输入框能力对账`（11 行键位 × 面板/TUI/门禁三列）。**RPC 矩阵、事件表、TUI 斜杠表一行未改**（33 / 25 / 27 / 9 不变）。 |
 | — | — | 修改本文档时必须同时改：受影响行的「面板端状态」、`## 1/3/4` 末尾的统计数字、以及 `## 6` 的一行。统计数字算错会让「零缺口」变成一句空话。 |
