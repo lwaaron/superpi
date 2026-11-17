@@ -232,10 +232,10 @@ New-Item -ItemType Junction `
 ### 方式三：手工 pnpm add（不想跑脚本时）
 
 ```powershell
-npm pack                                        # 得到 superpi-0.10.0.tgz
+npm pack                                        # 得到 superpi-0.11.0.tgz
 cd "$env:USERPROFILE\.dsh\profiles\desktop"
 node "$env:USERPROFILE\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\pnpm\bin\pnpm.cjs" `
-  add "file:C:\path\to\superpi-0.10.0.tgz" --ignore-scripts
+  add "file:C:\path\to\superpi-0.11.0.tgz" --ignore-scripts
 ```
 
 不要在 profile 里用 `npm install`：npm 会另写一份 `package-lock.json`，而宿主插件管理器用的是 pnpm，两套锁文件互相看不见，下次插件安装就会把 node_modules 重建成 pnpm 理解的样子。
@@ -403,6 +403,7 @@ npm install --prefix <插件>/.runtime --save-exact --no-audit --no-fund --logle
   「最高优先级」是机制不是口号：①规则塞进 pi 的自定义 section，而 pi 组装提示时自定义 section **排在最后**（`preamble → tools → rules → docs → … → cwd → 自定义`），也就是整份提示的末尾；②块首显式声明「优先级最高、覆盖上文与项目说明、冲突以本段为准」，才能压过 `<project_context>` 里 `AGENTS.md` 那些指令；③规则被清空时返回 `undefined`，pi 收到的提示与「没装这个扩展」逐字相同 —— 空规则必须是零痕迹。
   两端同一份文件：面板走 host 的 `/api/superpi/rules` 三条路由（浏览器没有 fs），命令行走 `extensions/superpi-rules.ts` 的 `before_agent_start` 每轮读 `<home>/.superpi/rules.json`（mtime+size 缓存，改完下一轮就生效）与 `/superpi-rules` 命令（看级别与字数 / 编辑 / 恢复默认 / 只显示全文）；settings 菜单里也加了 `rules` 一条（标 `source:'superpi'`，与 pi 自带的四条分开 —— 冒充 pi 命令会让「点了没反应」变成假话）。两侧共用 `extensions/superpi-rules.mjs` 这一份模型，安装器一次把三个文件同步进 `<piAgentDir>/extensions/`（少装 `.mjs` 会让 `.ts` 报模块找不到、规则整个不生效）。
   **刻意不写 `SYSTEM.md`**（那会**替换**掉 pi 的整套默认提示：工具说明、docs 路径、技能列表全没，等于让系统退化两个维度），**也不写 `APPEND_SYSTEM.md`**（静态文件，面板改完要重启会话才生效，且面板没有读原文的通道）。`rules.json` 坏掉时一律回落默认文案 + 告警（保存一次即修好），绝不让设置页打不开、也绝不让 pi 的一轮对话失败。设计、状态矩阵与端到端验收清单见 `docs/rules.md`。
+- **技能与「卡住」的分诊（0.11.0）**：新增两个 pi 技能（`skills/`），装到 `~/.agents/skills/`，pi 启动自动发现、也可 `/skill:name` 强制加载；常驻上下文只有描述段 **1442 字符（约 361 token）**，正文按需读取。①`verified-delivery`：交活前必须跑「识别命令 → 执行 → 读输出 → 比对 → 才敢说完成」，测试必须**先看见失败**再让它通过，并用**变异杀伤率**度量"这层门禁是不是空的"（本仓库实测基线：12 个变异体、10 个有效、9 个被杀 = **90%**，唯一存活的那个是真缺口 —— store 的校验挡住了命令层预检查，断言该写具体文案而不是"有 error 即可"）。它还把「卡住」本身做成了分诊表：同一命令重跑两次仍未变 = 在重跑不在诊断；「刚写的文件不存在」= 两个同名目录（`/tmp` 在 bash 是 `%LOCALAPPDATA%\Temp`、在 node/python 是 `D:\\tmp`，实测）；「一行编辑后语法坏了」= 编辑工具吃掉了转义（heredoc 里 `^---\n` 变成真换行）；「编译过但测试说符号未定义」= 作用域，只有跑门禁才看得见；同一处修 3 次 = 模型错了不是补丁错了。②`change-scope`：动手前先写清「必须做什么 / 不能改什么 / 假设了什么 / 哪里有歧义」，每个改动行都要能追溯到请求的某一句话（`git diff` 逐行走查），"顺手改"一律回退另开一步。**这两个技能的内容来自对两个公开仓库的研究（andrej-karpathy-skills 的四原则 / obra/superpowers 的 TDD+验证必达），经过实测筛选：只有能被本仓库证据支撑的部分才写进来**，并且每条都配了对应的机械约束（见 `AGENTS.md` §5 新增的三条：`/tmp` 三义、heredoc 吃反斜杠、改完立刻 `node --check`）。
 - **修「`/reload` 之后没变化」（0.9.8）**：pi 通过 `getEditorTheme()` 交给编辑器的 theme **只有 `borderColor` 与 `selectList`，没有 `fg`**；0.9.4 起为了取「与模型名一致」的颜色调了 `this.theme.fg('dim', …)`，直接抛错，而 `render()` 的兜底是「返回没套框的原始行」—— 于是 0.9.4~0.9.7 的外观改动**全部静默失效**，门禁因为假 theme 带了 `fg` 也没发现。现在：取色次序 = `theme.fg` → 注入的 `hooks.dim`（来自 `ctx.ui.theme.fg('dim', …)`）→ 原样文本；兜底改成 `plainFrame()`（只有框线与 Working，不依赖取色），**任何情况下都不会变成无框原始行**。门禁换用 pi 的真实 theme 形状，并专测「没有 `fg` 时框仍然在」。
 
 ## 自检：现在跑的是不是磁盘上那份代码
@@ -455,6 +456,7 @@ pwsh -NoProfile -File .\tools\standalone-verify.ps1   # 全新 DSH_HOME 里只�
 | `test/fixtures/pi-ext-ui-probe.ts` | 扩展 UI 探针（人工验证用，不参与 `npm test`）：复制到 `%USERPROFILE%\.pi\agent\extensions\` 并重启 pi 会话后，`/dsh-ui-probe` 依次弹 select→confirm→input→editor，`/dsh-ui-notify` 验五个单向方法。**扩展对话框必须真人点，自动化只能测到 host 侧的时序**，所以探针留在仓库里当复现手段 |
 | `test/client-render.mjs` | `react-dom/server` 把面板渲染成字符串（含键集与循环展开共执行 831 次，条数由脚本自报 `PASS (831 assertions)`）：挡组件异常、文案缺键、中英键集不一致、引导页结构、以及扩展 UI 四种弹窗（confirm 的「否/确认」按钮集、select 的选项数、input 的 prefill/placeholder、editor 的多行回填、空 title 回落、`dialogBudgetMs` 的「声明值与 5 分钟上限取小」四类非法值回落）。**倒计时的「还剩 Ns」文案断言不到**——那行由 `useEffect` 驱动，SSR 阶段 `left` 为 `null` 不渲染，只能在真浏览器里验 |
 | `test/css-tokens.mjs` | CSS 门禁 98 条：禁硬色值（只准 `--dsw-*`）、令牌白名单、字体栈、`:focus-visible` 可见性、`prefers-reduced-motion` 兜底，另有 0 号自检确认门禁本身不是空跑 |
+| `test/tui-editor.mjs`（技能段） | `skills/` 的契约 36 条（0.11.0）：目录只能有 `verified-delivery` / `change-scope` 两个、安装器 `SKILL_NAMES` 与目录一致、每个 `SKILL.md` 的 frontmatter `name` 必须等于目录名（否则 pi 的发现名与路径对不上）、`description` 以 `Use when`/`Use before` 开头且足够长、正文含核心原则与自我合理化对照表、不含硬编码本机路径；安装面装出到 `~/.agents/skills/`、装出的内容与源**逐字节一致**、卸载后不留残留（`remove()` 也要清 skill，否则「卸了还在生效」是最难排查的残留）|
 | `test/restart-lib.mjs` | 重启脚本门禁：22 条 node 断言（文件层：UTF-8 BOM、无游离 CR、库模式开关、去注释后无裸 `Start-Process -FilePath $exe`、走 `ProcessStartInfo`、有自保护）+ `test/fixtures/restart-lib-checks.ps1` 的 31 条 PS 断言（`Get-LaunchSpec` 四种输入、`Get-DshHomeFromRoot` 五种、`Get-EnvPatch` 六种、`Get-LaunchRootPid`/`Test-SelfAncestorOf` 对活进程、`Test-DshPiHealth` 对五种假响应与死端口）。**pwsh 7 与 PowerShell 5.1 各跑一遍**，是「5.1 能不能读这个脚本」的唯一机器保障 |
 | `test/version.mjs` | 版本号单一真相：`/health`、`/state`、`/diagnostics` 报的版本必须等于 `package.json` 的 `version`；换版本重新加载要跟着变（防写死常量）；`package.json` 缺失时降级 `0.0.0` 而不是崩；README 里的 tarball 名必须跟版本对齐 |
 | `test/session-projects.mjs` | 两级历史列表 55 条：`pathComparisonKey` 大小写归一、`isTemporaryPath` 三条正则逐条对齐 pi（`/tmp`、`appdata/local/temp`、`pi-runtime-*`）、`shortenHomePath` 的 `~` 缩写边界、`groupSessionsByProject` 的「当前项目 → 非临时 → 最近活动降序」与大小写合并、`listAllSessions`/`listSessions` 的「全部项目 vs 单项目」两种语义、`readSessionCwd` 只读 64KB 头行且首行非杂项时返回空、`firstRunningSessionFile` 的「跨项目也算当前会话」与活/死优先级。造一棵符合 pi 目录约定的假 `sessions/` 树来跑，不碰真会话 |

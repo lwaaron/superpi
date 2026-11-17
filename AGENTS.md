@@ -47,6 +47,24 @@ DSH（DeepSeek Runtime）插件：把 pi 编码 agent 装进 DSH 的侧栏面板
 8. **推线上**：`npm run sync`（有网）/ 只提交本地（无网，退出码 2）。发布一个新版本时顺手 `git tag -a v<version>` —— tag 由同一条 push 带上去。
 
 ## 5. 禁止项
+<!-- RULE-TMP-PATH -->
+- **禁止用 `/tmp` 在工具之间传文件。** `/tmp` 不是一个目录，是**三个**：bash 里它是
+  `C:/Users/<me>/AppData/Local/Temp`，node 与 python 里它是 `D:/tmp`（实测，2026-11-18）。
+  跨工具读写时路径必然对不上，而症状是「文件明明刚写过却不存在」—— 排查方向会被引到
+  「写入失败」上，实际是「两个不同的 /tmp」。一次性产物一律落 `_scratch/`（仓库内、
+  已被 `.gitignore` 忽略），用完删掉；跨工具传路径时**只用同一个绝对路径字符串**。
+
+- **禁止用 heredoc / `sed -i` / python 三引号往代码里写含反斜杠的内容**（正则、`\n`、
+  Windows 路径）。多层 shell 转义会吃掉一层：实测 `^---\n` 会变成真正的换行、
+  `[\s\S]` 会变成 `[sS]`，文件语法直接坏掉，而 `bash` 不报错 —— 只看得到
+  「Unexpected token」。含反斜杠的内容一律用 `write` 工具落成文件，或写成
+  `String.fromCharCode(92)` 拼装；**改完立刻 `node --check <file>`**（0.1 秒），
+  漏掉就是几十分钟的瞎猜。
+
+- **改完一个文件立刻用工具验语法，不要靠"我写过应该对"**：`node --check <file>` 对
+  `.js/.cjs/.mjs`，`jiti` 或门禁对 `.ts`。这一步是四十分钟与零秒的差别 —— 2026-11-18
+  一次 heredoc 事故就是这么烧掉的。
+
 
 - **禁止在 `tools/restart-dsh.ps1` 里用 `Start-Process -FilePath $exe` 重启**（0.4.2 之前的老实现）。桌面实例的启动命令行带 6 个参数，裸起等于换个东西启动。重启必须走 `Get-LaunchSpec` + `ProcessStartInfo`，参数一个字节都不重排。
 - **禁止给 pi 打补丁（2026-11-17 用户明确禁用）。** 不许改 `node_modules` 里 pi / pi-tui 的任何文件，不许 wrap 它们已打包 chunk 的原型方法，不许替换 bundle 里的函数体 —— 哪怕「可回滚 + 幂等标记 + 备份」也不行。要补能力只能走两条路：① pi 的**官方扩展点**（`pi.on()` / `registerTool` / `registerCommand` / `ctx.ui.setEditorComponent()` / `ctx.ui.custom()`，见 `docs/extensions.md`）；② `docs/parity.md` 记为显式缺口交上游。0.9.2 的教训：先做的补丁版（wrapper chunk）已全部删除回退，最终用 `extensions/superpi-editor.ts` 这个官方扩展实现同一能力。

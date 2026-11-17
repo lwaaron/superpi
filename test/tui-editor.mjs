@@ -1111,4 +1111,70 @@ const makeFooterData = () => ({
   eq(tuiModule.visibleWidth(padToWidth('abcdef', 4)), 4, 'padToWidth 超长时截断')
 }
 
+
+/* ────────────────────── 技能（skills/）与安装面 ────────────────────── */
+//
+// 两个 skill 是这一层的行为约定，最容易被下一个人顺手改坏而无人察觉：
+// 名字改了 pi 就发现不了；frontmatter 少了 description 就不加载；描述不以
+// "Use when" 开头，模型就不会在正确的时机想起它。所以逐条钉死。
+{
+  const skillsRoot = path.join(root, 'skills')
+  ok(fs.existsSync(skillsRoot), 'skills/ 目录存在')
+  const names = fs.readdirSync(skillsRoot).sort()
+  // 只允许这两个：多一个就要同时登记到安装器 SKILL_NAMES，否则装了不生效还不报错。
+  eq(names.join(','), 'change-scope,verified-delivery', 'skills/ 下只有这两个 skill')
+
+  // 这里要自己取：526 行那份是另一个块里的局部解构，块外看不见。
+  const { SKILL_NAMES, resolveUserSkillsDir, status, install, remove } = await import('../tools/install-pi-extension.mjs')
+  eq(SKILL_NAMES.slice().sort().join(','), names.join(','), '安装器 SKILL_NAMES 与 skills/ 目录一致')
+
+  const FRONTMATTER = /^---\r?\n([\s\S]*?)\r?\n---\r?\n/
+  for (const name of names) {
+    const file = path.join(skillsRoot, name, 'SKILL.md')
+    ok(fs.existsSync(file), name + ' 有 SKILL.md')
+    const text = fs.readFileSync(file, 'utf8')
+    const front = FRONTMATTER.exec(text)
+    ok(front !== null, name + ' 有 YAML frontmatter')
+    const body = front === null ? '' : front[1]
+    const declaredName = (/^name:[ \t]*(\S+)[ \t]*$/m.exec(body) ?? [])[1]
+    eq(declaredName, name, name + ' 的 frontmatter name 与目录名一致（否则 pi 的发现名与路径对不上）')
+    const desc = (/^description:[ \t]*(.+)$/m.exec(body) ?? [])[1] ?? ''
+    ok(desc.length > 80, name + ' 的 description 足够长（太短无法路由）')
+    ok(/^(Use when|Use before)/.test(desc), name + ' 的 description 以触发条件开头（Use when / Use before）')
+    // 正文必须能独立成立：有核心原则、有实质篇幅，不是标题集合
+    ok(/Core principle/.test(text), name + ' 写明核心原则')
+    ok(text.split('\n').length >= 80, name + ' 正文有实质内容（>= 80 行）')
+    // 防自我合理化表（writing-skills 里纪律类技能的必备形式）
+    ok(/rationalization|合理化/i.test(text), name + ' 含「自我合理化」对照表（纪律类技能的关键形式）')
+    ok(/^\|/m.test(text), name + ' 含表格（可快速对照，不用通读）')
+    // 不许写死本机路径（会随机器泄漏，也会在别的机器上指错地方）
+    ok(!/[A-Za-z]:\\Users[\\/]/.test(text), name + ' 不含硬编码本机绝对路径')
+  }
+
+  // 安装面：用户级目录不经过项目信任，所以装了就一定被 pi 加载。
+  const fakeHome = path.join(process.env.TEMP ?? '.', 'fake-home-' + process.pid)
+  const fakeExtDir = path.join(process.env.TEMP ?? '.', 'superpi-skill-test-' + process.pid)
+  eq(resolveUserSkillsDir({ USERPROFILE: fakeHome }).endsWith(path.join('.agents', 'skills')), true, '用户级 skill 目录在 <home>/.agents/skills')
+  const before = status({ dir: fakeExtDir, env: { USERPROFILE: fakeHome } })
+  eq(before.skills.length, 2, 'status() 报告两个 skill')
+  eq(before.skills.every(item => item.sourceExists), true, '两个 skill 源都在')
+  eq(before.complete, false, '未安装时 complete=false（skill 也计入完整度）')
+  const installedSkills = install({ dir: fakeExtDir, env: { USERPROFILE: fakeHome } })
+  eq(installedSkills.code, 0, 'install 成功（含 skill）')
+  for (const name of names) {
+    const target = path.join(fakeHome, '.agents', 'skills', name, 'SKILL.md')
+    ok(fs.existsSync(target), '装出 ' + name + '/SKILL.md')
+    eq(fs.readFileSync(target, 'utf8'), fs.readFileSync(path.join(skillsRoot, name, 'SKILL.md'), 'utf8'), name + ' 装出的内容与源逐字节一致')
+  }
+  eq(status({ dir: fakeExtDir, env: { USERPROFILE: fakeHome } }).complete, true, '装完 complete=true')
+  // 卸载要把 skill 一起清掉，否则「卸了还有」是最难排查的一种残留。
+  const removedSkills = remove({ dir: fakeExtDir, env: { USERPROFILE: fakeHome } })
+  eq(removedSkills.code, 0, 'remove 成功（含 skill）')
+  for (const name of names) {
+    ok(!fs.existsSync(path.join(fakeHome, '.agents', 'skills', name, 'SKILL.md')), '卸载后 ' + name + ' 的 SKILL.md 消失')
+  }
+  fs.rmSync(fakeHome, { recursive: true, force: true })
+  fs.rmSync(fakeExtDir, { recursive: true, force: true })
+}
+
 console.log(`PASS (${checks} checks)`)

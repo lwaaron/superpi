@@ -46,6 +46,30 @@ export const EXTENSION_FILE_NAME = 'superpi-editor.ts'
 export const RULES_EXTENSION_FILE_NAME = 'superpi-rules.ts'
 export const RULES_MODULE_FILE_NAME = 'superpi-rules.mjs'
 
+/**
+ * 需要同步的 skill 清单（0.10.0 起）。
+ *
+ * 为什么走**用户级** `~/.agents/skills` 而不是项目级 `<cwd>/.pi/skills`：
+ * pi 只在**项目被信任**时才加载项目级资源（`core/trust-manager.js` 的
+ * `hasTrustRequiringProjectResources`），而 trust.json 里没有本仓库的条目 ——
+ * 实测：项目级 skill 一个都不出现，模型只会列出用户级的那几个。用户级目录
+ * 不经过信任判定，所以「装了就一定生效」。
+ *
+ * 为什么是复制而不是符号链接：Windows 上创建符号链接需要开发者模式或管理员��
+ * 失败后 cp 会静默退化成复制 —— **一份源码两份字节**，改一处就会分叉。这里
+ * 显式复制并由 `status()` 逐文件比对，分叉会立刻显示「内容不一致，需要 --install」。
+ */
+export const SKILL_FILE_NAME = 'SKILL.md'
+
+/** 需要安装的 skill：`[skills/` 下的目录名]。 */
+export const SKILL_NAMES = ['verified-delivery', 'change-scope']
+
+/** 用户级 skill 目录：`~/.agents/skills`（pi 的 Agent Skills 兼容位置，恒被加载）。 */
+export function resolveUserSkillsDir(env = process.env) {
+  const home = env.USERPROFILE || env.HOME || os.homedir()
+  return path.join(home, '.agents', 'skills')
+}
+
 /** 需要同步的文件清单：`[源相对路径（相对仓库根）, 安装后的文件名]`。 */
 export const EXTENSION_FILES = [
   { label: 'editor', source: 'extensions/superpi-editor.ts', name: EXTENSION_FILE_NAME },
@@ -82,6 +106,15 @@ export function status(options = {}) {
     const same = fromExists && toExists && fs.readFileSync(from, 'utf8') === fs.readFileSync(to, 'utf8')
     return { label: entry.label, source: from, target: to, sourceExists: fromExists, targetExists: toExists, identical: same }
   })
+  const skillsDir = options.skillsDir ?? resolveUserSkillsDir(options.env ?? process.env)
+  const skills = SKILL_NAMES.map(name => {
+    const from = path.join(pluginRoot, 'skills', name, SKILL_FILE_NAME)
+    const to = path.join(skillsDir, name, SKILL_FILE_NAME)
+    const fromExists = fs.existsSync(from)
+    const toExists = fs.existsSync(to)
+    const same = fromExists && toExists && fs.readFileSync(from, 'utf8') === fs.readFileSync(to, 'utf8')
+    return { name, source: from, target: to, sourceExists: fromExists, targetExists: toExists, identical: same }
+  })
   return {
     dir,
     target,
@@ -90,8 +123,10 @@ export function status(options = {}) {
     targetExists,
     identical,
     files,
+    skillsDir,
+    skills,
     /** 三个文件全装且内容一致，才算「安装完整」—— 缺一个就会有一半功能不生效。 */
-    complete: files.every(file => file.targetExists && file.identical),
+    complete: files.every(file => file.targetExists && file.identical) && skills.every(skill => skill.targetExists && skill.identical),
     piVersion: pi.version ?? '',
     piFound: Boolean(pi.cliPath),
   }
@@ -108,6 +143,17 @@ export function install(options = {}) {
     }
     fs.copyFileSync(file.source, file.target)
   }
+  // skill 是纯文档（SKILL.md）：只复制内容，失败不阻断扩展安装 —— 扩展坏了比少一个 skill 严重。
+  const skillErrors = []
+  for (const skill of state.skills) {
+    if (skill.sourceExists !== true) { skillErrors.push(skill.name + ' 源缺失'); continue }
+    try {
+      fs.mkdirSync(path.dirname(skill.target), { recursive: true })
+      fs.copyFileSync(skill.source, skill.target)
+    } catch (error) {
+      skillErrors.push(skill.name + ': ' + String(error?.message ?? error))
+    }
+  }
   // 顺手把 pi 的品牌名改成 SuperPi（官方 piConfig 机制，幂等）。
   // 扩展只负责 TUI 输入框；TUI 里的「Welcome to pi」等文案归 piConfig 管，
   // 两件事都在“让命令行窗口看起来是 SuperPi”，所以装扩展时一起做。
@@ -118,6 +164,8 @@ export function install(options = {}) {
     target: state.target,
     brand,
     files: state.files.map(file => ({ label: file.label, target: file.target })),
+    skills: state.skills.map(skill => ({ name: skill.name, target: skill.target })),
+    skillErrors,
   }
 }
 
@@ -139,9 +187,10 @@ function brandRuntime() {
 
 export function remove(options = {}) {
   const state = status(options)
-  const present = state.files.filter(file => file.targetExists)
-  if (present.length === 0) return { code: 0, message: '未安装，无需卸载' }
-  for (const file of present) {
+  const presentFiles = state.files.filter(file => file.targetExists)
+  const presentSkills = state.skills.filter(skill => skill.targetExists)
+  if (presentFiles.length === 0 && presentSkills.length === 0) return { code: 0, message: '未安装，无需卸载' }
+  for (const file of presentFiles) {
     try { fs.unlinkSync(file.target) } catch { /* 已经不在了 */ }
     for (const suffix of ['.bak']) {
       const backup = file.target + suffix
@@ -150,17 +199,32 @@ export function remove(options = {}) {
       }
     }
   }
-  return { code: 0, message: '已卸载（pi 下次启动/`/reload` 后恢复原始输入框与系统提示）' }
+  // skill 也要一起卸：留下一个还在生效的 skill 是最难排查的残留
+  // （用户以为卸了，模型却仍在按它办事）。目录空了顺手收掉，别留空壳。
+  for (const skill of presentSkills) {
+    try { fs.unlinkSync(skill.target) } catch { /* 已经不在了 */ }
+    const dir = path.dirname(skill.target)
+    try { if (fs.readdirSync(dir).length === 0) fs.rmdirSync(dir) } catch { /* 目录已不在或非空 */ }
+  }
+  return { code: 0, message: '已卸载（pi 下次启动/`/reload` 后恢复原始输入框、系统提示与技能）' }
 }
 
 function report(state) {
-  const line = (label, value) => process.stdout.write(label.padEnd(14, ' ') + value + '\n')
+  // 14 是给 editor / rules 这类短标签的；skill:<name> 更长，按最长标签补，列才对得齐。
+  const width = Math.max(14, ...state.files.map(f => f.label.length), ...state.skills.map(k => ('skill:' + k.name).length)) + 2
+  const line = (label, value) => process.stdout.write(label.padEnd(width, ' ') + value + '\n')
   line('安装目录', state.dir)
   for (const file of state.files) {
     const statusText = file.sourceExists !== true
       ? `${file.source}  (源缺失!)`
       : (file.targetExists !== true ? '(未安装)' : (file.identical ? '已同步' : '内容不一致，需要 --install'))
     line(file.label, file.target + '  ' + statusText)
+  }
+  for (const skill of state.skills) {
+    const text = skill.sourceExists !== true
+      ? `${skill.source}  (源缺失!)`
+      : (skill.targetExists !== true ? '(未安装)' : (skill.identical ? '已同步' : '内容不一致，需要 --install'))
+    line('skill:' + skill.name, skill.target + '  ' + text)
   }
   line('pi 运行时', state.piFound ? `${state.piVersion || '(版本未知)'}` : '未找到（扩展仍然可装，pi 会自己找）')
   process.stdout.write('\n生效方式：重启 pi 会话窗口，或在 pi 里执行 /reload\n')
