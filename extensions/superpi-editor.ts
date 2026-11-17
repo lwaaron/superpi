@@ -1474,7 +1474,7 @@ function writeViaPowerShell(text: string): Promise<boolean> {
  *   - `• max` 那一段 → `/thinking`（pi 自己的推理档位选择器）
  * 鼠标移入时同样变亮 + 下划线（与输入框右下角的入口同一套反馈）。
  */
-export type FooterHitKind = 'project' | 'model' | 'thinking'
+export type FooterHitKind = 'project' | 'settings' | 'home' | 'model' | 'thinking'
 export type FooterHit = { kind: FooterHitKind; x: number; y: number; width: number }
 
 /**
@@ -1809,9 +1809,13 @@ export class SuperPiFooter {
     cursor += gap
     const pieces: string[] = []
     for (const action of EDITOR_ACTIONS) {
-      const label2 = action.label
-      pieces.push(hoverState.id === action.id ? hoverStyle(label2, (t, v) => this.fg(t, v)) : this.dim(label2))
-      cursor += widthOf(label2) + 2
+      const text = action.label
+      const actionWidth = widthOf(text)
+      // **必须登记命中区**，否则这两个入口只有悬停、没有点击
+      // （0.9.9 把这一行从编辑器搬到 footer 时漏了这一句 —— 用户实测点不动）。
+      this.hits.push({ kind: action.id as 'settings' | 'home', x: cursor, y, width: actionWidth })
+      pieces.push(hoverState.id === action.id ? hoverStyle(text, (t, v) => this.fg(t, v)) : this.dim(text))
+      cursor += actionWidth + 2
     }
     row += pieces.join('  ')
     return padToWidth(row, width)

@@ -753,6 +753,70 @@ const makeFooterData = () => ({
   eq(emitted.at(-1), 'thinking', '点 max → /thinking（用户第三条要求）')
 }
 
+// ④d2 回归：settings / home 必须在**第一行**上有命中区（0.9.9 漏登记 → 用户点不动）
+{
+  const emitted = []
+  const footer = new SuperPiFooter({ requestRender() {} }, { fg: (t, x) => x }, makeFooterData(), {
+    ctx: { ...makeExtCtx(), onFooterAction: kind => emitted.push(kind) },
+  })
+  const rows = footer.render(96)
+  const clickOn = (needle, rowIndex) => {
+    const at = stripAnsi(rows[rowIndex]).indexOf(needle)
+    ok(at >= 0, `第 ${rowIndex} 行里有 ${needle}`)
+    // 点这个词的**第一个字符**，模拟用户真的点在文字上
+    const result = footer.handleMouse({ type: 'click', button: 'left', x: at, y: rowIndex })
+    ok(result && result.handled, `点 ${needle} 必须被 footer 消费`)
+    return at
+  }
+  clickOn('settings', 0)
+  eq(emitted.at(-1), 'settings', '点 settings → settings（回归：0.9.9 这里漏了 hits.push）')
+  clickOn('home', 0)
+  eq(emitted.at(-1), 'home', '点 home → home')
+  // 点每个词的**最后一个字符**也要中（命中区宽度算错就会漏）
+  const plain = stripAnsi(rows[0])
+  const homeEnd = plain.indexOf('home') + 'home'.length - 1
+  footer.handleMouse({ type: 'click', button: 'left', x: homeEnd, y: 0 })
+  eq(emitted.at(-1), 'home', 'home 的最后一个字符也在命中区内')
+  const setEnd = plain.indexOf('settings') + 'settings'.length - 1
+  footer.handleMouse({ type: 'click', button: 'left', x: setEnd, y: 0 })
+  eq(emitted.at(-1), 'settings', 'settings 的最后一个字符也在命中区内')
+  // 两个词之间的空隙不该命中任何东西（否则会把相邻入口吞掉）
+  const gapX = plain.indexOf('settings') + 'settings'.length + 1
+  const before = emitted.length
+  const gapResult = footer.handleMouse({ type: 'click', button: 'left', x: gapX, y: 0 })
+  eq(emitted.length, before, '两个入口之间的空格不触发动作')
+  eq(gapResult, undefined, '空隙上返回 undefined，交回 pi')
+}
+
+// ④d3 不变式：**渲染里出现的入口，必须都有命中区**
+// 这条比逐条断言更抗回归 —— 以后再加/挪入口，只要画了却没登记 hits 就会红。
+{
+  const footer = new SuperPiFooter({ requestRender() {} }, { fg: (t, x) => x }, makeFooterData(), {
+    ctx: { ...makeExtCtx(), onFooterAction() {} },
+  })
+  const rows = footer.render(96)
+  const plainRows = rows.map(r => stripAnsi(r))
+  const expect = [
+    { text: 'settings', row: 0 },
+    { text: 'home', row: 0 },
+    { text: SWITCH_ICON, row: 0 },
+  ]
+  for (const item of expect) {
+    const at = plainRows[item.row].indexOf(item.text)
+    ok(at >= 0, `渲染里有 ${item.text}`)
+    const mid = at + Math.floor(item.text.length / 2)
+    const res = footer.handleMouse({ type: 'click', button: 'left', x: mid, y: item.row })
+    ok(res && res.handled, `${item.text} 画出来了就必须可点（命中区已登记）`)
+  }
+  // 模型名与档位在第二行，同样不能只画不登记
+  for (const text of ['Deepseek', 'max']) {
+    const at = plainRows[1].indexOf(text)
+    ok(at >= 0, `第二行有 ${text}`)
+    const res = footer.handleMouse({ type: 'click', button: 'left', x: at + 1, y: 1 })
+    ok(res && res.handled, `${text} 画出来了就必须可点`)
+  }
+}
+
 // ④e 悬停：移入变亮 + 下划线，移出复原（用户第四条要求）
 {
   const emitted = []
