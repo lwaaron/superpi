@@ -479,10 +479,17 @@ export class SuperPiEditor extends CustomEditor {
       phase === 'running' && runState.startedAt > 0
         ? ` · ${Math.max(0, Math.floor((Date.now() - runState.startedAt) / 1000))}s`
         : ''
-    const left = sgrFg(color) + statusIcon(phase) + ' Working' + elapsed + SGR_RESET
+    const label = ' Working' + elapsed
     const rightPlain = EDITOR_ACTIONS.map(action => action.label).join('  ')
+    const rightWidth = widthOf(rightPlain)
+    // 窄面板上依次退让：完整标签 → 只剩图标 → 只剩右侧入口。
+    // 两个入口不能退（它们是唯一入口），所以先砍左边。
+    let left = sgrFg(color) + statusIcon(phase) + label + SGR_RESET
+    if (widthOfVisible(left) + 1 + rightWidth > inner) {
+      left = sgrFg(color) + statusIcon(phase) + SGR_RESET
+    }
     const leftWidth = widthOfVisible(left)
-    const gap = Math.max(1, inner - leftWidth - widthOf(rightPlain))
+    const gap = Math.max(leftWidth + 1 + rightWidth <= inner ? 1 : 0, inner - leftWidth - rightWidth)
 
     // 记录可点区域（组件坐标：x 从 0 起，含左侧框线那一列，所以 +1）
     let x = leftWidth + gap
@@ -1078,7 +1085,9 @@ function applyWindowTitle(ctx: any): void {
         base = cwd.replace(/[\\/]+$/, '').split(/[\\/]/).pop() ?? ''
       }
     } catch { /* cwd 拿不到就只显示品牌名 */ }
-    ctx.ui.setTitle(base === '' ? WINDOW_TITLE : WINDOW_TITLE + ' - ' + base)
+    // 目录名与品牌同名（例如就在 SuperPi 仓库里）时不要拼成 "SuperPi - SuperPi"。
+    const sameAsBrand = base.toLowerCase() === WINDOW_TITLE.toLowerCase()
+    ctx.ui.setTitle(base === '' || sameAsBrand ? WINDOW_TITLE : WINDOW_TITLE + ' - ' + base)
   } catch (error) {
     // 终端不支持设置标题（或 API 变了）→ 静默跳过，绝不让 pi 起不来。
     void error

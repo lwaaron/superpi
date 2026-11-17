@@ -382,7 +382,8 @@ const anchorOf = editor => editor.selAnchor
   eq(factories.length, 2, '两个会话事件都装了编辑器工厂')
   eq(ctx.ui.workingVisible, false, '关掉 pi 内置 Working 行（改由本扩展渲染状态）')
   // 标题必须盖住上游默认的 "π"：TUI 下叫 SuperPi，形状对齐 pi 的 "${APP_TITLE} - ${cwd}"。
-  ok(titles.length > 0 && titles[0] === 'SuperPi - SuperPi', '窗口标题 = SuperPi - <cwd 目录名>，实际 ' + String(titles[0]))
+  // 目录名与品牌同名时不重复拼（避免 "SuperPi - SuperPi"）。
+  ok(titles.length > 0 && titles[0] === 'SuperPi', '窗口标题 = SuperPi（目录名与品牌同名时不重复），实际 ' + String(titles[0]))
   const tui = { renders: 0, terminal: { rows: 40, columns: 100 }, requestRender() { this.renders += 1 } }
   const built = factories[0](tui, theme, { matches: () => false })
   ok(built instanceof SuperPiEditor, '工厂返回 SuperPiEditor 实例')
@@ -622,6 +623,26 @@ const columnOf = (rows, y, needle) => stripAnsi(rows[y] ?? '').indexOf(needle)
     ok(piSource.includes(`text === "${item.command}"`), `pi 里仍然有 ${item.command}`)
   }
   ok(piSource.includes('text === "/new"'), 'pi 里仍然有 /new（home 的目标）')
+}
+
+// ⑧b 窄宽度 / 多行 / 中文 / 跨行选区下，框线仍然对齐
+{
+  const tricky = [
+    '短',
+    '一行很长的中文内容用来触发自动换行，看看框线会不会歪掉一二三四五六七八九十',
+    ['E:', 'xwechat_files', 'wxid', 'a.png'].join(String.fromCharCode(92)),
+    'third line with latin words that wrap around too',
+  ].join('\n')
+  for (const width of [24, 33, 40, 73, 120]) {
+    const { editor } = makeEditor(tricky)
+    editor.handleInput(KEY.ctrlA)
+    const rows = editor.render(width)
+    const widths = new Set(rows.map(row => tuiModule.visibleWidth(row)))
+    eq([...widths].join(','), String(width), `宽度 ${width}：所有行等宽（含中文/换行/选区）`)
+    ok(stripAnsi(rows[0]).startsWith('╭') && stripAnsi(rows.at(-1)).startsWith('╰'), `宽度 ${width}：首尾是框角`)
+    ok(stripAnsi(rows.at(-2)).includes('settings'), `宽度 ${width}：状态行仍在框内`)
+    ok(stripAnsi(rows.at(-2)).includes('home'), `宽度 ${width}：窄宽度下 home 也没被截掉`)
+  }
 }
 
 // ⑨ padToWidth 不会破坏框线对齐
