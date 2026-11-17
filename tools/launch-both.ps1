@@ -1,11 +1,11 @@
 ﻿<#
 .SYNOPSIS
-  一键启动：同时起「命令行编程会话窗口」(pi TUI) 与「DSH web 面板实例」。
+  一键启动：同时起「命令行编程会话窗口」(SuperPi TUI) 与「DSH web 面板实例」。
 
 .DESCRIPTION
   这两个是同一个 pi / 同一个 agent loop 的两个平级前端，形态不同、互不替代：
 
-    1) pi TUI —— 命令行编程会话窗口。必须在**真实控制台**里跑（非 TTY 下 pi 会静默退出），
+    1) SuperPi TUI —— 命令行编程会话窗口。必须在**真实控制台**里跑（非 TTY 下 pi 会静默退出），
        所以用 Windows Terminal 新开一个窗口，回落 conhost + cmd。
        这是「我要写代码」的入口。
     2) DSH web —— 浏览器/侧栏面板形态的实例，监听 25117。后台起，不占前台窗口。
@@ -16,7 +16,7 @@
   位置无关：pi 与 node 一律走 src/pi-runtime.mjs 的解析链，不硬编码任何本机路径。
 
 .PARAMETER WorkDir
-  pi TUI 的工作目录（也就是 agent 干活的项目根）。默认 = 本仓库根。
+  SuperPi TUI 的工作目录（也就是 agent 干活的项目根）。默认 = 本仓库根。
 
 .PARAMETER Resume
   pi 会话续接方式：auto（默认，--continue）/ pick（--resume 弹列表）/ new（--new）。
@@ -190,7 +190,7 @@ if ($NoTui) {
   $results.tui = 'failed'
   if ($reasons['tui'] -eq '') { $reasons['tui'] = 'pi 运行时未解析出来' }
 } else {
-  Step ('starting pi TUI in a new console, cwd = ' + $WorkDir)
+  Step ('starting SuperPi TUI in a new console, cwd = ' + $WorkDir)
 
   # 先把 superpi 的输入框扩展装进 pi（官方扩展，不改 pi 任何文件）。
   # 装在 <piAgentDir>/extensions/，pi 启动时自动加载；失败不阻断 TUI 启动 ——
