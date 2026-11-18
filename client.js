@@ -46,6 +46,12 @@ window.__ModuleLoader__.load({
       untitled: '未命名会话',
       messages: '条消息',
       retry: '重试',
+      viewImage: '查看图片',
+      toolLimit: '上限 {limit}',
+      toolOverLimit: '已超出上限 {limit}',
+      imageFailed: '这张图取不回来了（可能已超出缓存，滚动或重新打开会话再试）',
+      loadEarlier: '加载更早的消息',
+      messageTotal: '共 {n} 条',
       stop: '停止',
       send: '发送',
       queue: '排队',
@@ -307,6 +313,12 @@ window.__ModuleLoader__.load({
       untitled: 'Untitled session',
       messages: 'messages',
       retry: 'Retry',
+      viewImage: 'view image',
+      toolLimit: 'limit {limit}',
+      toolOverLimit: 'over limit {limit}',
+      imageFailed: 'Could not load this image (cache may have evicted it; reopen the session and retry)',
+      loadEarlier: 'Load earlier messages',
+      messageTotal: '{n} total',
       stop: 'Stop',
       send: 'Send',
       queue: 'Queue',
@@ -680,6 +692,8 @@ window.__ModuleLoader__.load({
       '.superpi-working{display:flex;align-items:center;gap:6px;margin-top:2px;padding-top:10px;border-top:.5px solid var(--dsw-alias-border-l3);color:var(--dsw-alias-label-deep-diving);font-size:calc(var(--dsh-content-font-size,14px) - 2px);line-height:calc(22px + var(--dsh-content-font-delta,0px))}',
       '.superpi-working-icon{flex:0 0 auto;display:inline-flex;width:14px;height:14px;animation:superpi-pulse 1.6s ease-in-out infinite}',
       '.superpi-working-text{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-variant-numeric:tabular-nums}',
+      // 当前工具段：与主文案同色但更弱，等宽数字避免秒数跳动时抖动。
+      '.superpi-working-tool{flex:0 1 auto;min-width:0;margin-left:8px;padding-left:8px;border-left:1px solid var(--dsw-alias-border-l3);color:var(--dsw-alias-label-tertiary);font-size:var(--dsw-font-xxxs-11-font-size);line-height:18px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--ds-font-family-code,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace);font-variant-numeric:tabular-nums}',
 
       // 状态标签 = DSH ._tag 的四种 tone（run/success/warning/danger）
       '.superpi-tag{display:inline-flex;align-items:center;height:17px;padding:1px 8px;border:0;border-radius:999px;corner-shape:round;background:var(--dsw-alias-bg-module-platform);color:var(--dsw-alias-label-secondary);font-size:var(--dsw-font-xxxs-11-font-size);line-height:var(--dsw-font-xxxs-11-line-height);font-weight:500;white-space:nowrap}',
@@ -690,6 +704,16 @@ window.__ModuleLoader__.load({
       '.superpi-usage{margin-top:2px;font-size:var(--dsw-font-xxxs-11-font-size);line-height:var(--dsw-font-xxxs-11-line-height);color:var(--dsw-alias-label-caption);font-variant-numeric:tabular-nums}',
       '.superpi-caret{display:inline-block;width:6px;height:14px;margin-left:2px;background:var(--dsw-alias-label-secondary);animation:superpi-pulse 1s steps(2) infinite;vertical-align:text-bottom}',
       '.superpi-img{max-width:min(100%,360px);max-height:240px;border:0;border-radius:var(--dsw-radius-md);cursor:zoom-in;display:block}',
+      // 历史图片占位卡（0.14.0）：不发 base64，点开才取真实像素。
+      // 外观刻意做成"可点的中性块"而不是缩略图轮廓 —— 免得用户以为图加载失败了。
+      '.superpi-imagestub{display:inline-flex;align-items:center;gap:6px;height:26px;margin:2px 0;padding:0 10px;border:.5px solid var(--dsw-alias-border-l3);border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-secondary);font-size:var(--dsw-font-xxxs-11-font-size);line-height:18px;cursor:pointer;transition:background-color .16s ease,color .16s ease}',
+      '.superpi-imagestub:hover{background:var(--dsw-alias-bg-module-platform);color:var(--dsw-alias-label-primary)}',
+      '.superpi-imagestub-icon{opacity:.72}',
+      // 「加载更早」入口：只在还有更早历史时出现，贴在列表顶部。
+      '.superpi-earlier{display:flex;justify-content:center;padding:10px 0 2px}',
+      '.superpi-earlier button{height:26px;padding:0 12px;border:.5px solid var(--dsw-alias-border-l3);border-radius:999px;background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-secondary);font-size:var(--dsw-font-xxxs-11-font-size);cursor:pointer}',
+      '.superpi-earlier button:hover{background:var(--dsw-alias-bg-module-platform);color:var(--dsw-alias-label-primary)}',
+      '.superpi-earlier button[disabled]{opacity:.55;cursor:default}',
       '.superpi-img-open{position:fixed;inset:0;z-index:60;background:var(--dsw-alias-bg-mask-photo);display:flex;align-items:center;justify-content:center;padding:40px;cursor:zoom-out}',
       '.superpi-img-open img{max-width:100%;max-height:100%;border-radius:var(--dsw-radius-md)}',
       // 结论里的文件 = 可点标签（用户 m22969：过程里生成的文件要点得开）。
@@ -1162,6 +1186,11 @@ window.__ModuleLoader__.load({
      * 把 pi 的 content block 转成面板内部形状。
      * image 保留原始 base64（走 <img src="data:...">），绝不能降级成文字占位——
      * 命令行的 pi 会把图片交给模型看，面板把图丢了就是能力缺失。
+     *
+     * 0.14.0 新增 `image-stub`：分页接口不传 base64（历史里 88.2% 的体积都是它），
+     * 只给 `{ id, mimeType, bytes }`。面板**不是把图丢掉**，而是渲染一张
+     * 「N KB · 点击查看」的占位卡，点开时才走 `/images/:id` 取回真实像素 ——
+     * 能力等价，代价从「打开会话就传 48.6MB」降到「看哪张取哪张」。
      */
     function normalizeBlock(block) {
       if (block === null || typeof block !== 'object') return null
@@ -1177,6 +1206,15 @@ window.__ModuleLoader__.load({
       }
       if (block.type === 'image') {
         return { type: 'image', data: String(block.data === undefined ? '' : block.data), mimeType: typeof block.mimeType === 'string' ? block.mimeType : 'image/png' }
+      }
+      if (block.type === 'image-stub') {
+        return {
+          type: 'image',
+          data: '',
+          mimeType: typeof block.mimeType === 'string' ? block.mimeType : 'image/png',
+          stubId: typeof block.id === 'string' ? block.id : null,
+          bytes: typeof block.bytes === 'number' ? block.bytes : 0,
+        }
       }
       return { type: 'text', text: stringifyArgs(block) }
     }
@@ -1237,7 +1275,11 @@ window.__ModuleLoader__.load({
         var raw = list[i]
         if (raw === null || typeof raw !== 'object') continue
         if (raw.role === 'system') continue
-        next.push(makeMessage(raw, next.length))
+        // host 分页时给每条消息带上了它在**完整列表**里的下标 `seq`（0.14.0）。
+        // 必须用它而不是 next.length：翻页拼接时数组下标会重排，只有完整列表下标
+        // 才能用来去重和保持 React key 稳定；没有该字段（如事件流回放）就退回下标。
+        var seq = typeof raw.seq === 'number' && Number.isFinite(raw.seq) && raw.seq >= 0 ? raw.seq : next.length
+        next.push(makeMessage(raw, seq))
       }
       return next
     }
@@ -1626,6 +1668,8 @@ window.__ModuleLoader__.load({
     function markIdle(view) {
       view.busy = false
       view.busySince = 0
+      // 轮次结束不可能还有工具在跑：不清的话 Working 行会在下一轮显示上一轮的工具。
+      view.activeTool = null
     }
 
     function createView() {
@@ -1654,6 +1698,15 @@ window.__ModuleLoader__.load({
         dropped: 0,
         thinkingLevel: '',
         lastError: null,
+        // 0.14.0 分页状态：总条数 / 还有更早的 / 下一次翻页的游标 / 是否正在翻。
+        // 这几个字段只用于「加载更早」入口与「共 N 条」提示，不影响消息渲染本身。
+        messageTotal: 0,
+        hasEarlier: false,
+        nextBefore: 0,
+        loadingEarlier: false,
+        // 当前正在跑的工具（Working 行据此显示「bash · 8m20s · 上限 500s」）。
+        // null = 没有工具在跑（纯模型推理中），此时只显示原来的"深度求索中"。
+        activeTool: null,
       }
     }
 
@@ -1907,7 +1960,23 @@ window.__ModuleLoader__.load({
         return
       }
       if (type === 'tool_execution_start') {
-        view.toolStatus[String(record.toolCallId)] = { status: 'running', name: String(record.toolName === undefined ? '' : record.toolName), partial: '' }
+        // 记下 args 里的 `timeout`（秒）：模型经常自己给 bash 开很大的上限
+        // （实测 p90=1800s、最大 120000s）。面板据此在 Working 行显示
+        // 「工具名 · 已跑 · 上限」，让"合法的长等待"可见，而不是看起来像卡死。
+        var limitSeconds = 0
+        var rawArgs = record.args === undefined ? (record.arguments === undefined ? null : record.arguments) : record.args
+        if (rawArgs !== null && typeof rawArgs === 'object' && typeof rawArgs.timeout === 'number' && rawArgs.timeout > 0) {
+          limitSeconds = rawArgs.timeout
+        }
+        view.toolStatus[String(record.toolCallId)] = {
+          status: 'running',
+          name: String(record.toolName === undefined ? '' : record.toolName),
+          partial: '',
+          startedAt: Date.now(),
+          limitSeconds: limitSeconds,
+        }
+        // 当前活跃工具：Working 行只显示"最近启动且还没结束"的那一个。
+        view.activeTool = { id: String(record.toolCallId), name: String(record.toolName === undefined ? '' : record.toolName), startedAt: Date.now(), limitSeconds: limitSeconds }
         return
       }
       if (type === 'tool_execution_update') { applyToolUpdate(view, record); return }
@@ -1918,6 +1987,7 @@ window.__ModuleLoader__.load({
           name: String(record.toolName === undefined ? '' : record.toolName),
           partial: view.toolStatus[id] === undefined ? '' : view.toolStatus[id].partial,
         }
+        if (view.activeTool !== null && view.activeTool !== undefined && view.activeTool.id === id) view.activeTool = null
         return
       }
       if (type === 'thinking_level_changed') { view.thinkingLevel = String(record.level === undefined ? '' : record.level); return }
@@ -2579,11 +2649,25 @@ window.__ModuleLoader__.load({
      * 屏幕阅读器那边用 `role=status` + `aria-live=polite` 只播报不带秒数的那半句：
      * 每秒都在变的数字进 live region 会把读屏软件刷成噪音。
      */
+    /**
+     * 工作状态行。
+     *
+     * 0.14.0 起不只显示"深度求索中 N 分钟"，还显示**当前在跑什么、跑了多久、它自己
+     * 设了多长上限**。理由：实测一个真实会话里 71 次工具执行超过 60 秒（累计 198 分钟），
+     * 全是模型自己给 bash 传了 timeout=300/1800/6000 秒。这些等待是**合法的**
+     * （跑全量测试、多次取帧），但用户只看到 Working 秒数一直涨，无从判断
+     * 「它在干活」还是「它卡死了」。把工具名与上限摆出来，等待就从"疑似卡死"变成"可见的进度"。
+     *
+     * 上限已过而仍未返回时显式说明「超出上限、可能仍在下游执行」—— 不静默继续加秒数，
+     * 因为那正是用户以为卡死的时刻。
+     */
     function WorkingRow(props) {
       var state = useState(0)
       var setTick = state[1]
       var since = props.since
       var known = typeof since === 'number' && since > 0
+      var tool = props.tool === undefined ? null : props.tool
+      var toolSince = tool !== null && typeof tool.startedAt === 'number' ? tool.startedAt : 0
       useEffect(function () {
         if (known === false) return undefined
         var timer = window.setInterval(function () { setTick(function (value) { return value + 1 }) }, 1000)
@@ -2591,10 +2675,24 @@ window.__ModuleLoader__.load({
       }, [since, known])
       var label = props.t('deepDiving')
       var text = known === false ? label : props.t('working').replace('{duration}', fmtDuration(Math.max(1000, Date.now() - since), props.t))
+      // 工具段：`bash · 8m20s · 上限 500s`（无上限时省掉最后一段）。
+      var toolText = null
+      if (tool !== null && tool.name !== '') {
+        var elapsedMs = toolSince > 0 ? Math.max(1000, Date.now() - toolSince) : 0
+        var parts = [String(tool.name)]
+        if (elapsedMs > 0) parts.push(fmtDuration(elapsedMs, props.t))
+        var limitSeconds = typeof tool.limitSeconds === 'number' && tool.limitSeconds > 0 ? tool.limitSeconds : 0
+        if (limitSeconds > 0) {
+          if (elapsedMs > 0 && elapsedMs > limitSeconds * 1000) parts.push(props.t('toolOverLimit').replace('{limit}', fmtDuration(limitSeconds * 1000, props.t)))
+          else parts.push(props.t('toolLimit').replace('{limit}', fmtDuration(limitSeconds * 1000, props.t)))
+        }
+        toolText = parts.join(' · ')
+      }
       return h('div', { className: 'superpi-working' },
         h('span', { className: 'superpi-sr', role: 'status', 'aria-live': 'polite', key: 'sr' }, label),
         h('span', { className: 'superpi-working-icon', key: 'icon' }, h(WhaleTailIcon, null)),
-        h('span', { className: 'superpi-working-text', key: 'text' }, text))
+        h('span', { className: 'superpi-working-text', key: 'text' }, text),
+        toolText === null ? null : h('span', { className: 'superpi-working-tool', key: 'tool', title: toolText }, toolText))
     }
 
     function usageLine(usage, t) {
@@ -2608,9 +2706,38 @@ window.__ModuleLoader__.load({
       return h('div', { className: 'superpi-usage' }, parts.join(' · '))
     }
 
-    /** 图片块：pi 把图片以 base64 交给模型，面板必须同样显示，不能降级成 "[image png]" 文字。 */
+    /**
+     * 图片块：pi 把图片以 base64 交给模型，面板必须同样显示，不能降级成 "[image png]" 文字。
+     *
+     * 0.14.0：历史图片不再随 `get_messages` 下发 base64（那占历史体量的 88.2%），
+     * 只给 `stubId`。这里渲染一张「N KB · 点击查看」的占位卡，**点开时**才走
+     * `/images/:id` 取回真实像素 —— 用户看到的仍是完整的图，只是不再为「116 张里
+     * 99% 都不会被点开」的那些付首屏传输与解码代价。
+     *
+     * 本轮（刚由工具产生）的图片仍是完整 base64，直接渲染，零额外请求。
+     */
     function ImageBlock(props) {
       var open = props.onOpen
+      // t 必须从 props 取：ImageBlock 是 module 级组件，拿不到 PiPanel 闭包里的 t。
+      // （少了这一行会直接 ReferenceError —— 0.14.0 的 client-render 门禁抓到过。）
+      var t = typeof props.t === 'function' ? props.t : function (key) { return String(key) }
+      var stubId = typeof props.stubId === 'string' ? props.stubId : null
+      var hasData = typeof props.data === 'string' && props.data !== ''
+      if (!hasData && stubId !== null) {
+        var kb = typeof props.bytes === 'number' && props.bytes > 0 ? Math.round(props.bytes / 1024) : 0
+        return h('button', {
+          type: 'button',
+          className: 'superpi-imagestub',
+          'data-stub-id': stubId,
+          title: props.mimeType,
+          onClick: function () {
+            if (open === undefined) return
+            open({ stubId: stubId, mimeType: props.mimeType })
+          },
+        }, h('span', { className: 'superpi-imagestub-icon', 'aria-hidden': 'true' }, '▣'),
+          h('span', { className: 'superpi-imagestub-text' },
+            (kb > 0 ? String(kb) + ' KB' : String(props.mimeType)) + ' · ' + String(t('viewImage'))))
+      }
       return h('img', {
         className: 'superpi-img',
         alt: props.mimeType,
@@ -2642,7 +2769,7 @@ window.__ModuleLoader__.load({
         return h('div', { className: 'superpi-row superpi-row-user' },
           h('div', { className: 'superpi-bubble-user' },
             userImages.length === 0 ? null : h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: userText === '' ? '0' : '6px' } },
-              userImages.map(function (block, index) { return h(ImageBlock, { key: 'ui' + String(index), data: block.data, mimeType: block.mimeType, onOpen: props.onOpenImage }) })),
+              userImages.map(function (block, index) { return h(ImageBlock, { key: 'ui' + String(index), data: block.data, mimeType: block.mimeType, stubId: block.stubId, bytes: block.bytes, onOpen: props.onOpenImage, t: props.t }) })),
             userText === '' ? null : userText))
       }
       if (message.role === 'toolResult') {
@@ -2696,7 +2823,7 @@ window.__ModuleLoader__.load({
           }
         } else if (block.type === 'image') {
           flushTools()
-          nodes.push(h(ImageBlock, { key: 'k' + String(i), data: block.data, mimeType: block.mimeType, onOpen: props.onOpenImage }))
+          nodes.push(h(ImageBlock, { key: 'k' + String(i), data: block.data, mimeType: block.mimeType, stubId: block.stubId, bytes: block.bytes, onOpen: props.onOpenImage, t: props.t }))
         } else if (block.type === 'text' && block.text.trim() !== '') {
           flushTools()
           nodes.push(h('div', { key: 'k' + String(i), className: 'superpi-prose' }, renderMarkdown(block.text, props.onOpenFile)))
@@ -5194,24 +5321,32 @@ window.__ModuleLoader__.load({
         repaint()
       }
 
-      /** 回拉完整消息列表，并以它为准整表重建（等价于命令行 pi 从 jsonl 恢复会话）。
+      /** 回拉一页历史消息，并以它为准整表重建（等价于命令行 pi 从 jsonl 恢复会话）。
        *
        * 为什么必须有这一步：bash 结果、以及「已落盘但没发事件」的历史消息只有 get_messages 能给。
        * switch_session / fork / clone / new_session 之后 host 会 resetEvents（index.js 的
        * SESSION_REPLACING_COMMANDS），事件缓冲归零，snapshot 里没有任何历史 —— 只重放事件面板
        * 必然是空的。这是 0.4.0 及之前「点开历史会话没有内容」的根因。
        *
+       * 0.14.0 改为**分页**（判据见 docs/performance-acceptance.md §1.2 D）：
+       * 整个会话一次拉完实测 55.1 MB / 3251 条，其中 88.2% 是图片 base64。
+       * 现在只取最近一页（默认 200 条、图片为 image-stub），实测 224 KB、0.3 ms；
+       * 更早的历史由「加载更早」按 before 往前翻。
+       *
        * 两道防线：
        *  - 会话已经切走（sessionRef 变了）就丢弃结果，避免旧会话的响应污染新会话；
        *  - 正在跑动（busy）就不覆盖列表，改记待办，由 flush 在 settled 那一拍补上，
        *    否则会把正在流式的气泡整条吞掉。
        */
-      var refreshMessages = function () {
+      var refreshMessages = function (before) {
         var id = sessionRef.current
         if (id === null) return Promise.resolve(null)
-        return rpc(id, { type: 'get_messages' }).then(function (data) {
+        var query = typeof before === 'number' && before > 0 ? ('?before=' + String(before)) : ''
+        return requestJson('/sessions/' + encodeURIComponent(id) + '/messages' + query).then(function (body) {
           if (sessionRef.current !== id) return null
-          var list = data !== null && data !== undefined && Array.isArray(data.messages) ? data.messages : null
+          if (body === null || typeof body !== 'object' || body.ok === false) return null
+          var payload = body.data === undefined ? null : body.data
+          var list = payload !== null && payload !== undefined && Array.isArray(payload.messages) ? payload.messages : null
           if (list === null) return null
           var view = viewRef.current
           if (view.busy === true) {
@@ -5220,12 +5355,44 @@ window.__ModuleLoader__.load({
           }
           var next = messagesFromHistory(list)
           if (next === null) return null
+          if (typeof payload.total === 'number') view.messageTotal = payload.total
+          view.hasEarlier = payload.hasMore === true
+          view.nextBefore = typeof payload.nextBefore === 'number' ? payload.nextBefore : 0
+          // 往回翻：把新拿到的更早一页拼到现有列表**前面**，并按 seq 去重。
+          //
+          // 去重不能靠"新的全是更早的"这个假设：翻页期间若有新消息落库，两页在边界上
+          // 会重叠。seq 来自 host 分页时写进每条消息的**完整列表下标**，所以它才是
+          // 唯一可靠的排序与去重依据。
+          if (typeof before === 'number' && before > 0) {
+            var existingSeqs = {}
+            for (var mi = 0; mi < view.messages.length; mi += 1) existingSeqs[String(view.messages[mi].seq)] = true
+            var older = next.filter(function (item) { return existingSeqs[String(item.seq)] !== true })
+            view.messages = older.concat(view.messages)
+            view.openIndex = -1
+            view.streamingIndex = -1
+            repaint()
+            return null
+          }
           view.messages = next
           view.openIndex = -1
           view.streamingIndex = -1
           repaint()
           return null
         }, function () { return null })
+      }
+
+      /** 「加载更早」：按 nextBefore 往前翻一页。 */
+      var loadEarlier = function () {
+        var view = viewRef.current
+        if (view.loadingEarlier === true) return Promise.resolve(null)
+        if (view.hasEarlier !== true) return Promise.resolve(null)
+        view.loadingEarlier = true
+        repaint()
+        return refreshMessages(view.nextBefore).then(function () {
+          viewRef.current.loadingEarlier = false
+          repaint()
+          return null
+        })
       }
 
       /** 挂载 / 切换会话后对账一次历史消息；busy 时挂待办，settled 时由 flush 补。 */
@@ -5515,6 +5682,14 @@ window.__ModuleLoader__.load({
         var node = scrollRef.current
         if (node === null || node === undefined) return
         pinnedRef.current = node.scrollHeight - node.scrollTop - node.clientHeight < 80
+        // 滚到顶自动往前翻一页（0.14.0 窗口化配套）。
+        // 只在「已经没有任何已加载的更早内容」时才拉 host —— 本地窗口还有余量就先把
+        // 窗口放大（RENDER_WINDOW 每次 +120），避免为一次滚动发一次网络请求。
+        if (node.scrollTop > 24) return
+        if (viewRef.current.hasEarlier !== true && viewRef.current.messages.length <= 120) return
+        if (viewRef.current.loadingEarlier !== true && viewRef.current.hasEarlier === true) {
+          loadEarlier()
+        }
       }
 
       // ── 发送 / 中断 ────────────────────────────────────────────────────────
@@ -6424,14 +6599,71 @@ window.__ModuleLoader__.load({
         results[resultMessage.toolCallId] = { text: textOfMessage(resultMessage), isError: resultMessage.isError === true }
       }
 
-      var rows = view.messages.map(function (message, index) {
+      /**
+       * 渲染窗口化（0.14.0）。
+       *
+       * 为什么��做：面板此前把 `view.messages` 全量 map 成行 —— 一个真实会话 3251 条，
+       * 里面有 116 张 `data:` 大图，全部进 DOM 要几百毫秒到数秒，而且每次
+       * bash 结束的回拉都会整表重建一次。这就是「一卡好几分钟」的第三个来源。
+       *
+       * 做法：只渲染尾部 RENDER_WINDOW 条（窗口随「加载更早」增大），更早的由
+       * 顶部按钮按 before 往前翻。**不丢能力**：翻到头就是完整历史；
+       * 也不破坏滚动锚点：新增的是列表尾部，用户看到的视口内容不变。
+       *
+       * 为什么不直接上虚拟列表：这个列表的每行高度是内容决定的（展开的工具输出、
+       * 图片、markdown），精确测量成本高且容易在流式更新时抖动。分页 + 尾窗
+       * 用最少的活动部件解决同一个问题，且与 host 的分页天然对齐。
+       */
+      var RENDER_WINDOW = 120
+      var renderFrom = view.messages.length > RENDER_WINDOW ? view.messages.length - RENDER_WINDOW : 0
+      var visibleMessages = renderFrom === 0 ? view.messages : view.messages.slice(renderFrom)
+      var earlierNodes = null
+      if (view.hasEarlier === true || renderFrom > 0) {
+        var hiddenCount = renderFrom + (view.messageTotal > view.messages.length ? view.messageTotal - view.messages.length : 0)
+        earlierNodes = h('div', { className: 'superpi-earlier' },
+          h('button', {
+            type: 'button',
+            disabled: view.loadingEarlier === true,
+            onClick: function () { loadEarlier() },
+          }, view.loadingEarlier === true ? t('sessionsLoading') : t('loadEarlier') + (hiddenCount > 0 ? ' (' + String(hiddenCount) + ')' : '')))
+      }
+
+      var rows = visibleMessages.map(function (message, index) {
+        var absoluteIndex = renderFrom + index
         return h(MessageRow, {
-          key: 'm' + String(message.seq) + '-' + String(index),
+          key: 'm' + String(message.seq) + '-' + String(absoluteIndex),
           t: t,
           message: message,
           toolStatus: view.toolStatus,
           results: results,
-          onOpenImage: function (image) { setOverlay(image) },
+          /**
+           * 打开一张图。本轮图片带完整 base64，直接显示；历史图片只有 stubId，
+           * 先按需向 host 取回真实像素再显示（0.14.0）。
+           *
+           * 取图是**点开才发生**的一次请求，失败要给用户看得见的提示 ——
+           * 静默失败等于让用户以为图坏了。
+           */
+          onOpenImage: function (image) {
+            if (image !== null && typeof image === 'object' && typeof image.stubId === 'string') {
+              var stubId = image.stubId
+              setOverlay({ data: '', mimeType: image.mimeType, loading: true })
+              var sid = sessionRef.current
+              requestJson('/sessions/' + encodeURIComponent(sid) + '/images/' + encodeURIComponent(stubId)).then(function (body) {
+                var data = body !== null && typeof body === 'object' && body.ok === true ? body.data : null
+                if (data === null) {
+                  setOverlay(null)
+                  notice(t('imageFailed'), 'err')
+                  return
+                }
+                setOverlay({ data: String(data.data), mimeType: String(data.mimeType === undefined ? image.mimeType : data.mimeType), loading: false })
+              }, function () {
+                setOverlay(null)
+                notice(t('imageFailed'), 'err')
+              })
+              return
+            }
+            setOverlay(image)
+          },
           // renderFileChip 的 normalizeFileActions 同时接受函数与 {open, reveal}，
           // 这里给对象形态，左键开预览、右键定位文件。
           onOpenFile: { open: openFile, reveal: revealFile },
@@ -6441,7 +6673,7 @@ window.__ModuleLoader__.load({
       // 工作状态行：过程流末尾那条「深度求索中，用时 43分54秒 …」。
       // 它是唯一一处「只在忙的时候存在」的节点 —— 空闲态不占位、不留空行。
       if (view.busy === true) {
-        rows = rows.concat([h(WorkingRow, { key: 'working', t: t, since: view.busySince })])
+        rows = rows.concat([h(WorkingRow, { key: 'working', t: t, since: view.busySince, tool: view.activeTool })])
       }
 
       var notices = []
@@ -6602,6 +6834,8 @@ window.__ModuleLoader__.load({
         h('div', { className: 'superpi-scroll', ref: scrollRef, onScroll: onScroll },
           h('div', { className: 'superpi-inner' },
             notices.length === 0 ? null : notices,
+            // 「加载更早」贴在列表顶部：它是唯一能往前翻的入口（0.14.0 窗口化）。
+            earlierNodes,
             view.messages.length === 0 ? h(EmptyState, { t: t, meta: emptyMeta, onPickDir: function () { setDrawer('dir') } }) : rows)),
         h(Composer, {
           t: t,
@@ -6783,6 +7017,7 @@ window.__ModuleLoader__.load({
       ToolResultRow: ToolResultRow,
       MessageRow: MessageRow,
       WorkingRow: WorkingRow,
+      ImageBlock: ImageBlock,
       ThinkingBlock: ThinkingBlock,
       parseToolArgs: parseToolArgs,
       firstLineOf: firstLineOf,

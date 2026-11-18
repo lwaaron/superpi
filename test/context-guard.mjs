@@ -189,7 +189,179 @@ const inTurn = [
 for (let i = 0; i < 30; i += 1) inTurn.unshift(...turn(i + 100))
 const keep = planContextWindow(inTurn, { windowTokens, settings })
 const tailImages = keep.messages.slice(-2).reduce((sum, message) => sum + (Array.isArray(message.content) ? message.content.filter(block => block.type === 'image').length : 0), 0)
-eq(tailImages, 2, '本轮的两张图一张都没被替换')
+eq(tailImages, 2, '本轮的两张图一张都没被替换（低于限额 4，不该裁）')
+
+/* -------------------- C2'. 本轮图片限额：超过上限时必须裁（0.14.0） */
+
+section('C2. 本轮图片限额：48 张只留最近 4 张，text 与 toolCall 一字不动')
+
+/**
+ * 这一条对应 docs/performance-acceptance.md 判据 F。
+ *
+ * 病根：旧规则「本轮图片一律保留」让视觉迭代任务（同一轮里渲染→截图→比对）
+ * 产出的几十张图永久免疫裁剪 —— 实测一个真实会话本轮 48 张图 = 576k tokens，
+ * 占预算 80%，于是守卫裁到最狠仍超预算 71%、overBudget 恒为 true。
+ */
+function turnWithImages(count, { textEvery = 1 } = {}) {
+  const list = [{ role: 'user', content: [{ type: 'text', text: '看这些图并给结论' }] }]
+  for (let i = 0; i < count; i += 1) {
+    list.push({ role: 'assistant', content: [{ type: 'toolCall', id: 'tc' + String(i), name: 'read', arguments: { path: 'shot' + String(i) + '.png' } }] })
+    list.push({ role: 'toolResult', toolCallId: 'tc' + String(i), toolName: 'read', content: [{ type: 'image', data: 'E'.repeat(200000), mimeType: 'image/png' }] })
+    if (textEvery > 0 && i % textEvery === 0) {
+      list.push({ role: 'assistant', content: [{ type: 'text', text: '第 ' + String(i) + ' 张的结论：尺子对齐、颜色正确。' }] })
+    }
+  }
+  return list
+}
+const heavyTurn = turnWithImages(48)
+// 前面垫一点历史，确保确实会触发裁剪（本轮自己就已经远超预算）。
+for (let i = 0; i < 6; i += 1) heavyTurn.unshift(...turn(i + 200))
+const heavyWindow = 300000
+const heavySettings = normalizeGuardSettings({ ...settings, keepRecentImagesPerTurn: 4 })
+const heavy = planContextWindow(heavyTurn, { windowTokens: heavyWindow, settings: heavySettings })
+
+let heavyTurnImages = 0
+{
+  let lastUser = heavy.messages.length
+  for (let i = heavy.messages.length - 1; i >= 0; i -= 1) {
+    if (heavy.messages[i]?.role === 'user') { lastUser = i; break }
+  }
+  for (let i = lastUser; i < heavy.messages.length; i += 1) {
+    heavyTurnImages += Array.isArray(heavy.messages[i].content)
+      ? heavy.messages[i].content.filter(block => block.type === 'image').length
+      : 0
+  }
+}
+ok(heavyTurnImages <= 4, '本轮图片被裁到限额以内（实际 ' + String(heavyTurnImages) + ' 张，限额 4）')
+ok(heavy.stats.imagesDropped >= 44, '确实丢掉了大部分本轮图片（' + String(heavy.stats.imagesDropped) + ' 张）')
+
+// 被替换的位置必须是**带路径的文本占位**（可重读），不能是空块或 undefined。
+const replaced = heavy.messages.filter(message => Array.isArray(message.content) &&
+  message.content.some(block => block?.type === 'text' && String(block.text).includes('image omitted')))
+ok(replaced.length > 0, '被替换的图片变成了 image omitted 占位（' + String(replaced.length) + ' 条）')
+ok(replaced.some(message => message.content.some(block => block?.type === 'text' && /shot\d+\.png/.test(String(block.text)))), '占位文本带原文件路径（可重读）')
+
+// 本轮的文本与工具调用结构不能被这条规则碰到：模型正在读的文字抽走就是能力退化。
+const heavyOriginalTexts = heavyTurn.filter(message => message.role === 'assistant')
+  .map(message => (Array.isArray(message.content) ? message.content.filter(block => block.type === 'text').map(block => block.text).join('') : ''))
+const heavyAfterTexts = heavy.messages.filter(message => message.role === 'assistant')
+  .map(message => (Array.isArray(message.content) ? message.content.filter(block => block.type === 'text').map(block => block.text).join('') : ''))
+eq(heavyAfterTexts.length, heavyOriginalTexts.length, 'assistant 消息条数不变（不做破坏性删除）')
+const turnToolCalls = heavy.messages.reduce((sum, message) => sum + (Array.isArray(message.content)
+  ? message.content.filter(block => block.type === 'toolCall').length : 0), 0)
+const turnToolCallsBefore = heavyTurn.reduce((sum, message) => sum + (Array.isArray(message.content)
+  ? message.content.filter(block => block.type === 'toolCall').length : 0), 0)
+eq(turnToolCalls, turnToolCallsBefore, 'toolCall 一个都没少（只换图片块，不动调用）')
+
+// 幂等：对结果再跑一次不能再变（否则每轮都在改 prompt，cache 被反复击穿）。
+const heavyAgain = planContextWindow(heavy.messages, { windowTokens: heavyWindow, settings: heavySettings })
+eq(heavyAgain.stats.imagesDropped, 0, '幂等：已裁过的图片不会被重复计数')
+ok(heavyAgain.stats.after <= heavy.stats.after + 1, '幂等：再跑不会变大（' + String(heavyAgain.stats.after) + ' <= ' + String(heavy.stats.after) + '）')
+
+/* -------------------- C3. toolCallArgs 折叠（0.14.0） */
+
+section('C3. 参数折叠：write/edit 的正文不该在上下文里留副本')
+
+/**
+ * 判据 G。病根：五个阶段没有一个处理 `toolCall.arguments`，实测裁剪后前缀里
+ * assistant 的参数仍有 1,377,032 字符 ≈ 459k tokens，其中 177 条 >2000 字符 ——
+ * 全是已落盘的 write/edit 正文，上下文里留一份毫无价值（需要时重新 read 文件）。
+ */
+function turnWithWrites(index, chars) {
+  return [
+    { role: 'user', content: [{ type: 'text', text: '第 ' + String(index) + ' 轮' }] },
+    {
+      role: 'assistant',
+      content: [
+        { type: 'toolCall', id: 'w' + String(index), name: 'write', arguments: { path: 'src/f' + String(index) + '.mjs', content: 'x'.repeat(chars) } },
+        { type: 'text', text: '写好了第 ' + String(index) + ' 个文件' },
+      ],
+    },
+    { role: 'toolResult', toolCallId: 'w' + String(index), toolName: 'write', content: [{ type: 'text', text: 'ok' }] },
+  ]
+}
+const writeTurns = []
+for (let i = 0; i < 60; i += 1) writeTurns.push(...turnWithWrites(i, 8000))
+// 前置条件必须成立：不超预算时 planContextWindow 按设计一条都不动，
+// 那样下面的断言就测不到折叠逻辑（而不是"折叠没生效"）。
+ok(estimateMessagesTokens(writeTurns, settings) > Math.floor(100000 * settings.targetRatio), 'C3 前置条件：参数确实撑爆预算')
+const writePlanned = planContextWindow(writeTurns, { windowTokens: 100000, settings })
+const argSizeOf = list => list.reduce((sum, message) => sum + (Array.isArray(message.content)
+  ? message.content.filter(block => block.type === 'toolCall').reduce((inner, block) => inner + JSON.stringify(block.arguments ?? {}).length, 0)
+  : 0), 0)
+const argBefore = argSizeOf(writeTurns)
+const argAfter = argSizeOf(writePlanned.messages)
+ok(argAfter < argBefore * 0.2, '参数体积降到原来的 20% 以下（' + argBefore + ' → ' + argAfter + '）')
+ok(writePlanned.stats.stages.toolCallArgs > 0, '发生了参数折叠（' + String(writePlanned.stats.stages.toolCallArgs) + ' 条）')
+
+const foldedCalls = writePlanned.messages.flatMap(message => (Array.isArray(message.content)
+  ? message.content.filter(block => block.type === 'toolCall' && block.arguments?._omitted === true) : []))
+ok(foldedCalls.length > 0, '折叠后的参数带 _omitted 标记（可被门禁识别）')
+ok(foldedCalls.every(block => String(block.arguments.note).includes('src/f')), '占位里带文件路径（可重新 read）')
+ok(foldedCalls.every(block => typeof block.id === 'string' && typeof block.name === 'string' && block.name.length > 0), 'id 与 name 原样保留（否则 toolResult 配不上，pi 报孤儿）')
+
+// bash 不折叠：它的 command 是"当时干了什么"的唯一线索，且通常很短。
+const bashTurn = [
+  { role: 'user', content: [{ type: 'text', text: '跑测试' }] },
+  { role: 'assistant', content: [{ type: 'toolCall', id: 'b1', name: 'bash', arguments: { command: 'node test/x.mjs 2>&1 | tail -20' + ' && echo ok'.repeat(200) } }] },
+  { role: 'toolResult', toolCallId: 'b1', toolName: 'bash', content: [{ type: 'text', text: 'passed' }] },
+]
+for (let i = 0; i < 45; i += 1) bashTurn.unshift(...turnWithWrites(i + 300, 8000))
+const bashPlanned = planContextWindow(bashTurn, { windowTokens: 100000, settings })
+const bashCall = bashPlanned.messages.flatMap(message => (Array.isArray(message.content)
+  ? message.content.filter(block => block.type === 'toolCall' && block.name === 'bash') : []))[0]
+ok(bashCall !== undefined && bashCall.arguments._omitted !== true, 'bash 的 command 不被折叠（要看它干了什么）')
+
+// 本轮（最后一条 user 之后）的参数一律不动：模型正在用它们干活。
+const liveTurn = [
+  { role: 'user', content: [{ type: 'text', text: '写一个大文件' }] },
+  { role: 'assistant', content: [{ type: 'toolCall', id: 'live', name: 'write', arguments: { path: 'big.mjs', content: 'y'.repeat(40000) } }] },
+]
+for (let i = 0; i < 55; i += 1) liveTurn.unshift(...turnWithWrites(i + 500, 8000))
+const livePlanned = planContextWindow(liveTurn, { windowTokens: 100000, settings })
+const liveCall = livePlanned.messages.flatMap(message => (Array.isArray(message.content)
+  ? message.content.filter(block => block.type === 'toolCall' && block.id === 'live') : []))[0]
+ok(liveCall !== undefined && liveCall.arguments._omitted !== true, '本轮的 write 参数不折叠（正在用它干活）')
+
+/* -------------------- C4. overBudget 兜底（0.14.0） */
+
+section('C4. 兜底：裁到最狠仍超预算时按整轮丢弃，而不是只举一只手')
+
+/**
+ * 判据 H。病根：五阶段跑完仍超预算时只把 overBudget:true 写进日志，于是日志里
+ * 连续上百行全是 true —— 这个信号失去所有区分度。
+ */
+// 关键：这里的"超"必须**五阶段都治不动**，否则兜底本来就不该触发 ——
+// 那就变成"测了个寂寞"。user 正文是唯一五阶段完全碰不到的类别（永不裁剪），
+// 用大量超长 user 需求把窗口塞爆，五阶段跑完必然仍超，这时才轮到兜底出场。
+const extreme = []
+for (let i = 0; i < 400; i += 1) {
+  extreme.push({ role: 'user', content: [{ type: 'text', text: '第 ' + String(i) + ' 轮要求：' + '很长的需求描述'.repeat(300) }] })
+  extreme.push({ role: 'assistant', content: [{ type: 'text', text: '结论 ' + String(i) }] })
+}
+const extremeWindow = 120000
+ok(estimateMessagesTokens(extreme, settings) > Math.floor(extremeWindow * settings.targetRatio) * 1.5, 'C4 前置条件：确实远超预算')
+const extremePlanned = planContextWindow(extreme, { windowTokens: extremeWindow, settings })
+ok(extremePlanned.stats.after <= Math.floor(extremeWindow * settings.targetRatio), '极端会话被兜底压回预算内（' + String(extremePlanned.stats.after) + '）')
+eq(extremePlanned.stats.overBudget, false, '兜底后不再报 overBudget（信号恢复区分度）')
+ok(extremePlanned.stats.droppedTurns > 0, '确实丢了最旧的轮次（' + String(extremePlanned.stats.droppedTurns) + ' 轮）')
+// 兜底按「整轮」丢最旧，所以最早那条 user 会被丢掉 —— 这是设计意图（它已完成）。
+// 真正要守的是：剩下的第一条 user 仍是一条**完整的**任务要求，不是被截断的半截。
+const firstRemainingUser = extremePlanned.messages.find(message => message.role === 'user')
+ok(firstRemainingUser !== undefined, '兜底后仍有 user 消息（没有把任务全丢光）')
+ok(String(JSON.stringify(firstRemainingUser?.content ?? [])).includes('轮要求：'), '剩下的第一条 user 仍是完整任务要求（按整轮丢，不是截半截）')
+const extremeUsers = extremePlanned.messages.filter(message => message.role === 'user').length
+ok(extremeUsers >= Math.min(settings.keepRecentTurns, 6), '最近若干轮被保留（剩 ' + String(extremeUsers) + ' 条 user）')
+
+// 只有一轮、且这一轮自己就超预算：不许崩、不许无限循环，必须诚实报 overBudget。
+// 单轮、且这一轮**只有 user 正文**（五阶段唯一碰不到的类别）。
+// 不用图片：图片一裁就能达标，那样测到的是"图片阶段有效"，不是"无轮可丢"。
+const singleRound = [{ role: 'user', content: [{ type: 'text', text: '唯一的一轮，但要求极长：' + '细节'.repeat(200000) }] },
+  { role: 'assistant', content: [{ type: 'text', text: '收到' }] }]
+const single = planContextWindow(singleRound, { windowTokens: 120000, settings })
+eq(single.stats.overBudget, true, '无轮可丢时诚实报 overBudget')
+eq(single.stats.droppedTurns, 0, '无轮可丢时不假装丢了')
+ok(single.messages.length > 0, '无轮可丢时仍然返回内容（不返回空列表）')
 ok(keep.stats.after <= budget || keep.stats.overBudget === true, '本轮图保留后要么达标、要么诚实报 overBudget')
 
 // 保护区不得自己吃掉整个窗口：轮次多、消息多、token 多的会话要能压下来。

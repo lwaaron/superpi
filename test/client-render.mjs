@@ -1168,6 +1168,91 @@ const panelHtml = renderToStaticMarkup(React.createElement(internals.PiPanel, { 
 assert(panelHtml.includes('superpi-root'), 'PiPanel 应渲染出 superpi-root')
 assert(panelHtml.includes(zh('loading')), 'PiPanel 首帧应是 loading 文案')
 
+// ── 11. 0.14.0 性能修复的渲染面判据 ──────────────────────────────────────
+// 对应 docs/performance-acceptance.md 判据 B / E。这些点退化时不报错、只是"变卡"，
+// 所以必须由断言把行为钉住。
+
+// 11a. 历史图片走 image-stub：占位卡可点、不带 base64、带 id。
+{
+  const stubHtml = renderToStaticMarkup(React.createElement(internals.ImageBlock, {
+    data: '',
+    mimeType: 'image/png',
+    stubId: 'sess:12:0',
+    bytes: 204800,
+    onOpen: () => {},
+    t: zh,
+  }))
+  assert(stubHtml.includes('superpi-imagestub'), 'image-stub 应渲染成可点占位卡，不是 <img>')
+  assert(!stubHtml.includes('<img'), 'image-stub 不应生成 <img>（那就等于把 base64 当空串塞进去了）')
+  assert(stubHtml.includes('data-stub-id="sess:12:0"'), 'image-stub 必须带 stubId（回取原图的句柄）')
+  assert(stubHtml.includes('200 KB'), 'image-stub 应显示体积（用户要知道自己在点什么）')
+  assert(stubHtml.includes(zh('viewImage')), 'image-stub 应提示可查看（不能让人以为图坏了）')
+
+  // 本轮图片带真实 base64：必须仍然渲染成 <img>，不能退化。
+  const liveHtml = renderToStaticMarkup(React.createElement(internals.ImageBlock, {
+    data: 'AAAA',
+    mimeType: 'image/png',
+    stubId: null,
+    bytes: 0,
+    onOpen: () => {},
+    t: zh,
+  }))
+  assert(liveHtml.includes('<img'), '本轮图片（有 base64）仍渲染成 <img>')
+  assert(liveHtml.includes('data:image/png;base64,AAAA'), '本轮图片的 data URL 原样保留')
+}
+
+// 11b. Working 行显示当前工具与它自带的上限（判据 B）。
+{
+  const withTool = renderToStaticMarkup(React.createElement(internals.WorkingRow, {
+    t: zh,
+    since: Date.now() - 5000,
+    tool: { name: 'bash', startedAt: Date.now() - 520000, limitSeconds: 500 },
+  }))
+  assert(withTool.includes('superpi-working-tool'), 'Working 行应渲染工具段')
+  assert(withTool.includes('bash'), '应显示工具名')
+  // 超过 500s 上限时必须显式说明，而不是静默继续加秒数。
+  assert(withTool.includes(zh('toolOverLimit').replace('{limit}', internals.fmtDuration(500000, zh))),
+    '超过命令自设上限时应显示「已超出上限」')
+
+  const withinLimit = renderToStaticMarkup(React.createElement(internals.WorkingRow, {
+    t: zh,
+    since: Date.now() - 5000,
+    tool: { name: 'bash', startedAt: Date.now() - 60000, limitSeconds: 500 },
+  }))
+  assert(withinLimit.includes(zh('toolLimit').replace('{limit}', internals.fmtDuration(500000, zh))),
+    '未超上限时应显示「上限 500s」')
+
+  const noTool = renderToStaticMarkup(React.createElement(internals.WorkingRow, {
+    t: zh,
+    since: Date.now() - 5000,
+    tool: null,
+  }))
+  assert(!noTool.includes('superpi-working-tool'), '没有工具在跑时不应出现工具段')
+  assert(noTool.includes('superpi-working-text'), '纯推理时仍显示原有的用时文案')
+}
+
+// 11c. messagesFromHistory 必须保留 host 给的 seq（翻页去重与 React key 依赖它）。
+{
+  const list = [
+    { role: 'user', content: [{ type: 'text', text: 'a' }], seq: 42 },
+    { role: 'assistant', content: [{ type: 'text', text: 'b' }], seq: 43 },
+    { role: 'user', content: [{ type: 'text', text: 'c' }] },
+  ]
+  const mapped = internals.messagesFromHistory(list)
+  assert(mapped[0].seq === 42, 'host 给的 seq 必须原样保留（不能用数组下标覆盖）')
+  assert(mapped[1].seq === 43, '第二条同样保留 host seq')
+  assert(mapped[2].seq === 2, '没有 seq 时退回数组下标（事件流回放路径）')
+}
+
+// 11d. createView 必须带上分页状态字段（少了就是「加载更早」永远不出现）。
+{
+  const v = internals.createView()
+  assert(v.hasEarlier === false, 'createView 应初始化 hasEarlier=false')
+  assert(v.messageTotal === 0, 'createView 应初始化 messageTotal=0')
+  assert(v.loadingEarlier === false, 'createView 应初始化 loadingEarlier=false')
+  assert(v.activeTool === null, 'createView 应初始化 activeTool=null')
+}
+
 if (failed > 0) {
   console.error(String(failed) + ' 条断言失败（通过 ' + String(passed) + ' 条）')
   process.exit(1)

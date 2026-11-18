@@ -975,6 +975,145 @@ try {
   } finally {
     await server.close()
   }
+
+  /* ════════════════════════════════════════════════ 4. 0.14.0 性能判据 */
+
+  /**
+   * 这几条对应 docs/performance-acceptance.md 的判据 C / D。
+   *
+   * 为什么必须进机器门禁：这几处的退化是**静默**的 —— O(n²) 的切帧器照样能切出
+   * 正确的帧，只是慢 100 倍；全量返回的 get_messages 照样能渲染，只是卡几秒。
+   * 只有把「耗时上限」和「响应体上限」写成断言，退化才会当场变红。
+   */
+
+  // ── 4.1 切帧器：语义不变 + 线性耗时（判据 C）
+
+  {
+    const rpc = await import(pathToFileURL(path.join(root, 'src', 'pi-rpc.mjs')).href)
+
+    /**
+     * 用「协议替身」驱动真实 LineSplitter：它是 PiProcess 内部类，
+     * 通过一个最小 PiProcess 实例拿到 —— 这样测的是**真正在跑的那份代码**，
+     * 不是测试里复制粘贴的另一份实现（复制的那份永远不会跟源码一起退化）。
+     */
+    const makeSplitter = onLine => {
+      const proc = rpc.createProcess
+        ? null
+        : null
+      void proc
+      // PiProcess 的 splitter 在 start() 里创建并绑定到子进程；这里直接构造一个
+      // 不过 start() 的实例，只借它的 LineSplitter 语义（构造函数是纯的）。
+      const instance = Object.create(rpc.PiProcess.prototype)
+      return instance
+    }
+    void makeSplitter
+
+    // 直接用真实类：PiProcess 上暴露了拆分入口（start 时创建 splitter 并喂 stdout）。
+    // 为了不依赖子进程，这里用一份「与源码逐字相同」的取用方式：
+    // 通过 start() 前的 splitter 构造路径不可行，所以改为按行为验证 ——
+    // 用 PiProcess 的 receive 路径太重，改为断言源码里的关键性质 + 计时。
+    const source = fs.readFileSync(path.join(root, 'src', 'pi-rpc.mjs'), 'utf8')
+    check('切帧器不再每次 push 都从头 indexOf', !/this\.buffer\.indexOf\(0x0a\)/.test(source),
+      '仍有 this.buffer.indexOf(0x0a)（O(n²) 会回来）')
+    check('切帧器不再每次 push 都 concat 全量', !/this\.buffer = this\.buffer\.length === 0 \? chunk : Buffer\.concat/.test(source),
+      '仍有「每 chunk 都 Buffer.concat 全量」的旧写法')
+    check('切帧器保留 pending 分块列表（每字节只扫一次）', /this\.pending = \[\]/.test(source) && /this\.pendingBytes = 0/.test(source),
+      '缺少 pending/pendingBytes 结构')
+    check('切帧器仍然只按 LF 切（不使用 readline）', !/from 'node:readline'/.test(source) && !/require\('readline'\)/.test(source),
+      '引入了 readline（会在 U+2028 / U+2029 处多断行）')
+
+    // 真实耗时：用 55MB 单帧 + 64KB 分块，必须远低于旧实现的 11,494 ms。
+    // 阈值取 1500ms：既给慢机器留足余量，又能在旧实现（秒级）下必然变红。
+    const SplitterClass = new Function('Buffer', (() => {
+      const match = source.match(/class LineSplitter \{[\s\S]*?\n\}/)
+      return match === null ? '' : match[0] + '; return LineSplitter'
+    })())(Buffer)
+    check('能从源码取出 LineSplitter 类（门禁自检）', typeof SplitterClass === 'function')
+    if (typeof SplitterClass === 'function') {
+      const totalMB = 55
+      const chunkBytes = 64 * 1024
+      const full = Buffer.concat([Buffer.alloc(totalMB * 1024 * 1024 - 1, 0x41), Buffer.from('\n')])
+      let lines = 0
+      const splitter = new SplitterClass(() => { lines += 1 })
+      const started = performance.now()
+      for (let offset = 0; offset < full.length; offset += chunkBytes) {
+        splitter.push(full.subarray(offset, Math.min(offset + chunkBytes, full.length)))
+      }
+      const elapsed = performance.now() - started
+      check('55MB 单帧解析 < 1500ms（旧实现 11,494ms）', elapsed < 1500, '实测 ' + Math.round(elapsed) + 'ms')
+      eq('55MB 单帧只切出 1 条帧', lines, 1)
+
+      // 语义不变：各种分块大小必须切出一模一样的帧序列。
+      const sample = Buffer.from('a\r\nbb\n\nccc\r\n{"k":"v\u2028x"}\nlast-without-newline')
+      const baseline = (() => {
+        const out = []
+        const sp = new SplitterClass(line => out.push(line))
+        sp.push(sample)
+        sp.flush()
+        return out
+      })()
+      for (const chunkSize of [1, 2, 3, 7, 64, 1024, 99999]) {
+        const out = []
+        const sp = new SplitterClass(line => out.push(line))
+        for (let offset = 0; offset < sample.length; offset += chunkSize) {
+          sp.push(sample.subarray(offset, Math.min(offset + chunkSize, sample.length)))
+        }
+        sp.flush()
+        eq('切帧结果与分块大小无关（chunk=' + String(chunkSize) + '）', out, baseline)
+      }
+      eq('U+2028 不断行（只在 LF 处切）', baseline.some(line => line.includes('\u2028')), true)
+    }
+  }
+
+  // ── 4.2 历史分页（判据 D）
+
+  {
+    check('导出 HISTORY_PAGE_SIZE', typeof mod.HISTORY_PAGE_SIZE === 'number' && mod.HISTORY_PAGE_SIZE > 0)
+    check('导出 paginateHistory', typeof mod.paginateHistory === 'function')
+    check('导出 stubImagesInMessage', typeof mod.stubImagesInMessage === 'function')
+
+    const bigImage = bytes => ({ type: 'image', data: 'A'.repeat(bytes), mimeType: 'image/png' })
+    const history = []
+    for (let i = 0; i < 1000; i += 1) {
+      history.push({ role: 'user', content: [{ type: 'text', text: 'msg ' + String(i) }] })
+      if (i % 10 === 0) history.push({ role: 'toolResult', toolCallId: 'c' + String(i), content: [bigImage(200000)] })
+    }
+
+    const page = mod.paginateHistory(history, { imageIdOf: (block, messageIndex, blockIndex) => 'img:' + String(messageIndex) + ':' + String(blockIndex) })
+    eq('默认一页 ' + String(mod.HISTORY_PAGE_SIZE) + ' 条', page.messages.length, mod.HISTORY_PAGE_SIZE)
+    eq('total 是完整条数', page.total, history.length)
+    eq('hasMore 为真', page.hasMore, true)
+    eq('nextBefore = 本页起点', page.nextBefore, history.length - mod.HISTORY_PAGE_SIZE)
+    check('响应体远小于全量（图片已转 stub）', Buffer.byteLength(JSON.stringify(page)) < 1024 * 1024,
+      '实测 ' + Math.round(Buffer.byteLength(JSON.stringify(page)) / 1024) + 'KB')
+    const stubbed = page.messages.flatMap(message => (Array.isArray(message.content) ? message.content : [])).filter(block => block.type === 'image-stub')
+    check('图片块换成 image-stub（不带 base64）', stubbed.length > 0 && stubbed.every(block => typeof block.data === 'undefined'),
+      '仍在下发 base64')
+    check('image-stub 带 id（可回取原图）', stubbed.every(block => typeof block.id === 'string' && block.id !== ''))
+    check('image-stub 带 bytes 与 mimeType', stubbed.every(block => typeof block.bytes === 'number' && typeof block.mimeType === 'string'))
+
+    const older = mod.paginateHistory(history, { before: page.nextBefore, imageIdOf: () => 'x' })
+    eq('往前翻一页条数一致', older.messages.length, mod.HISTORY_PAGE_SIZE)
+    check('两页 seq 不重叠', older.messages.every(message => message.seq < page.nextBefore))
+    check('一直能翻到第 0 条', (() => {
+      let cursor = history.length
+      let guard = 0
+      while (cursor > 0 && guard < 100) {
+        const p = mod.paginateHistory(history, { before: cursor, imageIdOf: () => 'x' })
+        cursor = p.nextBefore
+        guard += 1
+        if (!p.hasMore) break
+      }
+      return cursor === 0
+    })())
+
+    const limited = mod.paginateHistory(history, { limit: 99999 })
+    eq('limit 被夹到 HISTORY_PAGE_MAX', limited.messages.length <= 500, true)
+
+    // 非图片消息必须原样通过（这条函数只做一件窄事）。
+    const untouched = mod.stubImagesInMessage({ role: 'user', content: [{ type: 'text', text: 'hi' }] }, () => 'x')
+    eq('非图片消息原样返回', JSON.stringify(untouched), JSON.stringify({ role: 'user', content: [{ type: 'text', text: 'hi' }] }))
+  }
 } finally {
   try { fs.rmSync(tmp, { recursive: true, force: true }) } catch { /* 清理失败不影响结论 */ }
 }

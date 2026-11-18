@@ -1,6 +1,6 @@
 # superpi 两端能力对齐账本（parity）
 
-> 基线：pi `1.5.2` / superpi `0.13.0` · 唯一权威 = `packages/coding-agent/src/modes/rpc/rpc-types.ts`（303 行）、`src/modes/rpc/rpc-mode.ts`（846 行，`switch` 在 `:404-737`）、`src/core/agent-session.ts`（4714 行，`AgentSessionEvent` 在 `:220-261`）
+> 基线：pi `1.5.2` / superpi `0.14.0` · 唯一权威 = `packages/coding-agent/src/modes/rpc/rpc-types.ts`（303 行）、`src/modes/rpc/rpc-mode.ts`（846 行，`switch` 在 `:404-737`）、`src/core/agent-session.ts`（4714 行，`AgentSessionEvent` 在 `:220-261`）
 > 本文档是 `AGENTS.md` §3「100% 对齐」的账本。任何一行状态变化必须同步改这里，否则视为未完成。**本账本由 `test/parity.mjs` 与 `test/host-parity.mjs` 机器兜底**，人肉维护只是第一道。
 
 ## 0. 怎么读这张表
@@ -31,9 +31,9 @@
 **门禁已经是事实，不是目标态。** `test/parity.mjs`（78 checks）、`test/host-parity.mjs`（291 checks）、`test/tui-editor.mjs`（276 checks，0.9.2 起；0.9.11 起 276）与 `test/session-projects.mjs`（55 checks，0.5.0 起）都已落地，且都在 `npm test` 的 13 项流水线里：
 
 ```
-selfcheck → client-render(972) → css-tokens(98) → runtime-resolve → config-hot
-→ host-parity(346) → session-projects(55) → timeout(28) → rules(203)
-→ context-guard(74) → modalities(67) → parity(96) → tui-editor(348) → restart-lib(31×2 引擎) → github-sync(82) → version
+selfcheck → client-render(1004) → css-tokens(98) → runtime-resolve → config-hot
+→ host-parity(377) → session-projects(55) → timeout(28) → rules(203)
+→ context-guard(100) → modalities(76) → parity(98) → tui-editor(348) → restart-lib(31×2 引擎) → github-sync(82) → version
 ```
 
 三套核心门禁都离线跑（不起 pi、不打 LLM）。`npm test` 2026-11-13 实测：加 `restart-lib` 之前 ~5.2 s，加上之后 ~14.3 s —— **`test/restart-lib.mjs` 独占约 9.1 s**（它要起 pwsh 7 与 PowerShell 5.1 两个引擎各跑一遍 fixture，进程启动开销占大头），`test/timeout.mjs` 约 3.1 s（真等若干超时周期），其余各项合计 <1.5 s。`test/parity.mjs` 做的是**三向对账**：`src/rpc-contract.mjs` ↔ pi 的类型声明与官方文档 ↔ `client.js`/`index.js` 的实际覆盖面。任一方向对不上即红：
@@ -41,6 +41,8 @@ selfcheck → client-render(972) → css-tokens(98) → runtime-resolve → conf
 - **我们缺的** = 缺口（pi 有、契约没有 → 面板会静默丢弃）；
 - **我们编的** = 幻觉（契约有、pi 没有 → 虚构分支）；
 - **死契约** = 契约里有、面板里没有落地字面量（`test/parity.mjs:221-242` 逐条 `includes` 扫）。
+
+**0.14.0 起 `get_messages` 由 host 代发（不是缺口，是刻意的归属调整）。** 面板不再直接发这条 RPC，改调 `GET /sessions/:id/messages?before=&limit=`，由 host 分页后只下发最近一页并把图片换成 `image-stub`。原因：一次性拉全量实测 55.1 MB / 3251 条（图片占 88.2%），首屏直接卡死。`test/parity.mjs` 的「面板覆盖」因此把 `get_messages` 放进 `HOST_PROXIED_COMMANDS` 白名单，并**同时断言 host 真的代发了它** —— 否则"排除"会退化成"缺失"。TUI 侧不受影响（命令行 pi 本来就从 jsonl 恢复，没有这条 RPC）。
 
 `test/parity.mjs` 找不到 pi 包时（`findPiPackage()` 返回 `null`，`test/parity.mjs:245-251`）会 SKIP 掉 §3/§4 的类型对账，只跑契约自洽 + 面板覆盖；此时是「降级通过」而不是「全绿」，CI 上必须让 pi 在场。
 
@@ -443,6 +445,7 @@ pi 只提供 `SYSTEM.md`（整份替换）、`APPEND_SYSTEM.md`（静态文件�
 | 日期 | 版本 | 变更 |
 | --- | --- | --- |
 | 2026-11-12 | 0.2.5 | 建立本账本。实测基线：RPC 33 条 / 已实现 5 / 部分 1 / 缺口 27；扩展 UI 9 请求 3 应答全部缺口（host 已就绪）；事件 25 种 / 已实现 12 / 部分 3 / 显式忽略 2 / 缺口 8；TUI 27 条 / 缺口 14 / 部分 3 / 仅命令行 10。登记 `D-01`..`D-06`。（行号为 0.2.5 落地当时的坐标，非当前坐标） |
+| 2026-11-18 | 0.14.0 | **性能与卡顿根治（三个独立病根，各自有机器判据）**。①**卡好几分钟**：实测 1640 次工具执行中 71 次 >60s（累计 198 分钟）、9 次 >300s，全是模型自己给 bash 传了 `timeout=1200/1800/6000` —— 这类等待是**合法的**（跑全量测试），不能砍，但必须可见：Working 行新增「工具名 · 已跑时长 · 命令自带上限」，超限时显式说「已超出上限」而不是静默加秒数。②**面板冻结**：`get_messages` 一次吐 55.1 MB / 3251 条 / 116 张 base64 图（图片占 88.2%），而 `LineSplitter.push` 每 chunk 都 `Buffer.concat` 全量 + 从下标 0 重扫（O(n²)），55MB 单帧实测 **11,494 ms 同步阻塞事件循环**。三处一起治：host 改分页端点 `GET /messages`（默认 200 条 + `image-stub`，实测 **55.1MB → 224KB / 0.3ms**，真实像素走 `GET /images/:id` 按需取）；切帧器改 pending 分块列表（每字节只扫一次、只在凑齐一帧时 concat 一次，**11,494ms → 92ms，125×**，七种分块大小输出逐字节一致）；client 渲染窗口化（只渲染尾部 120 条 + 「加载更早」）。③**上下文守卫裁不动**：五阶段没人管 `toolCall.arguments`（裁剪后仍余 1,377,032 字符 ≈ 459k tokens，全是已落盘的 write/edit 正文），且「本轮图片一律保留」让视觉任务同一轮产的 48 张图（576k tokens，占预算 80%）永久免疫 —— 于是裁到最狠仍超 71%、`overBudget` 恒为 true 失去区分度。三处一起治：本轮图片改「最近 N 张」限额（默认 4，缺省可配，占位带路径可重读）；新增第 6 阶段 `toolCallArgs` 折叠 write/edit 大参数（**482,090 → 54,670 字符**）；新增兜底：五阶段跑完仍超就按整轮丢最旧轮次，`overBudget` 重获区分度。**真会话实测：2,832,667 → 715,362 tokens 进入预算，overBudget 由恒真转 false，且消息一条未删、无需兜底。** 判据全部进 `npm test`：`context-guard` 74 → **100**、`host-parity` 291 → **377**、`client-render` 972 → **1004**、`parity` 96 → **98**（另修掉两条依赖 LF 的脆弱断言，仓库是 CRLF）。验收文档见 `docs/performance-acceptance.md`（含「不允许出现的假达标」七条反模式）。**RPC 命令矩阵、事件表、TUI 斜杠表一行未改**（33 / 25 / 27 / 9 不变）；`get_messages` 归入 `HOST_PROXIED_COMMANDS` 白名单并断言 host 真的代发。 |
 | 2026-11-18 | 0.10.0 | **新增第四层对齐：用户自定义规则（最高优先级）** —— 前五节都是「pi 有、另一端没有」，这一条是**两端都没有**的新能力，所以它在 pi 的官方扩展点（`before_agent_start` + `registerCommand`）上实现，**不写 `SYSTEM.md` / `APPEND_SYSTEM.md`、不把规则当消息发**（三者都会让系统退化）。规则写进 `systemPromptOptions.sections.user_defined_rules`（pi 排在 `cwd` 之后 = 提示末尾），块首显式声明覆盖上文与项目说明；空规则返回 `undefined`（零痕迹）。面板走 host `/rules` 三条路由（浏览器无 fs；设置页也不该依赖子进程活着），命令行走 `/superpi-rules` 与每轮 `before_agent_start`，两端共用 `extensions/superpi-rules.mjs` 这一份模型与同一个 `<home>/.superpi/rules.json`。门槛：新增 `test/rules.mjs` 193 checks（含真 `.ts` 扩展层），`host-parity` +34、`client-render` +95、`parity` +18、`tui-editor` +17；`npm test` 13 → **14 项**。设计与 `E2E-01`~`E2E-14` 验收清单见 `docs/rules.md`。 |
 | 2026-11-13 | 0.3.0 | **缺口清零。** RPC 33 条 = 已实现 32 + 部分 1（`steer` 走 `prompt`+`streamingBehavior:'steer'`）+ 缺口 0；扩展 UI 9 请求 3 应答全部已实现（含 5 分钟兜底超时 `DIALOG_FALLBACK_MS`）；事件 25 种 = 已实现 22 + 显式忽略 3 + 缺口 0；TUI 27 条 = 已实现 17 + 仅命令行 9 + `unsupported` 1 + 缺口 0。`D-01`/`D-02`/`D-04`/`D-05`/`D-06` 闭环；新增 `D-07`/`D-08`（均为上游协议面限制，面板侧无解）。门禁落地：`test/parity.mjs` + `test/host-parity.mjs` 进 `npm test`。（行号为 0.3.0 落地当时的坐标，非当前坐标） |
 | 2026-11-13 | 0.3.0 收尾 | **`D-03` 闭环**：顶栏拆成「新会话」（`runNewSession` → `new_session`，与 `/new` 同路径）与「重连」（`endSession`，换子进程）；同一件事不再有两个入口两种结果。**修掉两处在 0.2.5 真实存在的时序缺陷**：① 装了扩展 / 改了 prompt 模板后斜杠菜单不刷新（现于 `agent_settled` 重拉 `get_commands`，未知斜杠先重拉再判定）；② 扩展弹窗等着人点时命令先超时（`timeoutLimitMs` 三态 + `armTimer` 让位 + `respond` 后重开窗口 + 面板 `CHAT_TIMEOUT_MS = 0`）。门禁加强：新增 `test/timeout.mjs`（28 checks，用 `test/fixtures/fake-pi-rpc.mjs` 协议替身把 5 分钟等待压到毫秒级）、`test/host-parity.mjs` 125 checks（+10）、`test/parity.mjs` 65 checks（+16，新增 §6 会话入口与超时语义）。`npm test` 从 7 项变 8 项，耗时 ~1.3 s → ~5.2 s。（行号为 0.3.0 落地当时的坐标，非当前坐标） |

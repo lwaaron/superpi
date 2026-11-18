@@ -83,8 +83,25 @@ export const DEFAULT_GUARD_SETTINGS = {
   keepRecentMessages: 120,
   /** 保护区最多占窗口多少（与上面两条取最严格者，防止保护区本身超预算）。 */
   protectedTokenRatio: 0.3,
-  /** 最近多少张图片原样保留（其余所占的 toolResult 整条不动，只换图片块）。 */
+  /**
+   * 最近多少张**历史**图片原样保留（其余所占的 toolResult 整条不动，只换图片块）。
+   * 只看「最后一条 user 之前」的图片；本轮的图片由 keepRecentImagesPerTurn 管。
+   */
   keepRecentImages: 1,
+  /**
+   * 本轮（最后一条 user 之后）最多原样保留多少张图片。
+   *
+   * 为什么必须有这条上限：视觉迭代类任务（渲染 → 截图 → 比对）会在**同一轮内**连续
+   * 产图。实测一个真实会话里，最后一条 user 之后有 678 条消息 / 733k tokens，
+   * 其中 48 张图 × 12000 = 576k —— 单这一项就吃掉整个预算的 80%。而旧的
+   * 「本轮一律不动」规则让这 80% 永久免疫裁剪，于是守卫裁到最狠仍超预算 71%，
+   * overBudget 恒为 true、彻底失去区分度（症状见 docs/performance-acceptance.md §2.1）。
+   *
+   * 保留最近 N 张而不是全留：模型真正正在看的是**最新**那几张；更早的图它已经看过并
+   * 写成了结论。占位文本带路径，需要时按路径重新 read —— 能力不损失，只损失
+   * 「同时盯着 48 张图」这个本就不该有的特权。
+   */
+  keepRecentImagesPerTurn: 4,
   /** 单条历史工具结果文本超过多少字符才截断。 */
   maxTextChars: 20000,
   charsPerToken: DEFAULT_CHARS_PER_TOKEN,
@@ -179,6 +196,7 @@ export function normalizeGuardSettings(raw) {
     keepRecentMessages: Math.round(clamp(source.keepRecentMessages, 20, 5000, base.keepRecentMessages)),
     protectedTokenRatio: clamp(source.protectedTokenRatio, 0.05, 0.9, base.protectedTokenRatio),
     keepRecentImages: Math.round(clamp(source.keepRecentImages, 0, 20, base.keepRecentImages)),
+    keepRecentImagesPerTurn: Math.round(clamp(source.keepRecentImagesPerTurn, 0, 200, base.keepRecentImagesPerTurn)),
     maxTextChars: Math.round(clamp(source.maxTextChars, 2000, 200000, base.maxTextChars)),
     charsPerToken: clamp(source.charsPerToken, 1.5, 6, base.charsPerToken),
     imageTokens: Math.round(clamp(source.imageTokens, 500, 200000, base.imageTokens)),
@@ -445,6 +463,98 @@ function foldToolResult(message) {
   return { ...message, content: blocks }
 }
 
+/**
+ * 折叠旧的工具调用参数（write / edit / patch 类）。
+ *
+ * 为什么需要这一阶段：五个既有阶段（images / thinking / toolText / toolFold / replies）
+ * 没有任何一个碰 `toolCall.arguments`。实测一个真实会话在裁剪后，前缀里 assistant 的
+ * toolCall 参数仍有 1,377,032 字符 ≈ 459k tokens（其中 177 条 >2000 字符累计 248k）——
+ * 它们全是 write / edit 的正文，也就是**已经落盘的文件内容**。上下文里留一份副本
+ * 毫无价值：需要时模型可以重新 read 文件，那是唯一可信的真相。
+ *
+ * 只折叠「内容型」工具。`bash` 的 command 不折叠 —— 它是"当时干了什么"的唯一线索，
+ * 而且通常很短（长的是它的**输出**，那是 toolFold 的职责）。
+ *
+ * id / name 必须原样保留：pi 按 toolCallId 把 toolResult 配回调用行，改了就是孤儿。
+ */
+const ARG_FOLD_TOOLS = new Set(['write', 'edit', 'patch', 'apply_patch', 'multiedit', 'multi_edit'])
+/** 参数 JSON 短于这个长度就不折（折叠收益还不够占位文本本身）。 */
+const ARG_FOLD_MIN_CHARS = 1200
+
+function foldToolCallArgs(message, callIndex) {
+  if (message?.role !== 'assistant' || !Array.isArray(message.content)) return null
+  let changed = false
+  const blocks = message.content.map(block => {
+    if (block?.type !== 'toolCall') return block
+    const name = typeof block.name === 'string' ? block.name.toLowerCase() : ''
+    if (!ARG_FOLD_TOOLS.has(name)) return block
+    let size = 0
+    try { size = JSON.stringify(block.arguments ?? {}).length } catch { return block }
+    if (size < ARG_FOLD_MIN_CHARS) return block
+    changed = true
+    const filePath = filePathOfCall({ name: block.name, args: block.arguments })
+    const where = filePath !== '' ? filePath : '(unknown path)'
+    return {
+      ...block,
+      arguments: {
+        _omitted: true,
+        path: filePath,
+        chars: size,
+        note: `[${String(block.name)} omitted: ${where}, ${String(size)} chars — 正文已落盘，需要时重新 read]`,
+      },
+    }
+  })
+  if (!changed) return null
+  return { ...message, content: blocks }
+}
+
+/**
+ * 兜底：按整轮（user 边界）丢弃最旧的轮次，直到回到预算以内。
+ *
+ * 为什么需要它：裁到最狠仍超预算时，旧实现只把 `overBudget: true` 写进日志。
+ * 于是日志连续上百行全是 true，这个信号失去了所有区分度 —— 既不能告警也不能解释。
+ * 兜底之后，`overBudget: true` 重新表示「这个会话真的没救了，必须 /compact 或新建」。
+ *
+ * 三条不可退让的保留：
+ *  ① 所有 system 消息（工具声明与系统提示没了，模型就不知道能干什么）；
+ *  ② 首条 user 消息（任务目标不能丢，丢了这轮就是"没有需求的执行"）；
+ *  ③ 最近 keepRecentTurns 轮（正在干的活不能丢）。
+ * 找不到可丢的边界就停（不无限循环），返回原数组由调用方诚实报 overBudget。
+ */
+function dropOldestTurns(messages, { settings, windowTokens, budget, estimate }) {
+  const list = Array.isArray(messages) ? messages : []
+  const firstUserIndex = list.findIndex(message => message?.role === 'user')
+  if (firstUserIndex < 0) return { messages: list, droppedTurns: 0 }
+  // 可丢区间 = 首条 user 之后（保留它本身）到许可区起点之前。
+  let guardFrom = protectionStartIndex(list, settings, windowTokens)
+  let droppedTurns = 0
+  let current = list
+  let total = estimate(current, settings)
+  // 每丢一轮都要把「首条 user」与新数组里的第一条一起保留，所以按 user 下标切。
+  while (total > budget) {
+    // 找可丢的第一个 user 起点（首条 user 之后的第一条 user）。
+    let cut = -1
+    for (let i = 1; i < current.length; i += 1) {
+      if (current[i]?.role !== 'user') continue
+      if (i >= guardFrom) break
+      cut = i
+      break
+    }
+    if (cut < 0) break
+    // 丢掉 [上一个 user 之后 .. 这个 user 之前] 这一整段（即最旧的那一轮的主体）。
+    const next = current.slice(cut)
+    // 把 system 消息补回来（它们可能落在被丢的区间里，但系统提示必须恒在）。
+    const systems = current.slice(0, cut).filter(message => message?.role === 'system')
+    const merged = systems.length === 0 ? next : [...systems, ...next]
+    if (merged.length >= current.length) break
+    current = merged
+    droppedTurns += 1
+    total = estimate(current, settings)
+    guardFrom = protectionStartIndex(current, settings, windowTokens)
+  }
+  return { messages: droppedTurns > 0 ? current : list, droppedTurns }
+}
+
 function firstTextLine(message) {
   const content = message?.content
   if (typeof content === 'string') return content.split('\n')[0]
@@ -492,6 +602,8 @@ export function planContextWindow(messages, options = {}) {
     stages: { images: 0, thinking: 0, toolText: 0, toolFold: 0, replies: 0 },
     imagesDropped: 0,
     imagesKept: 0,
+    /** 兜底阶段丢掉了几个最旧的轮次（0 = 不需要兜底）。 */
+    droppedTurns: 0,
   }
   if (settings.enabled !== true) return { messages: list, stats: { ...emptyStats, disabled: true } }
   if (budget <= 0) return { messages: list, stats: { ...emptyStats, noWindow: true } }
@@ -511,10 +623,14 @@ export function planContextWindow(messages, options = {}) {
   }
 
   let current = list.slice()
-  const stats = { ...emptyStats, stages: { images: 0, thinking: 0, toolText: 0, toolFold: 0, replies: 0 } }
+  const stats = { ...emptyStats, stages: { images: 0, thinking: 0, toolText: 0, toolFold: 0, replies: 0, toolCallArgs: 0 } }
 
-  // 本轮（最后一条 user 之后）的图片一律保留：模型还没"看过"它们，
-  // 替换掉等于让本轮的 read 白做。历史图片则无论是否落在保护区里，都只留最近 N 张。
+  // 本轮（最后一条 user 之后）的图片**不是一律保留**，而是保留最近 N 张。
+  //
+  // 旧实现写的是「本轮的图片一律保留」，理由是模型还没"看过"。但视觉迭代任务会在
+  // 同一轮里连续产图（渲染→截图→比对），一个真实会话的本轮就堆了 48 张 = 576k tokens，
+  // 永久免疫裁剪 → 守卫裁到最狠仍超预算 71%。模型真正在看的是**最新**那几张，
+  // 更早的它已经写成结论了；占位带路径可重读，所以按最近 N 张保留即可。
   let lastUserIndex = list.length
   for (let i = list.length - 1; i >= 0; i -= 1) {
     if (list[i]?.role === 'user') {
@@ -522,14 +638,26 @@ export function planContextWindow(messages, options = {}) {
       break
     }
   }
+  // 本轮图片豁免：从末尾往前数 keepRecentImagesPerTurn 张。
+  const turnImageProtected = new Set()
+  let turnImagesSeen = 0
+  for (let i = list.length - 1; i >= lastUserIndex && turnImagesSeen < settings.keepRecentImagesPerTurn; i -= 1) {
+    if (countImages(list[i]) > 0) {
+      turnImageProtected.add(i)
+      turnImagesSeen += 1
+    }
+  }
 
   const apply = (stage, transform, wholeList = false) => {
     let touched = 0
+    // images 阶段要覆盖整份列表（本轮图片也要按限额裁），其余阶段只动保护区之前。
     const end = wholeList ? current.length : protectedFrom
     for (let i = 0; i < end; i += 1) {
       if (stage === 'images') {
-        if (imageProtected.has(i)) continue
-        if (i >= lastUserIndex) continue
+        // 历史图的豁免：最近 keepRecentImages 张（跨轮际）。
+        if (i < lastUserIndex && imageProtected.has(i)) continue
+        // 本轮图片的豁免：最近 keepRecentImagesPerTurn 张。
+        if (i >= lastUserIndex && turnImageProtected.has(i)) continue
       }
       const next = transform(current[i], i)
       if (next !== null) {
@@ -547,9 +675,24 @@ export function planContextWindow(messages, options = {}) {
     apply('thinking', message => dropThinking(message)) ||
     apply('toolText', message => truncateToolText(message, settings.maxTextChars)) ||
     apply('toolFold', message => foldToolResult(message)) ||
+    // 参数折叠排在回复折叠之前：已落盘的文件正文（write/edit 的 arguments）
+    // 比模型结论更没有在上下文里留副本的价值。
+    apply('toolCallArgs', message => foldToolCallArgs(message, callIndex)) ||
     apply('replies', message => foldReply(message))
 
   done()
+
+  // 五阶段跑完仍超预算 → 兜底：按整轮丢弃最旧的轮次。
+  // 只标记 overBudget 而不动手，会让这个信号永远为 true、彻底失去区分度
+  // （实测日志连续上百行全是 overBudget:true）。
+  if (stats.after > budget) {
+    const reaped = dropOldestTurns(current, { settings, windowTokens, budget, estimate: estimateMessagesTokens })
+    if (reaped.messages !== current) {
+      current = reaped.messages
+      stats.droppedTurns = reaped.droppedTurns
+      stats.after = estimateMessagesTokens(current, settings)
+    }
+  }
 
   stats.trimmed = stats.after < before
   stats.overBudget = stats.after > budget

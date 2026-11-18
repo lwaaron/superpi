@@ -219,8 +219,19 @@ if (contractVersionMatch !== null) {
 
 // ── 2. 面板覆盖（契约的每一项都真的有接线）──────────────────────────────
 section('2. 面板覆盖（client.js / host 字面量）')
-const commandsMissing = contract.RPC_COMMAND_NAMES.filter((name) => clientSource.includes("'" + name + "'") === false)
-eq('client.js 引用全部 33 条 RPC 命令', commandsMissing, [])
+/**
+ * 0.14.0：`get_messages` 由 **host 代发**（GET /sessions/:id/messages 分页）。
+ * client.js 不再直接发这条 RPC —— 一次性拉 55.1MB 正是这一轮要治的病。
+ *
+ * 显式排除而不是让缺口静默存在：排除项集中写在这里，理由记在 docs/parity.md，
+ * 并且下面立刻断言 host 真的代发了它 —— 否则"排除"就退化成"缺失"。
+ */
+const HOST_PROXIED_COMMANDS = new Set(['get_messages'])
+const commandsMissing = contract.RPC_COMMAND_NAMES
+  .filter((name) => HOST_PROXIED_COMMANDS.has(name) === false)
+  .filter((name) => clientSource.includes("'" + name + "'") === false)
+eq('client.js 引用全部 RPC 命令（除 host 代发的）', commandsMissing, [])
+check('host 代发 get_messages（分页端点）', hostSource.includes("{ type: 'get_messages' }") === true)
 const eventsMissing = contract.RPC_EVENT_TYPES.filter((type) => clientSource.includes("'" + type + "'") === false)
 eq('client.js 处理全部 25 类事件', eventsMissing, [])
 const assistantMissing = contract.ASSISTANT_EVENT_TYPES.filter((type) => clientSource.includes("'" + type + "'") === false)
@@ -328,7 +339,9 @@ check('agent_settled 清空 pendingUi（pi 在 settled 时丢弃未应答请求�
 const agentEndBlock = /if \(type === 'agent_end'\) \{([\s\S]*?)\n {6}\}/.exec(clientSource)
 check('解析出 agent_end 分支', agentEndBlock !== null)
 check('agent_end 不清 busy（自动重试/压缩恢复仍可能继续，只有 settled 才是结束）', agentEndBlock !== null && /busy\s*=/.test(agentEndBlock[1]) === false)
-check('bash 结果不走进事件流 → 用 get_messages 回拉补气泡', clientSource.includes("'get_messages'") === true && clientSource.includes('bashRef') === true)
+// 0.14.0：回拉改走 GET /messages（分页端点）。判据从"引用了哪条 RPC"改成
+// "有没有回拉动作 + 有没有 bash 补偿"—— 测行为，不测实现细节。
+check('bash 结果不走进事件流 → 用历史回拉补气泡', /\/messages/.test(clientSource) === true && clientSource.includes('bashRef') === true)
 check('流式追加走 steer（与 TUI 的 streamingBehavior 一致）', clientSource.includes("streamingBehavior = 'steer'") === true)
 
 // ── 6. 0.3.0 闭环的两处缺陷：会话入口一致 + 超时不倒挂 ────────────────────
@@ -377,7 +390,11 @@ check('pi-rpc 的 send 支持「不设上限」（limitMs === null 时不起 tim
 check('pi-rpc 弹窗未答时续期而非超时（armTimer 看 pendingUi）', hostSource.includes('this.pendingUi.size > 0 && deferrals < MAX_TIMEOUT_DEFERRALS') === true)
 check('pendingUi 登记了 pi 声明的 timeout（面板倒计时要跟它对齐）', hostSource.includes('timeout: typeof record.timeout') === true)
 check('应答弹窗后重开一整轮超时窗口（不继承已烧掉的时间）', inOrder(hostSource, ['restartPendingTimers() {', 'waiter.deferrals = 0', 'this.armTimer(waiter, 0)'], 400) === true)
-check('respond 里调用 restartPendingTimers（答题就是活着的证据）', hostSource.includes('this.pendingUi.delete(id)\n    this.restartPendingTimers()') === true)
+// 不要硬编码换行与缩进：仓库文件是 CRLF，`\n` 字面量匹配不上 —— 这条断言此前
+// 一直靠"读进来恰好是 LF"的巧合通过，属于脆弱断言（0.14.0 被 CRLF 检出）。
+// 改成"两件事相邻发生"的正则判据，与换行风格无关。
+check('respond 里调用 restartPendingTimers（答题就是活着的证据）',
+  /this\.pendingUi\.delete\(id\)\s*\r?\n\s*this\.restartPendingTimers\(\)/.test(hostSource) === true)
 check('面板倒计时优先用扩展声明的 timeout', clientSource.includes('Math.min(declared, DIALOG_FALLBACK_MS)') === true)
 
 // ── 7. 会话切换后的历史对账（0.4.1 修「点开历史会话没有内容」）──────────────
@@ -394,13 +411,19 @@ section('7. 会话切换后的历史对账（0.4.1）')
 check('attach 末尾接上 hydrate（挂载即对账）', inOrder(clientSource, ['var attach = function (id) {', 'return hydrate(id)'], 1600) === true)
 check('reload 只经 attach 一处挂载（四个替换类命令共用一条对账路径）', inOrder(clientSource, ['var reload = function (id) {', 'return attach(id)'], 200) === true)
 check('startSession 两条分支都走 attach（首次进入也要对账）', (clientSource.split('attach(').length - 1) >= 3)
-check('refreshMessages 复用 messagesFromHistory（一份整形逻辑，不各写一遍）', inOrder(clientSource, ['var refreshMessages = function () {', 'messagesFromHistory(list)'], 2000) === true)
+// 0.14.0：refreshMessages 多了 before 参数（分页），签名变了但意图不变 ——
+// 「整形逻辑只有一份」这条必须继续守住，所以匹配放宽到函数起始行。
+check('refreshMessages 复用 messagesFromHistory（一份整形逻辑，不各写一遍）', inOrder(clientSource, ['var refreshMessages = function (before) {', 'messagesFromHistory(list)'], 3000) === true)
 check('会话已切走时丢弃旧会话的响应（避免串台）', clientSource.includes('if (sessionRef.current !== id) return null') === true)
 check('busy 期间不覆盖列表，改挂待办（否则吞掉流式气泡）', clientSource.includes('hydratePendingRef.current = true') === true)
 check('settled 后由 flush 补上挂起的对账（drainHydrate）', inOrder(clientSource, ['if (settled === true) {', 'loadCommands(sid)', 'drainHydrate()'], 400) === true)
 check('drainHydrate 只在视图真的 idle 时执行', inOrder(clientSource, ['var drainHydrate = function () {', 'if (viewRef.current.busy === true) return'], 300) === true)
 check('messagesFromHistory 跳过 system（每轮几十 KB 的提示词不进列表）', inOrder(clientSource, ['function messagesFromHistory(list) {', "if (raw.role === 'system') continue"], 400) === true)
-check('messagesFromHistory 用数组下标当 seq，不碰 view.lastSeq', inOrder(clientSource, ['function messagesFromHistory(list) {', 'makeMessage(raw, next.length)'], 500) === true)
+// 0.14.0 起 seq 的语义升级：分页拼接必须用 host 给的**完整列表下标**，
+// 才能在两页边界去重、并让 React key 稳定；没有该字段（事件流回放）仍回落数组下标。
+// 不变的约束是那条底线：**绝不碰 view.lastSeq**（它属事件去重，与消息序号无关）。
+check('messagesFromHistory 优先用 host 的 seq，缺省回落下标', inOrder(clientSource, ['function messagesFromHistory(list) {', 'raw.seq', 'makeMessage(raw, seq)'], 900) === true)
+check('messagesFromHistory 不碰 view.lastSeq', /messagesFromHistory[\s\S]{0,900}view\.lastSeq/.test(clientSource) === false)
 check('bashRef 仍只表示「bash 正在跑」（Esc 要能 abort_bash）', inOrder(clientSource, ['if (bashRef.current === true)', "'abort_bash'"], 200) === true)
 check('history 对账函数已导出给测试', clientSource.includes('messagesFromHistory: messagesFromHistory') === true)
 

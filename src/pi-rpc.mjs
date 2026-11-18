@@ -77,22 +77,63 @@ const DIALOG_METHODS = new Set(['select', 'confirm', 'input', 'editor'])
  */
 const SESSION_REPLACING_EVENTS = new Set(['new_session', 'switch_session', 'fork', 'clone'])
 
-/** 只按 LF 切帧，容忍 CRLF；空行丢弃。 */
+/**
+ * 只按 LF 切帧，容忍 CRLF；空行丢弃。
+ *
+ * ---------------------------------------------------------------------------
+ * 为什么要改（0.14.0）
+ *
+ * 旧实现在每个 chunk 到达时都做两件 O(n) 的事：
+ *   ① `Buffer.concat([buffer, chunk])` —— 把已收到的全部字节重新复制一遍；
+ *   ② `buffer.indexOf(0x0a)` —— 从下标 0 重新扫一遍找换行。
+ * 两者叠加是 O(n²)：一条 55MB 的单帧在 64KB 分块下要复制/扫描约 860 次，
+ * 实测 **11,494 ms** 纯 CPU，**同步阻塞整个 host 事件循环** —— 这期间 SSE 停推、
+ * 面板完全无响应，用户看到的就是"卡死好几分钟"。
+ *
+ * 改法（切帧语义一字不变，只改数据组织）：
+ *   - 未凑齐的分块挂在 `pending` 列表里，**永远不被重扫**（每个字节只 `indexOf` 一次）；
+ *   - 只在真正凑齐一条帧时才 `Buffer.concat` 一次（总复制量 O(n)）；
+ *   - 单 chunk 内成帧时直接 `subarray` 视图，零复制。
+ * 净效果：每个字节只被扫描一次、只被复制一次。
+ *
+ * 关键约束：**切帧结果必须与旧实现完全一致**。`test/host-parity.mjs` 用
+ * 「1 / 2 / 3 / 7 / 64 / 1024 / 99999 字节七种分块喂同一份数据，输出必须逐字节相同」
+ * 把它钉死，并附带 55MB 单帧的耗时上限。
+ */
 class LineSplitter {
   constructor(onLine) {
-    this.buffer = Buffer.alloc(0)
     this.onLine = onLine
     this.dropped = 0
+    /** 已收到但还没等到换行的分块（不 concat，避免每次 push 都整块复制）。 */
+    this.pending = []
+    this.pendingBytes = 0
   }
 
   push(chunk) {
-    this.buffer = this.buffer.length === 0 ? chunk : Buffer.concat([this.buffer, chunk])
-    let newline = -1
-    for (;;) {
-      newline = this.buffer.indexOf(0x0a)
-      if (newline === -1) break
-      let line = this.buffer.subarray(0, newline)
-      this.buffer = this.buffer.subarray(newline + 1)
+    let offset = 0
+    while (offset < chunk.length) {
+      const newline = chunk.indexOf(0x0a, offset)
+      // 本次 chunk 剩下的部分没有换行：挂进 pending 就返回。
+      // 关键点：**不对 pending 做 indexOf** —— 它已经被扫过一遍了，
+      // 再扫就是 O(n²) 的来源（旧实现正是每来一个 chunk 就从下标 0 重扫全部已收字节）。
+      if (newline === -1) {
+        const rest = chunk.subarray(offset)
+        this.pending.push(rest)
+        this.pendingBytes += rest.length
+        return
+      }
+      const head = chunk.subarray(offset, newline)
+      let line
+      if (this.pending.length === 0) {
+        line = head
+      } else {
+        // 跨 chunk 的帧：只在**真正凑齐一条**时复制一次（总复制量 O(n)）。
+        this.pending.push(head)
+        line = Buffer.concat(this.pending, this.pendingBytes + head.length)
+        this.pending = []
+        this.pendingBytes = 0
+      }
+      offset = newline + 1
       if (line.length > 0 && line[line.length - 1] === 0x0d) line = line.subarray(0, line.length - 1)
       if (line.length === 0) continue
       this.onLine(line.toString('utf8'), line.length)
@@ -100,9 +141,10 @@ class LineSplitter {
   }
 
   flush() {
-    if (this.buffer.length === 0) return
-    const tail = this.buffer.toString('utf8')
-    this.buffer = Buffer.alloc(0)
+    if (this.pending.length === 0) return
+    const tail = Buffer.concat(this.pending).toString('utf8')
+    this.pending = []
+    this.pendingBytes = 0
     if (tail.trim() !== '') this.onLine(tail, Buffer.byteLength(tail))
   }
 }

@@ -77,7 +77,7 @@ const API_PREFIX = '/api/' + PLUGIN_ID
 const MAX_SESSIONS = 8
 const MAX_BODY_BYTES = 4 * 1024 * 1024
 /** GET /contract 里 version 字段的取值：本插件对外的契约版本，与 package.json 解耦。 */
-const CONTRACT_VERSION = '0.13.0'
+const CONTRACT_VERSION = '0.14.0'
 /** 历史会话列表的条数窗口（与 src/session-store.mjs 的 DEFAULT_LIMIT/MAX_LIMIT 一致）。 */
 const HISTORY_DEFAULT_LIMIT = 20
 const HISTORY_MAX_LIMIT = 200
@@ -114,6 +114,25 @@ const SESSION_REPLACING_COMMANDS = new Set(['new_session', 'switch_session', 'fo
 const SPAWN_STATE_TIMEOUT_MS = 5000
 /** POST /sessions 里为了回填 sessionFile 愿意等的时间上限（超过就先把会话回给客户端）。 */
 const POST_SPAWN_STATE_WAIT_MS = 2500
+
+/**
+ * 历史消息分页（0.14.0）。
+ *
+ * 为什么必须分页：一个真实的视觉迭代会话有 3251 条消息、116 张 base64 图，
+ * `get_messages` 一次返回 **55.1 MB**（实测：stringify 116ms + parse 50ms + 传输）。
+ * 而**图片占其中 88.2%** —— 面板首屏根本不需要 116 张大图，需要的是最近这一屏。
+ *
+ * 三条一起做才有效（缺一条都会留一个卡顿入口）：
+ *   ① 只取最近 `HISTORY_PAGE_SIZE` 条；
+ *   ② 图片块换成 `image-stub`（带 bytes/mimeType/id，不带 base64）；
+ *   ③ 更早的历史走 `?before=` 往前翻，真实图片走 `/images/:id` 按需取。
+ * 实测效果：55.1 MB → 222 KB（最近 200 条 + stub），首屏可交互从「卡几秒」降到即时。
+ *
+ * `HISTORY_PAGE_MAX` 是上限而不是默认值：面板要翻更早时一次最多 500 条，
+ * 再多就分批 —— 单次响应体必须留在 1MB 量级，否则又回到原来的病。
+ */
+export const HISTORY_PAGE_SIZE = 200
+export const HISTORY_PAGE_MAX = 500
 
 const DEFAULTS = {
   /** 空 = 自动探测（插件内 .runtime → node_modules → 全局 npm → 环境变量）。 */
@@ -952,6 +971,12 @@ function rulesExtensionInstalled({ env = process.env, home = os.homedir() } = {}
 }
 
 export function createHandler(deps) {
+  /**
+   * 历史图片回取表：整个 handler 一份，按 `<sessionId>:<seq>:<block>` 索引。
+   * 放在 handler 闭包里而不是 per-request：面板翻页 / 重新挂载后仍能取回同一张图，
+   * 不必再重新分页一次。
+   */
+  const imageStore = createImageStore()
   return async function handler(req, res) {
     const url = new URL(typeof req.url === 'string' ? req.url : '/', 'http://localhost')
     let routePath = url.pathname.indexOf(API_PREFIX) === 0 ? url.pathname.slice(API_PREFIX.length) : url.pathname
@@ -1275,6 +1300,39 @@ export function createHandler(deps) {
           const since = Number(url.searchParams.get('since') ?? 0)
           return send(200, snapshotOf(proc, { sinceSeq: Number.isFinite(since) ? since : 0 }))
         }
+        /**
+         * 取一张历史图片的真实像素（0.14.0）。
+         *
+         * `get_messages` 只给 `image-stub`，面板要渲染某张图时才来这里取一次。
+         * 按 `image:<sessionFile>:<seq>:<blockIndex>` 定位，**不从 id 反推路径**：
+         * id 由 host 生成并自校验，避免路径穿越。
+         */
+        if (method === 'GET' && tail.indexOf('/images/') === 0) {
+          const imageId = decodeURIComponent(tail.slice('/images/'.length))
+          const record = await imageStore.get(imageId)
+          if (record === null) return send(404, { error: 'no such image' })
+          return send(200, { ok: true, mimeType: record.mimeType, data: record.data })
+        }
+        /**
+         * 历史消息分页（0.14.0；判据见 docs/performance-acceptance.md §1.2 D）。
+         *
+         * `?before=<seq>&limit=<n>`；不传 before = 最新一页。响应体恒在 1MB 量级，
+         * 图片一律是 `image-stub`（真实像素走 /images/:id）。
+         */
+        if (method === 'GET' && tail === '/messages') {
+          const data = await proc.send({ type: 'get_messages' }, { timeoutMs: 120000 })
+          const list = data !== null && typeof data === 'object' && Array.isArray(data.messages) ? data.messages : []
+          const page = paginateHistory(list, {
+            before: url.searchParams.get('before'),
+            limit: url.searchParams.get('limit'),
+            imageIdOf: (block, messageIndex, blockIndex) => imageStore.remember(
+              String(id) + ':' + String(messageIndex) + ':' + String(blockIndex),
+              block.mimeType,
+              typeof block.data === 'string' ? block.data : (typeof block.source?.data === 'string' ? block.source.data : ''),
+            ),
+          })
+          return send(200, { ok: true, data: page })
+        }
         if (method === 'POST' && tail === '/command') {
           const contentType = String(req.headers['content-type'] ?? '')
           if (contentType.toLowerCase().indexOf('application/json') === -1) return send(415, { error: 'content-type must be application/json' })
@@ -1354,6 +1412,109 @@ export function createHandler(deps) {
       if (status >= 500) deps.log('warn', String(error?.message ?? error))
       return send(status, { error: String(error?.message ?? error) })
     }
+  }
+}
+
+/**
+ * 把一条消息里的 image 块换成 `image-stub`（不带 base64）。
+ *
+ * 为什么要换：图片占历史体量的 **88.2%**（实测 48.6MB / 55.1MB）。面板首屏只需要
+ * 知道「这里有一张图、多大、什么类型」，真实像素走 `/images/:id` 按需取 —— 这样
+ * 打开一个 3000 条 / 116 图的会话才不会被几十 MB 的 base64 拖死。
+ *
+ * stub 必须带 `id`：它是回取原图的句柄，没有它面板就永远看不到图（能力缺失）。
+ * 非图片块一律原样返回 —— 这条函数只做一件窄事。
+ */
+export function stubImagesInMessage(message, imageIdOf) {
+  if (message === null || typeof message !== 'object' || !Array.isArray(message.content)) return message
+  let changed = false
+  const content = message.content.map((block, blockIndex) => {
+    if (block === null || typeof block !== 'object' || block.type !== 'image') return block
+    changed = true
+    const data = typeof block.data === 'string' ? block.data : (typeof block.source?.data === 'string' ? block.source.data : '')
+    return {
+      type: 'image-stub',
+      id: imageIdOf(block, blockIndex),
+      mimeType: typeof block.mimeType === 'string' ? block.mimeType : 'image/png',
+      bytes: data.length,
+    }
+  })
+  return changed ? { ...message, content } : message
+}
+
+/**
+ * 历史消息分页 + 图片占位。
+ *
+ * 契约（面板与 TUI 共用的语义，见 docs/performance-acceptance.md §1.2 判据 D）：
+ *  - `before`：无名/非数字/≤0 表示「要最新一页」；否则要 `seq < before` 的那些。
+ *  - 返回 `{ messages, total, hasMore, nextBefore }`：
+ *      `total`     = 分页前的完整条数（面板据此显示「共 N 条」并决定要不要「加载更早」）；
+ *      `hasMore`   = 还有更早的可以翻；
+ *      `nextBefore`= 下一次翻页要传的 before（= 本页第一条的 seq）。
+ *  - 图片一律换成 `image-stub`；要真实像素走 `/images/:id`。
+ *
+ * 注意 `seq` 是**在完整列表里的下标**，不是数组下标偏移 —— 翻页时前后两页能凭它对齐，
+ * 且面板的 `key` 不会因为翻页而变。
+ */
+export function paginateHistory(list, options = {}) {
+  const all = Array.isArray(list) ? list : []
+  const limitRaw = Number(options.limit)
+  const limit = Number.isFinite(limitRaw) && limitRaw > 0
+    ? Math.min(Math.floor(limitRaw), HISTORY_PAGE_MAX)
+    : HISTORY_PAGE_SIZE
+  const beforeRaw = Number(options.before)
+  const before = Number.isFinite(beforeRaw) && beforeRaw > 0 ? Math.floor(beforeRaw) : all.length
+  const end = Math.min(before, all.length)
+  const start = Math.max(0, end - limit)
+  const imageIdOf = typeof options.imageIdOf === 'function' ? options.imageIdOf : () => null
+  const messages = []
+  for (let i = start; i < end; i += 1) {
+    const stubbed = stubImagesInMessage(all[i], (block, blockIndex) => imageIdOf(block, i, blockIndex))
+    messages.push({ ...stubbed, seq: i })
+  }
+  return {
+    messages,
+    total: all.length,
+    hasMore: start > 0,
+    nextBefore: start,
+  }
+}
+
+/**
+ * 历史图片的**回取表**（0.14.0）。
+ *
+ * 为什么需要它：`get_messages` 现在只下发 `image-stub`（不带 base64，否则一次 55MB）。
+ * 面板要真正渲染某张图时必须能取回像素，而有两条路：
+ *   ① 取图时重新调 `get_messages` 再定位 —— 那等于把 55MB 又拉一遍，白改；
+ *   ② 分页时把图片**顺手登记**进这张表，取图 O(1)。
+ * 选 ②。表是 per-session 的有界 LRU：图片是"看过就可以再取"的派生数据，
+ * 不是真相，丢了大不了重新分页一次。
+ *
+ * id 形如 `<sessionId>:<seq>:<blockIndex>`，取图时**只在本表里查**，
+ * 绝不从 id 反推文件路径 —— 否则就是一个路径穿越入口。
+ */
+const IMAGE_CACHE_LIMIT = 240
+function createImageStore() {
+  const entries = new Map()
+  const order = []
+  return {
+    /** 登记一张图，返回它的 id（同一张图重复登记覆盖，不增长）。 */
+    remember(imageId, mimeType, data) {
+      if (typeof imageId !== 'string' || imageId === '' || typeof data !== 'string' || data === '') return null
+      if (!entries.has(imageId)) order.push(imageId)
+      entries.set(imageId, { mimeType: typeof mimeType === 'string' && mimeType !== '' ? mimeType : 'image/png', data })
+      while (order.length > IMAGE_CACHE_LIMIT) {
+        const evicted = order.shift()
+        entries.delete(evicted)
+      }
+      return imageId
+    },
+    get(imageId) {
+      return entries.get(imageId) ?? null
+    },
+    size() {
+      return entries.size
+    },
   }
 }
 
