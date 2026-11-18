@@ -113,16 +113,61 @@ const ESC = '\x1b'
  */
 export type RunPhase = 'idle' | 'running' | 'success' | 'error'
 
-export const runState: { phase: RunPhase; failed: boolean; startedAt: number } = {
+/**
+ * 当前正在执行的那一个工具。
+ *
+ * 为什么需要它（0.14.1）：实测一个真实会话里，**一轮**跑 25 次工具执行、累计
+ * 2028 秒（33.8 分钟），其中单条 `timeout=960` 的命令就要 371~494 秒。
+ * 这些等待是**合法的**（跑全量变异测试），但界面上只有一个一直涨的秒数，
+ * 用户无从判断「它在干活」还是「它卡死了」，实际体感就是"卡在 Working"。
+ * 把工具名与它自设的上限摆出来，等待就从"疑似卡死"变成"可见的进度"。
+ *
+ * 与面板端（client.js 的 `view.activeTool`）逐字对齐 —— AGENTS.md §3 的
+ * 100% 对齐在这里是结构性成立的：两端都从 `tool_execution_start.args.timeout` 取上限。
+ */
+export type ActiveTool = { name: string; startedAt: number; limitSeconds: number } | null
+
+export const runState: { phase: RunPhase; failed: boolean; startedAt: number; tool: ActiveTool } = {
   phase: 'idle',
   failed: false,
   startedAt: 0,
+  tool: null,
+}
+
+/**
+ * 从 `tool_execution_start` 的 args 里取命令自带的上限（秒）。
+ *
+ * pi 的 bash 工具把 `timeout` 当**秒**用且没有上限钳制 —— 实测模型给过
+ * 1200 / 1800 / 6000，甚至 120000。取不到就返回 0（表示这次调用没声明上限），
+ * 不用「猜一个默认值」：猜错会让"还剩多久"变成假信息。
+ */
+export function toolLimitSeconds(args: unknown): number {
+  if (args === null || typeof args !== 'object') return 0
+  const raw = (args as { timeout?: unknown }).timeout
+  if (typeof raw !== 'number' || !Number.isFinite(raw) || raw <= 0) return 0
+  return Math.floor(raw)
 }
 
 export function markRunStart(now = Date.now()): void {
   runState.phase = 'running'
   runState.failed = false
   runState.startedAt = now
+  runState.tool = null
+}
+
+export function markToolStart(name: unknown, args: unknown, now = Date.now()): void {
+  runState.phase = 'running'
+  runState.tool = {
+    name: typeof name === 'string' && name !== '' ? name : 'tool',
+    startedAt: now,
+    limitSeconds: toolLimitSeconds(args),
+  }
+}
+
+export function markToolEnd(): void {
+  // 只清工具，不改 phase：工具结束之后 agent 还要继续推理/推进，
+  // 把 phase 置 idle 会让 Working 行消失一下又出现（闪烁）。
+  runState.tool = null
 }
 
 export function markToolError(): void {
@@ -132,12 +177,70 @@ export function markToolError(): void {
 export function markRunSettled(): void {
   runState.phase = runState.failed ? 'error' : 'success'
   runState.startedAt = 0
+  runState.tool = null
 }
 
 export function resetRunState(): void {
   runState.phase = 'idle'
   runState.failed = false
   runState.startedAt = 0
+  runState.tool = null
+}
+
+/**
+ * 时长文案，口径与 pi 自己的 `formatToolDuration`
+ * （`dist/core/tools/render-utils.js:97-106`）**逐字一致**：
+ *   <60s  → `4.2s`（一位小数）
+ *   <60m  → `5m 41s`
+ *   更久  → `2h 3m 4s`
+ *
+ * 为什么必须同口径：同一条命令，pi 的工具行写 `Elapsed 5m 41s`，Working 行要是写
+ * `341s` 或 `16分`，用户会以为是两个不同的计时（实测反馈里就出现过这个困惑）。
+ *
+ * 注意 `<60s` 的分界是**秒**不是 10 秒：写成 `seconds < 10` 会让
+ * `formatRunDuration(42000)` 输出 `42s` 而 pi 输出 `42.0s`，口径又分叉了。
+ */
+export function formatRunDuration(ms: number): string {
+  const safe = Number.isFinite(ms) && ms > 0 ? ms : 0
+  const seconds = safe / 1000
+  if (seconds < 60) return seconds.toFixed(1) + 's'
+  const totalSeconds = Math.floor(seconds)
+  const minutes = Math.floor(totalSeconds / 60)
+  const remainder = totalSeconds % 60
+  if (minutes < 60) return minutes + 'm ' + remainder + 's'
+  return Math.floor(minutes / 60) + 'h ' + (minutes % 60) + 'm ' + remainder + 's'
+}
+
+/**
+ * Working 行主文案：`◐ Working · 38m 7s · bash · 上限 16m`。
+ *
+ * 三段各有职责，缺一段就会让某一类等待变得不可解释：
+ *   · `Working · 38m 7s` —— 本轮**累计**耗时（不是单个工具）。实测一轮里 25 次工具
+ *     执行累计 2028 秒，用户看到的"卡了好久"多数是这个累计值。
+ *   · `bash`             —— 此刻在跑什么。没有它，累计秒数涨到 38 分钟时无法区分
+ *     "模型卡死"与"命令在跑"。
+ *   · `上限 16m`         —— 这条命令自带的 timeout。模型常给 960/1800 秒，
+ *     知道上限就能算出最坏还要等多久；超限时改说「已超出上限」，那是真该报警的时刻。
+ *
+ * 窄终端依次退让：完整三段 → 只留 Working+累计 → 只留图标（见 topBorder 的 widthOfVisible 判断）。
+ */
+export function workingLabel(now = Date.now(), includeTool = true): string {
+  const phase = runState.phase
+  const startedAt = runState.startedAt
+  if (phase !== 'running' || startedAt <= 0) return 'Working'
+  let text = 'Working · ' + formatRunDuration(now - startedAt)
+  const tool = runState.tool
+  if (includeTool === true && tool !== null) {
+    text += ' · ' + tool.name
+    if (tool.limitSeconds > 0) {
+      const limitMs = tool.limitSeconds * 1000
+      const elapsed = now - tool.startedAt
+      text += elapsed > limitMs
+        ? ' · 已超出上限 ' + formatRunDuration(limitMs)
+        : ' · 上限 ' + formatRunDuration(limitMs)
+    }
+  }
+  return text
 }
 
 /* ------------------------------------------------------------------ 入口 */
@@ -587,15 +690,17 @@ export class SuperPiEditor extends CustomEditor {
   private topBorder(raw: string | undefined, inner: number): string {
     const phase: RunPhase = runState.phase
     const color = STATUS_RGB[phase] ?? STATUS_RGB.idle
-    const elapsed =
-      phase === 'running' && runState.startedAt > 0
-        ? ` · ${Math.max(0, Math.floor((Date.now() - runState.startedAt) / 1000))}s`
-        : ''
-    const full = sgrFg(color) + statusIcon(phase) + ' Working' + elapsed + SGR_RESET
+    // 0.14.1：主文案带上「当前工具 + 它自设的上限」，让合法长等待可见。
+    // 实测一轮累计 2028s、单命令 371~494s，界面只涨秒数时用户会判定成卡死。
+    const full = sgrFg(color) + statusIcon(phase) + ' ' + workingLabel() + SGR_RESET
+    // 退化档：只留 Working 与累计时长（去掉工具段）—— 工具名比累计值次要，
+    // 但"正在跑什么"仍要尽量保留，所以它排在图标档之前。
+    const noTool = sgrFg(color) + statusIcon(phase) + ' ' + workingLabel(Date.now(), false) + SGR_RESET
     const compact = sgrFg(color) + statusIcon(phase) + SGR_RESET
-    // 窄面板上依次退让：完整标签 → 只剩图标 → 只画横线。
+    // 窄面板上依次退让：完整三段 → 去掉工具段 → 只剩图标 → 只画横线。
     let chosen = ''
     if (widthOfVisible(full) + 5 <= inner) chosen = full
+    else if (widthOfVisible(noTool) + 5 <= inner) chosen = noTool
     else if (widthOfVisible(compact) + 5 <= inner) chosen = compact
     if (chosen === '') return borderBody(raw, inner)
     const rest = Math.max(0, inner - 2 - widthOfVisible(chosen) - 1)
@@ -2311,8 +2416,23 @@ export default function superpiEditor(pi: any): void {
   }
   if (typeof pi?.on !== 'function') return
   pi.on('agent_start', () => markRunStart())
+  /**
+   * 工具开始/结束（0.14.1）。
+   *
+   * 为什么必须订阅 `tool_execution_start`：只有它带 `args`，而 `args.timeout` 是
+   * 这条命令自带的执行上限。实测模型会给 bash 传 960 / 1800 / 6000 秒（最大见过
+   * 120000），一条命令合法地跑 371~494 秒、一轮累计 2028 秒 —— 没有这个事件，
+   * Working 行只能显示一个一直涨的秒数，用户无法区分"在跑"与"卡死"。
+   *
+   * 面板端在 `client.js` 的同一事件上做同一件事（`view.activeTool`），
+   * 两端取的是同一个字段，所以不会出现"面板有上限、命令行没有"的偏差。
+   */
+  pi.on('tool_execution_start', (event: any) => {
+    markToolStart(event?.toolName ?? event?.name, event?.args ?? event?.arguments)
+  })
   pi.on('tool_execution_end', (event: any) => {
     if (event?.isError) markToolError()
+    markToolEnd()
   })
   pi.on('agent_settled', () => markRunSettled())
   pi.on('session_start', (_event: any, ctx: any) => {

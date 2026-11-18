@@ -217,6 +217,117 @@ eq(decodeListing(''), null, 'decodeListing 空输出 → null')
 eq(decodeListing(b64('')), null, 'decodeListing 空列表 → null')
 eq(decodeListing(b64('C:\\a\u0001.png')), null, 'decodeListing 挡掉控制字符')
 
+/* --------------------------------- 0.14.1 等待可见性（合法长等待 vs 卡死） */
+
+/**
+ * 这一段的由来：用户报「总卡在 Elapsed 6m 0s / Working · 2287s」。
+ * 查真实会话发现**并没有卡死** —— 那一轮 25 次工具执行累计 2028 秒（33.8 分钟），
+ * 其中 `timeout=960` 的命令单次跑 371~494 秒，是合法的长任务。
+ * 真正的问题是界面只显示一个一直涨的秒数，用户无法区分「在跑」与「卡死」。
+ *
+ * 所以这里测的不是"更快"，而是**可解释性**：工具名、命令自设上限、超限提示。
+ * 面板端（client.js）有对应的一组断言，两边取同一个字段 `args.timeout`。
+ */
+
+const toolLimitSeconds = extensionModule.toolLimitSeconds
+const markToolStart = extensionModule.markToolStart
+const markToolEnd = extensionModule.markToolEnd
+const formatRunDuration = extensionModule.formatRunDuration
+const workingLabel = extensionModule.workingLabel
+
+// --- 上限提取：只认正有限数
+eq(toolLimitSeconds({ timeout: 960 }), 960, 'toolLimitSeconds 读出 timeout')
+eq(toolLimitSeconds({ timeout: 120000 }), 120000, 'toolLimitSeconds 支持超大上限（实测见过 120000s）')
+eq(toolLimitSeconds({ timeout: 0 }), 0, 'timeout=0 视为未声明')
+eq(toolLimitSeconds({ timeout: -5 }), 0, '负 timeout 视为未声明')
+eq(toolLimitSeconds({ timeout: '960' }), 0, '字符串 timeout 不认（不做隐式转换，避免猜错）')
+eq(toolLimitSeconds({}), 0, '没 timeout 字段时为 0')
+eq(toolLimitSeconds(null), 0, 'args 为 null 时不崩')
+eq(toolLimitSeconds(undefined), 0, 'args 为 undefined 时不崩')
+eq(toolLimitSeconds({ timeout: Infinity }), 0, 'Infinity 视为未声明')
+
+// --- 时长口径必须与 pi 自己的 formatToolDuration 逐字一致
+// （pi 的工具行写 `Elapsed 5m 41s`，Working 行写别的格式会让人以为是两个计时）
+eq(formatRunDuration(4200), '4.2s', '<60s 带一位小数')
+eq(formatRunDuration(42000), '42.0s', '42s 也要带小数（pi 的分界是 60s 不是 10s）')
+eq(formatRunDuration(341000), '5m 41s', '分钟级用 Nm Ns（与截图里的 Elapsed 5m 41s 同口径）')
+eq(formatRunDuration(2287000), '38m 7s', '38m 级（用户截图里的 2287s）')
+eq(formatRunDuration(3720000), '1h 2m 0s', '超过一小时用 Nh Nm Ns（pi 保留秒位）')
+eq(formatRunDuration(7324000), '2h 2m 4s', '两小时级')
+eq(formatRunDuration(0), '0.0s', '0 不崩')
+eq(formatRunDuration(-1), '0.0s', '负数钳到 0')
+
+// --- Working 文案三段：累计、工具、上限
+{
+  resetRunState()
+  eq(workingLabel(Date.now(), true), 'Working', 'idle 时只有 Working（不显示 0s）')
+
+  markRunStart(1000000)
+  eq(workingLabel(1000000 + 5000, true), 'Working · 5.0s', 'running 但无工具时只显示累计')
+  ok(!workingLabel(1000000 + 5000, true).includes('上限'), '无工具时不出现上限段')
+
+  // 模拟：本轮已跑 38 分钟，当前在跑一条 timeout=960 的 bash（才跑了 3 分钟）
+  markRunStart(1000000)
+  markToolStart('bash', { command: 'node test/mutation.test.mjs', timeout: 960 }, 1000000 + 2100000)
+  const label = workingLabel(1000000 + 2280000, true)
+  ok(label.includes('38m'), '显示本轮累计（38m 级）')
+  ok(label.includes('bash'), '显示当前工具名 —— 这是区分「在跑」与「卡死」的关键')
+  ok(label.includes('上限 16m'), '显示命令自设上限（960s = 16m）')
+
+  // 超过上限：必须改口，不能静默继续加秒数
+  const over = workingLabel(1000000 + 2100000 + 961000, true)
+  ok(over.includes('已超出上限'), '超限时显式说明（这是真该报警的时刻）')
+  ok(!over.includes('上限 16m ·'), '超限后不再显示"上限 N"（两者互斥）')
+
+  // 退化档（窄终端）：去掉工具段但保留累计
+  const narrow = workingLabel(1000000 + 2280000, false)
+  ok(!narrow.includes('bash'), '窄档不显示工具名')
+  ok(narrow.includes('38m'), '窄档仍显示累计时长')
+
+  // 工具结束 → 工具段消失，但 phase 仍是 running（否则 Working 会闪烁消失）
+  markToolEnd()
+  eq(runState.phase, 'running', '工具结束后 phase 仍是 running（避免 Working 行闪烁）')
+  ok(!workingLabel(1000000 + 2290000, true).includes('bash'), '工具结束后不再显示工具名')
+
+  // 出错 + 收尾
+  markToolStart('bash', { timeout: 960 }, Date.now())
+  markToolError()
+  markRunSettled()
+  eq(runState.phase, 'error', '有工具错误时 settled → error')
+  eq(runState.tool, null, 'settled 清空工具（否则下一轮会显示上一轮的工具）')
+  eq(runState.startedAt, 0, 'settled 后 startedAt 归零')
+
+  resetRunState()
+  eq(runState.phase, 'idle', 'reset 回到 idle')
+  eq(runState.tool, null, 'reset 清空工具')
+}
+
+// --- 真入口：tool_execution_start 事件必须真的驱动 activeTool
+{
+  resetRunState()
+  const calls = []
+  const fakePi = { on: (event, handler) => calls.push({ event, handler }) }
+  defaultExport(fakePi)
+  const start = calls.find(c => c.event === 'tool_execution_start')?.handler
+  const end = calls.find(c => c.event === 'tool_execution_end')?.handler
+  ok(typeof start === 'function' && typeof end === 'function', '入口接到工具开始/结束两个事件')
+
+  markRunStart()
+  start({ toolName: 'bash', args: { command: 'x', timeout: 1800 } })
+  ok(runState.tool !== null && runState.tool.name === 'bash', '事件驱动 activeTool（工具名）')
+  eq(runState.tool.limitSeconds, 1800, '事件把 args.timeout 带进状态（面板端取同一个字段）')
+
+  end({ isError: false })
+  eq(runState.tool, null, 'tool_execution_end 清空 activeTool')
+
+  // 缺字段时不许崩（pi 的其它工具可能没有 timeout）
+  start({})
+  ok(runState.tool !== null, '事件缺 toolName 时仍记录（回落成 tool）')
+  eq(runState.tool.limitSeconds, 0, '缺 args 时上限为 0')
+  end({})
+  resetRunState()
+}
+
 /* ---------------------------------------------------------------- 集成断言 */
 
 /** 直接看私有状态（TS 的 private 只在类型层，运行时是普通属性）。 */
@@ -421,13 +532,23 @@ const stripAnsi = text => text.replace(/\x1b\[[0-9;:?]*[A-Za-z]/g, '').replace(/
   const calls = []
   const fakePi = { on: (event, handler) => calls.push({ event, handler }) }
   defaultExport(fakePi)
-  // 3 个状态事件 + session_start + session_switch + session_info_changed（标题重设）
-  eq(calls.length, 6, '入口注册六个事件（状态机 3 + 会话 3）')
+  // 4 个状态事件（agent_start + tool_execution_start + tool_execution_end + agent_settled）
+  // + session_start + session_switch + session_info_changed（标题重设）
+  eq(calls.length, 7, '入口注册七个事件（状态机 4 + 会话 3）')
   ok(calls.every(c => typeof c.handler === 'function'), '入口注册的都是函数')
   const events = calls.map(c => c.event)
-  for (const name of ['agent_start', 'tool_execution_end', 'agent_settled', 'session_start', 'session_switch', 'session_info_changed']) {
+  for (const name of ['agent_start', 'tool_execution_start', 'tool_execution_end', 'agent_settled', 'session_start', 'session_switch', 'session_info_changed']) {
     ok(events.includes(name), `入口订阅了 ${name}`)
   }
+  /**
+   * 0.14.1：`tool_execution_start` 是**唯一**带 `args`（含 timeout）的事件。
+   * 少订它，Working 行就只能显示一个一直涨的秒数 —— 那正是用户把"合法长等待"
+   * 误判成"卡死"的根源（实测一轮累计 2028s、单命令 371~494s）。
+   * 这条断言防止以后有人把它当成冗余事件删掉。
+   */
+  ok(events.includes('tool_execution_start'), '必须订阅 tool_execution_start（否则拿不到命令自带的上限）')
+  const startHandler = calls.find(c => c.event === 'tool_execution_start')?.handler
+  ok(typeof startHandler === 'function', 'tool_execution_start 有处理器')
   const factories = []
   const titles = []
   const footers = []
@@ -576,6 +697,37 @@ const stripAnsi = text => text.replace(/\x1b\[[0-9;:?]*[A-Za-z]/g, '').replace(/
 
 const rowIndexOf = (rows, needle) => rows.findIndex(row => stripAnsi(row).includes(needle))
 const columnOf = (rows, y, needle) => stripAnsi(rows[y] ?? '').indexOf(needle)
+
+/**
+ * ①z 上边框真的画出「工具 · 上限」（0.14.1）。
+ *
+ * 纯函数层（`workingLabel`）已经测过文案，但那只证明"文案函数返回了字符串"——
+ * 上边框有没有把它画出来是另一回事（0.9.4~0.9.7 的教训：改了却从未生效）。
+ * 所以这里走真 `render()`，从渲染结果里读。
+ */
+{
+  resetRunState()
+  markRunStart()
+  markToolStart('bash', { command: 'node test/mutation.test.mjs', timeout: 960 }, Date.now())
+  const { editor } = makeEditor('hello')
+  const rows = editor.render(120)
+  const top = stripAnsi(rows[0])
+  ok(top.includes('Working'), '上边框画出 Working')
+  ok(top.includes('bash'), '上边框画出当前工具名（区分「在跑」与「卡死」的关键）')
+  ok(top.includes('上限'), '上边框画出命令自设上限')
+  eq(top.startsWith('┌'), true, '加了工具段之后仍是直角上边框')
+
+  // 窄宽度：工具段必须让位，但 Working 与累计时长要留下，且框线不能错位
+  const narrowRows = editor.render(30)
+  const narrowTop = stripAnsi(narrowRows[0])
+  ok(narrowTop.startsWith('┌'), '窄宽度下仍是上边框')
+  ok(narrowTop.includes('Working') || narrowTop.includes('◐'), '窄宽度下仍有状态指示')
+  eq(narrowRows.every(row => tuiModule.visibleWidth(row) === tuiModule.visibleWidth(narrowRows[0])), true, '窄宽度下每行显示宽度一致（退化不让框线歪）')
+
+  resetRunState()
+  const idleRows = editor.render(120)
+  ok(!stripAnsi(idleRows[0]).includes('上限'), 'idle 时上边框不出现上限段')
+}
 
 // ① 框线 80% 白 + 四边闭合 + 直角
 {
