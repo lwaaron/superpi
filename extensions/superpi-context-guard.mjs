@@ -571,6 +571,7 @@ export function appendGuardLogSync(stats, { env = process.env, home = os.homedir
     fs.mkdirSync(path.dirname(filePath), { recursive: true })
     const line = JSON.stringify({
       at: stats?.at ?? new Date().toISOString(),
+      sessionId: stats?.sessionId ?? '',
       window: stats?.window ?? 0,
       budget: stats?.budget ?? 0,
       before: stats?.before ?? 0,

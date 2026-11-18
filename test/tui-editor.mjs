@@ -861,6 +861,56 @@ const makeFooterData = () => ({
   ok(hoverStyle('x', null).includes('\x1b[4m'), '没有主题取色时仍加下划线（降级但仍可见）')
 }
 
+// ④g 真实上下文占用（0.12.2）：footer 不能只信 usage —— 当前上游会把 1.31M 显示成 3.7%
+const guardLogModule = await import(pathToFileURL(path.join(root, 'extensions', 'superpi-context-guard.mjs')).href)
+{
+  const guardDir = fs.mkdtempSync(path.join(os.tmpdir(), 'superpi-guard-footer-'))
+  const previousGuard = process.env.SUPERPI_CONTEXT_GUARD
+  process.env.SUPERPI_CONTEXT_GUARD = path.join(guardDir, 'context-guard.json')
+  const makeFooter = ctx => new SuperPiFooter({ requestRender() {} }, { fg: (t, x) => x }, makeFooterData(), { ctx })
+  try {
+    const withSession = () => {
+      const ctx = makeExtCtx()
+      ctx.sessionManager.getSessionId = () => 'sess-A'
+      return ctx
+    }
+
+    // 1) 没有守卫日志 → 原样显示 pi 的 usage 百分比，且不加 ~ 前缀（不假装自己是估算）
+    const noLogLine = stripAnsi(makeFooter(withSession()).render(96)[1])
+    ok(noLogLine.includes('27.6%/1.0M'), '没有守卫日志时退回 pi 的百分比，实际 ' + noLogLine)
+    ok(!noLogLine.includes('~'), '没有守卫记录时不加 ~ 前缀')
+
+    // 2) 有本会话记录 → 用守卫的 after/window，并加 ~ 标记
+    const logFile = path.join(guardDir, 'context-guard.log.jsonl')
+    fs.writeFileSync(logFile, [
+      JSON.stringify({ at: 't1', sessionId: 'sess-A', window: 1000000, before: 1900000, after: 600000 }),
+      JSON.stringify({ at: 't2', sessionId: 'sess-B', window: 1000000, before: 1900000, after: 990000 }),
+    ].join('\n') + '\n', 'utf8')
+    const realLine = stripAnsi(makeFooter(withSession()).render(96)[1])
+    ok(realLine.includes('~60.0%/1.0M'), '有守卫记录时显示真实估算（~60.0%/1.0M），实际 ' + realLine)
+    ok(!realLine.includes('99.0'), '绝不把别的会话的数挂到当前会话上')
+
+    // 3) 拿不到 sessionId → 不猜（宁可退回原值，也不显示别人的）
+    const anonymousLine = stripAnsi(makeFooter(makeExtCtx()).render(96)[1])
+    ok(anonymousLine.includes('27.6%/1.0M'), '拿不到 sessionId 时不覆盖，实际 ' + anonymousLine)
+
+    // 4) 路径规则必须与守卫模块一致（三处同构：编辑器 / 守卫 / host 的 /context）
+    eq(
+      extensionModule.resolveGuardLogPath({ env: {}, home: 'C:/home/x' }),
+      guardLogModule.resolveGuardLogPath({ env: {}, home: 'C:/home/x' }),
+      'footer 与守卫模块算出同一个日志路径（单一真相，不靠人记）',
+    )
+    ok(
+      extensionModule.resolveGuardLogPath({ env: {}, home: 'C:/home/x' }).split(path.sep).join('/').endsWith('/.superpi/context-guard.log.jsonl'),
+      '日志落在 <home>/.superpi/context-guard.log.jsonl',
+    )
+  } finally {
+    if (previousGuard === undefined) delete process.env.SUPERPI_CONTEXT_GUARD
+    else process.env.SUPERPI_CONTEXT_GUARD = previousGuard
+    try { fs.rmSync(guardDir, { recursive: true, force: true }) } catch { /* 清理失败不影响结论 */ }
+  }
+}
+
 // ④f 项目列表：分组 + 排序 + 比较键 + 临时目录
 {
   eq(pathComparisonKey('D:\\A\\b\\'), pathComparisonKey('d:/a/B'), '比较键归一大小写与分隔符')

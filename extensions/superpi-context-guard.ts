@@ -90,7 +90,10 @@ export default function contextGuard(pi) {
       const now = Date.now()
       if (now - lastLoggedAt >= LOG_THROTTLE_MS) {
         lastLoggedAt = now
-        appendGuardLogSync(stats)
+        const sessionId = typeof ctx?.sessionManager?.getSessionId === 'function'
+          ? String(ctx.sessionManager.getSessionId() ?? '')
+          : ''
+        appendGuardLogSync({ ...stats, sessionId })
       }
       return { messages: next }
     } catch {

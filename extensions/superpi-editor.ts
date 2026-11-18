@@ -1592,6 +1592,74 @@ export function formatTokens(count: number): string {
   return Math.round(value / 1000000) + 'M'
 }
 
+/* --------------------------------------- 真实上下文占用（0.12.2，footer 用） */
+
+/**
+ * 为什么 footer 要自己读守卫日志，而不是 import `./superpi-context-guard.mjs`：
+ * 静态 import 会让「守卫模块缺失或语法坏」直接拖垮**整个编辑器扩展** ——
+ * 用户丢掉的是 Ctrl+A/粘贴路径/footer 全部能力，只为了一个可选的数字。
+ * 所以这里只做一件事：读日志最后一行。读不到就返回 null，footer 退回 pi 原值。
+ *
+ * 路径规则与守卫模块、host 的 `/context` 三处必须一致，由 `test/tui-editor.mjs`
+ * 断言（拿守卫模块的 `resolveGuardLogPath` 做对照），不靠人记。
+ */
+const GUARD_DIR_NAME = '.superpi'
+const GUARD_LOG_FILE_NAME = 'context-guard.log.jsonl'
+const GUARD_LOG_TAIL_BYTES = 128 * 1024
+
+export function resolveGuardLogPath({ env = process.env, home = os.homedir() }: { env?: any; home?: string } = {}): string {
+  const override = typeof env?.SUPERPI_CONTEXT_GUARD === 'string' ? env.SUPERPI_CONTEXT_GUARD.trim() : ''
+  const dir = override !== '' ? path.dirname(path.resolve(override)) : path.join(home, GUARD_DIR_NAME)
+  return path.join(dir, GUARD_LOG_FILE_NAME)
+}
+
+/**
+ * 读「本会话」最后一条守卫记录。
+ *
+ * 为什么带 sessionId：日志是所有会话共用的一份，不带过滤会拿到别的会话的数
+ * —— 那比不显示更糟（用户会以为自己的上下文变了）。
+ */
+export function readGuardUsageSync(
+  sessionId: string,
+  { env = process.env, home = os.homedir() }: { env?: any; home?: string } = {},
+): { after: number; window: number } | null {
+  try {
+    const file = resolveGuardLogPath({ env, home })
+    const stat = fs.statSync(file)
+    if (stat.size <= 0) return null
+    const readBytes = Math.min(stat.size, GUARD_LOG_TAIL_BYTES)
+    const buffer = Buffer.alloc(readBytes)
+    const handle = fs.openSync(file, 'r')
+    try {
+      fs.readSync(handle, buffer, 0, readBytes, stat.size - readBytes)
+    } finally {
+      fs.closeSync(handle)
+    }
+    const lines = buffer.toString('utf8').split('\n')
+    for (let i = lines.length - 1; i >= 0; i -= 1) {
+      const text = lines[i].trim()
+      if (text === '') continue
+      let row: any
+      try {
+        row = JSON.parse(text)
+      } catch {
+        continue
+      }
+      if (row === null || typeof row !== 'object') continue
+      // sessionId 为空 = 无法确认这条记录属于当前会话 → 宁可退回 pi 的原值，
+      // 也不能把别的会话的真实占用挂到当前窗口上（那比不显示更糟）。
+      if (sessionId === '' || row.sessionId !== sessionId) continue
+      const after = Number(row.after)
+      if (!Number.isFinite(after) || after < 0) return null
+      const window = Number(row.window)
+      return { after, window: Number.isFinite(window) && window > 0 ? window : 0 }
+    }
+    return null
+  } catch {
+    return null
+  }
+}
+
 /** footer 里的可点元素 → 命中的那个（按显示列）。 */
 function hitAt(hits: FooterHit[], x: unknown, y: unknown): FooterHit | undefined {
   if (typeof x !== 'number' || typeof y !== 'number') return undefined
@@ -1604,6 +1672,8 @@ export class SuperPiFooter {
   private footerData: any
   private ctx: any
   private hits: FooterHit[] = []
+  /** 守卫真实占用的缓存：footer 每帧都可能渲染，不能每帧读盘。 */
+  private guardCache: { at: number; value: { after: number; window: number } | null } = { at: 0, value: null }
   private lastWidth = 80
 
   constructor(tui: any, theme: any, footerData: any, options: any = {}) {
@@ -1701,12 +1771,22 @@ export class SuperPiFooter {
     if (promptTokens > 0 && usage.latestCacheHitRate !== undefined) {
       parts.push('CH' + usage.latestCacheHitRate.toFixed(1) + '%')
     }
-    const window = Number(context?.contextWindow ?? model?.contextWindow ?? 0)
-    if (context !== undefined) {
-      const percent = context?.percent
+    // 上下文占用的来源优先级：守卫的真实估算（`~` 标记）> pi 的 usage 派生值。
+    // 守卫没有这个会话的记录（没装 / 还没发过请求）时，原样显示 pi 的数 —— 绝不显示 '?' 骗人。
+    const real = this.guardUsage()
+    const window = Number(context?.contextWindow ?? model?.contextWindow ?? real?.window ?? 0)
+    if (context !== undefined || real !== null) {
       const auto = this.autoCompactEnabled()
-      const shown = percent === null || percent === undefined ? '?' : Number(percent).toFixed(1) + '%'
-      parts.push(shown + '/' + formatTokens(window) + (auto ? ' (auto)' : ''))
+      let shown = '?'
+      let estimated = false
+      if (real !== null && real.after > 0 && window > 0) {
+        shown = Math.min(100, (real.after / window) * 100).toFixed(1) + '%'
+        estimated = true
+      } else if (context !== undefined) {
+        const percent = context?.percent
+        shown = percent === null || percent === undefined ? '?' : Number(percent).toFixed(1) + '%'
+      }
+      parts.push((estimated ? '~' : '') + shown + '/' + formatTokens(window) + (auto ? ' (auto)' : ''))
     }
     const stats = parts.join(' ')
 
@@ -1736,8 +1816,30 @@ export class SuperPiFooter {
     return stats + ' '.repeat(Math.max(2, width - leftWidth - rightWidth)) + right
   }
 
-  /** 自动压缩开关（`ctx.getSettings().compaction.enabled`，拿不到就当开 —— 与 pi 同默认）。 */
-  private autoCompactEnabled(): boolean {
+  /**
+   * 真实上下文占用（2 秒节流）。
+   *
+   * pi 的 `getContextUsage()` 是 usage 派生值：当前上游把 prompt 全记在 cache 且
+   * `input=0`，真实 1.31M 的上下文会被算成 **3.7%** —— 用户以为还有 96% 空间，
+   * 直到撞上 400。这里读守卫每次请求前算的估算，只在这个会话有记录时覆盖显示。
+   */
+  private guardUsage(): { after: number; window: number } | null {
+    const now = Date.now()
+    if (now - this.guardCache.at < 2000) return this.guardCache.value
+    this.guardCache.at = now
+    let sessionId = ''
+    try {
+      const manager = readCtx(this.ctx, c => c.sessionManager)
+      const value = typeof manager?.getSessionId === 'function' ? manager.getSessionId() : ''
+      sessionId = value === null || value === undefined ? '' : String(value)
+    } catch {
+      sessionId = ''
+    }
+    this.guardCache.value = readGuardUsageSync(sessionId)
+    return this.guardCache.value
+  }
+
+  /** 自动压缩开关（`ctx.getSettings().compaction.enabled`，拿不到就当开 —— 与 pi 同默认）。 */  private autoCompactEnabled(): boolean {
     try {
       const enabled = this.ctx?.getSettings?.()?.compaction?.enabled
       return typeof enabled === 'boolean' ? enabled : true
