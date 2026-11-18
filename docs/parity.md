@@ -1,6 +1,6 @@
 # superpi 两端能力对齐账本（parity）
 
-> 基线：pi `1.5.2` / superpi `0.12.0` · 唯一权威 = `packages/coding-agent/src/modes/rpc/rpc-types.ts`（303 行）、`src/modes/rpc/rpc-mode.ts`（846 行，`switch` 在 `:404-737`）、`src/core/agent-session.ts`（4714 行，`AgentSessionEvent` 在 `:220-261`）
+> 基线：pi `1.5.2` / superpi `0.13.0` · 唯一权威 = `packages/coding-agent/src/modes/rpc/rpc-types.ts`（303 行）、`src/modes/rpc/rpc-mode.ts`（846 行，`switch` 在 `:404-737`）、`src/core/agent-session.ts`（4714 行，`AgentSessionEvent` 在 `:220-261`）
 > 本文档是 `AGENTS.md` §3「100% 对齐」的账本。任何一行状态变化必须同步改这里，否则视为未完成。**本账本由 `test/parity.mjs` 与 `test/host-parity.mjs` 机器兜底**，人肉维护只是第一道。
 
 ## 0. 怎么读这张表
@@ -31,9 +31,9 @@
 **门禁已经是事实，不是目标态。** `test/parity.mjs`（78 checks）、`test/host-parity.mjs`（291 checks）、`test/tui-editor.mjs`（276 checks，0.9.2 起；0.9.11 起 276）与 `test/session-projects.mjs`（55 checks，0.5.0 起）都已落地，且都在 `npm test` 的 13 项流水线里：
 
 ```
-selfcheck → client-render(926) → css-tokens(98) → runtime-resolve → config-hot
-→ host-parity(325) → session-projects(55) → timeout(28) → rules(199)
-→ context-guard(74) → parity(96) → tui-editor(333) → restart-lib(31×2 引擎) → github-sync(82) → version
+selfcheck → client-render(972) → css-tokens(98) → runtime-resolve → config-hot
+→ host-parity(346) → session-projects(55) → timeout(28) → rules(203)
+→ context-guard(74) → modalities(67) → parity(96) → tui-editor(348) → restart-lib(31×2 引擎) → github-sync(82) → version
 ```
 
 三套核心门禁都离线跑（不起 pi、不打 LLM）。`npm test` 2026-11-13 实测：加 `restart-lib` 之前 ~5.2 s，加上之后 ~14.3 s —— **`test/restart-lib.mjs` 独占约 9.1 s**（它要起 pwsh 7 与 PowerShell 5.1 两个引擎各跑一遍 fixture，进程启动开销占大头），`test/timeout.mjs` 约 3.1 s（真等若干超时周期），其余各项合计 <1.5 s。`test/parity.mjs` 做的是**三向对账**：`src/rpc-contract.mjs` ↔ pi 的类型声明与官方文档 ↔ `client.js`/`index.js` 的实际覆盖面。任一方向对不上即红：
@@ -395,6 +395,46 @@ pi 只提供 `SYSTEM.md`（整份替换）、`APPEND_SYSTEM.md`（静态文件�
 
 **为什么不去改 pi 的 `OVERFLOW_PATTERNS`**：那只是让 pi「认得」这个错，压缩输入仍然超限（根因 4），
 且 vendored 改动在升级时必丢 —— 治的是症状，不是病。**让超限不可能发生**才是根治。
+
+---
+
+## 5.4 模型模态开关（0.13.0 · 第六层：不是 RPC 面，是**每个模型允许收什么**）
+
+需求（用户 2026-11-18）：「每一个模型都增加一个模态启用功能，具体有哪些模态根据对应模型协议解析，
+默认文本和图像开启，其它模态默认关闭，可以由用户主动开启；TUI 功能保持对齐。」
+
+**先把边界钉死（这决定了什么不该做）**：
+
+| 问题 | 实测答案 | 来源 |
+| --- | --- | --- |
+| pi 的输入模态枚举有几个值 | **只有 `text` 与 `image`** | `ModelInputModalitySchema`（pi-ai/providers/model-schema.d.ts:9） |
+| 有哪些内容块类型 | `text / thinking / toolCall / image` | `ContentBlock`（pi-ai/types.d.ts:259-278） |
+| 适配层能发出音频/视频/文档吗 | **不能**，全部 api 只有 `image` 分支 | `grep -c 'case "audio"' dist/api/*.js` = 0 |
+| 模型库里 `input` 的实际取值 | 1773 条只有 `["text","image"]` / `["text"]` | `dist/providers/data/*.json` |
+
+所以「其它模态」不是被我们藏起来了，而是**运行时根本发不出去**。按用户「禁止利用目标维度指标的
+漏洞」的原则，这里**不做假开关**：`unsupported` 的模态会显式列出并写明「协议声明但运行时无法发送」，
+不可开启。pi 将来加了音频块，`resolveModelModalities()` 会自动把它纳入可开关集合（清单在
+`test/modalities.mjs` F 段与 pi 类型对账，清单过期会红）。
+
+| 维度 | 面板端 | 命令行 TUI | 门禁用例 |
+| --- | --- | --- | --- |
+| 入口 | 设置弹窗「模型模态」一节（每个模型一行、每个模态一个 chip） | `settings` 菜单 → `modalities`（= `/superpi-modalities`） | `test/client-render.mjs` 9.11a2、`test/tui-editor.mjs` ⑧ |
+| 模态清单来源 | `model.input` ∩ 运行时清单（`GET /modalities` 的 registry） | 同左（`ctx.scopedModels` / `ctx.modelRegistry.getAvailable()`） | `test/modalities.mjs` A 段 |
+| 默认值 | 文本 + 图像开启；其它默认关 | 同左（同一份 `.mjs`） | 同上 B 段 |
+| 文本 | 锁定开启，显示「对话必需通道，不可关闭」 | 同左 | 同上（`text` 覆盖被拒、POST 400） |
+| 关闭后的效果 | **请求前把该模态的块换成占位文本**（`context` 事件） | 同左（同一 agent loop） | 同上 G 段（断言返回的 messages 里没有 image 块） |
+| 未知模型（无 `input`） | 按产品默认（文本+图像）处理，**不凭空降级** | 同左 | 同上 A 段 |
+| 落盘 | `<home>/.superpi/modalities.json`（稀疏，只存非默认） | 同一份文件 | 同上 E 段 |
+| 非法输入 | 400（未知模态 / 锁定项 / 缺 id / 缺 enabled） | 命令里拒绝并提示 | `test/host-parity.mjs` 3.11b |
+
+**为什么「关闭」必须在 `context` 事件里做，而不是在输入框处拦**：关掉图像不等于禁止用户贴图，
+而是**不要让这个模型收到图**。两者语义不同：用户贴了图、模型收到占位并知道「这里原本有一张图」，
+比「贴图被静默拒绝」更好用，也更容易诊断。真正的执行点只有一处（守卫的 `context`），
+面板、TUI、RPC 三个入口都只是写同一份状态。
+
+**与上下文守卫的关系**：守卫先按模态开关剥（用户显式策略），再按窗口预算裁（自动止损）。
+顺序不能反：先剥掉用户明确不要的模态，预算才能算准；反过来则会把「本来就不发的图」算进压力里。
 
 ---
 

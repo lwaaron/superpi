@@ -166,6 +166,8 @@ export const SETTINGS_COMMANDS = [
   { label: 'scoped-models', command: '/scoped-models', source: 'pi' },
   // 用户自定义规则（最高优先级）—— 与面板设置里那一节是同一份文件（<home>/.superpi/rules.json）。
   { label: 'rules', command: '/superpi-rules', source: 'superpi' },
+  // 模型模态开关（0.13.0）—— 与面板设置里「模型模态」一节是同一份文件。
+  { label: 'modalities', command: '/superpi-modalities', source: 'superpi' },
 ] as const
 
 /** home = 回到刚启动时的界面 —— pi 里唯一对应的动作是 `/new`（起一棵新会话树）。 */

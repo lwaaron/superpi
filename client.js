@@ -127,6 +127,16 @@ window.__ModuleLoader__.load({
       contextReal: '真实占用（上下文守卫）',
       imagesReleased: '已释放图片',
       contextOverBudget: '已裁到最严仍超预算，建议压缩上下文',
+      modalitiesSection: '模型模态',
+      modalitiesBadge: '按协议解析',
+      modalitiesHint: '默认文本与图像开启；关闭某个模态后，发给该模型的请求里不再包含它的内容。',
+      modalitiesLoadFailed: '读取模态设置失败',
+      modalitiesNoSession: '还没有可用会话，模型列表暂时读不到；可先在命令行窗口用 /superpi-modalities 设置。',
+      modality_text: '文本',
+      modality_image: '图像',
+      modalityLocked: '对话必需通道，不可关闭',
+      modalityClickOn: '点击开启',
+      modalityClickOff: '点击关闭',
       cost: '费用',
       compactNow: '压缩上下文',
       compacting: '正在压缩上下文…',
@@ -377,6 +387,16 @@ window.__ModuleLoader__.load({
       contextReal: 'Real usage (context guard)',
       imagesReleased: 'images released',
       contextOverBudget: 'still over budget — compact the context',
+      modalitiesSection: 'Model modalities',
+      modalitiesBadge: 'parsed from protocol',
+      modalitiesHint: 'Text and image are on by default; turning a modality off removes its content from requests to that model.',
+      modalitiesLoadFailed: 'Failed to read modality settings',
+      modalitiesNoSession: 'No live session yet, so the model list is unavailable; set them in the CLI with /superpi-modalities.',
+      modality_text: 'Text',
+      modality_image: 'Image',
+      modalityLocked: 'Required channel — cannot be disabled',
+      modalityClickOn: 'Click to enable',
+      modalityClickOff: 'Click to disable',
       cost: 'Cost',
       compactNow: 'Compact context',
       compacting: 'Compacting context…',
@@ -806,6 +826,21 @@ window.__ModuleLoader__.load({
       '.superpi-rules-line[data-tone="warn"]{color:var(--dsw-alias-state-warn-primary);white-space:normal}',
       '.superpi-rules-line[data-tone="err"]{color:var(--dsw-alias-state-error-primary);white-space:normal}',
       '.superpi-rules-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:2px}',
+      // 模型模态（0.13.0）：一行一个模型，右侧是模态 chip。
+      // 限高滚动：模型可能有几十个，不能让设置弹窗被列表撑爆；滚动条只在超长时出现。
+      '.superpi-mod-section{display:flex;flex-direction:column;gap:8px;margin-top:4px}',
+      '.superpi-mod-list{display:flex;flex-direction:column;gap:2px;max-height:260px;overflow-y:auto;overscroll-behavior:contain;padding-right:2px}',
+      '.superpi-mod-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:5px 8px;border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-bg-layer-1)}',
+      '.superpi-mod-row:hover{background:var(--dsw-alias-bg-layer-2)}',
+      '.superpi-mod-name-wrap{display:flex;flex-direction:column;gap:1px;min-width:0}',
+      '.superpi-mod-name{font-size:var(--dsw-font-xxs-12-font-size);line-height:var(--dsw-font-xxs-12-line-height);color:var(--dsw-alias-label-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+      '.superpi-mod-provider{font-size:var(--dsw-font-xxxs-11-font-size);line-height:var(--dsw-font-xxxs-11-line-height);color:var(--dsw-alias-label-caption)}',
+      '.superpi-mod-chips{display:flex;gap:4px;flex:0 0 auto}',
+      '.superpi-mod-chip{padding:2px 8px;border:0;border-radius:999px;corner-shape:round;font:inherit;font-size:var(--dsw-font-xxxs-11-font-size);line-height:16px;cursor:pointer;background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-tertiary);transition:background-color .16s ease,color .16s ease}',
+      '.superpi-mod-chip[data-on="1"]{background:color-mix(in srgb,var(--dsw-alias-brand-primary) 14%,transparent);color:var(--dsw-alias-brand-primary)}',
+      '.superpi-mod-chip[data-locked="1"]{cursor:default;opacity:.85}',
+      '.superpi-mod-chip:hover:not([data-locked="1"]){background:var(--dsw-alias-interactive-bg-hover)}',
+      '.superpi-mod-chip:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:1px}',
       // 编辑框：与搜索框同一套 token，但允许多行、可纵向调高；高度固定 14 行以免抽屉高度跳动。
       '.superpi-rules-textarea{width:100%;box-sizing:border-box;resize:vertical;min-height:220px;padding:10px 12px;border:.5px solid var(--dsw-alias-border-l4);border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-primary);font-family:inherit;font-size:var(--dsw-font-xxs-12-font-size);line-height:1.6;outline:0;transition:border-color .16s ease}',
       '.superpi-rules-textarea:focus{border-color:var(--dsw-alias-state-business-primary)}',
@@ -1098,6 +1133,9 @@ window.__ModuleLoader__.load({
         var query = typeof sessionId === 'string' && sessionId !== '' ? '?sessionId=' + encodeURIComponent(sessionId) : ''
         return requestJson('/context' + query)
       },
+      /** 模型模态开关：状态 + 注册表（可用模态 / 默认值 / 锁定项）。 */
+      modalities: function () { return requestJson('/modalities') },
+      setModality: function (body) { return requestJson('/modalities', { method: 'POST', body: body }) },
       rules: function () { return requestJson('/rules') },
       setRules: function (text) { return requestJson('/rules', { method: 'POST', body: { text: text } }) },
       resetRules: function () { return requestJson('/rules/reset', { method: 'POST', body: {} }) },
@@ -4428,7 +4466,118 @@ window.__ModuleLoader__.load({
           h('span', { className: 'superpi-kv-k', style: { minWidth: '180px' } }, t('followUpMode')),
           h('button', { type: 'button', className: 'superpi-btn', onClick: function () { props.onFollowUp(state.followUpMode === 'all' ? 'one-at-a-time' : 'all') } }, String(state.followUpMode === undefined ? 'all' : state.followUpMode))),
         h('div', { className: 'superpi-sess-line' }, t('autoApprove')),
-        RulesSection({ t: t, rules: props.rules, loadError: props.rulesError, onEdit: props.onEditRules, onReset: props.onResetRules, onRetry: props.onLoadRules }))
+        RulesSection({ t: t, rules: props.rules, loadError: props.rulesError, onEdit: props.onEditRules, onReset: props.onResetRules, onRetry: props.onLoadRules }),
+        ModalitiesSection({
+          t: t,
+          models: props.models,
+          modalities: props.modalities,
+          error: props.modalitiesError,
+          onToggle: props.onToggleModality,
+          onRetry: props.onLoadModalities,
+        }))
+    }
+
+    /**
+     * 设置弹窗里的「模型模态」区（0.13.0）。
+     *
+     * 语义（与 `extensions/superpi-modalities.mjs` 同一套规则，门禁交叉对账）：
+     *  - **可开关的模态** = 模型协议声明（`model.input`）∩ 运行时能发送的（text / image）；
+     *  - 默认：文本与图像开启，其它默认关闭（今天没有"其它"，pi 只有这两种）；
+     *  - 文本锁定开启：关掉文本等于这个模型不能对话，是脚枪不是能力；
+     *  - 关闭 = 请求发出前把该模态的块换成占位 —— 真的会变，不是只存一个布尔值。
+     *
+     * 列表按 provider + 名字排序并限高滚动：模型可能有几十个，但不能让设置弹窗被撑爆。
+     */
+    function ModalitiesSection(props) {
+      var t = props.t
+      var models = Array.isArray(props.models) ? props.models : []
+      var payload = props.modalities === undefined ? null : props.modalities
+      var error = props.error === undefined || props.error === null ? null : props.error
+      var registry = payload !== null && payload.registry !== undefined && payload.registry !== null ? payload.registry : {}
+      var runtime = Array.isArray(registry.runtime) ? registry.runtime : ['text', 'image']
+      var defaults = Array.isArray(registry.defaults) ? registry.defaults : ['text', 'image']
+      var lockedIds = Array.isArray(registry.locked) ? registry.locked : ['text']
+      var state = payload !== null && payload.state !== undefined && payload.state !== null ? payload.state : { models: {} }
+      var overrides = state.models !== null && typeof state.models === 'object' ? state.models : {}
+
+      /** 某模型的模态条目（与 mjs 的 resolveModelModalities 同规则）。 */
+      function entriesFor(model) {
+        var declared = Array.isArray(model.input) ? runtime.filter(function (id) { return model.input.indexOf(id) >= 0 }) : []
+        // 拿不到协议声明时按产品默认（文本+图像），不凭空降级成"一个都不能用"。
+        var available = declared.length > 0 ? declared : defaults.slice()
+        var key = String(model.provider === undefined ? '' : model.provider) + '/' + String(model.id === undefined ? '' : model.id)
+        var own = overrides[key] !== null && typeof overrides[key] === 'object' ? overrides[key] : {}
+        return available.map(function (id) {
+          var isLocked = lockedIds.indexOf(id) >= 0
+          var override = own[id]
+          var enabled = isLocked ? true : (typeof override === 'boolean' ? override : defaults.indexOf(id) >= 0)
+          return { id: id, enabled: enabled, locked: isLocked, isDefault: typeof override !== 'boolean' }
+        })
+      }
+
+      var children = []
+      children.push(h('div', { key: 'head', className: 'superpi-rules-head' },
+        h('span', { className: 'superpi-rules-title' }, t('modalitiesSection')),
+        h('span', { className: 'superpi-rules-badge', 'data-tone': 'default' }, t('modalitiesBadge'))))
+
+      if (error !== null) {
+        children.push(h('div', { key: 'err', className: 'superpi-rules-line', 'data-tone': 'err', role: 'alert' }, t('modalitiesLoadFailed') + ' · ' + String(error)))
+        if (typeof props.onRetry === 'function') {
+          children.push(h('button', { key: 'retry', type: 'button', className: 'superpi-btn', onClick: props.onRetry }, t('retry')))
+        }
+        return h('div', { className: 'superpi-mod-section' }, children)
+      }
+      if (payload === null) {
+        children.push(h('div', { key: 'loading', className: 'superpi-rules-line', 'data-tone': 'muted' }, t('loading')))
+        return h('div', { className: 'superpi-mod-section' }, children)
+      }
+      children.push(h('div', { key: 'hint', className: 'superpi-rules-line', 'data-tone': 'muted' }, t('modalitiesHint')))
+
+      if (models.length === 0) {
+        children.push(h('div', { key: 'empty', className: 'superpi-rules-line', 'data-tone': 'muted' }, t('modalitiesNoSession')))
+        return h('div', { className: 'superpi-mod-section' }, children)
+      }
+
+      var sorted = models.slice().sort(function (a, b) {
+        var pa = String(a.provider === undefined ? '' : a.provider)
+        var pb = String(b.provider === undefined ? '' : b.provider)
+        if (pa !== pb) return pa < pb ? -1 : 1
+        var na = String(a.name === undefined || a.name === '' ? a.id : a.name)
+        var nb = String(b.name === undefined || b.name === '' ? b.id : b.name)
+        return na < nb ? -1 : (na > nb ? 1 : 0)
+      })
+
+      children.push(h('div', { key: 'list', className: 'superpi-mod-list', role: 'group', 'aria-label': t('modalitiesSection') },
+        sorted.map(function (model, index) {
+          var key = String(model.provider === undefined ? '' : model.provider) + ':' + String(model.id === undefined ? '' : model.id)
+          var entries = entriesFor(model)
+          return h('div', { key: 'm' + String(index), className: 'superpi-mod-row', 'data-model': key },
+            h('div', { className: 'superpi-mod-name-wrap' },
+              h('span', { className: 'superpi-mod-name' }, String(model.name === undefined || model.name === '' ? model.id : model.name)),
+              h('span', { className: 'superpi-mod-provider' }, String(model.provider === undefined ? '' : model.provider))),
+            h('div', { className: 'superpi-mod-chips' },
+              entries.map(function (entry) {
+                var label = t('modality_' + entry.id) === 'modality_' + entry.id ? entry.id : t('modality_' + entry.id)
+                var title = entry.locked ? t('modalityLocked') : (entry.enabled ? t('modalityClickOff') : t('modalityClickOn'))
+                return h('button', {
+                  key: entry.id,
+                  type: 'button',
+                  className: 'superpi-mod-chip',
+                  'data-modality': entry.id,
+                  'data-on': entry.enabled ? '1' : '0',
+                  'data-locked': entry.locked ? '1' : '0',
+                  'aria-pressed': entry.enabled ? 'true' : 'false',
+                  'aria-disabled': entry.locked ? 'true' : 'false',
+                  title: title,
+                  onClick: entry.locked ? null : function () { props.onToggle(model, entry.id, entry.enabled !== true) },
+                }, label)
+              })))
+        })))
+
+      if (registry.filePath !== undefined && registry.filePath !== null) {
+        children.push(h('div', { key: 'path', className: 'superpi-rules-line', 'data-tone': 'muted' }, String(registry.filePath)))
+      }
+      return h('div', { className: 'superpi-mod-section' }, children)
     }
 
     /**
@@ -4968,6 +5117,17 @@ window.__ModuleLoader__.load({
       var rulesEpochState = useState(0)
       var rulesEpoch = rulesEpochState[0]
       var setRulesEpoch = rulesEpochState[1]
+      /**
+       * 模型模态开关（0.13.0）：`{ state, registry }`，来自 host 的 `/modalities`。
+       * 与 `models`（来自 pi 的 get_available_models）合并后才是完整的一节：
+       * 前者说「用户设了什么」，后者说「这个模型协议上有什么」。
+       */
+      var modalitiesState = useState(null)
+      var modalities = modalitiesState[0]
+      var setModalities = modalitiesState[1]
+      var modalitiesErrorState = useState(null)
+      var modalitiesError = modalitiesErrorState[0]
+      var setModalitiesError = modalitiesErrorState[1]
       var modelsState = useState([])
       var models = modelsState[0]
       var setModels = modelsState[1]
@@ -5766,9 +5926,54 @@ window.__ModuleLoader__.load({
         setDrawer('settings')
         // 规则是设置弹窗里的一节，而且它不依赖会话 —— 即使还没有会话也要拉。
         loadRules()
+        // 模态开关同样不依赖会话进程（状态在 host 的 JSON 里），先拉状态；
+        // 模型列表要会话（get_available_models），会话不在就只显示状态、不显示模型。
+        loadModalities()
         var id = sessionRef.current
         if (id === null) return
         loadState(id)
+      }
+
+      /**
+       * 读模态开关状态 + 模型清单。
+       *
+       * 两份数据来自**两个不同的地方**：状态在 host（`GET /modalities`，与 pi 扩展共享的
+       * 同一个 JSON），模型清单在 pi 会话（`get_available_models`，带 `input` 声明）。
+       * 这里合并，是因为 host 不该持有模型目录 —— 目录是 pi 的知识。
+       */
+      var loadModalities = function () {
+        setModalitiesError(null)
+        api.modalities().then(function (body) {
+          setModalities(body !== null && typeof body === 'object' ? body : null)
+        }, function (failure) {
+          setModalities(null)
+          setModalitiesError(String(failure !== null && failure !== undefined && failure.message !== undefined ? failure.message : failure))
+        })
+        var id = sessionRef.current
+        if (id === null) return
+        rpc(id, { type: 'get_available_models' }).then(function (data) {
+          var list = data !== null && data !== undefined && Array.isArray(data.models) ? data.models : []
+          setModels(list)
+        }, function () {})
+      }
+
+      /** 切换某模型某模态。`enabled === null` = 恢复默认。 */
+      var setModality = function (model, modality, enabled) {
+        var provider = String(model !== null && model !== undefined && model.provider !== undefined ? model.provider : '')
+        var id = String(model !== null && model !== undefined && model.id !== undefined ? model.id : '')
+        return api.setModality({ provider: provider, id: id, modality: modality, enabled: enabled }).then(function (body) {
+          if (body !== null && body !== undefined && body.state !== undefined) {
+            setModalities(function (prev) {
+              return Object.assign({}, prev === null || prev === undefined ? {} : prev, { state: body.state })
+            })
+          }
+          setModalitiesError(null)
+          return body
+        }, function (failure) {
+          var message = String(failure !== null && failure !== undefined && failure.message !== undefined ? failure.message : failure)
+          setModalitiesError(message)
+          throw failure
+        })
       }
 
       /**
@@ -6353,6 +6558,11 @@ window.__ModuleLoader__.load({
           onEditRules: function () { setDrawer('rules') },
           onResetRules: function () { setConfirm('rulesReset') },
           onLoadRules: function () { loadRules().catch(function () {}) },
+          models: models,
+          modalities: modalities,
+          modalitiesError: modalitiesError,
+          onLoadModalities: function () { loadModalities() },
+          onToggleModality: function (model, modality, enabled) { setModality(model, modality, enabled).catch(function () {}) },
         })
       } else if (drawer === 'rules') {
         // key 带 rulesEpoch：保存 / 恢复默认之后必须重建弹窗，否则它的 useState
@@ -6598,6 +6808,7 @@ window.__ModuleLoader__.load({
       EmptyState: EmptyState,
       SettingsSheet: SettingsSheet,
       RulesSection: RulesSection,
+      ModalitiesSection: ModalitiesSection,
       RulesSheet: RulesSheet,
       SessionsList: SessionsList,
       SessionsSheet: SessionsSheet,

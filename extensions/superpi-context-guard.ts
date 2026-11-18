@@ -37,6 +37,12 @@ import {
   resolveGuardPath,
   protectedFromIndex,
 } from './superpi-context-guard.mjs'
+import {
+  allowedModalities,
+  filterMessagesByModalities,
+  overridesFor,
+  readModalitiesStateSync,
+} from './superpi-modalities.mjs'
 
 export const GUARD_COMMAND = 'superpi-context'
 
@@ -71,30 +77,46 @@ function summarize(stats) {
 
 export default function contextGuard(pi) {
   const cache = { path: '', mtimeMs: 0, size: 0, settings: normalizeGuardSettings(DEFAULT_GUARD_SETTINGS) }
+  const modalityCache = { path: '', mtimeMs: 0, size: 0, state: null }
   let lastLoggedAt = 0
   let lastStats = null
 
   pi.on('context', (event, ctx) => {
     try {
-      const settings = readGuardSettingsSync({ cache })
-      if (settings.enabled !== true) return undefined
       const messages = Array.isArray(event?.messages) ? event.messages : []
       if (messages.length === 0) return undefined
-      const windowTokens = resolveWindowTokens(ctx, settings)
-      const { messages: next, stats } = planContextWindow(messages, { windowTokens, settings })
-      if (stats.trimmed !== true) {
-        lastStats = stats
-        return undefined
+
+      // ① 模态开关（用户显式策略）**先于**窗口化：关掉的模态本来就不该发出去，
+      //    先剥掉能让后面的预算少算一大块（图片是最贵的那部分）。
+      //    这一层不受 `enabled` 影响 —— 用户关掉某个模态是明确指令，不该被"先停用窗口化"一起带走。
+      const modalityState = readModalitiesStateSync({ cache: modalityCache })
+      const model = ctx?.model
+      const allowed = allowedModalities(model, overridesFor(modalityState, model))
+      const filtered = filterMessagesByModalities(messages, allowed)
+      const modalityChanged = filtered !== messages
+
+      // ② 窗口化（可独立停用）
+      const settings = readGuardSettingsSync({ cache })
+      let next = filtered
+      if (settings.enabled === true) {
+        const windowTokens = resolveWindowTokens(ctx, settings)
+        const planned = planContextWindow(filtered, { windowTokens, settings })
+        next = planned.messages
+        lastStats = planned.stats
+        if (planned.stats.trimmed === true) {
+          const now = Date.now()
+          if (now - lastLoggedAt >= LOG_THROTTLE_MS) {
+            lastLoggedAt = now
+            const sessionId = typeof ctx?.sessionManager?.getSessionId === 'function'
+              ? String(ctx.sessionManager.getSessionId() ?? '')
+              : ''
+            appendGuardLogSync({ ...planned.stats, sessionId })
+          }
+        }
       }
-      lastStats = stats
-      const now = Date.now()
-      if (now - lastLoggedAt >= LOG_THROTTLE_MS) {
-        lastLoggedAt = now
-        const sessionId = typeof ctx?.sessionManager?.getSessionId === 'function'
-          ? String(ctx.sessionManager.getSessionId() ?? '')
-          : ''
-        appendGuardLogSync({ ...stats, sessionId })
-      }
+
+      // 两边都没动 → 返回 undefined，让 pi 保持原有的提示重放行为（不做无谓的 cache 变更）。
+      if (modalityChanged !== true && next === filtered) return undefined
       return { messages: next }
     } catch {
       // 守护是"止损"，不是"必经"：任何异常都退回 pi 的原始行为。

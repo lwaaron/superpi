@@ -61,6 +61,17 @@ export const GUARD_EXTENSION_FILE_NAME = 'superpi-context-guard.ts'
 export const GUARD_MODULE_FILE_NAME = 'superpi-context-guard.mjs'
 
 /**
+ * 「模型模态开关」的扩展与共享模块（0.13.0）。
+ *
+ * `superpi-modalities.mjs` 是**三处共用**的唯一模型层：host 的 `/modalities` 两条路由、
+ * 上下文守卫的请求前过滤、以及本扩展的 `/superpi-modalities` 菜单。放在 extensions/
+ * 而不是 src/，理由与 rules 相同：`.ts` 被复制到 `<piAgentDir>/extensions/` 后，
+ * `./superpi-modalities.mjs` 这条相对引用在仓库里与安装后指向同一份内容（零分叉）。
+ */
+export const MODALITIES_EXTENSION_FILE_NAME = 'superpi-modalities.ts'
+export const MODALITIES_MODULE_FILE_NAME = 'superpi-modalities.mjs'
+
+/**
  * 需要同步的 skill 清单（0.10.0 起）。
  *
  * 为什么走**用户级** `~/.agents/skills` 而不是项目级 `<cwd>/.pi/skills`：
@@ -91,6 +102,8 @@ export const EXTENSION_FILES = [
   { label: 'rules-module', source: 'extensions/superpi-rules.mjs', name: RULES_MODULE_FILE_NAME },
   { label: 'context-guard', source: 'extensions/superpi-context-guard.ts', name: GUARD_EXTENSION_FILE_NAME },
   { label: 'context-guard-module', source: 'extensions/superpi-context-guard.mjs', name: GUARD_MODULE_FILE_NAME },
+  { label: 'modalities', source: 'extensions/superpi-modalities.ts', name: MODALITIES_EXTENSION_FILE_NAME },
+  { label: 'modalities-module', source: 'extensions/superpi-modalities.mjs', name: MODALITIES_MODULE_FILE_NAME },
 ]
 
 /**

@@ -528,15 +528,15 @@ const stripAnsi = text => text.replace(/\x1b\[[0-9;:?]*[A-Za-z]/g, '').replace(/
   const state = status({ dir })
   ok(state.sourceExists, '扩展源文件可读')
   // 0.12.0 起安装面是五个文件（输入框 + 规则两枚 + 上下文守卫两枚）。
-  eq(EXTENSION_FILES.length, 5, '安装面五个文件')
-  eq(EXTENSION_FILES.map(file => file.name).sort().join(','), 'superpi-context-guard.mjs,superpi-context-guard.ts,superpi-editor.ts,superpi-rules.mjs,superpi-rules.ts', '文件清单固定')
+  eq(EXTENSION_FILES.length, 7, '安装面七个文件')
+  eq(EXTENSION_FILES.map(file => file.name).sort().join(','), 'superpi-context-guard.mjs,superpi-context-guard.ts,superpi-editor.ts,superpi-modalities.mjs,superpi-modalities.ts,superpi-rules.mjs,superpi-rules.ts', '文件清单固定')
   const installed = install({ dir })
   eq(installed.code, 0, 'install 成功')
   for (const file of EXTENSION_FILES) {
     ok(fs.existsSync(path.join(dir, file.name)), '安装后有 ' + file.name)
   }
   eq(status({ dir }).identical, true, '安装后 editor 内容与源一致')
-  eq(status({ dir }).complete, true, '五个文件全部一致 → complete')
+  eq(status({ dir }).complete, true, '七个文件全部一致 → complete')
   eq(install({ dir }).code, 0, 'install 幂等')
 
   // 真机那一步：装到临时 agentDir 后，用 **pi 自己的扩展加载器**加载一遍。
@@ -1044,25 +1044,33 @@ const guardLogModule = await import(pathToFileURL(path.join(root, 'extensions', 
 }
 
 // ⑧ settings 菜单里的命令必须真的有来源：pi 的命令去 pi 的源码里找，
-// superpi 自己的命令去对应扩展里找。混为一谈就是「点了没反应」的前奏。
+// superpi 自己的命令去**对应扩展**里找。混为一谈就是「点了没反应」的前奏。
 {
   const piSource = fs.readFileSync(path.join(pi.packageDir, 'dist', 'modes', 'interactive', 'interactive-mode.js'), 'utf8')
-  const rulesExtensionSource = fs.readFileSync(path.join(root, 'extensions', 'superpi-rules.ts'), 'utf8')
+  // 0.13.0 起 superpi 有两条自造命令，分属两个扩展。必须按扩展逐个对账：
+  // 只检查「所有扩展里出现过某个字符串」会漏掉「菜单项指向一个没人注册的命令」。
+  const superpiExtensionSources = fs.readdirSync(path.join(root, 'extensions'))
+    .filter(name => name.endsWith('.ts'))
+    .map(name => ({ name, source: fs.readFileSync(path.join(root, 'extensions', name), 'utf8') }))
   for (const item of SETTINGS_COMMANDS) {
     const source = item.source === undefined ? 'pi' : item.source
     if (source === 'pi') {
       ok(piSource.includes(`text === "${item.command}"`), `pi 里仍然有 ${item.command}`)
     } else {
-      // 自造的命令名去掉前导斜杠，就是 registerCommand 的第一个参数。
+      // 命名约定：命令 `/superpi-x` 由 `extensions/superpi-x.ts` 提供。
+      // 这条同时抓两种坏法：菜单项指向不存在的文件、文件存在但没 registerCommand。
       const name = item.command.slice(1)
-      ok(rulesExtensionSource.includes(`RULES_COMMAND`) || rulesExtensionSource.includes(`'${name}'`), `${item.command} 由 superpi-rules 扩展注册`)
+      const expected = name + '.ts'
+      const owner = superpiExtensionSources.filter(entry => entry.name === expected)
+      ok(owner.length === 1, `${item.command} 由 ${expected} 提供`)
+      ok(owner.length === 1 && owner[0].source.includes('registerCommand'), `${expected} 真的调用了 registerCommand（否则菜单点了没反应）`)
     }
   }
   ok(piSource.includes('text === "/new"'), 'pi 里仍然有 /new（home 的目标）')
   // 每一条都要标 source，否则下一个人又把自造命令加进「pi 的命令」那一类。
   ok(SETTINGS_COMMANDS.every(item => item.source === 'pi' || item.source === 'superpi'), '每一条都标了 source（pi / superpi）')
   eq(SETTINGS_COMMANDS.filter(item => item.source === 'pi').length, 4, 'pi 自带四条（settings/model/thinking/scoped-models）')
-  eq(SETTINGS_COMMANDS.filter(item => item.source === 'superpi').length, 1, 'superpi 一条（rules）')
+  eq(SETTINGS_COMMANDS.filter(item => item.source === 'superpi').length, 2, 'superpi 两条（rules + modalities）')
 }
 
 // ⑧b 窄宽度 / 多行 / 中文 / 跨行选区下，框线仍然对齐

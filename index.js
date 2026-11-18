@@ -59,6 +59,14 @@ import {
   createRulesStore,
   rulesView,
 } from './extensions/superpi-rules.mjs'
+import {
+  DEFAULT_ENABLED_MODALITIES,
+  LOCKED_MODALITIES,
+  MODALITY_LABELS,
+  RUNTIME_MODALITIES,
+  createModalitiesStore,
+  resolveModalitiesPath,
+} from './extensions/superpi-modalities.mjs'
 
 export const name = 'superpi'
 export const inject = []
@@ -69,7 +77,7 @@ const API_PREFIX = '/api/' + PLUGIN_ID
 const MAX_SESSIONS = 8
 const MAX_BODY_BYTES = 4 * 1024 * 1024
 /** GET /contract 里 version 字段的取值：本插件对外的契约版本，与 package.json 解耦。 */
-const CONTRACT_VERSION = '0.12.2'
+const CONTRACT_VERSION = '0.13.0'
 /** 历史会话列表的条数窗口（与 src/session-store.mjs 的 DEFAULT_LIMIT/MAX_LIMIT 一致）。 */
 const HISTORY_DEFAULT_LIMIT = 20
 const HISTORY_MAX_LIMIT = 200
@@ -156,6 +164,10 @@ const SELF_FILES = [
   // 所以改完只需重装扩展 + 重启 pi 会话，不需要重启 DSH。
   { rel: 'extensions/superpi-context-guard.mjs', runtime: false },
   { rel: 'extensions/superpi-context-guard.ts', runtime: false },
+  // 模型模态的唯一模型层。host 的 /modalities 两条路由直接 import 它，
+  // 所以改完必须重启 DSH（否则面板算的规则和进程里那份对不上）。
+  { rel: 'extensions/superpi-modalities.mjs', runtime: true },
+  { rel: 'extensions/superpi-modalities.ts', runtime: false },
   { rel: 'package.json', runtime: false },
   { rel: 'cordis.patch.yml', runtime: false },
 ]
@@ -844,6 +856,15 @@ export function apply(ctx, config = {}) {
    */
   const rulesStore = createRulesStore()
 
+  /**
+   * 模型模态开关的存储（0.13.0）。
+   *
+   * 与 rulesStore 同构：只建一次（内部串行写队列），面板写、pi 扩展每轮读同一份文件。
+   * 所以「面板改了开关，下一次请求就不发图」不需要任何同步协议 —— 它们看的是同一份
+   * `<home>/.superpi/modalities.json`。
+   */
+  const modalitiesStore = createModalitiesStore()
+
   const handler = createHandler({
     log,
     spawnSession,
@@ -859,6 +880,7 @@ export function apply(ctx, config = {}) {
     listRunningSessions,
     uiPrefs,
     rulesStore,
+    modalitiesStore,
     // /files 的 dir 缺省值：走一次指纹比对（没改配置就是常数时间），保证刚改的 workspace 立刻生效。
     workspacePath: () => { refreshRuntime(); return detected.workspace },
   })
@@ -899,6 +921,16 @@ function rulesStoreOf(deps) {
 
 /** 模块级兜底 store（只建一次：它内部有一条串行写队列）。 */
 let rulesFallbackStore = null
+
+/** 模态存储的取用器（与 rulesStoreOf 同一条约定：永远返回可用 store）。 */
+function modalitiesStoreOf(deps) {
+  const injected = deps === undefined || deps === null ? undefined : deps.modalitiesStore
+  if (injected !== undefined && injected !== null && typeof injected.read === 'function') return injected
+  if (modalitiesFallbackStore === null) modalitiesFallbackStore = createModalitiesStore()
+  return modalitiesFallbackStore
+}
+
+let modalitiesFallbackStore = null
 
 /**
  * 命令行扩展是否已经装进 pi 的全局扩展目录。
@@ -1140,6 +1172,48 @@ export function createHandler(deps) {
       if (method === 'GET' && routePath === '/context') {
         const sessionId = (url.searchParams.get('sessionId') ?? '').trim()
         return send(200, { ok: true, ...readContextGuardTail(sessionId) })
+      }
+      /**
+       * 模型模态开关（0.13.0）。
+       *
+       * 返回的是**状态 + 注册表**，不是「解析好的模型清单」：host 不持有模型目录
+       * （模型列表是 pi 的 `get_available_models`，属于会话进程的知识）。面板本来就要
+       * 拉那个列表，把它和自己这份 overrides 合并即可 —— 避免 host 为了拼一份清单
+       * 去猜 pi 的目录。
+       */
+      if (method === 'GET' && routePath === '/modalities') {
+        const store = modalitiesStoreOf(deps)
+        const state = await store.read()
+        return send(200, {
+          ok: true,
+          state,
+          registry: {
+            runtime: RUNTIME_MODALITIES,
+            defaults: DEFAULT_ENABLED_MODALITIES,
+            locked: LOCKED_MODALITIES,
+            labels: MODALITY_LABELS,
+            filePath: resolveModalitiesPath(),
+          },
+        })
+      }
+      if (method === 'POST' && routePath === '/modalities') {
+        const store = modalitiesStoreOf(deps)
+        const contentType = String(req.headers['content-type'] ?? '')
+        if (contentType.toLowerCase().indexOf('application/json') === -1) return send(415, { error: 'content-type must be application/json' })
+        const body = (await readJsonBody(req)) ?? {}
+        const provider = typeof body.provider === 'string' ? body.provider.trim() : ''
+        const id = typeof body.id === 'string' ? body.id.trim() : ''
+        const modality = typeof body.modality === 'string' ? body.modality.trim() : ''
+        // `enabled: null` = 恢复默认（清掉覆盖）。缺字段 ≠ null，必须区分。
+        const hasEnabled = Object.prototype.hasOwnProperty.call(body, 'enabled')
+        if (!hasEnabled) {
+          const failure = new Error('enabled required (boolean or null)')
+          failure.statusCode = 400
+          throw failure
+        }
+        const enabled = body.enabled === null ? null : body.enabled === true
+        const state = await store.set({ provider, id }, modality, enabled)
+        return send(200, { ok: true, state })
       }
       if (method === 'GET' && routePath === '/rules') {
         const store = rulesStoreOf(deps)

@@ -670,6 +670,55 @@ try {
       else process.env.SUPERPI_CONTEXT_GUARD = previousGuardEnv
     }
 
+    // 3.11b 模型模态开关（0.13.0）
+    // 这条钉住「开关是真的」：GET 回状态与注册表，POST 改完后 GET 立刻反映；
+    // 非法输入必须 400（运行时没有的模态、锁定的文本、缺 enabled 字段）。
+    const modalityMod = await import(pathToFileURL(path.join(root, 'extensions', 'superpi-modalities.mjs')).href)
+    const modalityFile = path.join(tmp, 'modalities', 'modalities.json')
+    const modalityServer = await makeServer({ modalitiesStore: modalityMod.createModalitiesStore({ filePath: modalityFile }) })
+    try {
+      const initial = await request(modalityServer.base, '/modalities')
+      eq('modalities GET 200', initial.status, 200)
+      eq('modalities 初始无覆盖', initial.body.state.models, {})
+      eq('modalities 注册表含运行时模态', initial.body.registry.runtime, ['text', 'image'])
+      eq('modalities 注册表默认开启文本与图像', initial.body.registry.defaults, ['text', 'image'])
+      eq('modalities 注册表锁定文本', initial.body.registry.locked, ['text'])
+
+      const off = await request(modalityServer.base, '/modalities', {
+        method: 'POST',
+        body: { provider: 'odys-deepseek', id: 'Deepseek-V4.1-Flash', modality: 'image', enabled: false },
+      })
+      eq('modalities POST 关闭图像 200', off.status, 200)
+      eq('modalities POST 落盘稀疏条目', off.body.state.models['odys-deepseek/Deepseek-V4.1-Flash'], { image: false })
+      const reread = await request(modalityServer.base, '/modalities')
+      eq('modalities 再读仍是关闭（真的写进去了）', reread.body.state.models['odys-deepseek/Deepseek-V4.1-Flash'], { image: false })
+
+      const restored = await request(modalityServer.base, '/modalities', {
+        method: 'POST',
+        body: { provider: 'odys-deepseek', id: 'Deepseek-V4.1-Flash', modality: 'image', enabled: null },
+      })
+      eq('modalities enabled=null 恢复默认', restored.body.state.models, {})
+
+      eq('modalities 缺 enabled → 400', (await request(modalityServer.base, '/modalities', {
+        method: 'POST',
+        body: { provider: 'p', id: 'i', modality: 'image' },
+      })).status, 400)
+      eq('modalities 运行时没有的模态 → 400', (await request(modalityServer.base, '/modalities', {
+        method: 'POST',
+        body: { provider: 'p', id: 'i', modality: 'audio', enabled: true },
+      })).status, 400)
+      eq('modalities 锁定文本 → 400', (await request(modalityServer.base, '/modalities', {
+        method: 'POST',
+        body: { provider: 'p', id: 'i', modality: 'text', enabled: false },
+      })).status, 400)
+      eq('modalities 缺 id → 400', (await request(modalityServer.base, '/modalities', {
+        method: 'POST',
+        body: { provider: 'p', modality: 'image', enabled: false },
+      })).status, 400)
+    } finally {
+      await modalityServer.close()
+    }
+
     // 3.12 面板偏好（项目重命名 / 会话置顶）
     // 这两件事都没有 pi 通道：set_session_name 改的是单个会话的 session_info，
     // 改不了项目层；置顶纯属面板概念。所以必须由 host 落盘，这里逐条钉死语义。

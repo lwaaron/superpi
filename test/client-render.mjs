@@ -480,6 +480,77 @@ const settingsNoRules = renderToStaticMarkup(React.createElement(SettingsSheet, 
 assert(settingsNoRules.includes(zh('loading')), '缺少 rules 数据时显示加载中而不是抛')
 
 
+// ── 9.11a2 设置里的「模型模态」（0.13.0）────────────────────────────────
+// 这一节最容易做成假开关，所以渲染测试要盯住四件事：
+//   ① 每个模型一行、每个可开关模态一个 chip；
+//   ② 文本锁定（aria-disabled、点不动）；
+//   ③ 关闭态 data-on="0"，开启态 data-on="1"（视觉与语义同源）；
+//   ④ 协议里声明了但运行时没有的模态**不出现假开关**。
+const ModalitiesSection = internals.ModalitiesSection
+assert(typeof ModalitiesSection === 'function', 'client.js 应导出 ModalitiesSection 以便测试')
+const renderModalities = (props) => renderToStaticMarkup(React.createElement(ModalitiesSection, Object.assign({ t: zh }, props)))
+const registryFixture = {
+  runtime: ['text', 'image'],
+  defaults: ['text', 'image'],
+  locked: ['text'],
+  labels: {},
+  filePath: 'C:/Users/x/.superpi/modalities.json',
+}
+const visionModel = { provider: 'odys-deepseek', id: 'Deepseek-V4.1-Flash', name: 'Deepseek-V4.1-Flash', input: ['text', 'image'] }
+const textOnlyModel = { provider: 'acme', id: 'text-only', name: 'Text Only', input: ['text'] }
+
+const modLoading = renderModalities({ models: [], modalities: null })
+assert(modLoading.includes(zh('modalitiesSection')), '模态区有标题')
+assert(modLoading.includes(zh('loading')), '模态区加载中显示占位')
+
+const modFailed = renderModalities({ models: [], modalities: null, error: 'boom', onRetry() {} })
+assert(modFailed.includes(zh('modalitiesLoadFailed')), '读失败显示错误标题')
+assert(modFailed.includes('boom'), '读失败显示详情')
+assert(modFailed.includes(zh('retry')), '读失败给重试')
+
+const modNoSession = renderModalities({ models: [], modalities: { state: { models: {} }, registry: registryFixture } })
+assert(modNoSession.includes(zh('modalitiesNoSession')), '无会话时明确说明（不是空白）')
+
+const modOk = renderModalities({
+  models: [visionModel, textOnlyModel],
+  modalities: { state: { models: {} }, registry: registryFixture },
+  onToggle() {},
+})
+assert(modOk.includes('data-model="odys-deepseek:Deepseek-V4.1-Flash"'), '视觉模型有一行')
+assert(modOk.includes('data-modality="image"'), '视觉模型有图像 chip')
+assert(modOk.includes('data-modality="text"'), '有文本 chip')
+assert(modOk.includes('data-locked="1"'), '文本 chip 标记为锁定')
+assert(/data-modality="text"[^>]*aria-disabled="true"/.test(modOk), '文本 chip aria-disabled（读屏知道点不动）')
+assert(modOk.includes(zh('modality_text')) && modOk.includes(zh('modality_image')), 'chip 用本地化名')
+// 只截取「纯文本模型那一行」：按下一个 data-model 切段，否则会把后面模型的行一起吞进来。
+const textOnlyStart = modOk.indexOf('data-model="acme:text-only"')
+const textOnlyNext = modOk.indexOf('data-model="', textOnlyStart + 10)
+const textOnlyRow = modOk.slice(textOnlyStart, textOnlyNext < 0 ? modOk.length : textOnlyNext)
+assert(textOnlyRow.includes('data-modality="text"'), '纯文本模型有文本 chip')
+assert(textOnlyRow.includes('data-modality="image"') === false, '纯文本模型没有图像 chip（不凭空出现）')
+
+const modOff = renderModalities({
+  models: [visionModel],
+  modalities: { state: { models: { 'odys-deepseek/Deepseek-V4.1-Flash': { image: false } } }, registry: registryFixture },
+  onToggle() {},
+})
+assert(/data-modality="image"[^>]*data-on="0"/.test(modOff), '关闭态 data-on=0')
+assert(/data-modality="image"[^>]*aria-pressed="false"/.test(modOff), '关闭态 aria-pressed=false')
+assert(/data-modality="text"[^>]*data-on="1"/.test(modOff), '文本始终开启')
+
+const modFuture = renderModalities({
+  models: [{ provider: 'x', id: 'y', name: 'Future', input: ['text', 'image', 'audio'] }],
+  modalities: { state: { models: {} }, registry: registryFixture },
+  onToggle() {},
+})
+assert(modFuture.includes('data-modality="audio"') === false, '运行时无法发送的模态不画开关（假开关比没有更糟）')
+
+// 点击回调：静态渲染拿不到事件对象，但可以钉住源码里的调用形状（取反后的目标态）。
+{
+  const modSource = fs.readFileSync(path.join(root, 'client.js'), 'utf8')
+  assert(modSource.includes('props.onToggle(model, entry.id, entry.enabled !== true)'), '点击时把「取反后的目标态」交给回调')
+}
+
 // ── 9.11b 工具行：展开区不是圆角卡片（用户 18994 明确要求拆掉圆角框） ────────
 // 过程流里一次任务会连着十几次工具调用。每行都套 border-radius + hairline + 底色，
 // 视觉上就是「框套框」的噪音墙。这里守住三点：无圆角、无背景、无外框，
