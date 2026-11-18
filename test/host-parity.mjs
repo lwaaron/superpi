@@ -641,6 +641,35 @@ try {
     eq('POST /sessions body 透传给 spawnSession', calls.spawn.at(-1), { cwd: 'C:/work' })
     check('POST /sessions 返回 session 对象', typeof created.body.session === 'object' && created.body.session !== null)
 
+    // 3.11 上下文守卫的真实占用（只读观测面，0.12.0）
+    // 面板的 `contextUsage` 来自 pi 的 usage，当前上游会把它算成 3.7%（真实 1.31M）。
+    // 这一条钉住「另给一个可信数」：读守卫日志最后一行、可按会话过滤、读不到就 available:false。
+    const guardFile = path.join(tmp, 'guard', 'context-guard.json')
+    const guardLogFile = path.join(path.dirname(guardFile), 'context-guard.log.jsonl')
+    const previousGuardEnv = process.env.SUPERPI_CONTEXT_GUARD
+    process.env.SUPERPI_CONTEXT_GUARD = guardFile
+    try {
+      const noLog = await request(server.base, '/context')
+      eq('context 无日志时 200', noLog.status, 200)
+      eq('context 无日志 available=false', noLog.body.available, false)
+      fs.mkdirSync(path.dirname(guardLogFile), { recursive: true })
+      fs.writeFileSync(guardLogFile, [
+        JSON.stringify({ at: 't1', sessionId: 's1', window: 1000, before: 900, after: 400, trimmed: true, imagesDropped: 3 }),
+        JSON.stringify({ at: 't2', sessionId: 's2', window: 1000, before: 1900, after: 500, overBudget: true }),
+      ].join('\n') + '\n', 'utf8')
+      const latest = await request(server.base, '/context')
+      eq('context 默认取最后一行', latest.body.sessionId, 's2')
+      eq('context 透传 overBudget（诚实信号）', latest.body.overBudget, true)
+      const bySession = await request(server.base, '/context?sessionId=s1')
+      eq('context 按 sessionId 过滤', bySession.body.sessionId, 's1')
+      eq('context 过滤后保留该会话字段', bySession.body.imagesDropped, 3)
+      eq('context 未知 sessionId → available=false', (await request(server.base, '/context?sessionId=nope')).body.available, false)
+      eq('context 用 POST → 404', (await request(server.base, '/context', { method: 'POST', body: {} })).status, 404)
+    } finally {
+      if (previousGuardEnv === undefined) delete process.env.SUPERPI_CONTEXT_GUARD
+      else process.env.SUPERPI_CONTEXT_GUARD = previousGuardEnv
+    }
+
     // 3.12 面板偏好（项目重命名 / 会话置顶）
     // 这两件事都没有 pi 通道：set_session_name 改的是单个会话的 session_info，
     // 改不了项目层；置顶纯属面板概念。所以必须由 host 落盘，这里逐条钉死语义。

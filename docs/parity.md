@@ -371,6 +371,7 @@ pi 只提供 `SYSTEM.md`（整份替换）、`APPEND_SYSTEM.md`（静态文件�
 | 停用 | `<home>/.superpi/context-guard.json` → `{"enabled":false}`，一条都不动 | 同左 | 同上 |
 | 坏配置 | 退回默认（默认启用）且不抛 —— 守护失效比静默不裁更危险 | 同左 | 同上 |
 | 观测 | `<home>/.superpi/context-guard.log.jsonl`（滚动 240 行）+ `/superpi-context` 命令 | `/superpi-context` | 同上 D 段 |
+| 真实占用 | 统计抽屉多一行「真实占用（上下文守卫）」= `before → after / window` + 已释放图片数；数据走 `GET /context?sessionId=`（host 只读日志最后一行） | 同一份日志、同一个数（写日志的是扩展，与前端无关） | `test/host-parity.mjs` 3.11、`test/client-render.mjs` |
 
 **口径差异是刻意的**：pi 自己的 `estimateTokens` 把一张图记成 4800 chars ≈ 1200 tokens，而上游按视觉分辨率计费（本例 ≈ 7.7k/张）。
 本模块默认 `imageTokens = 12000`、`charsPerToken = 3`（中文场景不低估）、`targetRatio = 0.72` —— **宁可多释放一张旧图，也不"以为还有余量"地发出去**。

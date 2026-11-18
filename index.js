@@ -69,7 +69,7 @@ const API_PREFIX = '/api/' + PLUGIN_ID
 const MAX_SESSIONS = 8
 const MAX_BODY_BYTES = 4 * 1024 * 1024
 /** GET /contract 里 version 字段的取值：本插件对外的契约版本，与 package.json 解耦。 */
-const CONTRACT_VERSION = '0.12.0'
+const CONTRACT_VERSION = '0.12.1'
 /** 历史会话列表的条数窗口（与 src/session-store.mjs 的 DEFAULT_LIMIT/MAX_LIMIT 一致）。 */
 const HISTORY_DEFAULT_LIMIT = 20
 const HISTORY_MAX_LIMIT = 200
@@ -163,6 +163,54 @@ const SELF_FILES = [
 const PLUGIN_ROOT = (() => {
   try { return path.dirname(fileURLToPath(import.meta.url)) } catch { return '' }
 })()
+
+/**
+ * 读「上下文守卫」写下的**观测日志**最后一行（0.12.0）。
+ *
+ * 为什么面板需要它：pi 的 `get_session_stats.contextUsage` 是 usage 派生值，而当前上游把
+ * prompt 全记在 cache 且 `input=0`，于是真实 1.31M 的上下文被显示成 **3.7%** —— 用户以为
+ * 还有 96% 空间，直到撞上 400。那个数字不能用来做决定。
+ *
+ * 为什么 host 不 import `extensions/superpi-context-guard.mjs`：日志是**观测面**，
+ * 不是真相面。host 只需要「最后一行能读出来的 JSON」，读不出来就 `available:false`；
+ * 反向依赖会把一个 pi 扩展模块拽进 host 的启动路径（它一旦有语法错误，面板就起不来）。
+ */
+const GUARD_LOG_DIR_NAME = '.superpi'
+const GUARD_LOG_FILE_NAME = 'context-guard.log.jsonl'
+const GUARD_LOG_TAIL_BYTES = 128 * 1024
+
+function resolveContextGuardLogPath(env = process.env, home = os.homedir()) {
+  const override = typeof env?.SUPERPI_CONTEXT_GUARD === 'string' ? env.SUPERPI_CONTEXT_GUARD.trim() : ''
+  const dir = override !== '' ? path.dirname(path.resolve(override)) : path.join(home, GUARD_LOG_DIR_NAME)
+  return path.join(dir, GUARD_LOG_FILE_NAME)
+}
+
+function readContextGuardTail(sessionId = '') {
+  try {
+    const file = resolveContextGuardLogPath()
+    const stat = fs.statSync(file)
+    if (stat.size <= 0) return { available: false }
+    const readBytes = Math.min(stat.size, GUARD_LOG_TAIL_BYTES)
+    const buffer = Buffer.alloc(readBytes)
+    const handle = fs.openSync(file, 'r')
+    try {
+      fs.readSync(handle, buffer, 0, readBytes, stat.size - readBytes)
+    } finally {
+      fs.closeSync(handle)
+    }
+    const lines = buffer.toString('utf8').split('\n').filter(line => line.trim() !== '')
+    for (let i = lines.length - 1; i >= 0; i -= 1) {
+      let row = null
+      try { row = JSON.parse(lines[i]) } catch { continue }
+      if (row === null || typeof row !== 'object') continue
+      if (sessionId !== '' && row.sessionId !== sessionId) continue
+      return { available: true, ...row }
+    }
+    return { available: false }
+  } catch {
+    return { available: false }
+  }
+}
 
 /**
  * 版本号只有一份真相：本包 package.json 的 version。
@@ -1085,6 +1133,14 @@ export function createHandler(deps) {
        * 三条路由都回**全量视图**（与 /ui-prefs 同一风格）；归一与校验在
        * extensions/superpi-rules.mjs 里，那里抛的错带 statusCode:400，由下面的 catch 原样回给客户端。
        */
+      /**
+       * 上下文真实占用（0.12.0）：只读守卫写下的观测日志最后一行。
+       * `sessionId` 可选 —— 面板传了就按会话过滤（日志是所有会话共用的一份）。
+       */
+      if (method === 'GET' && routePath === '/context') {
+        const sessionId = (url.searchParams.get('sessionId') ?? '').trim()
+        return send(200, { ok: true, ...readContextGuardTail(sessionId) })
+      }
       if (method === 'GET' && routePath === '/rules') {
         const store = rulesStoreOf(deps)
         const read = await store.read()

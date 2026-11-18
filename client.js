@@ -124,6 +124,9 @@ window.__ModuleLoader__.load({
       statsTools: '工具调用',
       statsTotal: '总条目',
       contextUsage: '上下文占用',
+      contextReal: '真实占用（上下文守卫）',
+      imagesReleased: '已释放图片',
+      contextOverBudget: '已裁到最严仍超预算，建议压缩上下文',
       cost: '费用',
       compactNow: '压缩上下文',
       compacting: '正在压缩上下文…',
@@ -371,6 +374,9 @@ window.__ModuleLoader__.load({
       statsTools: 'Tool calls',
       statsTotal: 'Total entries',
       contextUsage: 'Context usage',
+      contextReal: 'Real usage (context guard)',
+      imagesReleased: 'images released',
+      contextOverBudget: 'still over budget — compact the context',
       cost: 'Cost',
       compactNow: 'Compact context',
       compacting: 'Compacting context…',
@@ -1087,6 +1093,11 @@ window.__ModuleLoader__.load({
        * 为什么绕 host 而不是直接从浏览器读盘：浏览器没有 fs，而这份文件同时是 pi 扩展
        * 每轮 `before_agent_start` 读的那一份，走 host 读写才能保证「面板改什么、pi 用什么」。
        */
+      /** 上下文守卫的真实占用：host 读观测日志最后一行（不依赖会话进程活着）。 */
+      context: function (sessionId) {
+        var query = typeof sessionId === 'string' && sessionId !== '' ? '?sessionId=' + encodeURIComponent(sessionId) : ''
+        return requestJson('/context' + query)
+      },
       rules: function () { return requestJson('/rules') },
       setRules: function (text) { return requestJson('/rules', { method: 'POST', body: { text: text } }) },
       resetRules: function () { return requestJson('/rules/reset', { method: 'POST', body: {} }) },
@@ -4335,6 +4346,12 @@ window.__ModuleLoader__.load({
       var state = props.state
       var rows = []
       function push(key, value) { if (value !== undefined && value !== null && String(value) !== '') rows.push([key, String(value)]) }
+      function formatTokenCount(value) {
+        var count = typeof value === 'number' && isFinite(value) ? value : 0
+        if (count >= 1000000) return (count / 1000000).toFixed(2) + 'M'
+        if (count >= 1000) return String(Math.round(count / 1000)) + 'k'
+        return String(count)
+      }
       // stats 是异步拉的：null 表示还在路上，此时不能读字段（否则抽屉一打开就抛 TypeError）。
       if (stats !== null && stats !== undefined) {
       push(t('statsUser'), stats.userMessages)
@@ -4350,6 +4367,16 @@ window.__ModuleLoader__.load({
       if (stats.contextUsage !== undefined && stats.contextUsage !== null) {
         var usage = stats.contextUsage
         push(t('contextUsage'), (usage.tokens === null ? '?' : String(usage.tokens)) + ' / ' + String(usage.contextWindow) + (usage.percent === null ? '' : ' · ' + String(Math.round(usage.percent)) + '%'))
+      }
+      // 上面那行是 provider 报告的 usage 派生值（当前上游把 prompt 记在 cache 且 input=0，
+      // 真实 1.31M 会被显示成 3.7%）。这一行是守卫按「图片算视觉 token」重算的真实值：
+      // 两个数并列，用户能看出哪个可信，而不是被一个假百分比带着走到 400。
+      if (props.guardContext !== undefined && props.guardContext !== null) {
+        var guard = props.guardContext
+        var guardText = formatTokenCount(guard.before) + ' → ' + formatTokenCount(guard.after) + ' / ' + formatTokenCount(guard.window)
+        if (typeof guard.imagesDropped === 'number' && guard.imagesDropped > 0) guardText += ' · ' + t('imagesReleased') + ' ' + String(guard.imagesDropped)
+        if (guard.overBudget === true) guardText += ' · ' + t('contextOverBudget')
+        push(t('contextReal'), guardText)
       }
       push(t('cost'), typeof stats.cost === 'number' ? stats.cost.toFixed(4) : undefined)
       push(t('sessionName'), state.sessionName)
@@ -4956,6 +4983,14 @@ window.__ModuleLoader__.load({
       var statsState = useState(null)
       var stats = statsState[0]
       var setStats = statsState[1]
+      /**
+       * 上下文守卫的真实占用（0.12.0）：独立于 pi 的 `contextUsage`。
+       * 后者是 usage 派生值，当前上游把 prompt 全记在 cache 且 input=0，会显示成 3.7%；
+       * 这个来自守卫每次请求前算的估算（含图片按视觉 token 计），才是能用来做决定的数。
+       */
+      var guardContextState = useState(null)
+      var guardContext = guardContextState[0]
+      var setGuardContext = guardContextState[1]
       // 底部统计行用的是一份独立的 stats 快照：抽屉里的 stats 只在打开时拉一次，
       // 而统计行要跟着每一轮结束刷新，两者生命周期不同，共用一份会让关闭抽屉后数据变旧。
       var footerState = useState(null)
@@ -5704,9 +5739,14 @@ window.__ModuleLoader__.load({
         setDrawer('stats')
         setStats(null)
         setEntries(null)
+        setGuardContext(null)
         var id = sessionRef.current
         if (id === null) return
         rpc(id, { type: 'get_session_stats' }).then(function (data) { setStats(data) }, function () { setStats(null) })
+        // 守卫日志是 host 的只读观测面；拿不到就静默不显示，绝不阻塞统计抽屉。
+        api.context(id).then(function (body) {
+          setGuardContext(body !== null && body !== undefined && body.available === true ? body : null)
+        }, function () { setGuardContext(null) })
         rpc(id, { type: 'get_entries' }).then(function (data) { setEntries(data) }, function () { setEntries(null) })
         loadState(id)
       }
@@ -6294,6 +6334,7 @@ window.__ModuleLoader__.load({
         drawerNode = h(StatsSheet, {
           t: t,
           stats: stats,
+          guardContext: guardContext,
           entries: entriesReport,
           state: Object.assign({ cwd: activeCwd }, info === null ? {} : info),
           onClose: function () { setDrawer(null) },
