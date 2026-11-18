@@ -73,7 +73,11 @@ expect(registered !== null, '应注册路由')
 const httpServer = http.createServer((req, res) => { void registered.handler(req, res) })
 await new Promise(resolve => httpServer.listen(0, '127.0.0.1', resolve))
 const base = 'http://127.0.0.1:' + httpServer.address().port + registered.path
-const state = async () => (await (await fetch(base + '/state')).json())
+// `Connection: close` 不是优化，是**让进程能干净退出**：undici 默认 keep-alive，
+// socket 会在进程退出时被 libuv 撕在关闭中途（Windows 上就是
+// `Assertion failed: !(handle->flags & UV_HANDLE_CLOSING)`），而测试本身已经 PASS，
+// 退出码却变成 1 —— 一条本来绿的链路会把后面所有门禁一起掐断。
+const state = async () => (await (await fetch(base + '/state', { headers: { connection: 'close' } })).json())
 
 // 1) 空配置 → 自动探测
 const first = await state()
@@ -106,9 +110,18 @@ const fourth = await state()
 console.log('workspace -> ' + fourth.resolved.workspace)
 expect(fourth.resolved.workspace === externalRoot, 'workspace 热更新应立即生效，实际 ' + fourth.resolved.workspace)
 
-httpServer.close()
+// 关闭必须是**可等待**的：`close()` 只是发起关闭，keep-alive 连接还可能挂着。
+// 紧接着 `process.exit()` 会在 libuv 关句柄的中途撕掉进程 —— Windows 上表现为
+// `Assertion failed: !(handle->flags & UV_HANDLE_CLOSING)`，而测试本身已经 PASS，
+// 退出码却是 1，把 `npm test` 的整条链路断在这里（后面的门禁一条都不跑）。
+if (typeof httpServer.closeAllConnections === 'function') httpServer.closeAllConnections()
+await new Promise(resolve => httpServer.close(() => resolve()))
 for (const dispose of fake.effects) if (typeof dispose === 'function') dispose()
 fs.rmSync(externalRoot, { recursive: true, force: true })
 
 console.log(failures === 0 ? 'PASS' : 'FAILED ' + String(failures))
-process.exit(failures === 0 ? 0 : 1)
+// 不调 `process.exit()`：让它自然退出。Node 22 在 Windows 上会在 exit 的中途关闭
+// undici/http 的 async handle，触发 libuv 断言（脚本已 PASS、退出码却是 1，把
+// `npm test` 的后续门禁整条掐断）。设 exitCode 后让事件循环自己排空，就不会有
+// "关到一半被撕掉" 的窗口。
+process.exitCode = failures === 0 ? 0 : 1

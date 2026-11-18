@@ -69,7 +69,7 @@ const API_PREFIX = '/api/' + PLUGIN_ID
 const MAX_SESSIONS = 8
 const MAX_BODY_BYTES = 4 * 1024 * 1024
 /** GET /contract 里 version 字段的取值：本插件对外的契约版本，与 package.json 解耦。 */
-const CONTRACT_VERSION = '0.11.0'
+const CONTRACT_VERSION = '0.12.0'
 /** 历史会话列表的条数窗口（与 src/session-store.mjs 的 DEFAULT_LIMIT/MAX_LIMIT 一致）。 */
 const HISTORY_DEFAULT_LIMIT = 20
 const HISTORY_MAX_LIMIT = 200
@@ -152,6 +152,10 @@ const SELF_FILES = [
   { rel: 'extensions/superpi-rules.mjs', runtime: true },
   // 规则扩展本体（只随 tarball 分发、由工具装进 pi；面板不加载它）。
   { rel: 'extensions/superpi-rules.ts', runtime: false },
+  // 上下文守卫：模型层只在 pi 进程里跑（扩展加载），host 不 import 它，
+  // 所以改完只需重装扩展 + 重启 pi 会话，不需要重启 DSH。
+  { rel: 'extensions/superpi-context-guard.mjs', runtime: false },
+  { rel: 'extensions/superpi-context-guard.ts', runtime: false },
   { rel: 'package.json', runtime: false },
   { rel: 'cordis.patch.yml', runtime: false },
 ]

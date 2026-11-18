@@ -1,6 +1,6 @@
 # superpi 两端能力对齐账本（parity）
 
-> 基线：pi `1.5.2` / superpi `0.10.0` · 唯一权威 = `packages/coding-agent/src/modes/rpc/rpc-types.ts`（303 行）、`src/modes/rpc/rpc-mode.ts`（846 行，`switch` 在 `:404-737`）、`src/core/agent-session.ts`（4714 行，`AgentSessionEvent` 在 `:220-261`）
+> 基线：pi `1.5.2` / superpi `0.12.0` · 唯一权威 = `packages/coding-agent/src/modes/rpc/rpc-types.ts`（303 行）、`src/modes/rpc/rpc-mode.ts`（846 行，`switch` 在 `:404-737`）、`src/core/agent-session.ts`（4714 行，`AgentSessionEvent` 在 `:220-261`）
 > 本文档是 `AGENTS.md` §3「100% 对齐」的账本。任何一行状态变化必须同步改这里，否则视为未完成。**本账本由 `test/parity.mjs` 与 `test/host-parity.mjs` 机器兜底**，人肉维护只是第一道。
 
 ## 0. 怎么读这张表
@@ -32,8 +32,8 @@
 
 ```
 selfcheck → client-render(926) → css-tokens(98) → runtime-resolve → config-hot
-→ host-parity(325) → session-projects(55) → timeout(28) → rules(193)
-→ parity(96) → tui-editor(293) → restart-lib(31×2 引擎) → github-sync(82) → version
+→ host-parity(325) → session-projects(55) → timeout(28) → rules(199)
+→ context-guard(74) → parity(96) → tui-editor(333) → restart-lib(31×2 引擎) → github-sync(82) → version
 ```
 
 三套核心门禁都离线跑（不起 pi、不打 LLM）。`npm test` 2026-11-13 实测：加 `restart-lib` 之前 ~5.2 s，加上之后 ~14.3 s —— **`test/restart-lib.mjs` 独占约 9.1 s**（它要起 pwsh 7 与 PowerShell 5.1 两个引擎各跑一遍 fixture，进程启动开销占大头），`test/timeout.mjs` 约 3.1 s（真等若干超时周期），其余各项合计 <1.5 s。`test/parity.mjs` 做的是**三向对账**：`src/rpc-contract.mjs` ↔ pi 的类型声明与官方文档 ↔ `client.js`/`index.js` 的实际覆盖面。任一方向对不上即红：
@@ -338,6 +338,62 @@ pi 只提供 `SYSTEM.md`（整份替换）、`APPEND_SYSTEM.md`（静态文件�
 **实测踩到的缺陷（已修 + 已锁）**：`renderRulesBlock()` 首版自己包了 `<user_defined_rules>` 标签，而 pi 组装 section 时会**再包一层**，于是系统提示里出现同名嵌套两次。现在渲染器只出「覆盖声明 + 原文」，标签的唯一来源是 pi —— `test/rules.mjs` 断言 `renderRulesBlock()` 不含该标签。
 
 **真机证据**（不是推测）：起真 `pi --mode rpc` 子进程 + 装好的扩展 + 真规则文件，规则里埋一个随机暗号，问模型「你现在遵守的最高优先级规则里有一串暗号，只输出暗号」→ 模型逐字吐出暗号。这一步才证明「面板写的规则真的到达了模型」，而不是只到达了某个 options 对象。
+
+---
+
+## 5.3 上下文窗口化（0.12.0 · 第五层：不是 RPC 面，也不是提示，是**发出去的那个请求本身**）
+
+**现象（2026-11-18 实测）**：一个 2413 条消息的会话里读过 58 张 PNG 截图（会话文件 33MB，单张 base64 1.4~1.6MB）。
+某次请求返回 `400 上下文超出上游上限（1048576 tokens，本次估算 1309796 tokens）`；
+用户点「继续」→ 再返回 `Input too long: 1095829 tokens exceeds this provider's limit of 1048576`；
+状态栏同时显示 **3.7% / 1.0M**（看起来还有 96% 空间）。会话此后**无法继续，也无法压缩，只能新建**。
+
+**四条根因（都可量化，不是猜测）**：
+
+| # | 根因 | 证据 |
+| --- | --- | --- |
+| 1 | 历史图片**没有生命周期**：`read` 进来的 PNG 以 base64 常驻之后**每一次**请求 | 会话内 58 个 image 块 / 26.6MB，没有任何一条被 `context_edit` 省略 |
+| 2 | 上下文占用基线取自**最后一次成功的 usage**，而该上游把 prompt 全记在 cache 且 `input=0` | 最后一条成功 assistant：`input:0, output:156, cacheRead:31104, cacheWrite:3386` → `calculateContextTokens` = 34,646 ≈ 1048576 的 3.3%，即状态栏那个 3.7% |
+| 3 | `isContextOverflow()` 是**英文正则表**，认不出这两条文案（中文「上下文超出上游上限」/ `exceeds this provider's limit of`） | `pi-ai/dist/utils/overflow.js` 的 `OVERFLOW_PATTERNS` 无一条命中 → pi 把它当**不可恢复错误**，既不自动压缩也不重试 |
+| 4 | 即便识别成功，压缩本身也要把「切点前的全部历史」发给模型（`prepareCompaction` → `messagesToSummarize`）→ 1.28M 输入**同样 400** | 「用超限的资源去解决超限」的自指死锁；重试同理 |
+
+**方案：在 pi 官方扩展点 `context` 事件里做非破坏性窗口化**（`extensions/superpi-context-guard.ts` + `.mjs`）。
+每次 LLM 调用前拿到 messages 深拷贝，按「信息价值/成本」分级折叠，**保证请求不超预算**；不写 session、不调模型、不联网。
+
+| 维度 | 面板端（RPC 子进程） | 命令行 TUI | 门禁用例 |
+| --- | --- | --- | --- |
+| 生效方式 | 扩展装在 `<piAgentDir>/extensions/`，RPC 子进程加载 | 同一份扩展，同一 agent loop | `test/context-guard.mjs` E 段（jiti 真加载） |
+| 裁剪顺序 | 旧图片 → 旧思考 → 超长工具结果 → 旧工具结果 → 旧回复 | 同左（同一份 `.mjs` 纯函数） | `test/context-guard.mjs` C 段 |
+| 保护区 | 最近 `keepRecentTurns` 轮 / `keepRecentMessages` 条 / `protectedTokenRatio` 窗口，三者取最严 | 同左 | 同上（断言保护区 token 不超上限） |
+| 本轮图片 | 最后一条 user 之后的图片**一张不动**（模型还没看过，换了等于白读） | 同左 | 同上（`tailImages === 2`） |
+| 幂等 / 单调 | 同一输入两次结果一致；前缀只随会话增长后退 → prompt cache 不被击穿 | 同左 | 同上（二次运行 0 变化、返回同一引用） |
+| 无需裁剪时 | 返回 `undefined`（不触发 pi 重放系统提示） | 同左 | 同上 |
+| 停用 | `<home>/.superpi/context-guard.json` → `{"enabled":false}`，一条都不动 | 同左 | 同上 |
+| 坏配置 | 退回默认（默认启用）且不抛 —— 守护失效比静默不裁更危险 | 同左 | 同上 |
+| 观测 | `<home>/.superpi/context-guard.log.jsonl`（滚动 240 行）+ `/superpi-context` 命令 | `/superpi-context` | 同上 D 段 |
+
+**口径差异是刻意的**：pi 自己的 `estimateTokens` 把一张图记成 4800 chars ≈ 1200 tokens，而上游按视觉分辨率计费（本例 ≈ 7.7k/张）。
+本模块默认 `imageTokens = 12000`、`charsPerToken = 3`（中文场景不低估）、`targetRatio = 0.72` —— **宁可多释放一张旧图，也不"以为还有余量"地发出去**。
+
+**实测（用上面那个 33MB 会话回放）**：估算 1,909,544 → **578,485**，预算 754,974；
+释放 57 张图、丢弃 166 条思考、折叠 429 条旧工具结果、3 条超长结果截断；二次运行 0 变化。
+真机复现（`pi --mode rpc --session <该会话副本>` 发「继续」）：窗口 1,000,000 / 预算 720,000，
+`before 1,870,607 → after 524,122`，**58 张图全部释放，请求成功继续多步工具调用** —— 死锁解除。
+
+**光裁剪不够：要让模型自己不再制造大块内容（0.12.0 补）**。只裁剪的话模型不知道图已被换成占位，
+会以为图还在、反复 `read` 同一张图，于是继续制造大块内容。所以同一扩展再挂 `before_agent_start`，
+把一段**上下文卫生**准则写进 `systemPromptOptions.sections.superpi_context_hygiene`（与用户自定义规则
+并列、互不抢 key；`hygiene:false` 可单独关）：
+
+| 准则 | 为什么写死 |
+| --- | --- |
+| 截图/渲染图看完写结论，**不要反复 read 同一张图** | 生产的每一张图都是后续每次请求的常驻成本 |
+| 历史图片会变成 `[image omitted: 路径]`，需要时按路径重新 read | 让模型理解占位是正常机制，不会以为工具坏了 |
+| 收尾时把**自己生成的**临时图移到 `_scratch/archive/` | 磁盘归档只解决「重复读取」与目录整洁，**不等于**释放上下文（上下文存的是 base64 副本） |
+| **只清理本次任务自己生成的中间产物**，用户素材一律不动 | 「省上下文」不能变成「误删素材」——这条边界必须写在提示里 |
+
+**为什么不去改 pi 的 `OVERFLOW_PATTERNS`**：那只是让 pi「认得」这个错，压缩输入仍然超限（根因 4），
+且 vendored 改动在升级时必丢 —— 治的是症状，不是病。**让超限不可能发生**才是根治。
 
 ---
 

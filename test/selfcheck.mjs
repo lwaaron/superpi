@@ -26,7 +26,7 @@ function assert(condition, message) {
 }
 
 function copyPlugin(target) {
-  for (const rel of ['index.js', 'client.js', 'package.json', 'cordis.patch.yml', 'src/pi-rpc.mjs', 'src/pi-runtime.mjs', 'src/session-store.mjs', 'src/rpc-contract.mjs', 'src/ui-prefs.mjs', 'extensions/superpi-rules.mjs', 'extensions/superpi-rules.ts']) {
+  for (const rel of ['index.js', 'client.js', 'package.json', 'cordis.patch.yml', 'src/pi-rpc.mjs', 'src/pi-runtime.mjs', 'src/session-store.mjs', 'src/rpc-contract.mjs', 'src/ui-prefs.mjs', 'extensions/superpi-rules.mjs', 'extensions/superpi-rules.ts', 'extensions/superpi-context-guard.mjs', 'extensions/superpi-context-guard.ts']) {
     const to = path.join(target, rel)
     fs.mkdirSync(path.dirname(to), { recursive: true })
     fs.copyFileSync(path.join(root, rel), to)
@@ -98,7 +98,7 @@ try {
     assert(a.body.summary.stale === false, '未改动时应 stale=false')
     assert(a.body.summary.changedCount === 0, '未改动时 changedCount 应为 0')
     assert(a.body.ok === true, '未改动时 ok 应为 true')
-    assert(a.body.files.length === 11, 'files 长度应为 11（0.10.0 起多了规则模块与规则扩展），实际 ' + String(a.body.files.length))
+    assert(a.body.files.length === 13, 'files 长度应为 13（0.12.0 起多了上下文守卫两枚），实际 ' + String(a.body.files.length))
     const clientRow = () => a.body.files.find(file => file.rel === 'client.js')
     sha = clientRow().loadedSha256
     assert(typeof sha === 'string' && sha.length === 64, 'loadedSha256 应是 64 位十六进制')
@@ -166,5 +166,8 @@ try {
   console.error(String(error && error.message))
 } finally {
   try { fs.rmSync(tempDir, { recursive: true, force: true }) } catch { /* 清理失败不影响结论 */ }
-  process.exit(failed)
+  // 不用 `process.exit()`：Node 22 + Windows 会在 exit 中途撕掉 http/undici 的
+  // async handle（`Assertion failed: !(handle->flags & UV_HANDLE_CLOSING)`），
+  // 脚本明明 PASS、退出码却是 1，一条本来绿的链路会把后面所有门禁一起掐断。
+  process.exitCode = failed
 }

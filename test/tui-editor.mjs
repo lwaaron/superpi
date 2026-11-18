@@ -527,16 +527,16 @@ const stripAnsi = text => text.replace(/\x1b\[[0-9;:?]*[A-Za-z]/g, '').replace(/
   const dir = path.join(process.env.TEMP ?? process.env.TMPDIR ?? '.', `superpi-ext-test-${process.pid}`)
   const state = status({ dir })
   ok(state.sourceExists, '扩展源文件可读')
-  // 0.10.0 起安装面是三个文件（输入框 + 规则扩展 + 它们共用的模型模块）。
-  eq(EXTENSION_FILES.length, 3, '安装面三个文件')
-  eq(EXTENSION_FILES.map(file => file.name).sort().join(','), 'superpi-editor.ts,superpi-rules.mjs,superpi-rules.ts', '文件清单固定')
+  // 0.12.0 起安装面是五个文件（输入框 + 规则两枚 + 上下文守卫两枚）。
+  eq(EXTENSION_FILES.length, 5, '安装面五个文件')
+  eq(EXTENSION_FILES.map(file => file.name).sort().join(','), 'superpi-context-guard.mjs,superpi-context-guard.ts,superpi-editor.ts,superpi-rules.mjs,superpi-rules.ts', '文件清单固定')
   const installed = install({ dir })
   eq(installed.code, 0, 'install 成功')
   for (const file of EXTENSION_FILES) {
     ok(fs.existsSync(path.join(dir, file.name)), '安装后有 ' + file.name)
   }
   eq(status({ dir }).identical, true, '安装后 editor 内容与源一致')
-  eq(status({ dir }).complete, true, '三个文件全部一致 → complete')
+  eq(status({ dir }).complete, true, '五个文件全部一致 → complete')
   eq(install({ dir }).code, 0, 'install 幂等')
 
   // 真机那一步：装到临时 agentDir 后，用 **pi 自己的扩展加载器**加载一遍。

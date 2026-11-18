@@ -47,6 +47,20 @@ export const RULES_EXTENSION_FILE_NAME = 'superpi-rules.ts'
 export const RULES_MODULE_FILE_NAME = 'superpi-rules.mjs'
 
 /**
+ * 一并安装的「上下文守卫」扩展与它的共享模块（0.12.0）。
+ *
+ * 它治的是「上下文超限后会话彻底报废」：`superpi-context-guard.ts` 订阅 pi 的
+ * `context` 事件（每次 LLM 调用前），把历史里的大块内容（图片、思考、旧工具结果）
+ * 非破坏性地折叠掉，保证请求不会超过模型窗口；`superpi-context-guard.mjs` 是它的
+ * 纯函数模型层（估算 / 保护区 / 分级裁剪），可在 `test/context-guard.mjs` 里单测。
+ *
+ * 与 rules 同样的约束：`.ts` 在 pi 启动时 `import './superpi-context-guard.mjs'`，
+ * 少装 .mjs 会让扩展加载失败（pi 只报一条 extension error，用户看不到原因）。
+ */
+export const GUARD_EXTENSION_FILE_NAME = 'superpi-context-guard.ts'
+export const GUARD_MODULE_FILE_NAME = 'superpi-context-guard.mjs'
+
+/**
  * 需要同步的 skill 清单（0.10.0 起）。
  *
  * 为什么走**用户级** `~/.agents/skills` 而不是项目级 `<cwd>/.pi/skills`：
@@ -75,6 +89,8 @@ export const EXTENSION_FILES = [
   { label: 'editor', source: 'extensions/superpi-editor.ts', name: EXTENSION_FILE_NAME },
   { label: 'rules', source: 'extensions/superpi-rules.ts', name: RULES_EXTENSION_FILE_NAME },
   { label: 'rules-module', source: 'extensions/superpi-rules.mjs', name: RULES_MODULE_FILE_NAME },
+  { label: 'context-guard', source: 'extensions/superpi-context-guard.ts', name: GUARD_EXTENSION_FILE_NAME },
+  { label: 'context-guard-module', source: 'extensions/superpi-context-guard.mjs', name: GUARD_MODULE_FILE_NAME },
 ]
 
 /**
