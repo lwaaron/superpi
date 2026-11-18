@@ -690,7 +690,11 @@ window.__ModuleLoader__.load({
       // 文字是 brand 蓝 --dsw-alias-label-deep-diving（= color-mix(#4176e6 70%, #172554) = #345EBA），
       // 字号是正文 - 2px（14-2=12），行高 22px —— 都比过程行（13/24）小一号，视觉上退到过程流之后。
       '.superpi-working{display:flex;align-items:center;gap:6px;margin-top:2px;padding-top:10px;border-top:.5px solid var(--dsw-alias-border-l3);color:var(--dsw-alias-label-deep-diving);font-size:calc(var(--dsh-content-font-size,14px) - 2px);line-height:calc(22px + var(--dsh-content-font-delta,0px))}',
-      '.superpi-working-icon{flex:0 0 auto;display:inline-flex;width:14px;height:14px;animation:superpi-pulse 1.6s ease-in-out infinite}',
+      // 0.14.2：与命令行窗口对齐 —— 图标放大 14px → 18px，动效从「呼吸」改成「旋转」。
+      // 端点端语义必须一致：TUI 那边是 8 帧月相在转，面板这边只闪烁就会让人觉得"这边卡住了"。
+      // CSS 动画由浏览器合成线程驱动，与 SSE/重绘无关，所以天然不会"停下来静止"（这是 TUI 端最大的坑）。
+      '.superpi-working-icon{flex:0 0 auto;display:inline-flex;width:18px;height:18px;animation:superpi-spin 1.6s linear infinite}',
+      '@keyframes superpi-spin{0%{transform:rotate(0)}100%{transform:rotate(360deg)}}',
       '.superpi-working-text{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-variant-numeric:tabular-nums}',
       // 当前工具段：与主文案同色但更弱，等宽数字避免秒数跳动时抖动。
       '.superpi-working-tool{flex:0 1 auto;min-width:0;margin-left:8px;padding-left:8px;border-left:1px solid var(--dsw-alias-border-l3);color:var(--dsw-alias-label-tertiary);font-size:var(--dsw-font-xxxs-11-font-size);line-height:18px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--ds-font-family-code,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace);font-variant-numeric:tabular-nums}',

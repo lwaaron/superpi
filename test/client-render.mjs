@@ -603,8 +603,12 @@ assert(workingRule.includes('line-height:calc(22px + var(--dsh-content-font-delt
 const workingIconRule = cssRule('.superpi-working-icon')
 assert(workingIconRule !== null, 'client.js 里该有 .superpi-working-icon 规则')
 assert(workingIconRule.includes('state-business-primary') === false, '图标该随父级 currentColor，不该单独取 business-primary（两个蓝不是同一个），实际 ' + workingIconRule)
-assert(workingIconRule.includes('width:14px') && workingIconRule.includes('height:14px'), '图标盒该是 14x14（DSH .runningIcon），实际 ' + workingIconRule)
-assert(workingIconRule.includes('animation:superpi-pulse'), '图标该保留呼吸动画，实际 ' + workingIconRule)
+// 0.14.2：图标放大 14 → 18px，动效从「呼吸」改「旋转」，与命令行窗口对齐
+// （TUI 那边是 8 帧月相在转；面板只闪烁会让人觉得"这边卡住了"）。
+assert(workingIconRule.includes('width:18px') && workingIconRule.includes('height:18px'), '图标盒该是 18x18（0.14.2 放大，与 TUI 双宽月相对齐），实际 ' + workingIconRule)
+assert(workingIconRule.includes('animation:superpi-spin'), '图标该是旋转动画（不是呼吸），实际 ' + workingIconRule)
+// 旋转必须 infinite：一旦不是无限循环，动效就会跑完一遍后静止 —— 正是用户报的毛病。
+assert(workingIconRule.includes('infinite'), '旋转动画必须 infinite（否则跑完即静止），实际 ' + workingIconRule)
 for (const lang of ['zh', 'en']) {
   const label = strings[lang].working
   assert(label.indexOf('{duration}') >= 0, lang + '.working 该含 {duration} 占位，实际 ' + label)

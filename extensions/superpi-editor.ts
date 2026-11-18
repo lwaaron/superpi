@@ -153,6 +153,8 @@ export function markRunStart(now = Date.now()): void {
   runState.failed = false
   runState.startedAt = now
   runState.tool = null
+  // 开始干活就要转起来（幂等：重复调用不会叠加定时��）。
+  startAnimation()
 }
 
 export function markToolStart(name: unknown, args: unknown, now = Date.now()): void {
@@ -178,6 +180,8 @@ export function markRunSettled(): void {
   runState.phase = runState.failed ? 'error' : 'success'
   runState.startedAt = 0
   runState.tool = null
+  // 本轮结束就停表：idle 态不该继续烧 CPU（也让门禁能断言"settled 之后不转"）。
+  stopAnimation()
 }
 
 export function resetRunState(): void {
@@ -185,6 +189,7 @@ export function resetRunState(): void {
   runState.failed = false
   runState.startedAt = 0
   runState.tool = null
+  stopAnimation()
 }
 
 /**
@@ -349,6 +354,16 @@ export class SuperPiEditor extends CustomEditor {
   constructor(tui: any, theme: any, keybindings: any, options: any = {}) {
     super(tui, theme, keybindings, options)
     this.hooks = options?.hooks ?? {}
+    /**
+     * 把渲染通道交给动画定时器（0.14.2）。
+     *
+     * 这个编辑器是扩展唯一能拿到 `tui.requestRender` 的地方（官方设置入口
+     * `ctx.ui.setEditorComponent()` 交给我们的实例），所以在这里绑定。
+     * 定时器自己按 FRAME_INTERVAL_MS 敲它，pi 的 16ms 节流会合并 ——
+     * 这样即使 pi 在等一条 5 分钟的 bash、期间没有任何输入与 token，
+     * 图标也照样在转（此前正是因为"没人重绘"而停在最后一帧）。
+     */
+    bindFrameTarget(tui)
   }
 
   /* ------------------------------------------------------------ 输入入口 */
@@ -690,19 +705,24 @@ export class SuperPiEditor extends CustomEditor {
   private topBorder(raw: string | undefined, inner: number): string {
     const phase: RunPhase = runState.phase
     const color = STATUS_RGB[phase] ?? STATUS_RGB.idle
+    // 0.14.2：图标本身已是双宽（月相 emoji 实测 visibleWidth=2），自带呼吸区，
+    // 不再额外加两侧空格 —— 那会把它推得太远、看着像孤立符号。
+    const icon = sgrFg(color) + statusIcon(phase) + SGR_RESET
     // 0.14.1：主文案带上「当前工具 + 它自设的上限」，让合法长等待可见。
     // 实测一轮累计 2028s、单命令 371~494s，界面只涨秒数时用户会判定成卡死。
-    const full = sgrFg(color) + statusIcon(phase) + ' ' + workingLabel() + SGR_RESET
+    const full = icon + sgrFg(color) + ' ' + workingLabel() + SGR_RESET
     // 退化档：只留 Working 与累计时长（去掉工具段）—— 工具名比累计值次要，
     // 但"正在跑什么"仍要尽量保留，所以它排在图标档之前。
-    const noTool = sgrFg(color) + statusIcon(phase) + ' ' + workingLabel(Date.now(), false) + SGR_RESET
-    const compact = sgrFg(color) + statusIcon(phase) + SGR_RESET
+    const noTool = icon + sgrFg(color) + ' ' + workingLabel(Date.now(), false) + SGR_RESET
+    const compact = icon
     // 窄面板上依次退让：完整三段 → 去掉工具段 → 只剩图标 → 只画横线。
     let chosen = ''
     if (widthOfVisible(full) + 5 <= inner) chosen = full
     else if (widthOfVisible(noTool) + 5 <= inner) chosen = noTool
     else if (widthOfVisible(compact) + 5 <= inner) chosen = compact
     if (chosen === '') return borderBody(raw, inner)
+    // 行宽账目：'─ '（2 列）+ chosen（w 列）+ ' '（1 列）+ rest = inner。
+    // w 由 visibleWidth 算（不是字符串长度）：图标换成双宽 emoji 后这段账目自动跟着变。
     const rest = Math.max(0, inner - 2 - widthOfVisible(chosen) - 1)
     return '─ ' + chosen + ' ' + borderBody(raw, rest)
   }
@@ -905,12 +925,53 @@ export class SuperPiEditor extends CustomEditor {
 
 /* ------------------------------------------------------------------ 状态行 */
 
-export function statusIcon(phase: RunPhase): string {
+/**
+ * 旋转帧序列（0.14.2）。
+ *
+ * 用户三条要求：「图标稍微大一点」「动效流畅一点」「发送消息之后不能停下来静止」。
+ *
+ * ---------------------------------------------------------------------------
+ * 为什么是月相（🌑🌒🌓🌔🌕🌖🌗🌘），而不是原来的 ◐◓◑◒
+ *
+ * | 维度 | 旧方案 ◐◓◑◒ | 新方案 月相 8 帧 |
+ * | --- | --- | --- |
+ * | 视觉大小 | 1 列宽（`visibleWidth` 实测 1） | **2 列宽（天然双倍）** |
+ * | 帧数 | 4 | **8**（每帧位移更小 → 更流畅） |
+ * | 帧间差异 | 只有一条直径翻向，几乎看不出在动 | 明暗面积连续推移，像一个真转盘 |
+ * | 循环 | 4 帧循环，接缝明显 | 月相盈亏天生是闭环（🌘→🌑 无缝） |
+ *
+ * 「更大」这件事在终端里没有字号可调，唯一可靠的手段就是**换双宽字符**。
+ * 我核对过：8 个码位 `visibleWidth` 全部为 2、且都不含 VS16 变体选择符
+ * （含 VS16 的 emoji 在不同终端宽度会跳变，会把框线挤歪）。
+ *
+ * 为什么不用 1/8 圆几何符号：Unicode 里只有四分之一圆（`◴◵◶◷` / `◔◕◖◗`），
+ * 没有 1/8 圆的码位 —— 硬凑 8 帧只能重复帧，那是"看起来更卡"而不是"更流畅"。
+ * 月相是唯一既有 8 个真实不同的帧、又是双宽、又天生闭环的一组。
+ */
+export const RUN_FRAMES = ['🌑', '🌒', '🌓', '🌔', '🌕', '🌖', '🌗', '🌘'] as const
+
+/**
+ * 动画帧间隔（毫秒）。
+ *
+ * 取 120ms：8 帧 × 120ms = 960ms 转一圈，接近 1 秒/圈的舒适节奏。
+ * 下限有讲究 —— 低于 ~80ms 时终端渲染会与 pi 的 16ms 节流叠加出抖动感，
+ * 而且每个 tick 都触发一次全屏 diff，纯属浪费 CPU。
+ */
+export const FRAME_INTERVAL_MS = 120
+
+/**
+ * 取当前帧。
+ *
+ * 用「已运行时长」而不是 `Date.now()` 取模：定时器启动晚于 runState.startedAt 时，
+ * 用绝对时间会让第一帧随机落在某一格（看起来像"跳了一下"）；用相对时间则恒定从
+ * 第 0 帧开始转，每轮都是同一个起点。
+ */
+export function statusIcon(phase: RunPhase, at = Date.now()): string {
   switch (phase) {
     case 'running': {
-      // 4 帧小转盘；pi 在流式期间频繁重绘，所以按时间取帧就够动。
-      const frames = ['◐', '◓', '◑', '◒']
-      return frames[Math.floor(Date.now() / 250) % frames.length]
+      const startedAt = runState.startedAt > 0 ? runState.startedAt : at
+      const index = Math.floor(Math.max(0, at - startedAt) / FRAME_INTERVAL_MS) % RUN_FRAMES.length
+      return RUN_FRAMES[index]
     }
     case 'success':
       return '✔'
@@ -920,6 +981,100 @@ export function statusIcon(phase: RunPhase): string {
       return '○'
   }
 }
+
+/* ------------------------------------------------------- 自驱动动画定时器 */
+
+/**
+ * 让图标真的转起来 —— 这是「发送消息后动效静止」的根治。
+ *
+ * ---------------------------------------------------------------------------
+ * 病根（0.14.2 实测）
+ *
+ * `statusIcon()` 是按时间取帧的**纯函数**，但"取帧"只在**有人重绘时**才发生。
+ * 而 pi-tui 的 `requestRender()` 是**被动**的（`tui.js:658-669`：它只置一个标志，
+ * 等下一次 `scheduleRender` 才真的画）—— 没有输入事件、没有流式 token 到达时，
+ * 界面**根本不会重绘**。
+ *
+ * 于是出现了用户看到的现象：消息发出去之后，模型在跑一条 5 分钟的 bash，
+ * 期间既没有键盘输入也没有新 token → pi 不重绘 → 图标**永远停在最后一帧**，
+ * 看起来就是"动效停下来了、卡死了"。这与 0.14.1 修的「Waiting 秒数不涨」是同一类病：
+ * 信息其实都在，缺的是**驱动的节拍**。
+ *
+ * ---------------------------------------------------------------------------
+ * 为什么定时器必须挂在扩展这边而不是 pi 那边
+ *
+ * 不改 pi 一行代码是本仓库的硬约束（AGENTS.md）。扩展能拿到的唯一公开入口是
+ * `ctx.ui.setEditorComponent()` 给的那个编辑器实例，它的 `this.tui.requestRender()`
+ * 就是官方渲染通道。所以由我们按固定节拍敲它 —— pi 的 16ms 节流会自动合并，
+ * 我们敲 160ms 一次，实际帧率就是 160ms 一次，不多不少。
+ *
+ * 生命周期三条铁律：
+ *  ① 只在 `running` 时开表（`idle` 不转，省电）；
+ *  ② **幂等**：重复 start 不叠加定时器（否则每轮 agent_start 就泄漏一个）；
+ *  ③ 退出即停：`agent_settled` / `session_start` / `dispose` 全部走 stop。
+ */
+let frameTimer: ReturnType<typeof setInterval> | null = null
+/** 定时器要敲的目标；`install()` 换编辑器实例时更新它。 */
+let frameTarget: { requestRender?: () => void } | null = null
+
+/** 记录当前要驱动重绘的 tui（install 时调用；传 null 表示卸载）。 */
+export function bindFrameTarget(tui: { requestRender?: () => void } | null): void {
+  frameTarget = tui
+}
+
+/** 定时器是否在跑（门禁据此断言生命周期）。 */
+export function isAnimating(): boolean {
+  return frameTimer !== null
+}
+
+/**
+ * 开动效。**幂等**：已经在跑就不再起一个。
+ * @returns 本次是否真的启动了（门禁据此断言幂等性）
+ */
+export function startAnimation(): boolean {
+  if (frameTimer !== null) return false
+  const target = frameTarget
+  if (target === null || typeof target.requestRender !== 'function') return false
+  frameTimer = setInterval(() => {
+    // 目标可能已经被 dispose（窗口关了）——自己停掉，不留悬空定时器。
+    if (frameTarget === null) {
+      stopAnimation()
+      return
+    }
+    try {
+      frameTarget.requestRender?.()
+    } catch {
+      // 渲染通道出错不该拖垮会话：停表即可，下一轮 agent_start 会重开。
+      stopAnimation()
+    }
+  }, FRAME_INTERVAL_MS)
+  // 不 unref：这个定时器本来就该在会话期间活着；pi 退出时 dispose 负责收尾。
+  return true
+}
+
+/** 停动效。幂等。 */
+export function stopAnimation(): void {
+  if (frameTimer === null) return
+  clearInterval(frameTimer)
+  frameTimer = null
+}
+
+/** 门禁用：把帧序列按给定时间点采样出来（不依赖真实定时器）。 */
+export function sampleFrames(count: number, stepMs = FRAME_INTERVAL_MS, base = 1000000): string[] {
+  const out: string[] = []
+  // 必须临时把 startedAt 对齐到 base：statusIcon 是按「距 startedAt 的时长」取帧的，
+  // 如果 runState.startedAt 还是 0 或别的值，采样会一直落在第 0 帧
+  // （第一次写这条门禁时就踩到了：得到 "◴◴◴◴" 而不是 "◴◵◶◷"）。
+  const saved = runState.startedAt
+  runState.startedAt = base
+  try {
+    for (let i = 0; i < count; i += 1) out.push(statusIcon('running', base + i * stepMs))
+  } finally {
+    runState.startedAt = saved
+  }
+  return out
+}
+
 
 /* ------------------------------------------------------------------ 渲染实现 */
 
@@ -1834,7 +1989,11 @@ export class SuperPiFooter {
   }
 
   dispose(): void {
-    // 没有定时器/订阅需要释放（分支订阅由 pi 的 footerData 自己管）。
+    // footer 自身没有订阅要释放（分支订阅由 pi 的 footerData 自己管）。
+    // 但它是「窗口正在关闭」的最早信号之一：顺手停掉动画与目标绑定，
+    // 免得定时器继续敲一个已经销毁的 tui（那会每 160ms 抛一次异常）。
+    stopAnimation()
+    bindFrameTarget(null)
   }
 
   /**

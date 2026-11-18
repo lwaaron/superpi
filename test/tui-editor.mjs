@@ -92,6 +92,13 @@ const SETTINGS_COMMANDS = extensionModule.SETTINGS_COMMANDS
 const HOME_COMMAND = extensionModule.HOME_COMMAND
 const paintPathChips = extensionModule.paintPathChips
 const statusIcon = extensionModule.statusIcon
+const RUN_FRAMES = extensionModule.RUN_FRAMES
+const FRAME_INTERVAL_MS = extensionModule.FRAME_INTERVAL_MS
+const sampleFrames = extensionModule.sampleFrames
+const startAnimation = extensionModule.startAnimation
+const stopAnimation = extensionModule.stopAnimation
+const isAnimating = extensionModule.isAnimating
+const bindFrameTarget = extensionModule.bindFrameTarget
 const runState = extensionModule.runState
 const markRunStart = extensionModule.markRunStart
 const markRunSettled = extensionModule.markRunSettled
@@ -325,6 +332,141 @@ eq(formatRunDuration(-1), '0.0s', '负数钳到 0')
   ok(runState.tool !== null, '事件缺 toolName 时仍记录（回落成 tool）')
   eq(runState.tool.limitSeconds, 0, '缺 args 时上限为 0')
   end({})
+  resetRunState()
+}
+
+/* ------------------------ 0.14.2 状态图标：更大 + 动效流畅 + 不会静止 */
+
+/**
+ * 用户反馈三条：①图标稍微大一点 ②动效流畅一点 ③**发送消息之后动效不能停下来静止**。
+ *
+ * 第③条不是"动画参数没调好"，而是**没有节拍**：`statusIcon()` 只是按时间取帧的纯函数，
+ * 但取帧只在有人重绘时发生；pi-tui 的 `requestRender()` 是被动的（`tui.js:658-669`），
+ * 模型跑一条 5 分钟 bash 期间既无输入也无 token → 不重绘 → 图标永远停在最后一帧。
+ * 所以这里既测"帧本身"，也测"定时器真的在驱动"。
+ */
+
+// --- 帧序列：8 帧月相，互不相同、天生闭环
+eq(RUN_FRAMES.length, 8, '旋转序列是 8 帧（比 4 帧更流畅）')
+eq(new Set(RUN_FRAMES).size, 8, '八帧互不相同（有重复帧就是"看起来卡"）')
+eq(RUN_FRAMES.join(''), '🌑🌒🌓🌔🌕🌖🌗🌘', '帧序是月相盈亏（天生闭环，🌘→🌑 无缝）')
+ok(!RUN_FRAMES.some(f => '◐◓◑◒◴◵◶◷'.includes(f)), '不再使用旧的半圆/四分圆（都是 1 列宽，视觉偏小）')
+
+/**
+ * 视觉更大这件事在终端里没有字号可调，唯一可靠手段是换**双宽字符**。
+ * 这条断言直接量宽度：任何一个帧退化成 1 列，图标就会缩回原样，
+ * 而且会把上边框的行宽算歪（visibleWidth 是框线对齐的唯一依据）。
+ */
+{
+  const tuiWidth = tuiModule.visibleWidth
+  const widths = RUN_FRAMES.map(frame => tuiWidth(frame))
+  eq(widths.join(','), '2,2,2,2,2,2,2,2', '八帧全部双宽（视觉 2 倍大，实测 visibleWidth=2）')
+  ok(!RUN_FRAMES.some(frame => frame.includes('️')), '帧不含 VS16 变体选择符（含它的 emoji 在不同终端宽度会跳变，把框线挤歪）')
+}
+
+ok(FRAME_INTERVAL_MS >= 80, '帧间隔 >= 80ms（再快在终端里是抖动不是旋转）')
+ok(FRAME_INTERVAL_MS <= 250, '帧间隔 <= 250ms（再慢看起来是卡顿）')
+
+// 采样一个完整周期：必须八帧全出现，且能循环回起点
+{
+  const cycle = sampleFrames(8)
+  eq(cycle.join(''), RUN_FRAMES.join(''), '一个周期内八帧按序出现，不多不少')
+  const loop = sampleFrames(16)
+  eq(loop.slice(8).join(''), RUN_FRAMES.join(''), '第二个周期重新从第 0 帧开始（真循环）')
+  ok(new Set(loop).size === 8, '连续两个周期只有 8 种帧（没有漂移出界）')
+}
+
+// 同一时刻取帧必须稳定（纯函数，不依赖调用次数）
+{
+  const t = 1000000
+  eq(statusIcon('running', t), statusIcon('running', t), '同一时刻取帧结果相同（纯函数）')
+}
+
+// 用「已运行时长」取帧：从 startedAt 起必须从第 0 帧开始，而不是随机落在某格
+{
+  resetRunState()
+  markRunStart(500000)
+  eq(statusIcon('running', 500000), RUN_FRAMES[0], '刚开跑是第 0 帧（不随机跳格）')
+  eq(statusIcon('running', 500000 + FRAME_INTERVAL_MS), RUN_FRAMES[1], '一个间隔后是第 1 帧')
+  eq(statusIcon('running', 500000 + FRAME_INTERVAL_MS * 8), RUN_FRAMES[0], '八个间隔后回到第 0 帧')
+  resetRunState()
+}
+
+// --- 定时器生命周期：这才是「动效不会静止」的真正保障
+{
+  resetRunState()
+  // 桩 tui：只记录被敲了几次
+  let ticks = 0
+  bindFrameTarget({ requestRender: () => { ticks += 1 } })
+
+  eq(isAnimating(), false, 'idle 时不转')
+
+  const started = startAnimation()
+  eq(started, true, '首次启动真的起了定时器')
+  eq(isAnimating(), true, '启动后在转')
+
+  // 幂等：重复启动不能叠加（否则每轮 agent_start 泄漏一个定时器）
+  eq(startAnimation(), false, '重复启动返回 false（幂等，不叠加定时器）')
+  eq(startAnimation(), false, '再启动一次仍然 false')
+
+  stopAnimation()
+  eq(isAnimating(), false, '停止后在 idle')
+  eq(stopAnimation(), undefined, '重复停止不抛（幂等）')
+
+  // 没有可敲的目标时不许假装启动
+  bindFrameTarget(null)
+  eq(startAnimation(), false, '没有渲染目标时启动失败（不空转）')
+  eq(isAnimating(), false, '启动失败后仍是 idle')
+
+  resetRunState()
+}
+
+// --- 状态变迁自动开关表（agent_start 开、agent_settled 关）
+{
+  resetRunState()
+  bindFrameTarget({ requestRender: () => {} })
+  markRunStart()
+  eq(isAnimating(), true, 'markRunStart 自动开动效（不需要调用方记得）')
+  markRunSettled()
+  eq(isAnimating(), false, 'markRunSettled 自动停动效（idle 不烧 CPU）')
+  markRunStart()
+  eq(isAnimating(), true, '下一轮又能开')
+  resetRunState()
+  eq(isAnimating(), false, 'resetRunState 停表')
+  bindFrameTarget(null)
+}
+
+// --- 定时器真的在敲渲染通道（这是"不会静止"的直接证据）
+{
+  resetRunState()
+  let ticks = 0
+  bindFrameTarget({ requestRender: () => { ticks += 1 } })
+  startAnimation()
+  await new Promise(resolve => setTimeout(resolve, FRAME_INTERVAL_MS * 2 + 60))
+  stopAnimation()
+  ok(ticks >= 2, '定时器在真实时间里至少敲了 2 次渲染通道（实测 ' + ticks + ' 次）')
+  bindFrameTarget(null)
+  resetRunState()
+}
+
+// --- 渲染目标抛异常时必须自己停表，不能每 160ms 抛一次
+{
+  resetRunState()
+  bindFrameTarget({ requestRender: () => { throw new Error('tui gone') } })
+  startAnimation()
+  await new Promise(resolve => setTimeout(resolve, FRAME_INTERVAL_MS + 60))
+  eq(isAnimating(), false, '渲染通道抛错后自动停表（不留悬空定时器）')
+  bindFrameTarget(null)
+  resetRunState()
+}
+
+// --- 真入口：编辑器构造时必须把渲染通道交给定时器
+{
+  resetRunState()
+  makeEditor('')
+  // makeEditor 造的是 SuperPiEditor（有 tui.requestRender 的那个）
+  markRunStart()
+  eq(isAnimating(), true, '编辑器构造后即绑定目标，markRunStart 能直接开动效')
   resetRunState()
 }
 
@@ -729,6 +871,27 @@ const columnOf = (rows, y, needle) => stripAnsi(rows[y] ?? '').indexOf(needle)
   ok(!stripAnsi(idleRows[0]).includes('上限'), 'idle 时上边框不出现上限段')
 }
 
+/**
+ * ①z2 双宽图标不能让框线歪（0.14.2）。
+ *
+ * 图标从 1 列换成 2 列的 emoji 后，上边框的行宽账目**全部重算**：
+ * 少算 1 列会让上边框比下边框短，多算会让它撑出去 —— 两种都是"框歪了"。
+ * 所以在六个宽度上逐一量：每行 visibleWidth 必须恒等于目标宽度。
+ * 这条同时覆盖了窄档退让（120→20 会依次丢掉工具段与文案）。
+ */
+{
+  resetRunState()
+  markRunStart()
+  markToolStart('bash', { timeout: 960 })
+  for (const width of [120, 80, 60, 40, 30, 20]) {
+    const rows = makeEditor('x').editor.render(width)
+    const widths = new Set(rows.map(row => tuiModule.visibleWidth(row)))
+    eq(widths.size, 1, `宽度 ${width}：每行显示宽度一致（双宽图标没让框线歪）`)
+    eq([...widths][0], width, `宽度 ${width}：行宽恰为 ${width}`)
+  }
+  resetRunState()
+}
+
 // ① 框线 80% 白 + 四边闭合 + 直角
 {
   const { editor } = makeEditor('hello')
@@ -770,7 +933,8 @@ const columnOf = (rows, y, needle) => stripAnsi(rows[y] ?? '').indexOf(needle)
     const rgb = STATUS_RGB[phase].join(';')
     ok(rows[0].includes(`[38;2;${rgb}m`), `${phase}: 文案与图标用该状态的颜色`)
     if (icon) ok(topRow.includes(icon), `${phase}: 图标是 ${icon}`)
-    else ok(/[◐◓◑◒]/.test(topRow), 'running: 图标是转盘')
+    // 0.14.2：running 改用四分之一圆旋转序列（◴◵◶◷），笔画更满、视觉更大。
+    else ok(RUN_FRAMES.some(frame => topRow.includes(frame)), 'running: 图标是旋转帧之一')
   }
   const distinct = new Set([STATUS_RGB.idle, STATUS_RGB.success, STATUS_RGB.error].map(c => c.join(',')))
   eq(distinct.size, 3, 'idle / success / error 三色互不相同')
