@@ -121,6 +121,38 @@ if (problems.length > 0) {
     console.error('修复：')
     for (const f of [...new Set(fixes)]) console.error('  $ ' + f)
   }
+
+  // --fix：从仓库源自动恢复。
+  //
+  // 为什么必须有这个开关（而不是只打印修复命令）：
+  // 实测 2026-11-19 一天内两个 skill 从 ~/.agents/skills 消失 3 次，
+  // 每次都在 commit/sync 前后；但复现序列连跑 3 遍都没能再现，
+  // 且已排除 pi 加载器清空、github-sync（只删 .git 的 lock）、post-commit（只后台推送）。
+  // 根因未确定。工程上唯一正确的应对是：恢复路径必须自动。
+  // 否则每次消失都要人肉发现 → 人肉重装 → 忘记就带病工作
+  // （第一次消失后，整轮工作都在没有 skill 加载的状态下进行）。
+  if (process.argv.includes('--fix')) {
+    console.error('')
+    console.error('=== --fix：从仓库源恢复 ===')
+    try {
+      execFileSync(process.execPath, [path.join(process.cwd(), 'tools/install-pi-extension.mjs'), '--install'], {
+        cwd: process.cwd(), stdio: 'inherit', timeout: 180000,
+      })
+    } catch (error) {
+      console.error('恢复失败：' + String(error?.message ?? error).slice(0, 200))
+      process.exit(1)
+    }
+    // 结论以恢复后的复检为准，不以「装了一次」为准
+    console.error('')
+    console.error('=== 恢复后复检 ===')
+    try {
+      execFileSync(process.execPath, [process.argv[1]], { cwd: process.cwd(), stdio: 'inherit', timeout: 180000 })
+      process.exit(0)
+    } catch {
+      process.exit(1)
+    }
+  }
+
   process.exit(1)
 }
 console.log('')
