@@ -243,6 +243,8 @@ const formatRunDuration = extensionModule.formatRunDuration
 const workingLabel = extensionModule.workingLabel
 const HEARTBEAT_AFTER_MS = extensionModule.HEARTBEAT_AFTER_MS
 const markToolOutput = extensionModule.markToolOutput
+const isMalformedToolCall = extensionModule.isMalformedToolCall
+const markMalformedOutput = extensionModule.markMalformedOutput
 
 // --- 上限提取：只认正有限数
 eq(toolLimitSeconds({ timeout: 960 }), 960, 'toolLimitSeconds 读出 timeout')
@@ -466,6 +468,60 @@ ok(FRAME_INTERVAL_MS <= 250, '帧间隔 <= 250ms（再慢看起来是卡顿）')
   ok(!workingLabel(t + HEARTBEAT_AFTER_MS * 2, false).includes('已静默'), '窄档不含心跳段')
 
   resetRunState()
+}
+
+
+/* ------------------------ 0.15.1 畸形工具调用识别：让「莫名中断」可见 */
+
+/**
+ * 真实事故：上下文到 77.8% 时，模型把工具调用写成 DeepSeek 原生 DSML 语法
+ * （`<｜｜DSML｜｜ parameter>`），pi 认不出来 → 当成普通文本 → `stopReason: "stop"`
+ * → agent loop 结束 → **用户看到的就是「会话中断」**。
+ *
+ * 实测分布（n=1993 次调用）：0~68% 共 1574 次 DSML 为 0；76%~78% 共 264 次里 34 次
+ * （12.9%）畸形，且全部落在 77.8~77.9%。**这是远早于上限的能力退化。**
+ *
+ * 判据设计要点：模型完全可能**在正文里讨论** DSML（例如解释这个 bug），
+ * 所以不能只看关键词，必须同时满足 ①role=assistant ②stopReason≠toolUse
+ * ③同时含开标记与关标记。
+ */
+{
+  const dsml = (text, stopReason = 'stop') => ({ role: 'assistant', stopReason, content: [{ type: 'text', text }] })
+
+  // 真实形态（取自会话记录）
+  const REAL = '提交报警文案修正：\n\n<parameter name="bash">cd /d/x && git add -A</parameter>\n\n</｜｜DSML｜｜ invoke>\n</｜｜DSML｜｜ calls>'
+  eq(isMalformedToolCall(dsml(REAL)), true, '识别真实的 DSML 畸形输出')
+
+  // 正常工具调用（pi 已解析出结构化调用）→ 不是畸形
+  eq(isMalformedToolCall(dsml('执行中...', 'toolUse')), false, 'stopReason=toolUse 时不算畸形（pi 已解析成功）')
+
+  // 正常文本回复 → 不是畸形
+  eq(isMalformedToolCall(dsml('改好了，全量测试通过。')), false, '普通文本回复不算畸形')
+
+  // 正文里**讨论** DSML 但不能误判
+  eq(isMalformedToolCall(dsml('这个 bug 是因为出现了 <｜｜DSML｜｜ parameter> 这样的标记。')), false,
+    '只提开标记、没有完整结构时不误判（否则讲这个 bug 的回复会被判畸形）')
+
+  // 缺 role / 非 assistant
+  eq(isMalformedToolCall({ role: 'user', content: [{ type: 'text', text: REAL }] }), false, 'user 消息不检测')
+  eq(isMalformedToolCall(null), false, 'null 不崩')
+
+  // 错误态：要让本轮变成红色且能解释
+  resetRunState()
+  markRunStart(Date.now())
+  markMalformedOutput()
+  eq(runState.failed, true, '畸形输出标记为失败（图标变红）')
+  eq(runState.malformed, true, '记下畸形标记')
+  const label = workingLabel(Date.now(), true)
+  ok(label.includes('DSML'), '文案点明原因（DSML 格式错乱），不是一句无信息量的"出错了"')
+  ok(label.includes('重发'), '给出可行动动作（直接重发即可）')
+  ok(!label.includes('Working'), '失败态不再显示 Working（否则用户以为是还在跑）')
+
+  // 新一轮必须清掉旧标记
+  markRunStart(Date.now())
+  eq(runState.malformed, false, '新一轮开始时清掉畸形标记（否则会一直显示失败）')
+  resetRunState()
+  eq(runState.malformed, false, 'resetRunState 也清掉')
 }
 
 // --- 定时器生命周期：这才是「动效不会静止」的真正保障
@@ -752,10 +808,10 @@ const stripAnsi = text => text.replace(/\x1b\[[0-9;:?]*[A-Za-z]/g, '').replace(/
   defaultExport(fakePi)
   // 4 个状态事件（agent_start + tool_execution_start + tool_execution_end + agent_settled）
   // + session_start + session_switch + session_info_changed（标题重设）
-  eq(calls.length, 8, '入口注册八个事件（状态机 5 + 会话 3）')
+  eq(calls.length, 9, '入口注册九个事件（状态机 6 + 会话 3）')
   ok(calls.every(c => typeof c.handler === 'function'), '入口注册的都是函数')
   const events = calls.map(c => c.event)
-  for (const name of ['agent_start', 'tool_execution_start', 'tool_execution_update', 'tool_execution_end', 'agent_settled', 'session_start', 'session_switch', 'session_info_changed']) {
+  for (const name of ['agent_start', 'tool_execution_start', 'tool_execution_update', 'tool_execution_end', 'agent_settled', 'message_end', 'session_start', 'session_switch', 'session_info_changed']) {
     ok(events.includes(name), `入口订阅了 ${name}`)
   }
   /**

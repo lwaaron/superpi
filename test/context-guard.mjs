@@ -500,6 +500,54 @@ eq(applyHygieneToOptions({ sections: {} }, { enabled: true, hygiene: false }), n
 
 /* -------------------- C6. 上下文仪表：每轮带上目标 + 占用 + 拆解（0.15.0） */
 
+
+/* -------------------- C7. 能力退化线：targetRatio 必须留足安全边际（0.15.1） */
+
+section('C7. targetRatio 必须低于实测的模型能力退化线')
+
+/**
+ * 这条判据的直接来源是一次真实事故，且**上一轮的修复没挡住它**：
+ *
+ * 0.15.0 我把 targetRatio 定在 0.72，理由是「留出输出与系统提示的余量」——
+ * 那是从"别撞 1M 上限"推出来的，属于**只防崩溃、不防退化**。
+ * 实测结果是：实际发送 71.5%~77.9%，而模型在 77.8% 时开始把工具调用写成
+ * DeepSeek 原生 DSML 语法，pi 认不出 → 当普通文本收尾 → 用户看到「中断」。
+ *
+ * 量化分布（n=1993 次 assistant 调用，单会话）：
+ *   0%~68%   1574 次，DSML 0 次
+ *   74%~76%    40 次，DSML 0 次
+ *   76%~78%   264 次，DSML 34 次（12.9%）← 全部在 77.8~77.9%
+ *   78%+       98 次，DSML 0 次（守卫已裁回）
+ *
+ * 所以退化线约 **74%**，而 0.72 只留 4 个百分点（且实际发送还会因估算误差上浮）。
+ * 这条断言把「必须留 >= 10 个百分点边际」写成机器约束，
+ * 防止未来有人为了"多保留历史"把 targetRatio 又调回 0.7x。
+ */
+{
+  // 实测得到的退化起点（保守取观测到的最高安全点 74%）。
+  const OBSERVED_DEGRADE_LINE = 0.74
+  // 必须留的最小安全边际：10 个百分点（估算误差 + 输出预留 + provider 侧模板差异）。
+  const MIN_MARGIN = 0.10
+  ok(DEFAULT_GUARD_SETTINGS.targetRatio <= OBSERVED_DEGRADE_LINE - MIN_MARGIN,
+    'targetRatio(' + String(DEFAULT_GUARD_SETTINGS.targetRatio) + ') 必须 <= 退化线(' +
+    String(OBSERVED_DEGRADE_LINE) + ') − 边际(' + String(MIN_MARGIN) + ')，否则模型会在远早于上限处退化')
+
+  // 实际发送量（messages + 固定开销）必须真的落在这条线以下 —— 这才是模型感受到的量。
+  const list = turnList(120, 3000)
+  const planned = planContextWindow(list, { windowTokens: 1048576, settings })
+  const sentTotal = planned.stats.after + planned.stats.reservedOverhead
+  ok(sentTotal / 1048576 < OBSERVED_DEGRADE_LINE,
+    '实际发送量(' + (sentTotal / 1048576 * 100).toFixed(1) + '%) 必须低于退化线，不能只看 targetRatio')
+  ok(planned.stats.after <= planned.stats.budget, '预算约束仍然成立')
+
+  // 硬上限：预算永不得超过 targetRatio（防止 floor 反过来突破上限）
+  for (const w of [4000, 16000, 128000, 1048576]) {
+    const p = planContextWindow(turnList(40, 2000), { windowTokens: w, settings })
+    ok(p.stats.budget <= Math.floor(w * settings.targetRatio),
+      '窗口 ' + String(w) + '：预算不超 targetRatio（floor 不得突破上限）')
+  }
+}
+
 section('C6. 上下文仪表：让模型每轮都知道自己有多满')
 
 /**

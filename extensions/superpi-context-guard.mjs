@@ -72,8 +72,37 @@ export const DEFAULT_CHARS_PER_TOKEN = 3
 export const DEFAULT_GUARD_SETTINGS = {
   version: GUARD_VERSION,
   enabled: true,
-  /** 裁剪后目标占模型窗口的比例。留出输出、系统提示与工具声明的余量。 */
-  targetRatio: 0.72,
+  /**
+   * **最终总占用的上限**（占模型窗口的比例），含固定开销。
+   *
+   * 0.15.1 修正语义：这个值现在是「实际发送总量 / 窗口」的上限，
+   * **不再**是「messages 占窗口」的比例。旧语义让预算算不准 ——
+   * 因为固定开销（160k）不在这 72% 里面，于是「targetRatio=72%」实际发出去是 71.5%+
+   * 也仍然可能越线，而模型的真实压力取决于总量。
+   *
+   * ---------------------------------------------------------------------------
+   * 为什么从 0.72 降到 0.62（这是一次实测驱动的修正，不是保守）
+   *
+   * 一个真实会话里，`stopReason` 与 `usage.totalTokens` 的联合分布给出了
+   * **一条极干净的能力退化曲线**（n=1993 次 assistant 调用）：
+   *
+   * | 上下文占用 | 调用数 | 模型输出畸形工具调用(DSML)的比例 |
+   * | --- | --- | --- |
+   * | 0%~68% | 1574 | **0.0%** |
+   * | 74%~76% | 40 | 0.0% |
+   * | **76%~78%** | 264 | **12.9%** ← 34 次全部落在这里，具体是 77.8~77.9% |
+   * | 78%+ | 98 | 0.0%（守卫已裁回） |
+   *
+   * 也就是说：占用到 77.8% 时，模型开始把工具调用写成 DeepSeek 的原生 DSML 语法
+   * （`<｜｜DSML｜｜ invoke>`），而不是 pi 要求的 JSON 结构；pi 认不出来，
+   * 把它当普通文本收尾（`stopReason: stop`），这一轮就结束了 ——
+   * **用户看到的就是「会话中断」**。
+   *
+   * 这不是"上限撞墙"，而是**远早于上限的能力退化**。旧值 0.72 只留了 4 个百分点
+   * 的余量（实测发送 71.5%），恰好卡在退化区边缘。
+   * 取 0.62 留 14 个百分点：既在退化线（~74%）以下，又不至于无谓砍掉会话历史。
+   */
+  targetRatio: 0.62,
   /**
    * **不可裁剪的固定开销**（token）：系统提示 + 工具定义 + 模型模板包装。
    *
@@ -830,14 +859,31 @@ export function planContextWindow(messages, options = {}) {
    *  ② **扣完不低于窗口的 40%**：真正的下限保护，确保守卫不会把会话削成骨架。
    *  ③ 统计里记 `reservedOverhead` 实际扣了多少（0 = 没扣），观测与门禁都靠它。
    */
+  /**
+   * messages 预算 = 窗口 × targetRatio − 固定开销。
+   *
+   * 语义（0.15.1 起）：`targetRatio` 约束的是**最终总占用**（messages + 开销），
+   * 所以 messages 的预算必须先扣掉开销。旧实现把 targetRatio 当成 messages 的上限，
+   * 于是「72%」发出去是 71.5%+，而模型真正感到压力的是总量 —— 两套口径对不上。
+   *
+   * 两个夹取，防止边界情况把守卫逼疯：
+   *  ① 小窗口不扣开销（160k 可能比整个窗口还大，扣了预算就成负数）；
+   *  ② 预算不低于窗口 30% —— 但**同时不得高于 targetRatio**，否则下限会反过来
+   *     突破上限（0.62 target 配 0.4 floor 在极端小窗口下会变成 0.4 > 0.62−overhead，
+   *     那样"保护会话"就变成了"允许越线"）。
+   */
   const targetBudget = windowTokens > 0 ? Math.floor(windowTokens * settings.targetRatio) : 0
   // ① 只有窗口明显大于固定开销时才扣（否则扣了会失真）。
   const overheadApplies = windowTokens > 0 && settings.reservedOverheadTokens > 0 &&
     windowTokens * settings.targetRatio > settings.reservedOverheadTokens * 1.25
   const overhead = overheadApplies ? settings.reservedOverheadTokens : 0
-  // ② 扣完不低于窗口 40%（这是真下限，而非"刚好 30%"）。
-  const floorBudget = windowTokens > 0 ? Math.floor(windowTokens * 0.4) : 0
-  const budget = windowTokens > 0 ? Math.max(floorBudget, targetBudget - overhead) : 0
+  // ② 下限不得突破上限：floor 先被 targetRatio 夹一次。
+  const rawFloor = windowTokens > 0 ? Math.floor(windowTokens * 0.3) : 0
+  const floorBudget = Math.min(rawFloor, targetBudget)
+  // 无论怎么算，预算都不得超过 targetBudget（那是硬上限，不是目标值）。
+  const budget = windowTokens > 0
+    ? Math.min(targetBudget, Math.max(floorBudget, targetBudget - overhead))
+    : 0
   const before = estimateMessagesTokens(list, settings)
   const emptyStats = {
     version: GUARD_VERSION,

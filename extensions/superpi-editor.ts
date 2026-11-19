@@ -133,9 +133,17 @@ export type RunPhase = 'idle' | 'running' | 'success' | 'error'
  */
 export type ActiveTool = { id: string; name: string; startedAt: number; limitSeconds: number; lastOutputAt: number } | null
 
-export const runState: { phase: RunPhase; failed: boolean; startedAt: number; tool: ActiveTool } = {
+export const runState: {
+  phase: RunPhase
+  failed: boolean
+  /** 本轮是否是「模型输出畸形工具调用」失败（0.15.1）—— 与工具跑挂要分开解释。 */
+  malformed: boolean
+  startedAt: number
+  tool: ActiveTool
+} = {
   phase: 'idle',
   failed: false,
+  malformed: false,
   startedAt: 0,
   tool: null,
 }
@@ -157,6 +165,7 @@ export function toolLimitSeconds(args: unknown): number {
 export function markRunStart(now = Date.now()): void {
   runState.phase = 'running'
   runState.failed = false
+  runState.malformed = false
   runState.startedAt = now
   runState.tool = null
   // 开始干活就要转起来（幂等：重复调用不会叠加定时��）。
@@ -206,6 +215,50 @@ export function markToolError(): void {
   if (runState.phase === 'running') runState.failed = true
 }
 
+/**
+ * 模型输出了畸形工具调用（0.15.1）。
+ *
+ * 与 `markToolError` 的区别在**责任归属**：工具失败是"命令跑挂了"，畸形输出是
+ * "模型没按协议说话"。两者都该让状态变红，但后者还需要在文案��说清原因 ——
+ * 否则用户看到红色 ✖ 却不知道"为什么这轮没执行任何工具就结束了"。
+ *
+ * 记一个标记，让 `workingLabel` 能给出可行动的说明（见 `workingLabel` 的 malformed 分支）。
+ */
+export function markMalformedOutput(): void {
+  runState.failed = true
+  runState.malformed = true
+}
+
+/**
+ * 判断一条 assistant 消息是否是「畸形工具调用」。
+ *
+ * 判据只认 DSML 标记（DeepSeek 原生工具调用语法），不做模糊匹配：
+ *  - 模型在**正文里讨论** DSML 是合法行为（比如现在这段代码的注释），
+ *    所以必须要求它出现在 `stopReason === 'stop'`（本该收尾）且**同时**含
+ *    开标签与闭标签的完整结构，才判为畸形；
+ *  - 只认 `stop`：`toolUse` 说明 pi 已经成功解析出结构化调用，那不是畸形。
+ *
+ * 这样误判面极小：正常回复里几乎不可能同时出现 `<｜｜DSML｜｜ invoke>` 与
+ * `</｜｜DSML｜｜ calls>` 两个完整标记。
+ */
+export function isMalformedToolCall(message: any): boolean {
+  if (message === null || typeof message !== 'object') return false
+  if (message.role !== 'assistant') return false
+  // 已经解析出结构化工具调用 → 不是畸形（哪怕正文里提过 DSML）。
+  if (message.stopReason === 'toolUse') return false
+  const content = message.content
+  if (!Array.isArray(content)) return false
+  let text = ''
+  for (const block of content) {
+    if (block?.type === 'text' && typeof block.text === 'string') text += block.text
+  }
+  if (text === '') return false
+  // 必须同时有「调用块的开始」与「结束」，才是完整的畸形结构。
+  const hasOpen = text.includes('DSML') && (text.includes('invoke') || text.includes('parameter'))
+  const hasClose = text.includes('DSML') && text.includes('calls')
+  return hasOpen && hasClose
+}
+
 export function markRunSettled(): void {
   runState.phase = runState.failed ? 'error' : 'success'
   runState.startedAt = 0
@@ -217,6 +270,7 @@ export function markRunSettled(): void {
 export function resetRunState(): void {
   runState.phase = 'idle'
   runState.failed = false
+  runState.malformed = false
   runState.startedAt = 0
   runState.tool = null
   stopAnimation()
@@ -262,6 +316,20 @@ export function formatRunDuration(ms: number): string {
 export function workingLabel(now = Date.now(), includeTool = true): string {
   const phase = runState.phase
   const startedAt = runState.startedAt
+  /**
+   * 畸形输出的解释（0.15.1）。
+   *
+   * 这条路必须**先于** phase 判断：畸形输出发生时本轮已经 settled（phase 变 error 或 idle），
+   * 而用户最需要的恰恰是那一刻的解释 —— 否则他只会看到红色 ✖ 或图标消失，
+   * 完全不知道"为什么这轮什么都没做就结束了"。
+   *
+   * 文案刻意把**原因**与**可行动动作**分开写：
+   *  - 原因：模型这次吐了它自己的工具调用语法（不是 pi 的格式），所以没执行；
+   *  - 动作：直接重发即可（上下文已被守卫压到安全区，重发通常就好）。
+   */
+  if (runState.malformed === true) {
+    return '本轮未执行：模型输出格式错乱（DSML），工具调用没被识别 · 直接重发即可'
+  }
   if (phase !== 'running' || startedAt <= 0) return 'Working'
   let text = 'Working · ' + formatRunDuration(now - startedAt)
   const tool = runState.tool
@@ -2626,6 +2694,47 @@ export default function superpiEditor(pi: any): void {
   }
   if (typeof pi?.on !== 'function') return
   pi.on('agent_start', () => markRunStart())
+  /**
+   * **识别模型的畸形工具调用**（0.15.1）—— 这是「会话莫名中断」的真正原因之一。
+   *
+   * ---------------------------------------------------------------------------
+   * 现象与根因（实测，n=1993 次调用）
+   *
+   * 上下文占用到 **77.8~77.9%** 时，模型开始不再输出 pi 要求的 JSON 工具调用，
+   * 而是吐出 DeepSeek 的原生 DSML 语法：
+   *
+   *     <｜｜DSML｜｜ parameter name="bash">cd /d/...  <｜｜DSML｜｜ invoke>
+   *
+   * pi 的运行时不认识这种格式（`grep -rln DSML node_modules/@earendil-works` 为空），
+   * 于是把它当成**普通文本回复**收尾（`stopReason: "stop"`）。
+   * agent loop 看不到任何工具调用 → 这一轮就结束了 → **用户看到的就是「中断」**。
+   *
+   * 分布极干净：
+   *   0%~68%   → 1574 次调用，DSML **0 次**
+   *   74%~76%  → 40 次，0 次
+   *   76%~78%  → 264 次，**34 次（12.9%）** ← 全部落在 77.8~77.9%
+   *
+   * 所以：**这不是网络问题、不是超时问题、也不是上限撞墙**，
+   * 而是**远早于上限的能力退化**。上游修不了（那是 provider 的推理行为），
+   * 我们能做两件事：
+   *   ① 治因：把上下文压到退化线以下（`targetRatio` 0.72 → 0.62，见守卫）；
+   *   ② 治症：**让它可见**。以前它静默地结束，用户只知道"又断了"，
+   *      现在明确告知「模型输出格式错乱，本轮未能执行工具，请重试」。
+   *
+   * 为什么只提示、不尝试修复文本：把 DSML 文本还原成工具调用需要猜参数边界，
+   * 猜错就会执行一条错误的命令 —— 在编码 agent 里那比中止危险得多。
+   */
+  pi.on('message_end', (event: any) => {
+    try {
+      const message = event?.message
+      if (message?.role !== 'assistant') return undefined
+      if (!isMalformedToolCall(message)) return undefined
+      markRunFailed()
+      return undefined
+    } catch {
+      return undefined
+    }
+  })
   /**
    * 工具开始/结束（0.14.1）。
    *
