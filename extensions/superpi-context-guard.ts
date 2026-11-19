@@ -39,6 +39,7 @@ import {
   applyMeterToOptions,
   breakdownMessages,
   goalFromMessages,
+  resetMeterMemo,
 } from './superpi-context-guard.mjs'
 import {
   allowedModalities,
@@ -230,6 +231,9 @@ export default function contextGuard(pi) {
     lastStats = null
     lastMeterSnapshot = null
     lastLoggedAt = 0
+    // 仪表记忆也必须清：新会话的系统提示是全新的，
+    // 留着旧文本会让它误判"已经写过同样内容"而跳过注入。
+    resetMeterMemo()
   }
   pi.on('session_start', resetSessionCaches)
   pi.on('session_switch', resetSessionCaches)

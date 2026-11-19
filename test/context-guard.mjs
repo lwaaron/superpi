@@ -74,6 +74,7 @@ const {
   goalFromMessages,
   renderMeterBlock,
   applyMeterToOptions,
+  resetMeterMemo,
 } = mod
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'superpi-guard-'))
@@ -503,6 +504,116 @@ eq(applyHygieneToOptions({ sections: {} }, { enabled: true, hygiene: false }), n
 
 /* -------------------- C7. 能力退化线：targetRatio 必须留足安全边际（0.15.1） */
 
+
+/* -------------------- C8. 仪表必须「同档稳定」——否则每轮追加 system 进历史（0.15.2） */
+
+section('C8. 仪表文本在同档位内必须逐字节一致')
+
+/**
+ * 这是一次真实事故换来的判据，且它**只在真机跑久了才暴露**。
+ *
+ * pi 的系统提示是「结构化 sections + diff」：每轮把新 sections 与当前那条 system 的
+ * sections 做 diff，有变化就**追加一条 `role:"system"` 进历史**（`agent-session.js:1392`）。
+ * 这个增量协议本身很好 —— 缓存因此满血工作（实测 cacheRead 813k、cacheWrite ~200）。
+ *
+ * 但仪表第一版报**精确百分比**（53.4% → 54.4% → 55.3%），几乎每轮文本都不同，
+ * 于是**每轮都追加一条 system**，请求体持续膨胀，直到 provider 判
+ * `400 invalid JSON request body`（真机触发点：历史里 9 条 system、其中一条 45KB）。
+ *
+ * 根因是**架构错位**：把一个高频变化的值放进了设计为「低频稳定」的通道。
+ * 修法是量化到档位，让同档内文本逐字节一致 —— **不是**改走 forceSystemPrompt，
+ * 那会每轮整份重放提示、直接击穿上面那个缓存（为了修个问题而引入更贵的问题）。
+ */
+{
+  const bd = (total) => ({ text: total, thinking: 0, toolResult: 0, toolCallArgs: 0, images: 0, total })
+  const render = (afterTokens) => renderMeterBlock({
+    settings,
+    windowTokens: 1048576,
+    breakdown: bd(afterTokens),
+    afterTokens,
+    reservedOverhead: DEFAULT_GUARD_SETTINGS.reservedOverheadTokens,
+    goal: '目标A',
+  })
+
+  // ① 同一档内必须完全一致（这是"不产生 diff"的充要条件）
+  // 67.5% 档：after ∈ [547840, 574070)
+  const sameBand = [550000, 555000, 560000, 565000, 570000].map(render)
+  eq(new Set(sameBand).size, 1, '同一档位内文本逐字节一致（否则每轮产生新 diff）')
+
+  // ② 跨档必须变化（否则信息就没有意义了）
+  const b1 = render(300000)
+  const b2 = render(700000)
+  ok(b1 !== b2, '跨档位时文本必须变化（档位信息要真实）')
+
+  // ③ 关键回归：连续 20 轮的增长中，文本变化次数必须**远小于** 20
+  //    第一版是 20/20，改成量化后应 <= 10。这条直接锁住"历史膨胀"这个病。
+  {
+    let prev = null
+    let changes = 0
+    for (let i = 0; i < 20; i += 1) {
+      const text = render(300000 + i * 18000)
+      if (prev !== null && text !== prev) changes += 1
+      prev = text
+    }
+    ok(changes <= 10, '连续 20 轮里文本变化 <= 10 次（实测 ' + String(changes) + ' 次；改前是 20 次 = 每轮都变）')
+  }
+
+  // ④ 不报绝对 token 数：它每涨 10k 就改写文本，且对模型决策没有额外价值
+  ok(!/tokens）/.test(render(560000).split('\n')[1] ?? '') || !/\d+\.\d+k \//.test(render(560000)),
+    '不报绝对 token 数（只报档位百分比 + 窗口大小）')
+
+
+  // ⑥ 「当前目标」绝不能进系统提示（真机测出的元凶）
+  //
+  // 目标取的是「最近一条 user 的首行」，每轮必然不同（回复 ok1 → ok2 → ok3）。
+  // 第一版把它写进系统提示，真机 5 轮里产生了 5 条额外的 system 消息。
+  // 它同时也是零收益字段：模型刚读完用户消息，不需要系统提示再复述一遍。
+  {
+    const withGoal = renderMeterBlock({
+      settings,
+      windowTokens: 1048576,
+      breakdown: { text: 500000, thinking: 0, toolResult: 0, toolCallArgs: 0, images: 0, total: 500000 },
+      afterTokens: 500000,
+      reservedOverhead: DEFAULT_GUARD_SETTINGS.reservedOverheadTokens,
+      goal: '把登录页改好',
+    })
+    ok(!withGoal.includes('当前目标'), '系统提示里不含「当前目标」（每轮必变 → 每轮一条 system）')
+    ok(!withGoal.includes('把登录页改好'), '目标文本本身也不注入')
+
+    // 目标变了但占用同档 → 文本必须完全一致（这才是"不产生 diff"）
+    const goalB = renderMeterBlock({
+      settings,
+      windowTokens: 1048576,
+      breakdown: { text: 500000, thinking: 0, toolResult: 0, toolCallArgs: 0, images: 0, total: 500000 },
+      afterTokens: 500000,
+      reservedOverhead: DEFAULT_GUARD_SETTINGS.reservedOverheadTokens,
+      goal: '完全不同的另一个目标',
+    })
+    eq(goalB, withGoal, '换目标但占用同档时，仪表文本必须逐字节一致')
+  }
+
+  // ⑦ 模块级记忆：同样内容第二次调用必须返回 null（不写 = 不产生 system）
+  {
+    resetMeterMemo()
+    const opts1 = { sections: {} }
+    const args = {
+      settings,
+      windowTokens: 1048576,
+      breakdown: { text: 500000, thinking: 0, toolResult: 0, toolCallArgs: 0, images: 0, total: 500000 },
+      afterTokens: 500000,
+      reservedOverhead: DEFAULT_GUARD_SETTINGS.reservedOverheadTokens,
+    }
+    eq(applyMeterToOptions(opts1, args), {}, '首次注入返回空对象（写了）')
+    const opts2 = { sections: {} }
+    eq(applyMeterToOptions(opts2, args), null, '同内容第二次调用返回 null（不写 → pi 不追加 system）')
+    eq(opts2.sections[METER_SECTION_NAME], undefined, '第二次确实没往 sections 里塞东西')
+    resetMeterMemo()
+  }
+
+  // ⑤ 幂等：同样输入两次调用必须完全相等
+  eq(render(560000), render(560000), '同一输入幂等')
+}
+
 section('C7. targetRatio 必须低于实测的模型能力退化线')
 
 /**
@@ -587,7 +698,9 @@ section('C6. 上下文仪表：让模型每轮都知道自己有多满')
 
   // ① 低占比：只一行
   const lowMeter = renderMeterBlock({ settings, windowTokens: 1000000, messages: meterMessages })
-  ok(lowMeter.includes('当前目标'), '低占比也带目标（用户明确要求每轮都有）')
+  // 规格变更（0.15.2）：目标**不再进**系统提示 —— 它每轮必变，会把'每轮都带上'
+  // 变成'每轮都追加一条 system 进历史'。详见 C8 段的真机说明。
+  ok(!lowMeter.includes('当前目标'), '低占比也不注入目标（每轮必变的值不能进系统提示）')
   ok(lowMeter.includes('上下文占用'), '低占比也带占用百分比')
   ok(!lowMeter.includes('原始构成'), '低占比不给拆解（不浪费 token）')
 
@@ -598,7 +711,7 @@ section('C6. 上下文仪表：让模型每轮都知道自己有多满')
   ok(highMeter.includes('原始构成'), '高占比给按类拆解')
   ok(highMeter.includes('最贵的是'), '指出最贵的一类（不让模型自己算）')
   ok(highMeter.includes('工具输出'), '拆解里有工具输出这一项')
-  ok(highMeter.includes('固定开销'), '点明固定开销不可裁剪（否则模型会以为能砍掉）')
+  ok(!/固定开销/.test(highMeter), '不再单独报固定开销绝对量（改由窗口值隐含，避免每轮改文本）')
 
   // ③ 窗口未知 → 不注入（宁可没有，也不给假百分比）
   eq(renderMeterBlock({ settings, windowTokens: 0, messages: meterMessages }), '', '窗口未知时不注入（不编造）')
@@ -622,7 +735,8 @@ section('C6. 上下文仪表：让模型每轮都知道自己有多满')
       reservedOverhead: planned.stats.reservedOverhead,
     })
     const sentPct = Math.round((planned.stats.after + planned.stats.reservedOverhead) / 1000000 * 1000) / 10
-    ok(block.includes(String(sentPct) + '%'), '头部报的是**实际发送**占比（' + String(sentPct) + '%），不是裁剪前的吓人数字')
+    const quantized = Math.round(Math.round(sentPct / 5) * 5)
+    ok(block.includes(String(quantized) + '%'), '头部报**实际发送**占比（量化到 ' + String(quantized) + '% 档），不是裁剪前的吓人数字')
     ok(block.includes('原始内容'), '同时报原始规模（让模型知道自己的生产行为是否失控）')
     ok(block.includes('守卫已折叠'), '点明差距是守卫折叠掉的（否则模型会以为数据自相矛盾）')
     // 折叠之后若已达标，就不该再给"接近硬上限"的警告。

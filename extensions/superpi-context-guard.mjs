@@ -315,19 +315,76 @@ export function renderMeterBlock(options = {}) {
   const sentUsed = Number.isFinite(options.afterTokens) ? Math.max(0, options.afterTokens) + Math.max(0, overhead) : rawUsed
   const rawRatio = rawUsed / windowTokens
   const sentRatio = sentUsed / windowTokens
-  const sentPct = Math.round(sentRatio * 1000) / 10
+  /**
+   * **量化到档位，不报精确值**（0.15.2 关键修正）。
+   *
+   * ---------------------------------------------------------------------------
+   * 为什么必须量化（这是一次真实事故换来的）
+   *
+   * pi 的系统提示是**结构化 sections + diff**：每轮把 `buildSystemPromptSections(options)`
+   * 与「当前那条 system 的 sections」做 diff，有变化就**追加一条 `role:"system"` 进历史**
+   * （`agent-session.js:1392` `_preparePromptAndToolLoadout`）。
+   * 那是合理的增量协议 —— 缓存因此能满血工作（实测 cacheRead 813k、cacheWrite 仅 ~200）。
+   *
+   * 但仪表第一版报的是**精确百分比**（`53.4%` → `54.4%` → `55.3%`…），
+   * 几乎每一轮文本都不同 → **每一轮都产生 diff → 每一轮都追加一条 system 进历史**。
+   * 后果是请求体持续变大，直到某次 provider 直接判 `400 invalid JSON request body`
+   * （实测触发点：历史里累积到 9 条 system、其中一条 45KB 的 project_context）。
+   *
+   * 换句话说：**我把一个高频变化的值放进了设计为"低频稳定"的通道。**
+   * 这是架构错位，不是参数问题。
+   *
+   * ---------------------------------------------------------------------------
+   * 为什么选"量化"而不是"改走 forceSystemPrompt"
+   *
+   * `forceSystemPrompt`（返回 `systemPrompt`）确实不写历史，但它要求**每轮整份重放系统提示**，
+   * 会直接击穿上面那个 cacheRead 813k 的缓存 —— 每轮变成全量 cacheWrite，
+   * 成本上升一个量级。那属于"为了修一个问题而引入更贵的问题"，是 C 类反模式。
+   *
+   * 量化后：占用从 53.4% 走到 54.4% 时文本**完全不变**，不产生 diff；
+   * 只有跨过 5% 档位（50% → 55%）才更新一次。信息价值保留（模型仍知道自己在哪一档），
+   * 而历史增长从"每轮"降到"每 5 个百分点一次"。
+   */
+  const pctStep = (value) => Math.round(value * 20) / 20 // 5% 一档
+  const sentPct = Math.round(pctStep(sentRatio) * 100)
+  // token 数也量化到 10k 档，否则同一档位内 token 变化仍会改文本。
+  const bucketTokens = (value) => Math.round(value / 10000) * 10000
   // 目标优先取调用方显式给的（`context` 事件里算好存快照），
   // 其次才从 messages 现推 —— 因为 `before_agent_start` 阶段拿不到 messages。
   const goal = typeof options.goal === 'string' ? options.goal : goalFromMessages(options.messages)
 
   const lines = []
-  if (goal !== '') lines.push('- 当前目标：' + goal)
-  // 每轮必带的一行（用户明确要求）：以**实际发送量**为准。
-  lines.push('- 上下文占用 **' + String(sentPct) + '%**（' + shortCount(sentUsed) + ' / ' + shortCount(windowTokens) + ' tokens）')
+  /**
+   * **不注入「当前目标」**（0.15.2 真机测出的关键修正）。
+   *
+   * 用户要求「每次对话都带上当前任务目标」，第一版照做了。真机 5 轮实测：
+   * 系统提示里每轮都新增一条 system，原因就是这一行 —— 目标取的是「最近一条 user 的首行」，
+   * 而它**每轮必然不同**（回复 ok1 → 回复 ok2 → 回复 ok3）。
+   * 一个每轮必变的值放进系统提示 = 每轮一次 section diff = 每轮一条 system 进历史
+   * = 请求体持续膨胀 → 400 invalid JSON（真机已复现）。
+   *
+   * 更要紧的是：**它本来就没有信息价值**。模型刚读完用户那条消息，不需要系统提示
+   * 再复述一遍「当前目标是 X」；它真正缺的是「我还剩多少空间」（那个仍保留，且已量化）。
+   * 所以删掉它不是妥协，是去掉一个「零收益、高成本」的字段。
+   *
+   * 目标信息改由面板 / Working 行呈现给人看 —— 那才是真正需要它的一方。
+   */
+  void goal
+  /**
+   * 只报**档位百分比**，不报绝对 token 数。
+   *
+   * 试过报 `720.0k / 1.0M tokens`，结果同一 5% 档内 token 每涨 10k 文本就变一次
+   * （实测 20 轮里变了 19 次）—— 量化了个寂寞。绝对量对模型的决策没有额外价值：
+   * 它需要知道的是"我有多满、该不该收手"，那是百分比；具体多少 token 是面板给人看的。
+   */
+  lines.push('- 上下文占用 **' + String(sentPct) + '%**（窗口 ' + shortCount(windowTokens) + ' tokens）')
   const trimmedTokens = rawUsed - sentUsed
-  if (trimmedTokens > 0) {
-    lines.push('- 原始内容 ' + String(Math.round(rawRatio * 1000) / 10) + '%（' + shortCount(rawUsed) + '）；守卫已折叠 ' + shortCount(trimmedTokens) + '，实际发出的是上面那个数字')
-  }
+  // 折叠量同样只报到 10 万档：它是量级信息，不是精确账。
+  if (trimmedTokens > 0 && Math.round(pctStep(rawRatio) * 100) > sentPct) {
+    // 原始值只报到 **25% 一档**：它是量级信息（'约 3 倍窗口'），越粗越稳定。
+    // 用 5% 档时，一个 295% 的会话会在 295/300/305 之间频繁跳，又把 diff 带回来了。
+    const coarsePct = Math.round(rawRatio * 4) * 25
+    lines.push('- 原始内容约 ' + String(coarsePct) + '%；守卫已折叠到上面那个数字')  }
 
   if (sentRatio >= METER_DETAIL_RATIO) {
     const parts = [
@@ -338,8 +395,9 @@ export function renderMeterBlock(options = {}) {
       ['思考', breakdown.thinking],
     ].filter(item => item[1] > 0).sort((a, b) => b[1] - a[1])
     const base = Math.max(1, breakdown.total)
-    lines.push('- 原始构成：' + parts.map(item => item[0] + ' ' + String(Math.round(item[1] / base * 100)) + '%').join(' · '))
-    lines.push('- 固定开销（系统提示 + 工具定义）：' + shortCount(overhead) + ' tokens（不可裁剪）')
+    // 构成比例量化到 10% 一档：这一类内部的细微波动不该改写系统提示。
+    const bucketPct = (value) => Math.round(value / base * 10) * 10
+    lines.push('- 原始构成：' + parts.map(item => item[0] + ' ' + String(bucketPct(item[1])) + '%').join(' · '))
     if (parts.length > 0) {
       lines.push('- 最贵的是**' + parts[0][0] + '**；需要腾空间时优先处理它（守卫会自动折叠旧内容，但你可以少制造新的）')
     }
@@ -350,7 +408,43 @@ export function renderMeterBlock(options = {}) {
   return lines.join('\n')
 }
 
+/**
+ * 上一次写入的仪表文本（模块级记忆，0.15.2）。
+ *
+ * ---------------------------------------------------------------------------
+ * 为什么必须自己记（这是真机测出来的）
+ *
+ * 原本以为 `systemPromptOptions.sections` 会带着上一轮的值，所以能靠
+ * `sections[METER_SECTION_NAME] === block` 判断"没变就不写"。
+ * 真机实测（5 轮 RPC 会话）发现：**每轮都新增一条 `superpi_context_meter` 的
+ * system 消息（10 条 / 5 轮）**。
+ *
+ * 原因在 `runner.js:1130`：`emitBeforeAgentStart` 每次都用
+ * `normalizeBuildSystemPromptOptions(systemPromptOptions)` **重建** options，
+ * 拿到的 sections 是"当前系统提示的构成"，**不含上一轮扩展临时塞进去的 key**。
+ * 于是 `sections[METER_SECTION_NAME]` 永远是 undefined，「值相同就不写」的短路
+ * 一次都不会命中 —— 每轮都当成"新内容"写一遍，pi 就每轮追加一条 system 进历史。
+ *
+ * 解法：把上次写的内容记在模块级，与历史里那条 system 的 meter 值对账。
+ * 文本已量化到 5% 档（见 `renderMeterBlock`），所以只要占用没跨档就完全相同，
+ * 真机上从「5 轮 8 条」降到「跨档才写」。
+ */
+let lastMeterText = ''
+
 /** 把仪表块合并进系统提示（就地改 sections，避免 pi 整份重放提示）。 */
+/**
+ * 把仪表块合并进系统提示。
+ *
+ * **只在文本真正变化时才写**（0.15.2）。判据是模块级 `lastMeterText` 而不是
+ * `sections[METER_SECTION_NAME]` —— 后者每轮都会丢（见 `lastMeterText` 的注释）。
+ *
+ * 为什么这件事如此重要：pi 用 sections **diff** 决定是否往历史里追加一条
+ * `role:"system"`（`agent-session.js:1392`）。无谓的重写 = 每轮一条 system
+ * = 请求体持续膨胀 = 最终 `400 invalid JSON request body`（真机已复现）。
+ *
+ * 反过来，**该写时必须写**：占用跨档了却不更新，模型就会拿着过期数字做决策。
+ * 所以这里不是"尽量少写"，而是"值变了才写、值没变绝不写"。
+ */
 export function applyMeterToOptions(systemPromptOptions, options = {}) {
   if (systemPromptOptions === null || typeof systemPromptOptions !== 'object') return null
   const block = renderMeterBlock(options)
@@ -358,16 +452,34 @@ export function applyMeterToOptions(systemPromptOptions, options = {}) {
     ? systemPromptOptions.sections
     : {}
   if (block === '') {
-    // 先前注入过、现在条件不满足了（比如窗口未知）→ 清掉，别留过期数据。
-    if (sections[METER_SECTION_NAME] === undefined) return null
+    /**
+     * 条件不再满足（窗口未知 / 停用 / `meter:false`）。
+     *
+     * 这里**必须只看调用方给的 sections 里有没有残留**，不能看 `lastMeterText`：
+     * 停用是"回到什么都没做"的状态（pi 收到的提示与没装扩展完全一致），
+     * 若因为模块级记忆里还留着上一轮的文本就返回 `{}`，等于"停用了但还在动提示"。
+     * 真机上这会表现为「关掉守卫之后 system 里仍多出一条 meter」。
+     */
+    if (sections[METER_SECTION_NAME] === undefined) {
+      lastMeterText = ''
+      return null
+    }
+    lastMeterText = ''
     delete sections[METER_SECTION_NAME]
     systemPromptOptions.sections = sections
     return {}
   }
-  if (sections[METER_SECTION_NAME] === block) return null
+  // 文本没变 → 不写。这一条就是"不往历史里追加 system"的开关。
+  if (block === lastMeterText) return null
+  lastMeterText = block
   sections[METER_SECTION_NAME] = block
   systemPromptOptions.sections = sections
   return {}
+}
+
+/** 会话切换时重置仪表记忆（否则新会话会误以为"已经写过同样的内容"）。 */
+export function resetMeterMemo() {
+  lastMeterText = ''
 }
 
 export function thinkingPlaceholder() {
