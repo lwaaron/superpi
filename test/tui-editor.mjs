@@ -434,6 +434,29 @@ ok(FRAME_INTERVAL_MS <= 250, '帧间隔 <= 250ms（再慢看起来是卡顿）')
   // 再次长时间无输出 → 心跳重新出现（说明是"自上次输出起"计时，不是一次性）
   ok(workingLabel(t + HEARTBEAT_AFTER_MS * 2, true).includes('已静默'), '再次静默超阈值时心跳重现')
 
+
+  // 并发工具：B 的输出不能刷新 A 的静默计时（0.15.0 修的真缺陷）
+  //
+  // 不按 id 匹配时，并行调用里 A 明明卡住，却被 B 每 100ms 的输出不断重置
+  // lastOutputAt，心跳永远不触发 —— 那正是「看起来卡着」却没有任何解释的场景。
+  {
+    const t = 1000000
+    resetRunState()
+    markRunStart(t)
+    markToolStart('bash', { timeout: 900 }, t, 'toolA')
+    markToolStart('bash', { timeout: 900 }, t, 'toolB')
+    // 当前 activeTool 是 B。让它自己产出一次输出 → 计时刷新
+    markToolOutput(t + HEARTBEAT_AFTER_MS - 1, 'toolB')
+    ok(!workingLabel(t + HEARTBEAT_AFTER_MS, true).includes('已静默'), 'B 自己的输出能刷新计时')
+    // A 的输出出现在 B 静默期间 → 不得刷新 B
+    markToolOutput(t + HEARTBEAT_AFTER_MS + 500, 'toolA')
+    ok(workingLabel(t + HEARTBEAT_AFTER_MS * 2, true).includes('已静默'), '其他工具的输出不能刷新当前工具的计时')
+    // B 自己再输出 → 静默计时归零
+    markToolOutput(t + HEARTBEAT_AFTER_MS * 2, 'toolB')
+    ok(!workingLabel(t + HEARTBEAT_AFTER_MS * 2, true).includes('已静默'), '当前工具自己的输出才刷新')
+    resetRunState()
+  }
+
   // 工具结束后心跳必须消失（否则会在模型推理期显示上一轮工具的静默）
   markToolEnd()
   ok(!workingLabel(t + HEARTBEAT_AFTER_MS * 3, true).includes('已静默'), '工具结束后不再显示静默心跳')

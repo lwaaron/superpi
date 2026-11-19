@@ -97,6 +97,7 @@ export default function contextGuard(pi) {
     breakdown: { text: number; thinking: number; toolResult: number; toolCallArgs: number; images: number; total: number }
     reservedOverhead: number
     goal: string
+    afterTokens: number
   } = null
 
   pi.on('context', (event, ctx) => {
@@ -141,6 +142,7 @@ export default function contextGuard(pi) {
           breakdown: breakdownMessages(filtered, settings),
           reservedOverhead: planned.stats.reservedOverhead,
           goal: goalFromMessages(filtered),
+          afterTokens: planned.stats.after,
         }
         if (planned.stats.trimmed === true) {
           const now = Date.now()
@@ -205,6 +207,7 @@ export default function contextGuard(pi) {
           breakdown: snapshot.breakdown,
           reservedOverhead: snapshot.reservedOverhead,
           goal: snapshot.goal,
+          afterTokens: snapshot.afterTokens,
         })
       if (hygiene === null && meter === null) return undefined
       return {}
@@ -212,6 +215,24 @@ export default function contextGuard(pi) {
       return undefined
     }
   })
+
+  /**
+   * 会话切换时清掉上一轮的统计与仪表快照（0.15.0）。
+   *
+   * 为什么必须清：`lastStats` / `lastMeterSnapshot` 是本进程级的缓存，
+   * 而 `/new`、`switch_session`、`fork` 会在**同一个进程**里换掉整棵会话树。
+   * 不清的话新会话第一轮就会显示旧会话的占用（实测过的串台形态），
+   * 而模型会据此误判"我已经很满了"，进而做出保守/错误的决策。
+   *
+   * 只清缓存，不动设置与日志 —— 设置是用户的，日志是观测记录。
+   */
+  const resetSessionCaches = () => {
+    lastStats = null
+    lastMeterSnapshot = null
+    lastLoggedAt = 0
+  }
+  pi.on('session_start', resetSessionCaches)
+  pi.on('session_switch', resetSessionCaches)
 
   pi.registerCommand(GUARD_COMMAND, {    description: '查看上下文窗口化状态（真实占用 / 已释放多少 / 保留多少轮）',
     handler: async (_args, ctx) => {

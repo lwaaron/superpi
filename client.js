@@ -1987,9 +1987,16 @@ window.__ModuleLoader__.load({
       }
       if (type === 'tool_execution_update') {
         applyToolUpdate(view, record)
-        // 0.15.0：bash 每 100ms 发一次本事件，收到就说明命令在推进。
-        // Working 行据此区分"在跑"与"静默"，见 client 的 WorkingRow。
-        if (view.activeTool !== null && view.activeTool !== undefined) view.activeTool.lastOutputAt = Date.now()
+        /**
+         * 0.15.0：bash 每 100ms 发一次本事件，收到就说明**那条命令**在推进。
+         *
+         * 必须按 id 匹配：并行工具调用时，工具 B 的输出不能刷新工具 A 的静默计时
+         * （否则 A 明明卡住了，心跳却被 B 的输出不断重置，永远不报警）。
+         */
+        var updateId = String(record.toolCallId === undefined ? '' : record.toolCallId)
+        if (view.activeTool !== null && view.activeTool !== undefined && view.activeTool.id === updateId) {
+          view.activeTool.lastOutputAt = Date.now()
+        }
         return
       }
       if (type === 'tool_execution_end') {

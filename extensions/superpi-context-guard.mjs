@@ -269,20 +269,38 @@ export function renderMeterBlock(options = {}) {
   if (windowTokens === 0) return ''
   const breakdown = options.breakdown ?? breakdownMessages(options.messages, settings)
   const overhead = Number.isFinite(options.reservedOverhead) ? options.reservedOverhead : settings.reservedOverheadTokens
-  // 真实占用 = 消息 + 不可裁剪的固定开销（与 planContextWindow 的口径一致）。
-  const used = Math.max(0, breakdown.total) + Math.max(0, overhead)
-  const ratio = used / windowTokens
-  const pct = Math.round(ratio * 1000) / 10
+  /**
+   * **两个数字都必须报**（0.15.0 修正）。
+   *
+   * 踩过的坑：第一版只报"裁剪前"的规模。实测一个会话裁剪前 96%、裁剪后 69.5% ——
+   * 于是模型每轮都看到"已接近硬上限"的警告，而实际上守卫已经把那 26 个百分点
+   * 折掉了。这是**用吓人的数字制造假警报**，属于 docs/anti-product-patterns.md 的 D1
+   * （指标失真：报表难看/好看与实际不符）。
+   *
+   * 正确的语义是两句话都要：
+   *   · 「实际发送 X%」—— 这是这次请求真实的规模，模型该以它为准；
+   *   · 「原始内容 Y%（守卫已折叠 Z）」—— 这是"不守会是多少"，让模型知道自己的
+   *     生产行为是否失控（否则它会以为上下文很空，继续堆大块内容）。
+   */
+  const rawUsed = Math.max(0, breakdown.total) + Math.max(0, overhead)
+  const sentUsed = Number.isFinite(options.afterTokens) ? Math.max(0, options.afterTokens) + Math.max(0, overhead) : rawUsed
+  const rawRatio = rawUsed / windowTokens
+  const sentRatio = sentUsed / windowTokens
+  const sentPct = Math.round(sentRatio * 1000) / 10
   // 目标优先取调用方显式给的（`context` 事件里算好存快照），
   // 其次才从 messages 现推 —— 因为 `before_agent_start` 阶段拿不到 messages。
   const goal = typeof options.goal === 'string' ? options.goal : goalFromMessages(options.messages)
 
   const lines = []
   if (goal !== '') lines.push('- 当前目标：' + goal)
-  // 紧凑头：无论占比多少都给（这就是用户要的「每轮都带上」）。
-  lines.push('- 上下文占用 **' + String(pct) + '%**（' + shortCount(used) + ' / ' + shortCount(windowTokens) + ' tokens）')
+  // 每轮必带的一行（用户明确要求）：以**实际发送量**为准。
+  lines.push('- 上下文占用 **' + String(sentPct) + '%**（' + shortCount(sentUsed) + ' / ' + shortCount(windowTokens) + ' tokens）')
+  const trimmedTokens = rawUsed - sentUsed
+  if (trimmedTokens > 0) {
+    lines.push('- 原始内容 ' + String(Math.round(rawRatio * 1000) / 10) + '%（' + shortCount(rawUsed) + '）；守卫已折叠 ' + shortCount(trimmedTokens) + '，实际发出的是上面那个数字')
+  }
 
-  if (ratio >= METER_DETAIL_RATIO) {
+  if (sentRatio >= METER_DETAIL_RATIO) {
     const parts = [
       ['工具输出', breakdown.toolResult],
       ['对话文本', breakdown.text],
@@ -291,13 +309,13 @@ export function renderMeterBlock(options = {}) {
       ['思考', breakdown.thinking],
     ].filter(item => item[1] > 0).sort((a, b) => b[1] - a[1])
     const base = Math.max(1, breakdown.total)
-    lines.push('- 占用构成：' + parts.map(item => item[0] + ' ' + String(Math.round(item[1] / base * 100)) + '%').join(' · '))
+    lines.push('- 原始构成：' + parts.map(item => item[0] + ' ' + String(Math.round(item[1] / base * 100)) + '%').join(' · '))
     lines.push('- 固定开销（系统提示 + 工具定义）：' + shortCount(overhead) + ' tokens（不可裁剪）')
     if (parts.length > 0) {
       lines.push('- 最贵的是**' + parts[0][0] + '**；需要腾空间时优先处理它（守卫会自动折叠旧内容，但你可以少制造新的）')
     }
-    if (ratio >= 0.85) {
-      lines.push('- **已接近硬上限**（窗口的 85% 以上）。若要继续做长任务，建议先收尾当前子目标，或提示用户开新会话。')
+    if (sentRatio >= 0.85) {
+      lines.push('- **已接近硬上限**（实际发送已达窗口的 85% 以上）。若要继续做长任务，建议先收尾当前子目标，或提示用户开新会话。')
     }
   }
   return lines.join('\n')

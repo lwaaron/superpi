@@ -541,13 +541,13 @@ section('C6. 上下文仪表：让模型每轮都知道自己有多满')
   const lowMeter = renderMeterBlock({ settings, windowTokens: 1000000, messages: meterMessages })
   ok(lowMeter.includes('当前目标'), '低占比也带目标（用户明确要求每轮都有）')
   ok(lowMeter.includes('上下文占用'), '低占比也带占用百分比')
-  ok(!lowMeter.includes('占用构成'), '低占比不给拆解（不浪费 token）')
+  ok(!lowMeter.includes('原始构成'), '低占比不给拆解（不浪费 token）')
 
   // ② 高占比：给拆解 + 最贵的一类
   const tightMessages = [{ role: 'user', content: [{ type: 'text', text: '目标：继续' }] }]
   for (let i = 0; i < 60; i += 1) tightMessages.push({ role: 'toolResult', toolCallId: 'c' + String(i), toolName: 'bash', content: [{ type: 'text', text: 'o'.repeat(40000) }] })
   const highMeter = renderMeterBlock({ settings, windowTokens: 1000000, messages: tightMessages })
-  ok(highMeter.includes('占用构成'), '高占比给按类拆解')
+  ok(highMeter.includes('原始构成'), '高占比给按类拆解')
   ok(highMeter.includes('最贵的是'), '指出最贵的一类（不让模型自己算）')
   ok(highMeter.includes('工具输出'), '拆解里有工具输出这一项')
   ok(highMeter.includes('固定开销'), '点明固定开销不可裁剪（否则模型会以为能砍掉）')
@@ -556,6 +556,34 @@ section('C6. 上下文仪表：让模型每轮都知道自己有多满')
   eq(renderMeterBlock({ settings, windowTokens: 0, messages: meterMessages }), '', '窗口未知时不注入（不编造）')
   // 停用 → 不注入
   eq(renderMeterBlock({ settings: { ...settings, enabled: false }, windowTokens: 1000000, messages: meterMessages }), '', '停用时仪表也不注入')
+
+
+  // ④ 双数字：实际发送量 与 原始规模必须都报，且以实际发送量为准（0.15.0 修）
+  //
+  // 踩过的坑：第一版只报裁剪前的 96%，而实际发送只有 69.5% —— 模型每轮都看到
+  // "已接近硬上限"的假警报。那是 D1 类失真（报表与实际不符）。
+  {
+    const tight = [{ role: 'user', content: [{ type: 'text', text: '目标：继续' }] }]
+    for (let i = 0; i < 60; i += 1) tight.push({ role: 'toolResult', toolCallId: 'c' + String(i), toolName: 'bash', content: [{ type: 'text', text: 'o'.repeat(40000) }] })
+    const planned = planContextWindow(tight, { windowTokens: 1000000, settings })
+    const block = renderMeterBlock({
+      settings,
+      windowTokens: 1000000,
+      messages: tight,
+      afterTokens: planned.stats.after,
+      reservedOverhead: planned.stats.reservedOverhead,
+    })
+    const sentPct = Math.round((planned.stats.after + planned.stats.reservedOverhead) / 1000000 * 1000) / 10
+    ok(block.includes(String(sentPct) + '%'), '头部报的是**实际发送**占比（' + String(sentPct) + '%），不是裁剪前的吓人数字')
+    ok(block.includes('原始内容'), '同时报原始规模（让模型知道自己的生产行为是否失控）')
+    ok(block.includes('守卫已折叠'), '点明差距是守卫折叠掉的（否则模型会以为数据自相矛盾）')
+    // 折叠之后若已达标，就不该再给"接近硬上限"的警告。
+    ok(sentPct < 85 || block.includes('已接近硬上限'), '耗尽的警告跟着实际发送量走，不是跟着原始规模')
+
+    // 未折叠时（after == raw）不该出现"已折叠"这句废话
+    const clean = renderMeterBlock({ settings, windowTokens: 1000000, messages: [{ role: 'user', content: [{ type: 'text', text: 'x' }] }] })
+    ok(!clean.includes('守卫已折叠'), '没有折叠时不显示"已折叠"（不制造噪音）')
+  }
 
   // 幂等 + 可清除
   const meterOptions = { sections: {} }
@@ -634,6 +662,16 @@ if (extensionModule !== null) {
   entry(fakePi)
   eq(typeof handlers.context, 'function', '订阅了 context 事件')
   eq(typeof handlers.before_agent_start, 'function', '订阅了 before_agent_start（注入卫生准则）')
+
+  /**
+   * 会话切换必须清缓存（0.15.0）。
+   *
+   * `lastStats` / `lastMeterSnapshot` 是进程级缓存，而 `/new`、`switch_session`
+   * 会在**同一进程**里换掉整棵会话树。不清就会让新会话第一轮显示旧会话的占用 ——
+   * 模型据此会误判"我已经很满了"，做出保守甚至错误的决策。
+   */
+  ok(typeof handlers.session_start === 'function', '订阅了 session_start（用于清缓存）')
+  ok(typeof handlers.session_switch === 'function', '订阅了 session_switch（用于清缓存）')
   eq(commands.length, 1, '注册了一个命令')
   eq(commands[0].name, extensionModule.GUARD_COMMAND, '命令名与导出常量一致')
 

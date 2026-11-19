@@ -131,7 +131,7 @@ export type RunPhase = 'idle' | 'running' | 'success' | 'error'
  * 与面板端（client.js 的 `view.activeTool`）逐字对齐 —— AGENTS.md §3 的
  * 100% 对齐在这里是结构性成立的：两端都从 `tool_execution_start.args.timeout` 取上限。
  */
-export type ActiveTool = { name: string; startedAt: number; limitSeconds: number; lastOutputAt: number } | null
+export type ActiveTool = { id: string; name: string; startedAt: number; limitSeconds: number; lastOutputAt: number } | null
 
 export const runState: { phase: RunPhase; failed: boolean; startedAt: number; tool: ActiveTool } = {
   phase: 'idle',
@@ -163,9 +163,10 @@ export function markRunStart(now = Date.now()): void {
   startAnimation()
 }
 
-export function markToolStart(name: unknown, args: unknown, now = Date.now()): void {
+export function markToolStart(name: unknown, args: unknown, now = Date.now(), id = ''): void {
   runState.phase = 'running'
   runState.tool = {
+    id: typeof id === 'string' ? id : '',
     name: typeof name === 'string' && name !== '' ? name : 'tool',
     startedAt: now,
     limitSeconds: toolLimitSeconds(args),
@@ -182,8 +183,16 @@ export function markToolStart(name: unknown, args: unknown, now = Date.now()): v
  * 只更新 `lastOutputAt`，不改 phase、不重置 startedAt —— 计时是"这一轮跑了多久"，
  * 不该被输出频率影响。
  */
-export function markToolOutput(now = Date.now()): void {
+export function markToolOutput(now = Date.now(), id = ''): void {
   if (runState.tool === null) return
+  /**
+   * 按 id 匹配（0.15.0）。
+   *
+   * 并行工具调用时，工具 B 的输出**不能**刷新工具 A 的静默计时 ——
+   * 否则 A 明明卡住了，心跳却被 B 不断重置，永远不报警。
+   * id 为空（老调用方/事件缺字段）时退化为"刷新当前"，保持向后兼容。
+   */
+  if (id !== '' && runState.tool.id !== '' && runState.tool.id !== id) return
   runState.tool = { ...runState.tool, lastOutputAt: now }
 }
 
@@ -2629,7 +2638,7 @@ export default function superpiEditor(pi: any): void {
    * 两端取的是同一个字段，所以不会出现"面板有上限、命令行没有"的偏差。
    */
   pi.on('tool_execution_start', (event: any) => {
-    markToolStart(event?.toolName ?? event?.name, event?.args ?? event?.arguments)
+    markToolStart(event?.toolName ?? event?.name, event?.args ?? event?.arguments, Date.now(), String(event?.toolCallId ?? ''))
   })
   /**
    * 工具产出新输出（0.15.0）。
@@ -2642,8 +2651,8 @@ export default function superpiEditor(pi: any): void {
    * 注意：这里**不做渲染节流** —— 状态更新是纯内存操作（一个数字），
    * 真正的重绘节流由 pi 的 16ms 和我们的 120ms 动画定时器共同保证。
    */
-  pi.on('tool_execution_update', () => {
-    markToolOutput()
+  pi.on('tool_execution_update', (event: any) => {
+    markToolOutput(Date.now(), String(event?.toolCallId ?? ''))
   })
   pi.on('tool_execution_end', (event: any) => {
     if (event?.isError) markToolError()
