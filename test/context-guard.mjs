@@ -389,6 +389,89 @@ eq(noWindow.messages, manyTurns, '窗口未知时原样返回（不瞎裁）')
 ok(imagePlaceholder({ filePath: 'D:/x/a.png', kilobytes: 12 }).includes('D:/x/a.png'), '图片占位带路径（可重读）')
 ok(imagePlaceholder({ filePath: 'D:/x/a.png' }).includes('omitted'), '图片占位显式声明已省略')
 
+/* -------------------- C4'. 兜底的三个致命缺陷（0.15.0 实测全部命中） */
+
+section('C4. 兜底：按整轮丢弃，必须真的生效且不丢任务目标')
+
+/**
+ * 这三条不是"补充覆盖"，每一条都对应一个**真实存在过、且静默失效**的 bug：
+ *
+ * ① 索引失效：旧实现把 protectionStartIndex 的绝对下标缓存进 guardFrom，
+ *    而每丢一轮都 slice，数组变短、下标没变 → 第二轮 cut 恒 -1 → 直接 break。
+ * ② 空切片死锁：cut 落在可丢区第一条 user 上时 slice(start, cut) 是空数组，
+ *    防御判据 break —— 兜底"跑了"但一条都没删（droppedTurns 恒 0）。
+ * ③ 丢任务目标：cut 落在第二条 user 上时 slice(1, cut) 把**首条 user** 也包进被丢区间，
+ *    实测 dropped:9 后剩余消息从「轮9」开始，任务目标没了。
+ *
+ * 三条共同的表现是：日志里 overBudget 恒 true、droppedTurns 恒 0，
+ * 看起来"守卫在工作"，实际兜底从未生效。
+ */
+function turnList(count, chars) {
+  const list = [{ role: 'system', content: [{ type: 'text', text: 'system prompt' }] }]
+  for (let i = 0; i < count; i += 1) {
+    list.push({ role: 'user', content: [{ type: 'text', text: '轮' + String(i) + ' ' + 'x'.repeat(chars) }] })
+    list.push({ role: 'assistant', content: [{ type: 'text', text: '结论' + String(i) }] })
+  }
+  return list
+}
+
+{
+  // 用纯 user 正文（五阶段唯一碰不到的类别）逼兜底出手。
+  // 数据量必须在本测试的 settings（charsPerToken=4）下确实超预算，
+  // 否则测到的是"本就不需要兜底"，而不是"兜底生效"。
+  const list = turnList(160, 3000)
+  ok(estimateMessagesTokens(list, settings) > Math.floor(100000 * settings.targetRatio), 'C4 前置条件：确实超预算')
+  const planned = planContextWindow(list, { windowTokens: 100000, settings })
+  ok(planned.stats.droppedTurns > 0, '兜底真的丢了轮次（不是恒 0）——' + String(planned.stats.droppedTurns) + ' 轮')
+  ok(planned.stats.after <= planned.stats.budget, '兜底后回到预算内（' + String(planned.stats.after) + ' <= ' + String(planned.stats.budget) + '）')
+  eq(planned.stats.overBudget, false, '兜底后不再报 overBudget')
+
+  // ③ 任务目标必须留：首条 user 仍是「轮0」，不是「轮9」。
+  const users = planned.messages.filter(message => message.role === 'user')
+  ok(users.length > 0, '兜底后仍有 user')
+  ok(String(JSON.stringify(users[0].content)).includes('轮0 '), '首条 user（任务目标）仍在，没被丢掉')
+  // system 必须留
+  ok(planned.messages.some(message => message.role === 'system'), 'system 消息仍在（不然模型不知道能干什么）')
+  // 末轮必须留（正在干的活）
+  ok(String(JSON.stringify(users[users.length - 1].content)).includes('轮159'), '最后一轮仍在')
+}
+
+/* -------------------- C5. 固定开销预留（守卫低估 15 个百分点） */
+
+section('C5. 固定开销：守卫低估系统提示与工具定义，必须显式扣掉')
+
+/**
+ * 实测一个真实长会话：守卫算 messages = 638,469，provider 的 totalTokens = 813,842，
+ * 相差 **175,373 tokens（16.7 个百分点）** —— 差的就是系统提示 + 工具声明。
+ * 不扣的话「守卫算 62% 安全」对应「实际 78%」，再走几轮就撞 1,048,576 硬墙，
+ * 历史 2 次 CONTEXT_OVERFLOW 就是这么发生的。
+ */
+{
+  eq(DEFAULT_GUARD_SETTINGS.reservedOverheadTokens > 0, true, '默认预留固定开销（不为 0）')
+  ok(DEFAULT_GUARD_SETTINGS.reservedOverheadTokens >= 150000, '预留量覆盖实测的 157k 偏差')
+
+  // 大窗口：必须真的扣掉
+  const big = planContextWindow(turnList(10, 100), { windowTokens: 1048576, settings })
+  eq(big.stats.reservedOverhead, DEFAULT_GUARD_SETTINGS.reservedOverheadTokens, '大窗口下扣满固定开销')
+  eq(big.stats.budget, Math.floor(1048576 * settings.targetRatio) - DEFAULT_GUARD_SETTINGS.reservedOverheadTokens, '预算 = 窗口×targetRatio − 开销')
+
+  // 小窗口：开销比窗口还大时**不能扣**，否则预算被压到地板、守卫疯狂削内容
+  // （那是用"更早的降级"换"更晚的溢出"，属于 C5 反模式）。
+  const small = planContextWindow(turnList(10, 100), { windowTokens: 100000, settings })
+  eq(small.stats.reservedOverhead, 0, '小窗口下不扣固定开销（否则预算失真）')
+  eq(small.stats.budget, Math.floor(100000 * settings.targetRatio), '小窗口预算 = 窗口×targetRatio')
+
+  // 预算下限：任何情况下都不低于窗口 40%
+  const tiny = planContextWindow(turnList(10, 100), { windowTokens: 200000, settings })
+  ok(tiny.stats.budget >= Math.floor(200000 * 0.4), '预算不低于窗口 40%（真下限保护）')
+
+  // 幂等：reservedOverhead 归一化后不变
+  const norm = normalizeGuardSettings({ ...DEFAULT_GUARD_SETTINGS })
+  eq(norm.reservedOverheadTokens, DEFAULT_GUARD_SETTINGS.reservedOverheadTokens, '归一化保留 reservedOverheadTokens')
+  eq(normalizeGuardSettings(norm), norm, '含新字段的归一化仍幂等')
+  eq(normalizeGuardSettings({ reservedOverheadTokens: -100 }).reservedOverheadTokens, 0, '负数被夹到 0')
+}
+
 /* ═════════════════════════════════════════════════════ C2. 卫生准则 */
 
 section('C2. 上下文卫生：让模型自己知道「图用完即弃」')

@@ -55,6 +55,7 @@ import {
   resolvePiRuntime,
 } from './src/pi-runtime.mjs'
 import { createUiPrefsStore } from './src/ui-prefs.mjs'
+import { ensureHttpIdleTimeout } from './src/http-idle-guard.mjs'
 import {
   createRulesStore,
   rulesView,
@@ -673,6 +674,23 @@ export function apply(ctx, config = {}) {
       error.statusCode = 500
       error.code = 'PI_RUNTIME_MISSING'
       throw error
+    }
+    /**
+     * 把 pi 的 HTTP idle 超时抬到「长思考不会被误杀」的量级（0.15.0）。
+     *
+     * 为什么在这里做：`httpIdleTimeoutMs` 是 pi 的**全局设置**，在每个会话 spawn 前
+     * 确保一次即可（幂等，已达标不写盘）。放在 spawn 而非每个请求，是因为它会触发
+     * pi 的 settings 重载，绝不能每次 prompt 都写文件。
+     *
+     * 失败不阻断：这是优化项，不该成为起会话的前置条件（`ok:false` 只记日志）。
+     * 详见 docs/session-interruption.md §1.1。
+     */
+    try {
+      const idle = ensureHttpIdleTimeout({ agentDir: resolveAgentDir({ env: process.env, home: os.homedir() }) })
+      if (idle.action === 'write') deps.log('info', 'httpIdleTimeoutMs 已抬到 ' + String(idle.ms) + 'ms（' + idle.reason + '）')
+      else if (idle.ok !== true) deps.log('warn', 'httpIdleTimeoutMs 未调整：' + idle.reason)
+    } catch (error) {
+      deps.log('warn', 'httpIdleTimeoutMs 调整异常（不影响会话）：' + String(error?.message ?? error))
     }
     if (sessions.size >= MAX_SESSIONS) {
       const error = new Error('会话数已达上限（' + String(MAX_SESSIONS) + '），先关掉一个')

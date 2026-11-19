@@ -1065,6 +1065,109 @@ try {
     }
   }
 
+  // ── 3.99 运行时文件清单自动发现（防止两个门禁再次漂移）
+
+  /**
+   * 0.15.0 之前 `test/selfcheck.mjs` 与 `test/version.mjs` 各硬编码一份复制清单，
+   * 实测已经漂移成 16 / 15 项。新增 `src/http-idle-guard.mjs` 后两个门禁同时
+   * `Cannot find module` 而红 —— 不是代码错，是清单漏。
+   *
+   * 现在清单由 `src/runtime-files.mjs` 按目录自动发现。这里钉三件事：
+   *   ① 新加的源文件必须被自动收录（否则等于没修）；
+   *   ② 两个门禁不许再出现硬编码的数组（退回旧写法立刻红）；
+   *   ③ 清单里每个文件都真实存在（防止收进幽灵路径）。
+   */
+  {
+    const rf = await import(pathToFileURL(path.join(root, 'src', 'runtime-files.mjs')).href)
+    const files = rf.listRuntimeFiles(root)
+    check('清单包含 index.js', files.includes('index.js'))
+    check('清单包含 client.js', files.includes('client.js'))
+    check('清单包含新模块 http-idle-guard.mjs', files.includes('src/http-idle-guard.mjs'),
+      '新增模块没被自动收录 —— 装到别处会 Cannot find module')
+    check('清单包含新模块 runtime-files.mjs', files.includes('src/runtime-files.mjs'))
+    check('清单包含三个扩展的 .ts', files.includes('extensions/superpi-editor.ts'))
+    check('清单不含非源码文件', files.every(rel => /\.(mjs|ts|js|json|yml)$/.test(rel)),
+      files.filter(rel => !/\.(mjs|ts|js|json|yml)$/.test(rel)).join(','))
+    // ③ 每个都在磁盘上
+    const missing = files.filter(rel => !fs.existsSync(path.join(root, rel)))
+    eq('清单里每个文件都真实存在', missing, [])
+    // ① 自动发现：src 下所有 .mjs 都必须在清单里
+    const srcFiles = fs.readdirSync(path.join(root, 'src')).filter(name => name.endsWith('.mjs'))
+    const notListed = srcFiles.filter(name => !files.includes('src/' + name))
+    eq('src 下所有 .mjs 都被收录（自动发现生效）', notListed, [])
+    // ② 两个门禁不许回到硬编码
+    for (const file of ['selfcheck.mjs', 'version.mjs']) {
+      const src = fs.readFileSync(path.join(root, 'test', file), 'utf8')
+      check(file + ' 不再硬编码复制清单', !/const COPY = \[/.test(src) && !/for \(const rel of \['/.test(src),
+        '仍在手写数组 —— 会与另一个门禁漂移')
+      check(file + ' 使用共享清单', src.includes('copyRuntimeFiles'))
+    }
+  }
+
+  // ── 4.0 HTTP idle 超时下限（判据 B · 0.15.0）
+
+  /**
+   * pi 的默认 300s 会误杀长思考：实测 4 次 BODY_TIMEOUT 的静默时长是 317/323/331/503s，
+   * 全都刚过 300 秒线，且与上下文规模无关（最浅一次只有 7.3% 占用）。
+   * 详见 docs/session-interruption.md §1.1。
+   */
+  {
+    const idle = await import(pathToFileURL(path.join(root, 'src', 'http-idle-guard.mjs')).href)
+    eq('导出 MIN_HTTP_IDLE_TIMEOUT_MS', typeof idle.MIN_HTTP_IDLE_TIMEOUT_MS, 'number')
+    eq('下限是 30 分钟', idle.MIN_HTTP_IDLE_TIMEOUT_MS, 30 * 60 * 1000)
+    eq('pi 默认值常量是 300s', idle.PI_DEFAULT_HTTP_IDLE_TIMEOUT_MS, 300000)
+    check('下限远大于实测最坏静默（503s）', idle.MIN_HTTP_IDLE_TIMEOUT_MS > 503 * 1000 * 3,
+      '余量不足 3 倍')
+
+    // 决策表：五条分支逐条钉死（这是"只抬不降、尊重显式"的机器保障）
+    eq('未设置 → 写入下限', idle.decideIdleTimeout({}).action, 'write')
+    eq('未设置 → 写入的值', idle.decideIdleTimeout({}).ms, idle.MIN_HTTP_IDLE_TIMEOUT_MS)
+    eq('显式 5min → 保持不动（不因小于下限去覆盖用户意图）', idle.decideIdleTimeout({ httpIdleTimeoutMs: 300000 }).action, 'keep')
+    eq('显式 1h → 保持不动', idle.decideIdleTimeout({ httpIdleTimeoutMs: 3600000 }).ms, 3600000)
+    eq('显式 0 → 尊重关闭', idle.decideIdleTimeout({ httpIdleTimeoutMs: 0 }).action, 'skip')
+    eq('显式 disabled → 尊重关闭', idle.decideIdleTimeout({ httpIdleTimeoutMs: 'disabled' }).action, 'skip')
+    eq('非法字符串 → 当作未设置（无有效意图可尊重）', idle.decideIdleTimeout({ httpIdleTimeoutMs: 'bogus' }).action, 'write')
+    eq('settings 是 null → 不碰', idle.decideIdleTimeout(null).action, 'skip')
+
+    // 真实文件读写：用临时目录，绝不碰用户的 ~/.pi
+    const dir = fs.mkdtempSync(path.join(tmp, 'idle-'))
+    const file = path.join(dir, 'settings.json')
+    try {
+      // 文件不存在 → 建一个
+      const first = idle.ensureHttpIdleTimeout({ agentDir: dir })
+      eq('文件不存在时创建', first.ok, true)
+      eq('写入动作', first.action, 'write')
+      const written = JSON.parse(fs.readFileSync(file, 'utf8'))
+      eq('写入了下限', written.httpIdleTimeoutMs, idle.MIN_HTTP_IDLE_TIMEOUT_MS)
+
+      // 幂等：第二次不写
+      const second = idle.ensureHttpIdleTimeout({ agentDir: dir })
+      eq('第二次是 keep（不重复写盘）', second.action, 'keep')
+      eq('文件内容未变', fs.readFileSync(file, 'utf8'), JSON.stringify(written, null, 2) + String.fromCharCode(10))
+
+      // 保留用户其它设置
+      fs.writeFileSync(file, JSON.stringify({ defaultModel: 'x', theme: 'dark' }), 'utf8')
+      idle.ensureHttpIdleTimeout({ agentDir: dir })
+      const kept = JSON.parse(fs.readFileSync(file, 'utf8'))
+      eq('保留了用户的其它设置', kept.defaultModel, 'x')
+      eq('也保留了 theme', kept.theme, 'dark')
+
+      // 坏 JSON：绝不覆盖
+      fs.writeFileSync(file, '{ broken', 'utf8')
+      const broken = idle.ensureHttpIdleTimeout({ agentDir: dir })
+      eq('坏 JSON 不写', broken.ok, false)
+      eq('坏 JSON 原样保留（没有把用户文件写没）', fs.readFileSync(file, 'utf8'), '{ broken')
+
+      // 显式小值：不动
+      fs.writeFileSync(file, JSON.stringify({ httpIdleTimeoutMs: 600000 }), 'utf8')
+      const explicit = idle.ensureHttpIdleTimeout({ agentDir: dir })
+      eq('显式 10min 保持不动', explicit.action, 'keep')
+      eq('值没被改成下限', JSON.parse(fs.readFileSync(file, 'utf8')).httpIdleTimeoutMs, 600000)
+    } finally {
+      try { fs.rmSync(dir, { recursive: true, force: true }) } catch { /* 清理失败不影响结论 */ }
+    }
+  }
+
   // ── 4.2 历史分页（判据 D）
 
   {

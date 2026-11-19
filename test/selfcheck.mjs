@@ -18,6 +18,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const root = path.dirname(here)
+// 运行时文件清单的唯一来源（按目录自动发现，避免与 version.mjs 漂移）
+const { copyRuntimeFiles } = await import(pathToFileURL(path.join(root, 'src', 'runtime-files.mjs')).href)
 
 function assert(condition, message) {
   if (condition) return
@@ -25,12 +27,16 @@ function assert(condition, message) {
   throw new Error(message)
 }
 
+/**
+ * 复制插件到临时目录（模拟"装到别处"）。
+ *
+ * 清单由 `src/runtime-files.mjs` **按目录自动发现**，不再硬编码：
+ * 0.15.0 之前这里是手写数组，与 `test/version.mjs` 各一份、且已经漂移（16 vs 15 项）。
+ * 新增一个源文件就会同时让两个门禁报 `Cannot find module` —— 而修法是"每处各补一条"，
+ * 下一个人必然再漏。改成自动发现后，加文件不需要动任何测试。
+ */
 function copyPlugin(target) {
-  for (const rel of ['index.js', 'client.js', 'package.json', 'cordis.patch.yml', 'src/pi-rpc.mjs', 'src/pi-runtime.mjs', 'src/session-store.mjs', 'src/rpc-contract.mjs', 'src/ui-prefs.mjs', 'extensions/superpi-rules.mjs', 'extensions/superpi-rules.ts', 'extensions/superpi-context-guard.mjs', 'extensions/superpi-context-guard.ts', 'extensions/superpi-modalities.mjs', 'extensions/superpi-modalities.ts']) {
-    const to = path.join(target, rel)
-    fs.mkdirSync(path.dirname(to), { recursive: true })
-    fs.copyFileSync(path.join(root, rel), to)
-  }
+  copyRuntimeFiles(root, target)
 }
 
 function makeCtx() {

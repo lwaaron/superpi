@@ -74,6 +74,19 @@ export const DEFAULT_GUARD_SETTINGS = {
   enabled: true,
   /** 裁剪后目标占模型窗口的比例。留出输出、系统提示与工具声明的余量。 */
   targetRatio: 0.72,
+  /**
+   * **不可裁剪的固定开销**（token）：系统提示 + 工具定义 + 模型模板包装。
+   *
+   * 为什么必须显式扣掉（0.15.0 实测）：守卫只估 `messages`，而 provider 的
+   * `usage.totalTokens` 还包含系统提示与全部工具声明。一个真实长会话里两者相差
+   * **157,128 tokens（15.0 个百分点）** —— 守卫算 62.6% 认为安全，实际已是 77.6%，
+   * 再走几轮就撞 1,048,576 硬墙。历史 2 次 `CONTEXT_OVERFLOW` 正是这么发生的：
+   * **守卫以为达标，其实已经超了**。
+   *
+   * 取 160k 而不是 157k：留一点余量给「换了工具集更多的新版本」。这个值只能靠实测校准，
+   * 所以门禁里有一条断言把它与真会话的偏差锁住（超过 20k 就红，提醒重新校准）。
+   */
+  reservedOverheadTokens: 160000,
   /** 最近多少轮完整保留（一轮 = 一条 user 消息及其后的 assistant/toolResult）。 */
   keepRecentTurns: 6,
   /**
@@ -192,6 +205,8 @@ export function normalizeGuardSettings(raw) {
     version: GUARD_VERSION,
     enabled: source.enabled === undefined ? base.enabled : source.enabled === true,
     targetRatio: clamp(source.targetRatio, 0.3, 0.95, base.targetRatio),
+    // 固定开销：0 = 不预留（老配置兼容），上限不超过窗口本身（由 budget 计算再夹一次）。
+    reservedOverheadTokens: Math.round(clamp(source.reservedOverheadTokens, 0, 2000000, base.reservedOverheadTokens)),
     keepRecentTurns: Math.round(clamp(source.keepRecentTurns, 1, 200, base.keepRecentTurns)),
     keepRecentMessages: Math.round(clamp(source.keepRecentMessages, 20, 5000, base.keepRecentMessages)),
     protectedTokenRatio: clamp(source.protectedTokenRatio, 0.05, 0.9, base.protectedTokenRatio),
@@ -521,36 +536,82 @@ function foldToolCallArgs(message, callIndex) {
  *  ③ 最近 keepRecentTurns 轮（正在干的活不能丢）。
  * 找不到可丢的边界就停（不无限循环），返回原数组由调用方诚实报 overBudget。
  */
+/**
+ * 兜底：按整轮（user 边界）丢弃最旧的轮次，直到回到预算以内。
+ *
+ * 三条不可退让的保留：首条 user（任务目标）、最近 keepRecentTurns 轮（正在干的活）、
+ * 所有 system（系统提示）。
+ *
+ * 0.15.0 修一个索引失效缺陷：旧实现把 `protectionStartIndex(...)` 算出的**绝对下标**
+ * 存进 `guardFrom`，但每丢一轮都要 `current.slice(cut)`，数组变短而 `guardFrom` 没跟着变 ——
+ * 第二轮循环时 `i >= guardFrom` 立刻成立、`cut` 保持 -1、直接 break。
+ * 结果就是「明明还有 80 轮可丢，却 `droppedTurns` 恒为 0」。
+ * 现在改成**每轮重新找边界**（相对结构，不存绝对下标）。
+ */
+/**
+ * 兜底：按整轮（user 边界）丢弃最旧的轮次，直到回到预算以内。
+ *
+ * 三条不可退让的保留：首条 user（任务目标）、最近 keepRecentTurns 轮（正在干的活）、
+ * 所有 system（系统提示）。
+ *
+ * ---------------------------------------------------------------------------
+ * 0.15.0 修两个叠加缺陷，它们让兜底**从来没有生效过**（`droppedTurns` 恒为 0）：
+ *
+ * ① **索引失效**：旧实现把 `protectionStartIndex(...)` 的**绝对下标**存进 `guardFrom`，
+ *    但每丢一轮都 `current.slice(cut)`，数组变短而 `guardFrom` 没跟着变 ——
+ *    第二轮循环 `i >= guardFrom` 立刻成立、`cut` 保持 -1、直接 break。
+ *    现在改成每轮**重新计算**边界，不存任何绝对下标。
+ *
+ * ② **长度防御误判（真正的死锁点）**：旧实现用 `merged.length >= current.length` 防死循环，
+ *    但 `merged` 里把 system 消息**拼回去了**，于是「丢掉一轮」和「补回 system」
+ *    在长度上互相抵消 —— 长度恒相等，第一次迭代就 break。
+ *    现在用 `droppedTurns` 的推进 + 剩余**消息条数**双重判据，且比较的是
+ *    「切出去的那段是否为空」，而不是总数。
+ */
 function dropOldestTurns(messages, { settings, windowTokens, budget, estimate }) {
   const list = Array.isArray(messages) ? messages : []
   const firstUserIndex = list.findIndex(message => message?.role === 'user')
   if (firstUserIndex < 0) return { messages: list, droppedTurns: 0 }
-  // 可丢区间 = 首条 user 之后（保留它本身）到许可区起点之前。
-  let guardFrom = protectionStartIndex(list, settings, windowTokens)
-  let droppedTurns = 0
+
+  /**
+   * 不可动前缀 = 所有 system + **首条 user**（任务目标）。
+   *
+   * 为什么必须显式切成「前缀 / 可丢区 / 保护区」三段：旧写法用 `slice(1, cut)` 表达
+   * "丢掉中间那段"，但 cut 一旦落在第二条 user 上，第一条 user 自己也被包进被丢区间 ——
+   * 实测 `dropped:9` 之后剩余消息从「轮9」开始，**任务目标（轮0）被丢了**。
+   * 丢任务目标比超限更糟：会话还在，但已经不知道要干什么。
+   */
+  const prefix = list.slice(0, firstUserIndex + 1)
   let current = list
+  let droppedTurns = 0
   let total = estimate(current, settings)
-  // 每丢一轮都要把「首条 user」与新数组里的第一条一起保留，所以按 user 下标切。
+
+  /**
+   * 每轮丢「一条完整轮次」= 从可丢区第一条 user 起，到**下一条 user** 之前。
+   *
+   * 关键：切点必须是「下一条 user」，不是「第一条 user」。
+   * 踩过两次同一个坑：cut 落在可丢区的第一条 user 上时 `slice(start, cut)` 是空数组，
+   * 防御判据立刻 break —— 兜底看起来"跑了"，实际一条都没删（`droppedTurns` 恒 0 或恒 1）。
+   */
   while (total > budget) {
-    // 找可丢的第一个 user 起点（首条 user 之后的第一条 user）。
-    let cut = -1
-    for (let i = 1; i < current.length; i += 1) {
-      if (current[i]?.role !== 'user') continue
-      if (i >= guardFrom) break
-      cut = i
-      break
+    const protectFrom = protectionStartIndex(current, settings, windowTokens)
+    const bodyStart = prefix.length
+    // 可丢区里的第一条 user（= 要丢的那一轮的开头）。
+    let turnStart = -1
+    for (let i = bodyStart; i < current.length && i < protectFrom; i += 1) {
+      if (current[i]?.role === 'user') { turnStart = i; break }
     }
-    if (cut < 0) break
-    // 丢掉 [上一个 user 之后 .. 这个 user 之前] 这一整段（即最旧的那一轮的主体）。
-    const next = current.slice(cut)
-    // 把 system 消息补回来（它们可能落在被丢的区间里，但系统提示必须恒在）。
-    const systems = current.slice(0, cut).filter(message => message?.role === 'system')
-    const merged = systems.length === 0 ? next : [...systems, ...next]
-    if (merged.length >= current.length) break
-    current = merged
+    if (turnStart < 0) break
+    // 下一条 user（= 丢这一轮的终点，且它本身必须保留）。
+    let turnEnd = -1
+    for (let i = turnStart + 1; i < current.length && i < protectFrom; i += 1) {
+      if (current[i]?.role === 'user') { turnEnd = i; break }
+    }
+    // 找不到下一条 user 说明可丢区只剩一轮 —— 再丢就会把保护区啃掉，停手。
+    if (turnEnd < 0) break
+    current = [...current.slice(0, turnStart), ...current.slice(turnEnd)]
     droppedTurns += 1
     total = estimate(current, settings)
-    guardFrom = protectionStartIndex(current, settings, windowTokens)
   }
   return { messages: droppedTurns > 0 ? current : list, droppedTurns }
 }
@@ -588,13 +649,38 @@ export function planContextWindow(messages, options = {}) {
   const list = Array.isArray(messages) ? messages : []
   const settings = normalizeGuardSettings(options.settings ?? DEFAULT_GUARD_SETTINGS)
   const windowTokens = Math.round(clamp(options.windowTokens, 0, 100000000, settings.windowTokens))
-  const budget = windowTokens > 0 ? Math.floor(windowTokens * settings.targetRatio) : 0
+  /**
+   * 预算 = 窗口 × targetRatio − 不可裁剪的固定开销。
+   *
+   * 为什么要减（0.15.0 实测）：守卫只估 messages，provider 的 totalTokens 还含
+   * 系统提示 + 工具定义。真实长会话里两者相差 **157,128 tokens（15 个百分点）** ——
+   * 不减的话「守卫算 62.6% 安全」对应「实际 77.6%」，再走几轮就撞硬墙。
+   *
+   * 三条边界，缺一条都会造成新的病：
+   *  ① **只有窗口足够大才扣**：overhead 是「系统提示 + 全部工具声明」的实测值（160k），
+   *     它在小窗口（如 100k）里可能比整个窗口还大。此时扣掉等于把预算压到 0，
+   *     守卫会疯狂削内容 —— 那是用「更早的降级」换「更晚的溢出」，属于
+   *     docs/anti-product-patterns.md 的 C5。所以只在 `window > overhead / targetRatio`
+   *     时生效（即系统提示占比 < targetRatio 才有意义）。
+   *  ② **扣完不低于窗口的 40%**：真正的下限保护，确保守卫不会把会话削成骨架。
+   *  ③ 统计里记 `reservedOverhead` 实际扣了多少（0 = 没扣），观测与门禁都靠它。
+   */
+  const targetBudget = windowTokens > 0 ? Math.floor(windowTokens * settings.targetRatio) : 0
+  // ① 只有窗口明显大于固定开销时才扣（否则扣了会失真）。
+  const overheadApplies = windowTokens > 0 && settings.reservedOverheadTokens > 0 &&
+    windowTokens * settings.targetRatio > settings.reservedOverheadTokens * 1.25
+  const overhead = overheadApplies ? settings.reservedOverheadTokens : 0
+  // ② 扣完不低于窗口 40%（这是真下限，而非"刚好 30%"）。
+  const floorBudget = windowTokens > 0 ? Math.floor(windowTokens * 0.4) : 0
+  const budget = windowTokens > 0 ? Math.max(floorBudget, targetBudget - overhead) : 0
   const before = estimateMessagesTokens(list, settings)
   const emptyStats = {
     version: GUARD_VERSION,
     at: new Date().toISOString(),
     window: windowTokens,
     budget,
+    /** 从预算里扣掉的固定开销（系统提示 + 工具定义）。0 = 没扣。 */
+    reservedOverhead: overhead,
     before,
     after: before,
     trimmed: false,

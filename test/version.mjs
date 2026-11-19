@@ -19,6 +19,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const root = path.dirname(here)
+const { copyRuntimeFiles } = await import(pathToFileURL(path.join(root, 'src', 'runtime-files.mjs')).href)
 
 function assert(condition, message) {
   if (condition) return
@@ -26,14 +27,12 @@ function assert(condition, message) {
   throw new Error(message)
 }
 
-const COPY = ['index.js', 'client.js', 'package.json', 'cordis.patch.yml', 'src/pi-rpc.mjs', 'src/pi-runtime.mjs', 'src/session-store.mjs', 'src/rpc-contract.mjs', 'src/ui-prefs.mjs', 'extensions/superpi-rules.mjs', 'extensions/superpi-rules.ts', 'extensions/superpi-context-guard.mjs', 'extensions/superpi-context-guard.ts', 'extensions/superpi-modalities.mjs', 'extensions/superpi-modalities.ts']
-
+/**
+ * 复制插件到临时目录。清单由 `src/runtime-files.mjs` 按目录自动发现 ——
+ * 0.15.0 之前这里与 `test/selfcheck.mjs` 各硬编码一份，已经漂移（15 vs 16 项）。
+ */
 function copyPlugin(target) {
-  for (const rel of COPY) {
-    const to = path.join(target, rel)
-    fs.mkdirSync(path.dirname(to), { recursive: true })
-    fs.copyFileSync(path.join(root, rel), to)
-  }
+  copyRuntimeFiles(root, target)
 }
 
 function makeCtx(server) {
