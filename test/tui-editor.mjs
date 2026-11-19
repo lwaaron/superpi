@@ -241,6 +241,8 @@ const markToolStart = extensionModule.markToolStart
 const markToolEnd = extensionModule.markToolEnd
 const formatRunDuration = extensionModule.formatRunDuration
 const workingLabel = extensionModule.workingLabel
+const HEARTBEAT_AFTER_MS = extensionModule.HEARTBEAT_AFTER_MS
+const markToolOutput = extensionModule.markToolOutput
 
 // --- 上限提取：只认正有限数
 eq(toolLimitSeconds({ timeout: 960 }), 960, 'toolLimitSeconds 读出 timeout')
@@ -389,6 +391,57 @@ ok(FRAME_INTERVAL_MS <= 250, '帧间隔 <= 250ms（再慢看起来是卡顿）')
   eq(statusIcon('running', 500000), RUN_FRAMES[0], '刚开跑是第 0 帧（不随机跳格）')
   eq(statusIcon('running', 500000 + FRAME_INTERVAL_MS), RUN_FRAMES[1], '一个间隔后是第 1 帧')
   eq(statusIcon('running', 500000 + FRAME_INTERVAL_MS * 8), RUN_FRAMES[0], '八个间隔后回到第 0 帧')
+  resetRunState()
+}
+
+/* ------------------------ 0.15.0 进度心跳：静默时诚实反馈 */
+
+/**
+ * 用户要求「隔一段时间反馈一下进度，以免让用户觉得卡着了」。
+ *
+ * 关键在于**诚实**：不编造百分比，只陈述"已静默 N 秒，仍在运行"。
+ * 依据是 bash 每 100ms 就发一次 tool_execution_update（core/tools/bash.js:15），
+ * 所以"长时间没有 update"确实等价于"没有新输出"，而不是"没在干活"。
+ *
+ * 有输出时不显示这一段 —— 那时工具行本身就有实时内容，再叠一句是噪音。
+ */
+{
+  eq(HEARTBEAT_AFTER_MS >= 10000, true, '心跳阈值不小于 10 秒（太短会变噪音）')
+  eq(HEARTBEAT_AFTER_MS <= 60000, true, '心跳阈值不大于 60 秒（太长就盖不住焦虑期）')
+
+  const t = 1000000
+  resetRunState()
+  markRunStart(t)
+  markToolStart('bash', { timeout: 960 }, t)
+
+  // 刚启动：静默 0 秒，不该出现心跳
+  ok(!workingLabel(t, true).includes('已静默'), '刚启动时不显示静默心跳')
+
+  // 静默刚好低于阈值：仍不显示
+  ok(!workingLabel(t + HEARTBEAT_AFTER_MS - 1, true).includes('已静默'), '未达阈值不显示心跳')
+
+  // 达到阈值：必须显示，且明确"仍在运行"（不是沉默，也不是假进度）
+  const silent = workingLabel(t + HEARTBEAT_AFTER_MS, true)
+  ok(silent.includes('已静默'), '达到阈值后显示静默时长')
+  ok(silent.includes('仍在运行'), '必须明确告知仍在运行（这是消解焦虑的关键半句）')
+  ok(!/%/.test(silent), '不编造百分比（没有真实进度就不装作有）')
+
+  // 有输出 → 心跳消失（因为 lastOutputAt 被推进）
+  markToolOutput(t + HEARTBEAT_AFTER_MS)
+  ok(!workingLabel(t + HEARTBEAT_AFTER_MS, true).includes('已静默'), '有输出后心跳消失（不产生噪音）')
+  ok(workingLabel(t + HEARTBEAT_AFTER_MS, true).includes('bash'), '有输出时仍显示工具名')
+
+  // 再次长时间无输出 → 心跳重新出现（说明是"自上次输出起"计时，不是一次性）
+  ok(workingLabel(t + HEARTBEAT_AFTER_MS * 2, true).includes('已静默'), '再次静默超阈值时心跳重现')
+
+  // 工具结束后心跳必须消失（否则会在模型推理期显示上一轮工具的静默）
+  markToolEnd()
+  ok(!workingLabel(t + HEARTBEAT_AFTER_MS * 3, true).includes('已静默'), '工具结束后不再显示静默心跳')
+
+  // 窄档（去掉工具段）也不该出现心跳（心跳属于工具层的解释）
+  markToolStart('bash', { timeout: 960 }, t)
+  ok(!workingLabel(t + HEARTBEAT_AFTER_MS * 2, false).includes('已静默'), '窄档不含心跳段')
+
   resetRunState()
 }
 
@@ -676,10 +729,10 @@ const stripAnsi = text => text.replace(/\x1b\[[0-9;:?]*[A-Za-z]/g, '').replace(/
   defaultExport(fakePi)
   // 4 个状态事件（agent_start + tool_execution_start + tool_execution_end + agent_settled）
   // + session_start + session_switch + session_info_changed（标题重设）
-  eq(calls.length, 7, '入口注册七个事件（状态机 4 + 会话 3）')
+  eq(calls.length, 8, '入口注册八个事件（状态机 5 + 会话 3）')
   ok(calls.every(c => typeof c.handler === 'function'), '入口注册的都是函数')
   const events = calls.map(c => c.event)
-  for (const name of ['agent_start', 'tool_execution_start', 'tool_execution_end', 'agent_settled', 'session_start', 'session_switch', 'session_info_changed']) {
+  for (const name of ['agent_start', 'tool_execution_start', 'tool_execution_update', 'tool_execution_end', 'agent_settled', 'session_start', 'session_switch', 'session_info_changed']) {
     ok(events.includes(name), `入口订阅了 ${name}`)
   }
   /**
@@ -689,6 +742,7 @@ const stripAnsi = text => text.replace(/\x1b\[[0-9;:?]*[A-Za-z]/g, '').replace(/
    * 这条断言防止以后有人把它当成冗余事件删掉。
    */
   ok(events.includes('tool_execution_start'), '必须订阅 tool_execution_start（否则拿不到命令自带的上限）')
+  ok(events.includes('tool_execution_update'), '必须订阅 tool_execution_update（否则无法区分在跑与静默）')
   const startHandler = calls.find(c => c.event === 'tool_execution_start')?.handler
   ok(typeof startHandler === 'function', 'tool_execution_start 有处理器')
   const factories = []

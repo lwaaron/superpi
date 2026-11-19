@@ -122,10 +122,16 @@ export type RunPhase = 'idle' | 'running' | 'success' | 'error'
  * 用户无从判断「它在干活」还是「它卡死了」，实际体感就是"卡在 Working"。
  * 把工具名与它自设的上限摆出来，等待就从"疑似卡死"变成"可见的进度"。
  *
+ * `lastOutputAt`（0.15.0）：最近一次收到工具输出的时刻。
+ * bash 每 100ms 就会发 `tool_execution_update`（`bash.js:15` 的
+ * BASH_UPDATE_THROTTLE_MS），所以「有输出」说明真的在推进；
+ * 而长时间**没有新输出**才是用户觉得卡住的原因（例如跑一个只打印一次的测试）。
+ * 有了它就能区分这两种静默，见 `workingLabel` 的心跳段。
+ *
  * 与面板端（client.js 的 `view.activeTool`）逐字对齐 —— AGENTS.md §3 的
  * 100% 对齐在这里是结构性成立的：两端都从 `tool_execution_start.args.timeout` 取上限。
  */
-export type ActiveTool = { name: string; startedAt: number; limitSeconds: number } | null
+export type ActiveTool = { name: string; startedAt: number; limitSeconds: number; lastOutputAt: number } | null
 
 export const runState: { phase: RunPhase; failed: boolean; startedAt: number; tool: ActiveTool } = {
   phase: 'idle',
@@ -163,7 +169,22 @@ export function markToolStart(name: unknown, args: unknown, now = Date.now()): v
     name: typeof name === 'string' && name !== '' ? name : 'tool',
     startedAt: now,
     limitSeconds: toolLimitSeconds(args),
+    // 起始时刻即"最近一次活动"，否则第一帧就会误报"已静默 N 秒"。
+    lastOutputAt: now,
   }
+}
+
+/**
+ * 工具产出了新输出（0.15.0）。
+ *
+ * bash 每 100ms 就会发一次 `tool_execution_update`（`core/tools/bash.js:15`
+ * 的 `BASH_UPDATE_THROTTLE_MS`），所以收到它就说明命令确实在推进。
+ * 只更新 `lastOutputAt`，不改 phase、不重置 startedAt —— 计时是"这一轮跑了多久"，
+ * 不该被输出频率影响。
+ */
+export function markToolOutput(now = Date.now()): void {
+  if (runState.tool === null) return
+  runState.tool = { ...runState.tool, lastOutputAt: now }
 }
 
 export function markToolEnd(): void {
@@ -243,6 +264,14 @@ export function workingLabel(now = Date.now(), includeTool = true): string {
       text += elapsed > limitMs
         ? ' · 已超出上限 ' + formatRunDuration(limitMs)
         : ' · 上限 ' + formatRunDuration(limitMs)
+    }
+    // 心跳段（0.15.0）：静默超过阈值时明确说"还在跑、只是没输出"。
+    // 这是用户要的「隔一段时间反馈一下进度，以免让用户觉得卡着了」——
+    // 且必须是**诚实的**：不编造百分比，只陈述"已静默 N 秒 + 仍在运行"。
+    // 有输出时（bash 每 100ms 发一次 update）不显示这一段，免得噪音。
+    const silentMs = now - tool.lastOutputAt
+    if (silentMs >= HEARTBEAT_AFTER_MS) {
+      text += ' · 已静默 ' + formatRunDuration(silentMs) + '，仍在运行'
     }
   }
   return text
@@ -958,6 +987,19 @@ export const RUN_FRAMES = ['🌑', '🌒', '🌓', '🌔', '🌕', '🌖', '🌗
  * 而且每个 tick 都触发一次全屏 diff，纯属浪费 CPU。
  */
 export const FRAME_INTERVAL_MS = 120
+
+/**
+ * 工具静默多久之后开始心跳（毫秒）。
+ *
+ * 取 20 秒：短命令（ls/grep）本来就该秒回，20 秒足够区分"正常慢"与"值得解释"；
+ * 又远小于任何一次合法长等待（实测 p90 就 11 秒、长任务 300~500 秒），
+ * 所以真正让人焦虑的那段时间一定被覆盖。
+ *
+ * 为什么是"静默"而不是"总时长"：bash 每 100ms 就发 tool_execution_update
+ * （`core/tools/bash.js:15`），有输出时用户能在工具行里看到实时内容 ——
+ * 那时再叠一句"仍在运行"纯属噪音。只有**长时间没有任何新输出**才是"看起来卡住"的来源。
+ */
+export const HEARTBEAT_AFTER_MS = 20_000
 
 /**
  * 取当前帧。
@@ -2588,6 +2630,20 @@ export default function superpiEditor(pi: any): void {
    */
   pi.on('tool_execution_start', (event: any) => {
     markToolStart(event?.toolName ?? event?.name, event?.args ?? event?.arguments)
+  })
+  /**
+   * 工具产出新输出（0.15.0）。
+   *
+   * bash 每 100ms 就发一次这个事件（`core/tools/bash.js:15` BASH_UPDATE_THROTTLE_MS），
+   * 收到它就说明命令确实在推进 —— 于是 `workingLabel` 不会打「已静默 N 秒」。
+   * 反过来，一条只打印一次的测试跑 400 秒，这期间没有新输出，
+   * Working 行就会明确写「已静默 3m 20s，仍在运行」，而不是干等一个不动的秒数。
+   *
+   * 注意：这里**不做渲染节流** —— 状态更新是纯内存操作（一个数字），
+   * 真正的重绘节流由 pi 的 16ms 和我们的 120ms 动画定时器共同保证。
+   */
+  pi.on('tool_execution_update', () => {
+    markToolOutput()
   })
   pi.on('tool_execution_end', (event: any) => {
     if (event?.isError) markToolError()

@@ -68,6 +68,12 @@ const {
   resolveGuardLogPath,
   renderHygieneBlock,
   resolveGuardPath,
+  METER_SECTION_NAME,
+  METER_DETAIL_RATIO,
+  breakdownMessages,
+  goalFromMessages,
+  renderMeterBlock,
+  applyMeterToOptions,
 } = mod
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'superpi-guard-'))
@@ -490,6 +496,76 @@ eq(applyHygieneToOptions(hygieneOptions, { enabled: true }), {}, '注入成功�
 eq(typeof hygieneOptions.sections[HYGIENE_SECTION_NAME], 'string', '写进独立 section（不与用户规则抢 key）')
 eq(applyHygieneToOptions(hygieneOptions, { enabled: true }), null, '同一内容不重复写（幂等）')
 eq(applyHygieneToOptions({ sections: {} }, { enabled: true, hygiene: false }), null, '停用时不动提示')
+
+
+/* -------------------- C6. 上下文仪表：每轮带上目标 + 占用 + 拆解（0.15.0） */
+
+section('C6. 上下文仪表：让模型每轮都知道自己有多满')
+
+/**
+ * 用户要求「每次对话都带上当前任务目标和系统上下文占用比例，以及每一种上下文的占比」。
+ *
+ * 为什么必须进系统提示：模型看不见自己的上下文规模，只能在"感觉快满了"时才想起整理 ——
+ * 而那时往往已经撞墙（本会话实测到过 77.6%，距 1M 硬墙只剩 22%）。
+ *
+ * 三条设计约束，每条都有对应的断言：
+ *  ① 低于 50% 只给一行（不浪费 token，但"每轮都带上"必须成立）；
+ *  ② ≥50% 给拆解，且必须指出"最贵的是哪一类"（否则等于让模型自己算）；
+ *  ③ 不编造进度／百分比（没有真实数据就不装）。
+ */
+{
+  eq(typeof METER_SECTION_NAME, 'string', '仪表有独立 section 名')
+  ok(METER_SECTION_NAME !== HYGIENE_SECTION_NAME, '仪表与卫生准则分开（一个是状态事实，一个是行为约束）')
+  eq(METER_DETAIL_RATIO, 0.5, '50% 以上才给详细拆解')
+
+  // 构造一组有明确构成的消息
+  const meterMessages = [
+    { role: 'user', content: [{ type: 'text', text: '目标：把登录页改好' }] },
+    { role: 'assistant', content: [{ type: 'thinking', thinking: 'z'.repeat(300) }, { type: 'toolCall', id: 'a', name: 'write', arguments: { path: 'x', content: 'y'.repeat(900) } }] },
+    { role: 'toolResult', toolCallId: 'a', toolName: 'bash', content: [{ type: 'text', text: 'w'.repeat(3000) }] },
+    { role: 'toolResult', toolCallId: 'b', toolName: 'read', content: [{ type: 'image', data: 'A'.repeat(1000), mimeType: 'image/png' }] },
+  ]
+  const bd = breakdownMessages(meterMessages, settings)
+  ok(bd.toolResult > 0, '拆解统计到工具输出')
+  ok(bd.thinking > 0, '拆解统计到思考')
+  ok(bd.toolCallArgs > 0, '拆解统计到工具参数')
+  ok(bd.images > 0, '拆解统计到图片（按 imageTokens 而非字符数）')
+  eq(bd.total, bd.text + bd.thinking + bd.toolResult + bd.toolCallArgs + bd.images, 'total = 五类之和')
+
+  // 目标提取：取最近一条 user 的首行
+  eq(goalFromMessages(meterMessages), '目标：把登录页改好', '目标取自最近一条 user 的首行')
+  eq(goalFromMessages([]), '', '没有 user 时目标为空（不编造）')
+  ok(goalFromMessages([{ role: 'user', content: [{ type: 'text', text: 'x'.repeat(300) }] }]).length <= 121, '超长目标被截断')
+
+  // ① 低占比：只一行
+  const lowMeter = renderMeterBlock({ settings, windowTokens: 1000000, messages: meterMessages })
+  ok(lowMeter.includes('当前目标'), '低占比也带目标（用户明确要求每轮都有）')
+  ok(lowMeter.includes('上下文占用'), '低占比也带占用百分比')
+  ok(!lowMeter.includes('占用构成'), '低占比不给拆解（不浪费 token）')
+
+  // ② 高占比：给拆解 + 最贵的一类
+  const tightMessages = [{ role: 'user', content: [{ type: 'text', text: '目标：继续' }] }]
+  for (let i = 0; i < 60; i += 1) tightMessages.push({ role: 'toolResult', toolCallId: 'c' + String(i), toolName: 'bash', content: [{ type: 'text', text: 'o'.repeat(40000) }] })
+  const highMeter = renderMeterBlock({ settings, windowTokens: 1000000, messages: tightMessages })
+  ok(highMeter.includes('占用构成'), '高占比给按类拆解')
+  ok(highMeter.includes('最贵的是'), '指出最贵的一类（不让模型自己算）')
+  ok(highMeter.includes('工具输出'), '拆解里有工具输出这一项')
+  ok(highMeter.includes('固定开销'), '点明固定开销不可裁剪（否则模型会以为能砍掉）')
+
+  // ③ 窗口未知 → 不注入（宁可没有，也不给假百分比）
+  eq(renderMeterBlock({ settings, windowTokens: 0, messages: meterMessages }), '', '窗口未知时不注入（不编造）')
+  // 停用 → 不注入
+  eq(renderMeterBlock({ settings: { ...settings, enabled: false }, windowTokens: 1000000, messages: meterMessages }), '', '停用时仪表也不注入')
+
+  // 幂等 + 可清除
+  const meterOptions = { sections: {} }
+  eq(applyMeterToOptions(meterOptions, { settings, windowTokens: 1000000, messages: meterMessages }), {}, '注入成功返回空对象')
+  ok(typeof meterOptions.sections[METER_SECTION_NAME] === 'string', '写进独立 section')
+  eq(applyMeterToOptions(meterOptions, { settings, windowTokens: 1000000, messages: meterMessages }), null, '同一内容不重复写（幂等）')
+  // 条件不满足时清掉过期段
+  eq(applyMeterToOptions(meterOptions, { settings, windowTokens: 0 }), {}, '窗口未知时清掉过期仪表')
+  eq(meterOptions.sections[METER_SECTION_NAME], undefined, '过期段真的被删掉了')
+}
 
 /* ═════════════════════════════════════════════════════ D. 日志 */
 

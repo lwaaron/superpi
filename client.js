@@ -48,6 +48,7 @@ window.__ModuleLoader__.load({
       retry: '重试',
       viewImage: '查看图片',
       toolLimit: '上限 {limit}',
+      toolSilent: '已静默 {silent}，仍在运行',
       toolOverLimit: '已超出上限 {limit}',
       imageFailed: '这张图取不回来了（可能已超出缓存，滚动或重新打开会话再试）',
       loadEarlier: '加载更早的消息',
@@ -315,6 +316,7 @@ window.__ModuleLoader__.load({
       retry: 'Retry',
       viewImage: 'view image',
       toolLimit: 'limit {limit}',
+      toolSilent: 'silent {silent}, still running',
       toolOverLimit: 'over limit {limit}',
       imageFailed: 'Could not load this image (cache may have evicted it; reopen the session and retry)',
       loadEarlier: 'Load earlier messages',
@@ -1980,10 +1982,16 @@ window.__ModuleLoader__.load({
           limitSeconds: limitSeconds,
         }
         // 当前活跃工具：Working 行只显示"最近启动且还没结束"的那一个。
-        view.activeTool = { id: String(record.toolCallId), name: String(record.toolName === undefined ? '' : record.toolName), startedAt: Date.now(), limitSeconds: limitSeconds }
+        view.activeTool = { id: String(record.toolCallId), name: String(record.toolName === undefined ? '' : record.toolName), startedAt: Date.now(), limitSeconds: limitSeconds, lastOutputAt: Date.now() }
         return
       }
-      if (type === 'tool_execution_update') { applyToolUpdate(view, record); return }
+      if (type === 'tool_execution_update') {
+        applyToolUpdate(view, record)
+        // 0.15.0：bash 每 100ms 发一次本事件，收到就说明命令在推进。
+        // Working 行据此区分"在跑"与"静默"，见 client 的 WorkingRow。
+        if (view.activeTool !== null && view.activeTool !== undefined) view.activeTool.lastOutputAt = Date.now()
+        return
+      }
       if (type === 'tool_execution_end') {
         var id = String(record.toolCallId)
         view.toolStatus[id] = {
@@ -2665,6 +2673,12 @@ window.__ModuleLoader__.load({
      * 上限已过而仍未返回时显式说明「超出上限、可能仍在下游执行」—— 不静默继续加秒数，
      * 因为那正是用户以为卡死的时刻。
      */
+    /**
+     * 工具静默多久后开始心跳（毫秒）。与 `extensions/superpi-editor.ts` 的
+     * HEARTBEAT_AFTER_MS **必须同值** —— 两端同一句文案，节奏不同会让人觉得是两个系统。
+     */
+    var HEARTBEAT_AFTER_MS = 20000
+
     function WorkingRow(props) {
       var state = useState(0)
       var setTick = state[1]
@@ -2689,6 +2703,14 @@ window.__ModuleLoader__.load({
         if (limitSeconds > 0) {
           if (elapsedMs > 0 && elapsedMs > limitSeconds * 1000) parts.push(props.t('toolOverLimit').replace('{limit}', fmtDuration(limitSeconds * 1000, props.t)))
           else parts.push(props.t('toolLimit').replace('{limit}', fmtDuration(limitSeconds * 1000, props.t)))
+        }
+        // 0.15.0 静默心跳：与命令行窗口同口径（HEARTBEAT_AFTER_MS = 20s）。
+        // 有输出时不显示（bash 每 100ms 发 update，那时工具行本身就有实时内容）；
+        // 长时间无输出时明确说"已静默 N，仍在运行" —— 诚实地消解焦虑，不编造进度。
+        var lastOutputAt = typeof tool.lastOutputAt === 'number' && tool.lastOutputAt > 0 ? tool.lastOutputAt : toolSince
+        var silentMs = lastOutputAt > 0 ? Date.now() - lastOutputAt : 0
+        if (silentMs >= HEARTBEAT_AFTER_MS) {
+          parts.push(props.t('toolSilent').replace('{silent}', fmtDuration(silentMs, props.t)))
         }
         toolText = parts.join(' · ')
       }

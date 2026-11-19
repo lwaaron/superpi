@@ -36,6 +36,9 @@ import {
   readGuardSettingsSync,
   resolveGuardPath,
   protectedFromIndex,
+  applyMeterToOptions,
+  breakdownMessages,
+  goalFromMessages,
 } from './superpi-context-guard.mjs'
 import {
   allowedModalities,
@@ -80,6 +83,21 @@ export default function contextGuard(pi) {
   const modalityCache = { path: '', mtimeMs: 0, size: 0, state: null }
   let lastLoggedAt = 0
   let lastStats = null
+  /**
+   * 上一轮请求的「仪表素材」（0.15.0）。
+   *
+   * 由 `context` 事件写入、`before_agent_start` 读取 —— 因为前者有 messages、
+   * 后者有 systemPromptOptions，两者都不具备对方的输入（见 types.d.ts:738-760）。
+   * 初值 null 表示"还没有过一次请求"，此时 `before_agent_start` 不注入仪表
+   * （宁缺勿造：窗口未知时算出来的百分比会是假的）。
+   */
+  let lastMeterSnapshot: null | {
+    settings: ReturnType<typeof normalizeGuardSettings>
+    windowTokens: number
+    breakdown: { text: number; thinking: number; toolResult: number; toolCallArgs: number; images: number; total: number }
+    reservedOverhead: number
+    goal: string
+  } = null
 
   pi.on('context', (event, ctx) => {
     try {
@@ -103,6 +121,27 @@ export default function contextGuard(pi) {
         const planned = planContextWindow(filtered, { windowTokens, settings })
         next = planned.messages
         lastStats = planned.stats
+        /**
+         * 记下本轮的仪表素材（0.15.0）。
+         *
+         * 为什么不直接在 `before_agent_start` 里算：那个事件的类型定义
+         * （`core/extensions/types.d.ts:738-760`）**只有 `systemPrompt` /
+         * `systemPromptOptions` / `prompt` / `message`，没有 messages** ——
+         * 拿不到历史就没法统计占用。而 `context` 事件是唯一能看到完整 messages 的地方，
+         * 所以在这里算好存起来，下一轮 `before_agent_start` 直接取用。
+         *
+         * 时序上是自洽的：`context` 每次 LLM 调用前触发，`before_agent_start`
+         * 只在一轮开始时触发一次 —— 所以仪表反映的是"上一次请求的真实规模"，
+         * 而这正是模型需要的（它要知道自己现在有多满）。
+         */
+        lastMeterSnapshot = {
+          settings,
+          windowTokens,
+          // 记裁剪**前**的规模：模型该知道"如果不守会是多少"，而不是被守卫美化后的数字。
+          breakdown: breakdownMessages(filtered, settings),
+          reservedOverhead: planned.stats.reservedOverhead,
+          goal: goalFromMessages(filtered),
+        }
         if (planned.stats.trimmed === true) {
           const now = Date.now()
           if (now - lastLoggedAt >= LOG_THROTTLE_MS) {
@@ -137,8 +176,38 @@ export default function contextGuard(pi) {
   pi.on('before_agent_start', (event, _ctx) => {
     try {
       const settings = readGuardSettingsSync({ cache })
-      const applied = applyHygieneToOptions(event?.systemPromptOptions, settings)
-      return applied === null ? undefined : applied
+      // ① 行为准则（该怎么做）
+      const hygiene = applyHygieneToOptions(event?.systemPromptOptions, settings)
+      /**
+       * ② 状态事实（现在什么情况）：目标 + 上下文占用；≥50% 时给按类拆解。
+       *
+       * 为什么必须进系统提示：模型看不见自己的上下文规模，只能在"感觉快满了"时
+       * 才想起整理 —— 而那时往往已经撞墙（本会话实测到过 77.6%，距 1M 硬墙仅 22%）。
+       * 把仪表每轮摆在它面前，它才能在还来得及的时候自己决定"少制造大块内容 / 先收尾"。
+       *
+       * 数据来源：`context` 事件写下的 `lastMeterSnapshot`（那个事件才有 messages）。
+       * 没有快照就不注入 —— 不编造一个假的百分比。
+       */
+      const snapshot = lastMeterSnapshot
+      // 停用（enabled=false）时两段都不注入：用户的开关必须是彻底的，
+      // 不能"准则注不进但仪表还在" —— 那会让「关掉守卫」变成一个半真的状态。
+      if (settings.enabled !== true) {
+        // 顺手清掉先前可能注入过的仪表段（用户是中途关的）。
+        const stale = applyMeterToOptions(event?.systemPromptOptions, { settings, windowTokens: 0 })
+        if (hygiene === null && stale === null) return undefined
+        return {}
+      }
+      const meter = snapshot === null
+        ? null
+        : applyMeterToOptions(event?.systemPromptOptions, {
+          settings: snapshot.settings,
+          windowTokens: snapshot.windowTokens,
+          breakdown: snapshot.breakdown,
+          reservedOverhead: snapshot.reservedOverhead,
+          goal: snapshot.goal,
+        })
+      if (hygiene === null && meter === null) return undefined
+      return {}
     } catch {
       return undefined
     }

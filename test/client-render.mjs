@@ -1235,6 +1235,36 @@ assert(panelHtml.includes(zh('loading')), 'PiPanel 首帧应是 loading 文案')
   assert(noTool.includes('superpi-working-text'), '纯推理时仍显示原有的用时文案')
 }
 
+// 11b2. 静默心跳：与命令行窗口同口径（0.15.0）。
+{
+  const fresh = renderToStaticMarkup(React.createElement(internals.WorkingRow, {
+    t: zh,
+    since: Date.now() - 5000,
+    tool: { name: 'bash', startedAt: Date.now() - 5000, limitSeconds: 960, lastOutputAt: Date.now() },
+  }))
+  assert(!fresh.includes(zh('toolSilent').replace('{silent}', '')), '刚有输出时不显示静默心跳')
+  assert(fresh.includes('bash'), '仍显示工具名')
+
+  const silent = renderToStaticMarkup(React.createElement(internals.WorkingRow, {
+    t: zh,
+    since: Date.now() - 300000,
+    tool: { name: 'bash', startedAt: Date.now() - 220000, limitSeconds: 960, lastOutputAt: Date.now() - 210000 },
+  }))
+  assert(silent.includes('仍在运行'), '静默超阈值时必须说「仍在运行」（消解焦虑的关键半句）')
+  assert(silent.includes('已静默'), '显示已静默时长')
+  // 只检查**心跳段**里不含百分比：整行里可能有别的合法文本，越界断言会误报。
+  const silentMatch = silent.match(/已静默[^<]*/)
+  assert(silentMatch !== null && !/%/.test(silentMatch[0]), '心跳段不编造百分比（没有真实进度就不装作有）')
+
+  // 工具结束后不残留心跳
+  const noTool = renderToStaticMarkup(React.createElement(internals.WorkingRow, {
+    t: zh,
+    since: Date.now() - 300000,
+    tool: null,
+  }))
+  assert(!noTool.includes('已静默'), '工具结束后不显示心跳')
+}
+
 // 11c. messagesFromHistory 必须保留 host 给的 seq（翻页去重与 React key 依赖它）。
 {
   const list = [

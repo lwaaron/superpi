@@ -176,6 +176,153 @@ export function applyHygieneToOptions(systemPromptOptions, settings = DEFAULT_GU
   return {}
 }
 
+/* --------------------------------------------------------- 上下文仪表（0.15.0） */
+
+/** 仪表注入的 section 名（与卫生准则分开：一个是行为约束，一个是状态事实）。 */
+export const METER_SECTION_NAME = 'superpi_context_meter'
+
+/**
+ * 占用达到这个比例才给「详细拆解」；低于它只给一行紧凑格式。
+ *
+ * 取 50%：用户明确要求「每次对话都带上当前任务目标和系统上下文占用比例」，
+ * 但每轮都塞一段十几行的拆解是纯浪费 —— 50% 以下还远没到需要模型自我整理的程度，
+ * 一行足矣；过了 50% 才是真该做决策的时候（这份拆解就是决策依据）。
+ */
+export const METER_DETAIL_RATIO = 0.5
+
+/** 字符 → token（与 estimateMessageTokens 同一口径，避免两处数字打架）。 */
+function estimateTokensFromChars(chars, settings) {
+  const per = settings.charsPerToken > 0 ? settings.charsPerToken : DEFAULT_CHARS_PER_TOKEN
+  return Math.ceil(chars / per)
+}
+
+/**
+ * 按类别拆解一组消息的 token 占用。
+ *
+ * 五类划分对应守卫的五个可裁剪阶段，所以它同时回答两个问题：
+ * 「现在被谁占着」与「真需要时能砍掉谁」。只报总数不报构成，
+ * 模型就只能说"要整理了"，说不出"该整理什么"。
+ */
+export function breakdownMessages(messages, settings = DEFAULT_GUARD_SETTINGS) {
+  const normalized = normalizeGuardSettings(settings)
+  const list = Array.isArray(messages) ? messages : []
+  const out = { text: 0, thinking: 0, toolResult: 0, toolCallArgs: 0, images: 0, total: 0 }
+  for (const message of list) {
+    const content = message?.content
+    if (typeof content === 'string') {
+      out.text += estimateTokensFromChars(content.length, normalized)
+      continue
+    }
+    if (!Array.isArray(content)) continue
+    for (const block of content) {
+      if (block === null || typeof block !== 'object') continue
+      if (block.type === 'image') { out.images += normalized.imageTokens; continue }
+      if (block.type === 'thinking') { out.thinking += estimateTokensFromChars(String(block.thinking ?? '').length, normalized); continue }
+      if (block.type === 'text') {
+        const chars = String(block.text ?? '').length
+        if (message?.role === 'toolResult') out.toolResult += estimateTokensFromChars(chars, normalized)
+        else out.text += estimateTokensFromChars(chars, normalized)
+        continue
+      }
+      if (block.type === 'toolCall') {
+        let size = 0
+        try { size = JSON.stringify(block.arguments ?? {}).length } catch { size = 0 }
+        out.toolCallArgs += estimateTokensFromChars(size, normalized)
+      }
+    }
+  }
+  out.total = out.text + out.thinking + out.toolResult + out.toolCallArgs + out.images
+  return out
+}
+
+/** 从最近一条 user 里取任务目标（首行，截断）。 */
+export function goalFromMessages(messages, maxChars = 120) {
+  const list = Array.isArray(messages) ? messages : []
+  for (let i = list.length - 1; i >= 0; i -= 1) {
+    if (list[i]?.role !== 'user') continue
+    const text = firstTextLine(list[i]).trim()
+    if (text === '') continue
+    return text.length > maxChars ? text.slice(0, maxChars) + '…' : text
+  }
+  return ''
+}
+
+/** token 数简写：1234 → 1.2k，1234567 → 1.2M。 */
+function shortCount(value) {
+  const n = Number.isFinite(value) ? Math.max(0, value) : 0
+  if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M'
+  if (n >= 1000) return (n / 1000).toFixed(1) + 'k'
+  return String(Math.round(n))
+}
+
+/**
+ * 渲染仪表块。
+ *
+ * 两条硬约束：
+ *  ① **只陈述事实**，不给"必须整理"之类的指令 —— 模型据此自己决定要不要整理；
+ *  ② 拆解只在 ≥50% 时给，且**必须**同时给「哪一类最贵」，否则等于让模型自己算。
+ */
+export function renderMeterBlock(options = {}) {
+  const settings = normalizeGuardSettings(options.settings ?? DEFAULT_GUARD_SETTINGS)
+  if (settings.enabled !== true || settings.meter === false) return ''
+  const windowTokens = Number.isFinite(options.windowTokens) && options.windowTokens > 0 ? Math.round(options.windowTokens) : 0
+  if (windowTokens === 0) return ''
+  const breakdown = options.breakdown ?? breakdownMessages(options.messages, settings)
+  const overhead = Number.isFinite(options.reservedOverhead) ? options.reservedOverhead : settings.reservedOverheadTokens
+  // 真实占用 = 消息 + 不可裁剪的固定开销（与 planContextWindow 的口径一致）。
+  const used = Math.max(0, breakdown.total) + Math.max(0, overhead)
+  const ratio = used / windowTokens
+  const pct = Math.round(ratio * 1000) / 10
+  // 目标优先取调用方显式给的（`context` 事件里算好存快照），
+  // 其次才从 messages 现推 —— 因为 `before_agent_start` 阶段拿不到 messages。
+  const goal = typeof options.goal === 'string' ? options.goal : goalFromMessages(options.messages)
+
+  const lines = []
+  if (goal !== '') lines.push('- 当前目标：' + goal)
+  // 紧凑头：无论占比多少都给（这就是用户要的「每轮都带上」）。
+  lines.push('- 上下文占用 **' + String(pct) + '%**（' + shortCount(used) + ' / ' + shortCount(windowTokens) + ' tokens）')
+
+  if (ratio >= METER_DETAIL_RATIO) {
+    const parts = [
+      ['工具输出', breakdown.toolResult],
+      ['对话文本', breakdown.text],
+      ['图片', breakdown.images],
+      ['工具参数', breakdown.toolCallArgs],
+      ['思考', breakdown.thinking],
+    ].filter(item => item[1] > 0).sort((a, b) => b[1] - a[1])
+    const base = Math.max(1, breakdown.total)
+    lines.push('- 占用构成：' + parts.map(item => item[0] + ' ' + String(Math.round(item[1] / base * 100)) + '%').join(' · '))
+    lines.push('- 固定开销（系统提示 + 工具定义）：' + shortCount(overhead) + ' tokens（不可裁剪）')
+    if (parts.length > 0) {
+      lines.push('- 最贵的是**' + parts[0][0] + '**；需要腾空间时优先处理它（守卫会自动折叠旧内容，但你可以少制造新的）')
+    }
+    if (ratio >= 0.85) {
+      lines.push('- **已接近硬上限**（窗口的 85% 以上）。若要继续做长任务，建议先收尾当前子目标，或提示用户开新会话。')
+    }
+  }
+  return lines.join('\n')
+}
+
+/** 把仪表块合并进系统提示（就地改 sections，避免 pi 整份重放提示）。 */
+export function applyMeterToOptions(systemPromptOptions, options = {}) {
+  if (systemPromptOptions === null || typeof systemPromptOptions !== 'object') return null
+  const block = renderMeterBlock(options)
+  const sections = systemPromptOptions.sections !== null && typeof systemPromptOptions.sections === 'object'
+    ? systemPromptOptions.sections
+    : {}
+  if (block === '') {
+    // 先前注入过、现在条件不满足了（比如窗口未知）→ 清掉，别留过期数据。
+    if (sections[METER_SECTION_NAME] === undefined) return null
+    delete sections[METER_SECTION_NAME]
+    systemPromptOptions.sections = sections
+    return {}
+  }
+  if (sections[METER_SECTION_NAME] === block) return null
+  sections[METER_SECTION_NAME] = block
+  systemPromptOptions.sections = sections
+  return {}
+}
+
 export function thinkingPlaceholder() {
   return '[thinking omitted]'
 }
