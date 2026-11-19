@@ -1,6 +1,6 @@
 {
   "name": "superpi",
-  "version": "0.14.4",
+  "version": "0.14.5",
   "type": "module",
   "description": "SuperPi：把 pi 编码代理接进 DSH 侧栏——整页聊天面板 + 过程流，底层是常驻的 pi --mode rpc 子进程。pi runtime is resolved from the plugin itself (.runtime), so the panel works on any machine without a hand-written path.",
   "icon": "./assets/icon.svg",
@@ -53,7 +53,8 @@
     "pi:brand:revert": "node tools/brand-pi-runtime.mjs --revert --all-profiles",
     "test:guard": "node test/context-guard.mjs",
     "test:modalities": "node test/modalities.mjs",
-    "check:carriers": "node tools/check-carriers.mjs"
+    "check:carriers": "node tools/check-carriers.mjs",
+    "check:carriers:fix": "node tools/check-carriers.mjs --fix"
   },
   "engines": {
     "node": ">=22.5"

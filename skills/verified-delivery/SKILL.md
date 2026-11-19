@@ -241,6 +241,24 @@ Run `node tools/check-carriers.mjs` at the start of a session and inside CI. It
 verifies each carrier exists, matches its source, and is actually **loaded by the
 runtime** — presence on disk is not the same as being loaded.
 
+**When a carrier disappears and the cause will not reproduce, automate recovery and stop investigating.**
+
+Observed: two user-level skills vanished 4 times in one day, always near a commit or
+sync. Five hypotheses were tested and excluded with evidence — the loader does not
+delete, sync only removes `.git` locks, the post-commit hook only pushes in the
+background, 60s of idle does not trigger it, and 100s of `fs.watch` across a commit
+caught zero events. It does not reproduce on demand.
+
+The lesson is not "find it eventually". Twenty rounds of forensics bought nothing while
+the work sat degraded (skills not loaded), and every round spent looking is a round the
+delivered thing stood still. The correct shape:
+
+- keep the alarm **honest** — the gate stays red when a carrier is missing, because a
+  gate that silently repairs itself is a green light wired to nothing;
+- make recovery **one command** (`npm run check:carriers:fix`), idempotent, sourced from
+  the repo (the single truth), never from a hand-made copy;
+- record which hypotheses were excluded, so the next session does not re-run them.
+
 **Edit the source, never the installed copy.** Installers overwrite the installed
 copy from the repo source. Edits made directly to `~/.agents/skills/**` are lost
 on the next `--install` without a warning. In one session the same file was lost
