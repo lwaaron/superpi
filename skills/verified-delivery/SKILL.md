@@ -1,6 +1,6 @@
 ---
 name: verified-delivery
-description: Use when about to claim any task is done, fixed, passing or complete — before running npm test, before committing, and when a gate is green but you have not seen it fail. Covers the pre-claim gate (identify the exact command that would prove the claim and run it), test-first with a watched red, and measuring whether the suite actually has teeth (mutation kill rate, vacuity audit) instead of trusting a green run.
+description: Use when about to claim any task is done, fixed, passing or complete; when about to end a turn or ask whether to continue; when a command times out, a process is busy, a tool crashed or a step failed and you are tempted to report it as blocked; before running npm test; before committing; when a gate is green but you have not seen it fail; when you just wrote or adopted a checker, tool, script or assertion and are about to trust its output; before deleting, replacing or archiving anything; and before condensing a long-lived rules/prompt/checklist file. Covers the pre-claim gate, test-first with a watched red, whether a suite has teeth (mutation kill rate, teeth tool, vacuity audit), verify-the-verifier (fixture with a known answer, then confirm it can fail), prove-before-delete (unused + duties transferred + full gate green + cross-project carriers), never-stall (retry silently with a bounded budget and a changed variable; only credentials, exclusive goals or irreversible wide impact justify asking), lossless condensing (anchor check, and which losses are correct), and the stop condition (goal objectively true, with a delivery ledger where unverified counts as red).
 ---
 
 # Verified Delivery
@@ -98,55 +98,154 @@ Two failure modes this catches, both invisible afterwards:
 
 ## Vacuity audit — a green suite may be vacuous
 
-A test can pass without testing anything: assertion inside a callback that
-never runs, a selector that matches nothing, `assert(true)`, an expectation
-computed from the same value it checks, a condition guarded by `if (x ===
-undefined) return` hitting that early exit forever, a regex that no longer
-matches the source it scans (`includes()` on a renamed string quietly returns
-`false` and `assert(!x)` still passes).
+A test can pass without testing anything: an assertion inside a callback that
+never runs, a selector that matches nothing, `assert(true)`, a condition guarded
+by an `if` that always takes the early exit, a regex that no longer matches the
+source it scans (`includes()` on a renamed string quietly returns `false`, and
+`assert(!x)` still passes).
 
-**Cheapest way to audit: mutate what the test claims to guard, and watch it
-fail.**
+**Cheapest way to audit: mutate the code and watch the suite stay green.**
 
-3. Pick the guard you believe in ("`renderBlock` must start with the override
-   line", "empty input must render nothing").
-4. Change the production code to violate it — delete that line, flip the
+Do this by hand for one guard you care about:
+
+1. Pick the guard you believe in ("`renderBlock` must start with the override line").
+2. Change the production code to violate it — delete that line, flip the
    comparison, widen the limit by one.
-5. Run the test. **Green means the guard is decorative.**
-6. Restore the code, verify the restored file is byte-identical (`git diff`
-   must be empty before you move on).
+3. Run the test. **Green means the guard is decorative.**
+4. Restore the code, verify the restored file is byte-identical (`git diff` must
+   be empty before you move on).
 
-### Metric: mutation kill rate
+### Do the whole suite at once: `teeth`
 
-```
-kill rate = killed mutants / valid mutants
-```
+Manual mutation does not scale past one or two guards, so it gets skipped —
+which is how suites end up decorative. There is a tool for this that works on
+**any repo, any language**, because it needs only one thing: the command that
+runs the tests.
 
-- **valid mutant** = the source actually changed (assert the replacement
-  happened; a silent no-op makes the measurement a lie)
-- **killed** = the suite went red
-- **survived** = the suite stayed green → that behavior is unguarded
-
-Reference measurement on this repo's `test/rules.mjs` (2026-11-18, 12 mutants
-across the model layer / pi extension / HTTP layer):
-
-```
-valid mutants      = 10 / 12 attempted   (2 patterns did not match — reported, not skipped)
-killed             = 9
-survived           = 1
-kill rate          = 90.0 %
+```bash
+T=~/.agents/toolkit/bin/teeth.mjs
+node $T --cmd "npm test"                      # JS / Node
+node $T --cmd "pytest -q"     --ext .py       # Python
+node $T --cmd "go test ./..." --ext .go       # Go
+node $T --cmd "cargo test"    --ext .rs       # Rust
+node $T --list --ext .js --max 30             # dry run: list mutation sites
 ```
 
-The survivor was **real**: `store.write()` rejected the over-long input so
-`test/rules.mjs` never reached the command handler's own length pre-check.
-The notice-only assertion (`some(item => item.level === 'error')`) was
-satisfied by the *other* guard. Fixing it means asserting the specific
-message and length, not "some error happened". Report the survivor exactly
-like this: what was believed covered, what actually covered it, what the
-test must assert instead.
+It flips comparisons (`<` ↔ `<=`), booleans and numeric literals in your
+**source** (not in strings, not in comments), runs the suite after each single
+change, restores byte-for-byte, and reports:
 
-Do not report a kill rate you did not compute. If you did not mutate
-anything, say "no mutation run" — never estimate it.
+```
+有效变异体 5 · 被杀 2 · 存活 3
+杀伤率 = 40.0%
+```
+
+Every survivor is printed as `file:line` with its source line. **A survivor is
+proof that no test constrains that line** — that is the finding, not the percentage.
+
+Verify the tool tells the truth on a fixture before trusting it on your repo:
+two functions, one tested and one not → kill rate should equal exactly the tested
+fraction. If a fully-tested module does not come back at 100%, the tool is
+misreading your project (wrong `--include`, wrong `--ext`, or a suite command that
+exits 0 even when assertions fail).
+
+## Verify the verifier
+
+The vacuity audit says: a green gate proves nothing until you have seen it fail.
+This section is one level up: **the thing you used to prove that also needs proving.**
+
+The loop it breaks: you write a checker, the checker says PASS, you trust it. If
+the checker is wrong it reports PASS anyway, and nothing warns you.
+
+### The three ways my own checkers lied (one session, all real)
+
+| Checker | What it reported | Reality |
+| --- | --- | --- |
+| mutation runtime | "kill rate 100%, PASS" | 2 of 6 mutants had stale patterns and were silently skipped — the denominator shrank 6→4 |
+| `teeth.mjs` (written that day) | ran fine, printed a number | on Windows `path.join` emits backslashes, so `--include "src/"` matched nothing; the tool silently degraded to scanning the whole repo |
+| `check-memory.mjs` (written that day) | "FAIL: index lists name.md but the file is missing" | it had parsed the *example* line inside the docs as a real entry — the checker itself misfired |
+
+All three produced a signal that did not match reality and **would not have
+raised any alarm on its own**.
+
+### Fixture-first, three steps
+
+Before pointing a checker at real data:
+
+1. **Build an input whose answer you already know.**
+   Two functions, one tested and one not → kill rate must equal exactly the
+   tested fraction. One bad entry in an index → report *that* entry and nothing else.
+2. **Confirm it returns the known answer.** Not "it ran" — the number matches.
+   40% must read 40%. A duck must read duck.
+   If it does not match, **the checker is wrong**, not the subject.
+3. **Feed it an input that must fail** and confirm it goes red.
+   A checker you have only seen pass is the same species as a guard that never fails.
+
+Skip any of the three and the checker has no standing to judge real data.
+
+### The three checker classes that get skipped
+
+- **Tools** — scripts, frame grabbers, OCR, proxy assertions. They take
+  parameters, depend on the platform, and degrade *silently* when a parameter
+  stops matching.
+- **Methods** — sampling strategy, coordinate transforms, mask thresholds,
+  sample density. A 25×25 grid stepped straight over the wheel spokes and
+  reported "the image is not animating". The method was wrong, the conclusion was
+  wrong, and it looked like a defect in the subject.
+- **My own assertions** — an assertion that has never been red is not "passing",
+  it is "unverified".
+
+### Self-check
+
+- What is this checker's input? Have I run it on one with a known answer?
+- When it fails silently (parameter ignored, platform mismatch, pattern no longer
+  matches), does it return a *plausible wrong answer*? If yes, a fixture must
+  stand between it and real data.
+- Is the number I am reporting computed by the checker, or is it what I *expect*
+  the checker would compute?
+
+## Before deleting anything, prove it first
+
+Deletion is the cheapest irreversible action and the most expensive to get
+wrong: it does not error, it frees space, and it looks like tidiness.
+
+**Prove three things first:**
+
+1. **Unused** — grep the whole repo, including `.json`, `.md`, CI config and
+   scripts. Zero references before you continue. Remember `grep` cannot see a
+   path built by string concatenation or an external caller.
+2. **Responsibility transferred** — list each duty of the old thing and point at
+   where the replacement covers *that duty*. A duty you cannot place is a reason
+   not to delete.
+3. **The full gate is still green after the removal** — the full one, not the
+   relevant subset.
+
+**A green suite is not proof.** Green only says the paths your tests cover still
+work. If the thing you are deleting had no tests, green carries no information
+about it at all.
+
+**Prefer archiving to deleting.** `_archive/` costs a few KB and keeps the
+history reviewable. Delete only what is regenerable, and keep the archive
+directory gitignored so archived artefacts do not enter the repo.
+
+**Cross-project carriers need their own check.** Deleting a file from a repo
+turns something red. Deleting a memory note, a skill, or a global config entry
+turns *nothing* red — no project depends on it, so no gate notices. That is how
+a carrier gets removed by "whoever last cleaned up".
+
+- `~/.agents/skills/` — user-level skills
+- `~/.pi/agent/memory/` — cross-project memory notes
+- `~/.agents/toolkit/bin/` — the scripts those notes refer to
+
+Run `node tools/check-carriers.mjs` at the start of a session and inside CI. It
+verifies each carrier exists, matches its source, and is actually **loaded by the
+runtime** — presence on disk is not the same as being loaded.
+
+**Edit the source, never the installed copy.** Installers overwrite the installed
+copy from the repo source. Edits made directly to `~/.agents/skills/**` are lost
+on the next `--install` without a warning. In one session the same file was lost
+this way twice, and the second loss was only caught because the carrier check
+compared bytes against the source.
 
 ## Keep throwaway verification out of the repo
 
@@ -241,6 +340,103 @@ an `fg`. Patch #4 would have been the fourth wrong fix in the same place;
 replacing the lookup chain (and rebuilding the fake from pi's real shape)
 ended the class of bug.
 
+## Condensing text without losing judgment
+
+Long-lived text (rules, AGENTS.md, prompts, checklists) accretes redundancy: the
+same intent restated, drift in wording, paragraphs that grow while the reader's
+attention is paid per token. Cutting it is easy. **Proving nothing was lost is
+the hard part.**
+
+The three ways manual condensing fails:
+
+1. It deletes the criterion and keeps the conclusion — reads better, executes worse.
+2. It keeps the meaning but changes the wording — a human understands it, a
+   machine check no longer matches, so future verification silently breaks.
+3. "I checked, it's all there" — that is inference, not evidence.
+
+Use the tool instead of judging by feel:
+
+```bash
+node ~/.agents/toolkit/bin/condense.mjs verify --src old.txt --new new.txt
+```
+
+It extracts **anchors** in six classes — ban verbs, ban targets, quantities,
+terms, judgment phrases, numbered labels — and reports which ones the new text no
+longer expresses. Exit 1 means a criterion is missing.
+
+### What counts as a correct loss
+
+The tool reports candidates; you decide. Three categories are correct compression:
+
+| Report | Verdict |
+| --- | --- |
+| an example or counter-example disappeared (`running` → `done` as a sample value) | correct — an example is not a criterion |
+| a descriptive sub-heading was merged or dropped | correct — that is the yield |
+| the same criterion now uses a synonym (`3 个地方` → `3 处`) | correct — extend the synonym table |
+
+Anything outside those three is a real loss: put it back.
+
+### The rule this enforces
+
+Compression is only finished when the anchor check has run **last**, after the
+final edit. A compression you "already verified" before the last tweak is
+unverified.
+
+## Never stall — but retry with a budget
+
+Two opposite failures wear the same face, and both look like caution:
+
+- **Stalling**: reporting "blocked / failed / waiting" for something you could
+  wait out or retry. This pushes your own retry cost onto the user.
+- **Spinning**: retrying the same thing unchanged. This is stalling with extra steps.
+
+### Retry silently (do not report as failure)
+
+| Situation | Do |
+| --- | --- |
+| resource busy / lock held ("another sync is running") | sleep, retry until acquired or budget spent |
+| timed out but the work is finite | raise the timeout, split the task, or take a faster equivalent path, then re-run |
+| transient fault (network, 5xx, file locked, port not yet freed) | back off with jitter (1s → 2s → 4s) and count attempts |
+| process or tool crashed | restart, restore to a known state, continue |
+
+None of these belong in a status report. Reporting them is asking the user to do
+your waiting for you.
+
+### Stop and ask (exactly three classes)
+
+1. something only the user holds — credentials, account, private assets, a file
+   they never provided;
+2. goals that are physically exclusive — two requirements that cannot both hold;
+3. irreversible action whose blast radius exceeds this task — production data,
+   live config, anything published.
+
+When you stop, say **what is missing, why you cannot obtain it, and what you
+propose**. Do not present a menu of trade-offs.
+
+### The budget is part of the rule
+
+Unbounded retrying is not persistence, it is the same failure as stalling.
+
+- **After 3 attempts at the same operation, stop retrying and change the layer or
+  the method.** This is the same rule as "the third failed fix means your model of
+  the system is wrong".
+- **Every retry must change a variable**: timeout, path, parameters, environment,
+  approach. An identical retry is a prayer, not an experiment.
+- **State the budget up front**: at most N attempts / at most T minutes. Past it,
+  either escalate to a human need or switch approach.
+
+### Interruption is the expensive case
+
+The costly form of "process interrupted" is not a failed command, it is work that
+stops half-done with no way to resume.
+
+- After each independently verifiable step, write the state into the repo — what
+  is done, what is next, what the acceptance check is.
+- Leave no ambiguous state: either roll back to the last known-good point or
+  label the spot "in progress, do not trust".
+- The next person (or the next you) should be able to continue from the files
+  alone, without asking anyone anything.
+
 ## Reporting
 
 Every completion report names, in this order:
@@ -248,7 +444,7 @@ Every completion report names, in this order:
 1. the command run and what it printed (counts, exit code)
 2. anything the run revealed that was not part of the task, by name
 3. what is **not** verified, stated as plainly as what is
-4. for behavior claims, whether tests were seen red before green
+4. for behaviour claims, whether tests were seen red before green
 
 Never upgrade an inference to an observation. "I did not run it" is a valid,
 honest line; "it works" without a run is not.
