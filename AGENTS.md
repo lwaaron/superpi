@@ -117,6 +117,55 @@ DSH（DeepSeek Runtime）插件：把 pi 编码 agent 装进 DSH 的侧栏面板
 3. 查会话文件 `~/.pi/agent/sessions/<project>/*.jsonl`，按 `usage.totalTokens` 分桶统计
    异常发生率 —— **上下文规模与故障类型的相关性往往一眼可见**，比读代码快得多。
 
+### 5.0.3 扩展往系统提示写东西，必须「同档逐字节稳定」（0.15.2，血泪）
+
+**这条是 400 `invalid JSON request body` 的真因，而且是我自己造成的。**
+
+pi 的系统提示是「结构化 sections + diff」：
+
+```js
+// agent-session.js:1392  _preparePromptAndToolLoadout
+const sections = diffSystemPromptSections(
+  getCurrentSystemMessage(messages)?.sections ?? {},
+  buildSystemPromptSections(options),
+)
+return sections ? { role: "system", content: "", sections } : undefined
+```
+
+**有变化就追加一条 `{role:"system"}` 进会话历史。** 这个增量协议本身很好 ——
+缓存因此满血工作（实测 cacheRead 813k / cacheWrite 仅 ~200）。
+
+但推论必须记住：**「每轮都变的内容」= 「每轮一条 system」= 请求体持续膨胀**。
+真机触发点：历史里累积 9 条 system、其中一条是 45KB 的 `project_context`，
+然后 provider 直接拒绝整个请求。
+
+#### 三条硬规则
+
+1. **动态内容绝不进系统提示。** 哪怕它"看起来很有用"。
+   实例：「当前目标」取最近一条 user 的首行，每轮必然不同（`回复 ok1` → `ok2` → `ok3`），
+   5 轮就产生 5 条额外 system。而它同时是**零收益**字段 —— 模型刚读完用户消息，
+   不需要系统提示再复述一遍。**目标信息应该给面板/Working 行看，那是真正需要它的一方。**
+2. **必须注入的数字要量化到档位。** 百分比 → 5% 档；构成比例 → 10% 档；
+   量级信息 → 25% 档；**不报绝对 token 数**（它每涨 10k 就改写文本）。
+   判据：同一档位内文本必须**逐字节一致**。
+3. **别指望 `sections[key] === block` 能短路。**
+   `runner.js:1130` 每轮用 `normalizeBuildSystemPromptOptions(systemPromptOptions)`
+   **重建** options —— 拿到的 `sections` 是「当前系统提示的构成」，
+   **不含上一轮扩展临时塞进去的 key**。所以那个短路一次都不会命中。
+   要自己用模块级变量记住上次写的内容（`lastMeterText`），并在会话切换时重置
+   （`resetMeterMemo()`）。
+
+#### 不要用 `forceSystemPrompt` 绕开
+返回 `systemPrompt` 确实不写历史，但它要求**每轮整份重放系统提示**，
+会直接击穿上面那个 cacheRead 813k 的缓存，成本上升一个量级 ——
+那是「为修一个问题而引入更贵的问题」，属 C 类反模式。
+
+#### 验证方式（必须真机）
+单测看不出这个问题（它只测纯函数）。真机做法：spawn `pi --mode rpc`，
+连发几轮 `{type:'prompt', message:'...'}`（**字段名是 `message`，不是 `prompt`**），
+收集 stdout 的 JSONL，统计 `message_end` 里 `role==='system'` 的条数。
+健康值：**远小于轮数**（实测修复后 5 轮 3 条；改前 5 轮 10 条）。
+
 <!-- RULE-TMP-PATH -->
 - **禁止用 `/tmp` 在工具之间传文件。** `/tmp` 不是一个目录，是**三个**：bash 里它是
   `C:/Users/<me>/AppData/Local/Temp`，node 与 python 里它是 `D:/tmp`（实测，2026-11-18）。
