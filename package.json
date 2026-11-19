@@ -1,6 +1,6 @@
 {
   "name": "superpi",
-  "version": "0.14.5",
+  "version": "0.15.0",
   "type": "module",
   "description": "SuperPi：把 pi 编码代理接进 DSH 侧栏——整页聊天面板 + 过程流，底层是常驻的 pi --mode rpc 子进程。pi runtime is resolved from the plugin itself (.runtime), so the panel works on any machine without a hand-written path.",
   "icon": "./assets/icon.svg",

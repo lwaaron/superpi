@@ -21,13 +21,15 @@ DSH（DeepSeek Runtime）插件：把 pi 编码 agent 装进 DSH 的侧栏面板
 | `src/session-store.mjs` | 只读枚举 `~/.pi/agent/sessions` 下的 pi 会话文件（语义对齐 `session-manager.ts:802-897`），另有 `pathComparisonKey` / `isTemporaryPath` / `shortenHomePath` / `groupSessionsByProject`（对齐 `cli/session-picker.ts:26-62` 与 `session-selector.ts:760-769`）与 `readSessionCwd`（读 header.cwd，供跨项目切换回填）。已接线：`index.js:34-45` import 十个函数，`GET /sessions/history?scope=`（`index.js:870`）暴露给面板的 `SessionsSheet`（`client.js:3659` 容器）/ `SessionsList`（`client.js:3432` 纯渲染）。 |
 | `client.js` | 浏览器半区：React 面板，零构建、零 JSX，只 `require('react')`。 |
 | `docs/parity.md` | 能力矩阵。两端对齐的唯一账本。 |
+| `src/http-idle-guard.mjs` | **HTTP idle 超时下限**（0.15.0）：pi 默认 `httpIdleTimeoutMs = 300_000`（5 分钟）会误杀长思考 —— 实测 4 次 `BODY_TIMEOUT` 的静默时长是 317/323/331/503s，刚过线且**与上下文规模无关**（最浅一次仅 7.3%）。`ensureHttpIdleTimeout({agentDir})` 在 spawn 前把它抬到 **30 分钟**。边界严格：只补「未设置」的、显式配置一律尊重（哪怕小于下限）、显式关闭（`0`/`"disabled"`）一律保留、坏 JSON **绝不覆盖**、幂等不重复写盘（已达标不刷 mtime）。设置项本身是 pi 官方支持的（`settings-manager.js:713-722` + `main.js:765` 会在进 `runRpcMode` 前重新配置调度器），所以这是**配置面不是补丁**。详见 `docs/session-interruption.md`。 |
+| `src/runtime-files.mjs` | **运行时文件清单的唯一来源**（0.15.0）：`listRuntimeFiles(root)` 按目录自动发现（根文件 + `src/` 与 `extensions/` 下全部 `.mjs`/`.ts`），`copyRuntimeFiles(root,target)` 供 `test/selfcheck.mjs` 与 `test/version.mjs` 共用。**为什么需要**：这两处原各硬编码一份复制清单，实测已漂移（16 vs 15 项），新增一个源文件就同时让两个门禁报 `Cannot find module` —— 而修法是每处各补一条，下一个人必然再漏。门禁断言「不许退回硬编码」。 |
 | `src/ui-prefs.mjs` | 面板偏好的落盘层（0.8.0）：项目显示名 / 会话显示名 / 会话置顶的唯一真相，落在 `<home>/.superpi/ui-prefs.json`（`SUPERPI_UI_PREFS` 可覆盖路径，`UI_PREFS_DIR_NAME` = `.superpi`，版本号 `UI_PREFS_VERSION = 1` 供将来迁移）。对外只经 host 的 `/ui-prefs` 三条路由（`index.js:991-1007`：GET 只读、`POST /ui-prefs/project`、`POST /ui-prefs/session` 走合并式补丁），校验与 400 语义都收在这一层（`MAX_PROJECT_NAME_LENGTH` 120 / `MAX_SESSION_PATH_LENGTH` 4096）。**它不归 pi 的 RPC 面管** —— 偏好是「面板自己的账」。 |
-| `extensions/superpi-editor.ts` | 命令行会话窗口（pi TUI）的**输入框增强**（0.9.2 起）：继承 pi 公开的 `CustomEditor`，通过官方扩展点 `ctx.ui.setEditorComponent()` 替换输入框 —— **不改 pi 任何文件、不打补丁、不碰 `node_modules`**。①输入语义：Ctrl+A 全选、Shift+方向/Home/End 扩选、Ctrl+C 复制（不再清空内容）、Ctrl+X 剪切、Backspace/Delete 删选区、可打印字符与粘贴替换选区、Windows 下 Ctrl+V 粘贴**剪贴板里的文件**时插入绝对路径（读 PowerShell 的 `GetFileDropList`，因为 pi-tui 的 Windows native 模块没有 `getFilePaths`）。②外观与入口（0.9.4，0.9.7 收口）：四边闭合的**直角**框（`┌─┐ │ │ └─┘`）+ 框线 80% 白（`FRAME_RGB=[204,204,204]`，pi 原本只有上下两条线，滚动提示保留）；Working 行**回到 pi 原来的位置（上边框内侧左侧）**并按状态换色（正常白 `[255,255,255]` / 成功绿 `[126,211,133]` / 出错红 `[236,94,94]`，图标同色，状态来自 `agent_start`/`tool_execution_end.isError`/`agent_settled`，并 `setWorkingVisible(false)` 关掉 pi 内置那条）；粘贴进来的绝对路径加浅灰底色（`PATH_CHIP_RGB=[104,104,104]`，`trimPathToken()` 保证**只染路径本身**、不溢出到后面打的字，圆角格只在确实是空白时才吃）；`settings` / `home` 两个入口（**全小写**）放在**框外右下角、模型上方**，颜色**与模型名一致**（`theme.fg('dim', …)`）：`settings` 展开 pi 自己的四条斜杠命令（`/settings` `/model` `/thinking` `/scoped-models`，点了走 `editor.onSubmit`），`home` 提交 `/new`（回启动界面）。③**Ctrl+V 判定归扩展自己**（0.9.7）：`resolveClipboardPaste()` 先问 native 快路径（位图落成临时 PNG），失败才起 PowerShell 探头 `readWindowsClipboard()` 一次性拿文件/文本/位图 —— 因为 pi-tui 的 Windows native 模块既没有 `getFilePaths`，实测连 `getImage`/`getText` 也会读不到，pi 自己的 `handleClipboardPaste` 于是「截图后 Ctrl+V 没反应」。三者都没有才回落 `onPasteImage`。安装面 `tools/install-pi-extension.mjs`（`--install/--remove/--status`）落到 `<piAgentDir>/extensions/`（0.10.0 起一次装三个文件：editor + `superpi-rules.ts` + `superpi-rules.mjs`，`status.complete` 才算完整）；门禁 `test/tui-editor.mjs` 442 checks（0.9.11 起；footer 接管见 0.9.9，底部那行回归见 0.9.10，点击命中区回归见 0.9.11；0.14.1 起含等待可见性：Working 行显示当前工具与命令自设上限）。 |
+| `extensions/superpi-editor.ts` | 命令行会话窗口（pi TUI）的**输入框增强**（0.9.2 起）：继承 pi 公开的 `CustomEditor`，通过官方扩展点 `ctx.ui.setEditorComponent()` 替换输入框 —— **不改 pi 任何文件、不打补丁、不碰 `node_modules`**。①输入语义：Ctrl+A 全选、Shift+方向/Home/End 扩选、Ctrl+C 复制（不再清空内容）、Ctrl+X 剪切、Backspace/Delete 删选区、可打印字符与粘贴替换选区、Windows 下 Ctrl+V 粘贴**剪贴板里的文件**时插入绝对路径（读 PowerShell 的 `GetFileDropList`，因为 pi-tui 的 Windows native 模块没有 `getFilePaths`）。②外观与入口（0.9.4，0.9.7 收口）：四边闭合的**直角**框（`┌─┐ │ │ └─┘`）+ 框线 80% 白（`FRAME_RGB=[204,204,204]`，pi 原本只有上下两条线，滚动提示保留）；Working 行**回到 pi 原来的位置（上边框内侧左侧）**并按状态换色（正常白 `[255,255,255]` / 成功绿 `[126,211,133]` / 出错红 `[236,94,94]`，图标同色，状态来自 `agent_start`/`tool_execution_end.isError`/`agent_settled`，并 `setWorkingVisible(false)` 关掉 pi 内置那条）；粘贴进来的绝对路径加浅灰底色（`PATH_CHIP_RGB=[104,104,104]`，`trimPathToken()` 保证**只染路径本身**、不溢出到后面打的字，圆角格只在确实是空白时才吃）；`settings` / `home` 两个入口（**全小写**）放在**框外右下角、模型上方**，颜色**与模型名一致**（`theme.fg('dim', …)`）：`settings` 展开 pi 自己的四条斜杠命令（`/settings` `/model` `/thinking` `/scoped-models`，点了走 `editor.onSubmit`），`home` 提交 `/new`（回启动界面）。③**Ctrl+V 判定归扩展自己**（0.9.7）：`resolveClipboardPaste()` 先问 native 快路径（位图落成临时 PNG），失败才起 PowerShell 探头 `readWindowsClipboard()` 一次性拿文件/文本/位图 —— 因为 pi-tui 的 Windows native 模块既没有 `getFilePaths`，实测连 `getImage`/`getText` 也会读不到，pi 自己的 `handleClipboardPaste` 于是「截图后 Ctrl+V 没反应」。三者都没有才回落 `onPasteImage`。安装面 `tools/install-pi-extension.mjs`（`--install/--remove/--status`）落到 `<piAgentDir>/extensions/`（0.10.0 起一次装三个文件：editor + `superpi-rules.ts` + `superpi-rules.mjs`，`status.complete` 才算完整）；门禁 `test/tui-editor.mjs` 459 checks（0.9.11 起；footer 接管见 0.9.9，底部那行回归见 0.9.10，点击命中区回归见 0.9.11；0.14.1 起含等待可见性：Working 行显示当前工具与命令自设上限）。 |
 
 | `extensions/superpi-rules.mjs` | **用户自定义规则**（0.10.0）的唯一模型层：`DEFAULT_RULES_TEXT`（用户手写的 21 条）、`OVERRIDE_PREFIX`（「优先级最高、覆盖上文、冲突以本段为准」的开场声明）、`normalizeRulesText()`（去 BOM / 统一换行 / 去行尾空白 / 压缩空行 / trim，**必须幂等**否则每次保存都改 checksum）、`isRulesEmptyText()`（`#` 注释行算空）、`checksumOf()`（sha256，写入时自己算不收客户端）、`renderRulesBlock()`（**不自带 `<user_defined_rules>` 标签** —— pi 组装 section 时会包，自己再包就是同名嵌套两次，实测抓到过）、`createRulesStore()`（串行写队列 + tmp/rename 原子落盘 + 读盘容错永不抛 + 幂等写不刷 `updatedAt`）与 `readRulesTextSync()`（扩展每轮读盘用，mtime+size 缓存）。落盘 `<home>/.superpi/rules.json`（`SUPERPI_RULES` 可覆盖），与 ui-prefs 同目录。**它同时被 `index.js`（`/rules` 三条路由）与 pi 扩展引用，所以放在 `extensions/` 而不是 `src/`** —— 扩展被原样复制到 `<piAgentDir>/extensions/` 后，`./superpi-rules.mjs` 这条相对引用在仓库里与安装后指向同一份内容，零复制、零分叉。只管 node 内建依赖（jiti 的 alias 表里没有第三方包）。 |
 | `extensions/superpi-rules.ts` | 把规则送进 pi 的**系统提示**（0.10.0）：`pi.on('before_agent_start')` 每轮读盘 → 写进 `systemPromptOptions.sections.user_defined_rules`（**不返回 `systemPrompt`**：那会走 `forceSystemPrompt` 整份重放 = 每轮一次缓存 miss，而 section 只发一次补丁）；位置由 pi 的组装顺序保证 —— 自定义 section 排在 `cwd` 之后，即整份提示末尾。另注册 `/superpi-rules`（看级别与字数 / 编辑 / 恢复默认 / 只显示全文），读写的是**面板那一份文件**。按 `ctx.ui.select/editor/confirm` 分级退化：没有交互 UI 就明确告知文件路径，**任何异常都不外抛**（规则读不出来不能让 pi 起不来或一轮对话失败）。不 import `@earendil-works/*`（只依赖 `pi.on` / `pi.registerCommand` / `ctx.ui.*` 三个运行时参数），所以多份 pi 副本都能加载、也能在 `test/rules.mjs` 里用假 pi 单测。 |
 | `extensions/superpi-context-guard.mjs` | **上下文窗口化**（0.12.0）的模型层：`planContextWindow(messages, {windowTokens, settings})` 在请求前按「信息价值/成本」分级折叠 —— ①旧图片→一行占位（带路径，可重读）②旧 thinking→丢弃 ③超长工具结果→头尾保留 ④旧工具结果→折成首行 ⑤旧回复→折叠；保护区由**三条约束取最严**（最近 `keepRecentTurns` 轮 / `keepRecentMessages` 条 / `protectedTokenRatio` 窗口），本轮（最后一条 user 之后）的图片一张不动。估算口径刻意与 pi 不同：图片按 `imageTokens=12000`（pi 记 4800 chars≈1200，实测低估十几倍）、文本 `charsPerToken=3`。设 `targetRatio=0.72`，**保证请求不超预算**。纯函数、幂等、单调（前缀只后退，prompt cache 不击穿）；`hygiene` 段落 `DEFAULT_HYGIENE_TEXT` 写死边界「只清理本次任务自己生成的中间产物」。落盘 `<home>/.superpi/context-guard.json`（`SUPERPI_CONTEXT_GUARD` 可覆盖）+ 观测日志 `context-guard.log.jsonl`（滚 240 行）。 |
-| `extensions/superpi-context-guard.ts` | 接线层：`pi.on('context')` 返回裁剪后的 messages（**不写 session、不调模型、不联网** —— 所以超限那一刻它必然能成功，而压缩/重试都要再用一次已被超限的资源）；无需裁剪时返回 `undefined`（不触发 pi 重放提示）；`pi.on('before_agent_start')` 把「图片用完即弃」准则写进 `sections.superpi_context_hygiene`（与用户规则并列、不抢 key）；`/superpi-context` 看真实占用与释放量。异常一律吞掉。门禁 `test/context-guard.mjs` **100 checks**（0.14.0 起：新增 C2 本轮图片限额 / C3 参数折叠 / C4 兜底三段）。**0.12.2 起**：TUI footer 第 2 行的上下文百分比也取这份日志（`readGuardUsageSync`，2 秒节流、按 sessionId 过滤、拿不到就退回 pi 原值），显示成 `~60.0%/1.0M` —— `~` 表示守卫估算，不是 provider 的 usage。 |
+| `extensions/superpi-context-guard.ts` | 接线层：`pi.on('context')` 返回裁剪后的 messages（**不写 session、不调模型、不联网** —— 所以超限那一刻它必然能成功，而压缩/重试都要再用一次已被超限的资源）；无需裁剪时返回 `undefined`（不触发 pi 重放提示）；`pi.on('before_agent_start')` 把「图片用完即弃」准则写进 `sections.superpi_context_hygiene`（与用户规则并列、不抢 key）；`/superpi-context` 看真实占用与释放量。异常一律吞掉。门禁 `test/context-guard.mjs` **150 checks**（0.14.0 起：新增 C2 本轮图片限额 / C3 参数折叠 / C4 兜底三段）。**0.12.2 起**：TUI footer 第 2 行的上下文百分比也取这份日志（`readGuardUsageSync`，2 秒节流、按 sessionId 过滤、拿不到就退回 pi 原值），显示成 `~60.0%/1.0M` —— `~` 表示守卫估算，不是 provider 的 usage。 |
 
 | `extensions/superpi-modalities.mjs` | **模型模态开关**（0.13.0）的唯一模型层：`RUNTIME_MODALITIES=['text','image']`（pi 运行时**实际能发**的，与 `ContentBlock` 联合类型对账，`test/modalities.mjs` F 段防过期）、`resolveModelModalities(model, overrides)`（可用模态 = `model.input` ∩ 运行时；`unsupported` 显式列出「协议声明但发不出去」的，**不画假开关**）、`allowedModalities()`、`filterMessagesByModalities()`（关掉的模态块→占位文本，非破坏性、text 永不过滤）、`normalizeModalitiesState()`（幂等 + 稀疏：只存非默认项，默认规则将来变了没动过的模型自动跟随）、`createModalitiesStore()`（串行队列 + 原子落盘 + 400 语义）、`readModalitiesStateSync()`（扩展每轮用，mtime+size 缓存）。落盘 `<home>/.superpi/modalities.json`（`SUPERPI_MODALITIES` 可覆盖）。**host 与两个扩展共用它**，所以放 `extensions/`（复制后相对引用仍指向同一份）。 |
 | `extensions/superpi-modalities.ts` | 命令行窗口的 `/superpi-modalities`：列模型（scoped 优先，否则全量）→ 选模型 → 逐个切模态（文本锁定、`unsupported` 只读、`恢复这个模型的默认`）。读写与面板**同一份** JSON。**不 hook `context`** —— 过滤只在守卫里执行一次（单一执行点）。异常不外抛。 |
@@ -39,7 +41,7 @@ DSH（DeepSeek Runtime）插件：把 pi 编码 agent 装进 DSH 的侧栏面板
 - 一条能力要么两端都有，要么两端都明确没有。**不存在「先做一端，另一端以后再说」**。
 - 任何当前缺口必须在 `docs/parity.md` 里是一条显式记录（能力名 + 缺什么 + 补齐版本），不允许静默存在。
 - 目标态是 `docs/parity.md` 里 **零缺口**。你新增任何能力，同步把另一端补齐，不许把缺口转嫁给下一任。
-- 检查动作：`npm test`。它含三套机器门禁 —— `test/parity.mjs`（98 checks，契约 ↔ pi 类型与官方文档 ↔ `client.js`/`index.js` 的面板覆盖，三向对账）、`test/host-parity.mjs`（**377 checks**，`buildSpawnArgs` 与 HTTP 面，0.14.0 起含切帧器线性耗时与历史分页）与 `test/timeout.mjs`（167 行 / 28 checks，用 `test/fixtures/fake-pi-rpc.mjs` 协议替身把 5 分钟的超时/弹窗时序压到毫秒级实测）。**这三套门禁是本仓库对齐的机器保障，不是可选装饰**：删掉或绕过它，等于把"100% 对齐"退回人肉承诺。
+- 检查动作：`npm test`。它含三套机器门禁 —— `test/parity.mjs`（98 checks，契约 ↔ pi 类型与官方文档 ↔ `client.js`/`index.js` 的面板覆盖，三向对账）、`test/host-parity.mjs`（**412 checks**，`buildSpawnArgs` 与 HTTP 面，0.14.0 起含切帧器线性耗时与历史分页）与 `test/timeout.mjs`（167 行 / 28 checks，用 `test/fixtures/fake-pi-rpc.mjs` 协议替身把 5 分钟的超时/弹窗时序压到毫秒级实测）。**这三套门禁是本仓库对齐的机器保障，不是可选装饰**：删掉或绕过它，等于把"100% 对齐"退回人肉承诺。
 
 ## 4. 新增一个能力的固定流程（顺序不可换）
 
@@ -53,6 +55,31 @@ DSH（DeepSeek Runtime）插件：把 pi 编码 agent 装进 DSH 的侧栏面板
 8. **推线上**：`npm run sync`（有网）/ 只提交本地（无网，退出码 2）。发布一个新版本时顺手 `git tag -a v<version>` —— tag 由同一条 push 带上去。
 
 ## 5. 禁止项
+
+### 5.0 最高优先级：禁止任何形式的「让产品变差」
+
+用户 2026-11-19 原话：**「任何让你在实现目标的过程中中断的、能力降级的、方案委屈求全
+（而非求最优）的、降低质量的、降低指标要求的等类似对产品不好的情况，都是不符合产品
+发展方向的，都是阻碍，都是应该被消除的都是应该被优化的。」**
+
+完整可判定清单见 **`docs/anti-product-patterns.md`**（6 类 31 条，每条带真实事故对照）。
+改任何东西前后都要对表过一遍。**三个必答问题，有一问答不上就不算完成**：
+
+1. 我这版有没有让**任何一条能力**变弱？
+2. 我的**指标**是真的变好，还是只是看起来变好？
+3. 出问题时，**用户和未来的我**能不能看出发生了什么？
+
+三条最容易被违反、必须单独记住的分支：
+
+- **禁止用「更早的降级」换「更晚的崩溃」。** 例如把小窗口下的固定开销也扣掉，
+  会把预算压到地板、守卫疯狂削内容 —— 那不是修，是把问题提前。
+- **禁止制造假警报。** 报数字必须以**用户/模型实际感知到的量**为准。
+  实例：0.15.0 的上下文仪表第一版只报裁剪前的 96%，而实际发送只有 69.5%，
+  模型每轮都看到"接近硬上限"——这是 D1 类失真（报表与实际不符），已改为双数字。
+- **禁止静默失效。** 一个机制「跑了但没生效」比它不存在更危险（它会让日志看起来
+  一切正常）。实例：`dropOldestTurns` 因三个叠加缺陷从未生效，`droppedTurns` 恒 0，
+  而日志里 `overBudget` 恒 true 达上百行。
+
 <!-- RULE-TMP-PATH -->
 - **禁止用 `/tmp` 在工具之间传文件。** `/tmp` 不是一个目录，是**三个**：bash 里它是
   `C:/Users/<me>/AppData/Local/Temp`，node 与 python 里它是 `D:/tmp`（实测，2026-11-18）。

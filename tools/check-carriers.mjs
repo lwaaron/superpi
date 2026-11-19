@@ -96,7 +96,23 @@ try {
   })
   loaded = r.skills.map((s) => s.name)
   for (const name of REQUIRED_SKILLS) {
-    if (!loaded.includes(name)) fail(`skill 未被 pi 加载：${name}（目录在但加载器读不到）`, 'node tools/install-pi-extension.mjs --install')
+    if (loaded.includes(name)) continue
+    // 报警必须区分**两种不同的故障**，否则会把人引导到错的排查方向：
+    //   ① 文件不在 → 重装就行；
+    //   ② 文件在但加载器读不到 → 重装不一定有用，要看 frontmatter / 路径 / 权限。
+    // 实测：初版把所有情况都写成「目录在但加载器读不到」，而当时其实是目录已不存在，
+    // 于是排查从「加载器为什么读不到」开始，偏离了真正的原因。
+    const f = path.join(SKILLS_DIR, name, 'SKILL.md')
+    if (!fs.existsSync(f)) {
+      fail(`skill 文件不存在：${name}（${f}）`, 'node tools/install-pi-extension.mjs --install')
+    } else {
+      const t = fs.readFileSync(f, 'utf8')
+      const hasFront = /^---\r?\n[\s\S]*?^name:\s*\S+/m.test(t)
+      fail(
+        `skill 文件在但 pi 加载不到：${name}（frontmatter ${hasFront ? '正常' : '损坏'}，${t.length} 字节）`,
+        hasFront ? '检查该目录权限与 pi 的 skillPaths 配置' : 'node tools/install-pi-extension.mjs --install',
+      )
+    }
   }
 } catch (error) {
   fail(`无法验证运行时加载（${String(error?.message ?? error).slice(0, 80)}）`, '确认 .runtime 下 pi 已安装')

@@ -863,21 +863,45 @@ const stripAnsi = text => text.replace(/\x1b\[[0-9;:?]*[A-Za-z]/g, '').replace(/
     'resolveExtensionDir 跟随 PI_CONFIG_DIR',
   )
   eq(EXTENSION_FILE_NAME, 'superpi-editor.ts', '扩展文件名固定')
-  const { install, remove, status, EXTENSION_FILES } = await import('../tools/install-pi-extension.mjs')
+  const { install, remove, status, EXTENSION_FILES, resolveUserSkillsDir } = await import('../tools/install-pi-extension.mjs')
   const dir = path.join(process.env.TEMP ?? process.env.TMPDIR ?? '.', `superpi-ext-test-${process.pid}`)
-  const state = status({ dir })
+  /**
+   * 必须把 `env` 也指向一个假 home（0.15.0 修）。
+   *
+   * 踩过的坑：这里原本只传 `dir`，于是 `install`/`remove` 内部用
+   * `resolveUserSkillsDir(options.env ?? process.env)` 回落到**真实的 process.env** ——
+   * 也就是操作真实的 `~/.agents/skills`。而 `remove()` 会把 skill 一并删掉（那是它的正确行为），
+   * 结果**每跑一次 tui-editor 就删掉用户的两个 skill**，之后 `check-carriers` 报载体缺失、
+   * 整个 `npm test` 被 `&&` 链卡在第一步。
+   *
+   * 症状看起来像"环境问题"，实际是**测试污染真实环境** —— 属于最隐蔽的一类缺陷：
+   * 测试自己是绿的，损坏发生在测试之外。所以门禁里另有一条断言：
+   * 跑完之后真实 skills 目录必须仍然完好。
+   */
+  const fakeHome = path.join(process.env.TEMP ?? process.env.TMPDIR ?? '.', `superpi-home-${process.pid}`)
+  const testEnv = { USERPROFILE: fakeHome, HOME: fakeHome }
+  // 测试开始前，真实用户 skill 目录里有哪些（用于末尾的"没被污染"断言）。
+  const realSkillSnapshot = (() => {
+    try {
+      const dir = resolveUserSkillsDir(process.env)
+      return fs.readdirSync(dir).filter(name => fs.existsSync(path.join(dir, name, 'SKILL.md')))
+    } catch {
+      return []
+    }
+  })()
+  const state = status({ dir, env: testEnv })
   ok(state.sourceExists, '扩展源文件可读')
   // 0.12.0 起安装面是五个文件（输入框 + 规则两枚 + 上下文守卫两枚）。
   eq(EXTENSION_FILES.length, 7, '安装面七个文件')
   eq(EXTENSION_FILES.map(file => file.name).sort().join(','), 'superpi-context-guard.mjs,superpi-context-guard.ts,superpi-editor.ts,superpi-modalities.mjs,superpi-modalities.ts,superpi-rules.mjs,superpi-rules.ts', '文件清单固定')
-  const installed = install({ dir })
+  const installed = install({ dir, env: testEnv })
   eq(installed.code, 0, 'install 成功')
   for (const file of EXTENSION_FILES) {
     ok(fs.existsSync(path.join(dir, file.name)), '安装后有 ' + file.name)
   }
-  eq(status({ dir }).identical, true, '安装后 editor 内容与源一致')
-  eq(status({ dir }).complete, true, '七个文件全部一致 → complete')
-  eq(install({ dir }).code, 0, 'install 幂等')
+  eq(status({ dir, env: testEnv }).identical, true, '安装后 editor 内容与源一致')
+  eq(status({ dir, env: testEnv }).complete, true, '七个文件全部一致 → complete')
+  eq(install({ dir, env: testEnv }).code, 0, 'install 幂等')
 
   // 真机那一步：装到临时 agentDir 后，用 **pi 自己的扩展加载器**加载一遍。
   // 这一步才能证“装完 pi 真的能认”，jiti 单测只能证语法/行为对。
@@ -902,13 +926,32 @@ const stripAnsi = text => text.replace(/\x1b\[[0-9;:?]*[A-Za-z]/g, '').replace(/
     process.stdout.write('  (skip) 没有 core/extensions/loader.js，跳过 pi 加载器实装验证\n')
   }
 
-  const removed = remove({ dir })
+  const removed = remove({ dir, env: testEnv })
   eq(removed.code, 0, 'remove 成功')
   for (const file of EXTENSION_FILES) {
     ok(!fs.existsSync(path.join(dir, file.name)), '卸载后 ' + file.name + ' 消失')
   }
-  eq(remove({ dir }).code, 0, 'remove 幂等（未安装也不报错）')
+  eq(remove({ dir, env: testEnv }).code, 0, 'remove 幂等（未安装也不报错）')
   fs.rmSync(dir, { recursive: true, force: true })
+  /**
+   * 关键回归断言：**真实的用户 skill 目录必须毫发无损**。
+   *
+   * 这条是专门为上面那个缺陷加的 —— 当时的 bug 是测试自己把真实目录删了，
+   * 而测试本身全绿。没有这条断言，同样的污染会再次悄无声息地发生，
+   * 表现只是"npm test 卡在第一步载体缺失"，排查方向会被引到环境上。
+   *
+   * 判据用「测试开始前的快照」对比，而不是「现在是否存在」：
+   * 只有测试前就有的名字才要求测试后仍然存在（全新机器上本来就没有，不该误报）。
+   */
+  {
+    const realSkillsDir = resolveUserSkillsDir(process.env)
+    const nowPresent = realSkillSnapshot.filter(name => {
+      try { return fs.existsSync(path.join(realSkillsDir, name, 'SKILL.md')) } catch { return true }
+    })
+    // 用 join 比较（eq 走 JSON.stringify，对同内容不同顺序敏感，会产生假失败）。
+    eq(nowPresent.slice().sort().join(','), realSkillSnapshot.slice().sort().join(','), '测试没有删掉真实的用户 skill 目录（禁止测试污染环境）')
+  }
+  fs.rmSync(fakeHome, { recursive: true, force: true })
 }
 
 
