@@ -34,7 +34,7 @@ _probe/
 
 # 一次性验证产物（探针 / 变异驱动 / E2E 抓包）的固定落点。
 # 为什么钉死一个目录而不是用系统 /tmp：`/tmp` 在 bash、node、python 里指向三个
-# 不同的物理路径（实测：bash → %LOCALAPPDATA%\Temp，node/python → D:	mp），
+# 不同的物理路径（实测：bash → %LOCALAPPDATA%\Temp，node/python → D:\tmp），
 # 跨工具传路径时必然对不上，失败时又看不出原因。`_scratch/` 三方都解析成同一个
 # 绝对路径，跑完即删，被忽略所以永远不会误提交。
 _scratch/
@@ -42,3 +42,7 @@ _scratch/
 # pi 的 bug 现场包（用户点「上报 bug」时生成的 zip，含会话全文与系统信息）。
 # 它是一次性诊断素材，属本地状态，不入库 —— 与 _scratch/ 同理。
 pi-bug-report-*.zip
+
+# 已归档的一次性产物（`prove-before-delete` 要求不可逆的先归档而不是删）。
+# 归档语义 = 不在工作集里：仍可查阅历史，但不再参与构建、不占仓库体积。
+_archive/
