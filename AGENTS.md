@@ -394,7 +394,7 @@ pwsh -NoProfile -File install-plugin.ps1 -Profile desktop   # 装进 desktop pro
 
 1. **提交永不因网络失败**。`tools/git-hooks/post-commit` 把同步跑在后台（`&` 分离、永远 `exit 0`），离线时什么都不做，提交照旧落地。
 2. **欠的提交会被补推**。`npm run sync` 每次都先 `ls-remote` 比对，不相等才推 —— 上次离线留下的提交下次自动跟着走。
-3. **失败必须分得清**。`auth`（凭据/权限）/ `rejected`（线上分叉）/ `offline`（连不上）/ `failed` 四类不许合并：把认证失效说成离线，就会永远静默重试并以为「只是没网」。
+3. **失败必须分得清**。`auth`（凭据/权限）/ `rejected`（线上分叉）/ `proxy`（代理配了但连不上）/ `offline`（连不上网）/ `failed` 五类不许合并：把认证失效说成离线，就会永远静默重试并以为「只是没网」。`proxy` 是 0.15.7 补的第五类 —— 实测事故：本机 `.gitconfig` 指向一个没启动的代理，于是每次同步都报 `offline`、钩子静默跳过，而直连 github 是通的；这两件事的处置**相反**（`offline` 等下次自动补推，`proxy` 必须人去看），合并就等于让同步永远推不上去还看不出来。
 
 | 命令 | 用途 |
 | --- | --- |
