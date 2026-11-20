@@ -701,41 +701,44 @@ section('C8. 仪表文本在同档位内必须逐字节一致')
   eq(render(560000), render(560000), '同一输入幂等')
 }
 
-section('C7. targetRatio 必须低于实测的模型能力退化线')
+section('C7. targetRatio 必须留足余量（退化线表述已降级为未证实）')
 
 /**
- * 这条判据的直接来源是一次真实事故，且**上一轮的修复没挡住它**：
+ * ⚠️ **本段的历史归因已被 0.15.4 推翻，但断言保留。**
  *
- * 0.15.0 我把 targetRatio 定在 0.72，理由是「留出输出与系统提示的余量」——
- * 那是从"别撞 1M 上限"推出来的，属于**只防崩溃、不防退化**。
- * 实测结果是：实际发送 71.5%~77.9%，而模型在 77.8% 时开始把工具调用写成
- * DeepSeek 原生 DSML 语法，pi 认不出 → 当普通文本收尾 → 用户看到「中断」。
+ * 0.15.1 的做法：观察到 33 次 DSML 全落在 77.4~77.9%，就认定「上下文占用到 77.8%
+ * 模型会退化成 DSML」，并据此把 targetRatio 从 0.72 降到 0.62。
  *
- * 量化分布（n=1993 次 assistant 调用，单会话）：
- *   0%~68%   1574 次，DSML 0 次
- *   74%~76%    40 次，DSML 0 次
- *   76%~78%   264 次，DSML 34 次（12.9%）← 全部在 77.8~77.9%
- *   78%+       98 次，DSML 0 次（守卫已裁回）
+ * 0.15.4 的反证：用户在 `~46.0%/1.0M` 的会话里**仍然**复现 DSML。
+ * 真因是**裁剪把上下文掏空**（见 AGENTS.md §5.0.1 与 C9 段）——
+ * 那个会话每次都被裁到 77.8% 附近，所以 DSML 与 77.8% 同时出现，属于**相关而非因果**。
  *
- * 所以退化线约 **74%**，而 0.72 只留 4 个百分点（且实际发送还会因估算误差上浮）。
- * 这条断言把「必须留 >= 10 个百分点边际」写成机器约束，
- * 防止未来有人为了"多保留历史"把 targetRatio 又调回 0.7x。
+ * 那为什么断言还留着？因为「留足余量」这个**结论**本身是对的，
+ * 只是理由变了：余量是为了吸收
+ *   ① 估算误差（charsPerToken / imageTokens 都是估的）
+ *   ② provider 侧模板与工具的额外包装
+ *   ③ 裁剪策略的不确定性
+ * 而不是为了躲一条未经证实的「退化线」。
+ *
+ * 所以这里的判据写成「必须留 >= 10 个百分点边际」，**不再声称那条线的存在**。
+ * 未来若有人能证明退化线存在，应当另加断言，而不是复用这条。
  */
 {
-  // 实测得到的退化起点（保守取观测到的最高安全点 74%）。
+  // 余量的用途是吸收估算误差、provider 包装、裁剪不确定性 —— 不是躲一条未经证实的线。
+  // 实测最高安全观测点（仅作余量基准，不代表存在退化阈值）。
   const OBSERVED_DEGRADE_LINE = 0.74
-  // 必须留的最小安全边际：10 个百分点（估算误差 + 输出预留 + provider 侧模板差异）。
+  // 必须留的最小安全边际：10 个百分点。
   const MIN_MARGIN = 0.10
   ok(DEFAULT_GUARD_SETTINGS.targetRatio <= OBSERVED_DEGRADE_LINE - MIN_MARGIN,
-    'targetRatio(' + String(DEFAULT_GUARD_SETTINGS.targetRatio) + ') 必须 <= 退化线(' +
-    String(OBSERVED_DEGRADE_LINE) + ') − 边际(' + String(MIN_MARGIN) + ')，否则模型会在远早于上限处退化')
+    'targetRatio(' + String(DEFAULT_GUARD_SETTINGS.targetRatio) + ') 必须 <= 基准(' +
+    String(OBSERVED_DEGRADE_LINE) + ') − 边际(' + String(MIN_MARGIN) + ')，为估算误差与裁剪不确定性留出余量')
 
   // 实际发送量（messages + 固定开销）必须真的落在这条线以下 —— 这才是模型感受到的量。
   const list = turnList(120, 3000)
   const planned = planContextWindow(list, { windowTokens: 1048576, settings })
   const sentTotal = planned.stats.after + planned.stats.reservedOverhead
   ok(sentTotal / 1048576 < OBSERVED_DEGRADE_LINE,
-    '实际发送量(' + (sentTotal / 1048576 * 100).toFixed(1) + '%) 必须低于退化线，不能只看 targetRatio')
+    '实际发送量(' + (sentTotal / 1048576 * 100).toFixed(1) + '%) 也必须留出余量，不能只看 targetRatio')
   ok(planned.stats.after <= planned.stats.budget, '预算约束仍然成立')
 
   // 硬上限：预算永不得超过 targetRatio（防止 floor 反过来突破上限）
