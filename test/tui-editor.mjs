@@ -245,6 +245,13 @@ const HEARTBEAT_AFTER_MS = extensionModule.HEARTBEAT_AFTER_MS
 const markToolOutput = extensionModule.markToolOutput
 const isMalformedToolCall = extensionModule.isMalformedToolCall
 const markMalformedOutput = extensionModule.markMalformedOutput
+// 0.15.9 自动重发：默认开启，但安全边界（无 toolCall）不可配置
+const AUTO_RETRY_DEFAULTS = extensionModule.AUTO_RETRY_DEFAULTS
+const AUTO_RETRY_TEXT = extensionModule.AUTO_RETRY_TEXT
+const decideAutoRetry = extensionModule.decideAutoRetry
+const readAutoRetrySettings = extensionModule.readAutoRetrySettings
+const resetAutoRetryRunState = extensionModule.resetAutoRetryRunState
+const autoRetryState = extensionModule.autoRetryState
 
 // --- 上限提取：只认正有限数
 eq(toolLimitSeconds({ timeout: 960 }), 960, 'toolLimitSeconds 读出 timeout')
@@ -584,6 +591,172 @@ ok(FRAME_INTERVAL_MS <= 250, '帧间隔 <= 250ms（再慢看起来是卡顿）')
   eq(runState.malformed, false, '新一轮开始时清掉畸形标记（否则会一直显示失败）')
   resetRunState()
   eq(runState.malformed, false, 'resetRunState 也清掉')
+}
+
+/* ---- 0.15.9：畸形输出自动重发（默认开启，安全边界不可配置）---- */
+
+/**
+ * 用户明确要求「加上，默认开启，设置中可修改」。
+ *
+ * 但**「默认开启」不等于「无条件重发」**，因为这里有一条真实危险：
+ * 畸形输出发生时无法确定上一轮的工具调用执行了没有；若已有 toolCall，
+ * 重发可能让 `write` / `git push` / `rm` **再执行一遍** —— 比中断危险得多。
+ *
+ * 所以设计是：开关只管"是否启用"，**安全判据（无 toolCall）是硬拦截**，
+ * 用户改配置也打不开。下面每一条都在锁这个边界。
+ */
+{
+  // ① 默认必须开启（用户要求）
+  eq(AUTO_RETRY_DEFAULTS.autoRetryOnMalformed, true, '自动重发默认开启')
+  eq(AUTO_RETRY_DEFAULTS.autoRetryCooldownMs, 30000, '默认冷却 30 秒')
+
+  // ② 与守卫模块的默认值必须一致（两份实现不许漂移）
+  {
+    const guard = await import(pathToFileURL(path.join(root, 'extensions', 'superpi-context-guard.mjs')).href)
+    const gs = guard.normalizeGuardSettings({})
+    eq(gs.autoRetryOnMalformed, AUTO_RETRY_DEFAULTS.autoRetryOnMalformed,
+      'editor 与 guard 的 autoRetryOnMalformed 默认值必须一致')
+    eq(gs.autoRetryCooldownMs, AUTO_RETRY_DEFAULTS.autoRetryCooldownMs,
+      'editor 与 guard 的 autoRetryCooldownMs 默认值必须一致')
+  }
+
+  // ③ 语义必须与守卫模块一致（同用例同结论）—— 两份实现不能各说各话
+  {
+    const guard = await import(pathToFileURL(path.join(root, 'extensions', 'superpi-context-guard.mjs')).href)
+    const cases = [
+      { state: { hadToolCall: false, now: 100000 }, override: {} },
+      { state: { hadToolCall: true, now: 100000 }, override: {} },
+      { state: { hadToolCall: false, lastAutoRetryAt: 90000, now: 100000 }, override: {} },
+      { state: { hadToolCall: false, lastAutoRetryAt: 10000, now: 100000 }, override: {} },
+      { state: { hadToolCall: false, now: 100000 }, override: { autoRetryOnMalformed: false } },
+    ]
+    for (const [i, item] of cases.entries()) {
+      const mine = decideAutoRetry({ ...AUTO_RETRY_DEFAULTS, ...item.override }, item.state)
+      const theirs = guard.shouldAutoRetryOnMalformed(guard.normalizeGuardSettings(item.override), item.state)
+      eq(mine.retry, theirs.retry, '用例 ' + String(i) + ' retry 与守卫模块一致')
+      eq(mine.reason, theirs.reason, '用例 ' + String(i) + ' reason 与守卫模块一致')
+    }
+  }
+
+  // ④ **安全边界不可配置**：无论开关怎么设，有 toolCall 一律不重发
+  //
+  // 注意只断言 retry，不断言具体原因：开关关闭时会先命中 disabled、根本走不到安全判据，
+  // 那是合理的短路。**但「不重发」这个结论必须一致。**
+  for (const enabled of [true, false]) {
+    const d = decideAutoRetry({ autoRetryOnMalformed: enabled, autoRetryCooldownMs: 0 }, { hadToolCall: true, now: 1 })
+    eq(d.retry, false, '开关=' + String(enabled) + ' 时，有 toolCall 仍必须拒绝重发（安全边界不可配置）')
+  }
+  eq(decideAutoRetry({ autoRetryOnMalformed: true, autoRetryCooldownMs: 0 }, { hadToolCall: true, now: 1 }).reason,
+    'had-tool-call', '开启时拒绝原因必须是 had-tool-call（而不是被别的分支挡掉）')
+
+  // ⑤ 冷却：防止模型持续故障时快速循环烧钱
+  {
+    const s = { autoRetryOnMalformed: true, autoRetryCooldownMs: 30000 }
+    eq(decideAutoRetry(s, { hadToolCall: false, lastAutoRetryAt: 100000, now: 100001 }).reason, 'cooldown', '冷却内拒绝')
+    eq(decideAutoRetry(s, { hadToolCall: false, lastAutoRetryAt: 100000, now: 130000 }).retry, true, '冷却到点后放行')
+    eq(decideAutoRetry({ autoRetryOnMalformed: true, autoRetryCooldownMs: 0 }, { hadToolCall: false, lastAutoRetryAt: 100000, now: 100001 }).retry, true, '冷却为 0 时不限制')
+  }
+
+  // ⑥ 读配置：文件不存在 / 坏 JSON / 字段缺失，都必须退回默认（默认开启）
+  {
+    const tmpHome = path.join(root, '_scratch', 'ar-home')
+    fs.rmSync(tmpHome, { recursive: true, force: true })
+    fs.mkdirSync(path.join(tmpHome, '.superpi'), { recursive: true })
+    const cfg = path.join(tmpHome, '.superpi', 'context-guard.json')
+
+    eq(readAutoRetrySettings({ env: {}, home: tmpHome }).autoRetryOnMalformed, true, '文件不存在 → 默认开启')
+
+    fs.writeFileSync(cfg, '{ 坏 JSON', 'utf8')
+    eq(readAutoRetrySettings({ env: {}, home: tmpHome }).autoRetryOnMalformed, true, '坏 JSON → 默认开启（永不抛）')
+
+    fs.writeFileSync(cfg, JSON.stringify({ enabled: true }), 'utf8')
+    eq(readAutoRetrySettings({ env: {}, home: tmpHome }).autoRetryOnMalformed, true, '字段缺失 → 默认开启')
+
+    fs.writeFileSync(cfg, JSON.stringify({ autoRetryOnMalformed: false }), 'utf8')
+    eq(readAutoRetrySettings({ env: {}, home: tmpHome }).autoRetryOnMalformed, false, '显式关闭 → 生效')
+
+    fs.writeFileSync(cfg, JSON.stringify({ autoRetryOnMalformed: true, autoRetryCooldownMs: 5000 }), 'utf8')
+    eq(readAutoRetrySettings({ env: {}, home: tmpHome }).autoRetryCooldownMs, 5000, '自定义冷却 → 生效')
+
+    fs.writeFileSync(cfg, JSON.stringify({ autoRetryCooldownMs: -100 }), 'utf8')
+    eq(readAutoRetrySettings({ env: {}, home: tmpHome }).autoRetryCooldownMs, 0, '负数冷却 → 夹到 0')
+
+    fs.rmSync(tmpHome, { recursive: true, force: true })
+  }
+}
+
+/* ---- 0.15.9：自动重发必须"真的发出去"（第三次静默失效的根治）---- */
+
+/**
+ * 这个文件里已经出现过三次同一类事故：
+ *   0.15.6 `markRunFailed()`（不存在）—— 被 try/catch 吞掉，提示从未显示
+ *   0.15.7 `markMalformedOutput` 调错名 —— 同上
+ *   0.15.9 `AUTO_RETRY_TEXT` 未定义 —— 判据通过、计数器加了，**消息一条没发出去**
+ *
+ * 共同点：**判据函数是对的，接线是错的，而 try/catch 把证据吞掉了。**
+ * 所以从这一版起，凡是有"处理器 + 副作用"的地方，门禁都必须
+ * **驱动处理器并断言副作用真的发生**，而不是只测纯函数。
+ */
+{
+  const handlers = new Map()
+  const sentMessages = []
+  const fakePi = {
+    on: (n, f) => { handlers.set(n, f); return () => {} },
+    registerCommand: () => {}, registerTool: () => {}, setStatus: () => {}, getContext: () => ({}),
+    sendUserMessage: (txt, opts) => { sentMessages.push({ txt, opts }); return Promise.resolve() },
+  }
+  const fakeCtx = {
+    ui: { setEditorComponent: () => {}, setWorkingVisible: () => {}, setFooter: () => {}, setStatus: () => {},
+      select: async () => undefined, editor: async () => undefined, confirm: async () => false, notify: () => {},
+      custom: () => ({}), theme: { fg: (_k, t) => t } },
+    cwd: process.cwd(), sessionId: 'gate',
+  }
+  const entry = extensionModule.default ?? extensionModule.activate ?? extensionModule
+  const activate = typeof entry === 'function' ? entry : extensionModule.activate
+  if (typeof activate === 'function') { try { activate(fakePi, fakeCtx) } catch { } }
+
+  const onAgentStart = handlers.get('agent_start')
+  const onMessageEnd = handlers.get('message_end')
+  ok(onMessageEnd !== undefined, 'message_end 已注册（自动重发依赖它）')
+
+  const malformed = { role: 'assistant', stopReason: 'stop',
+    content: [{ type: 'thinking', thinking: 'x</thinking>\n</｜｜DSML｜｜ calls>' }] }
+
+  if (onMessageEnd !== undefined) {
+    // ① 无 toolCall 的畸形输出 → **必须真的调用了 sendUserMessage**
+    resetAutoRetryRunState()
+    sentMessages.length = 0
+    const before = autoRetryState().count
+    onMessageEnd({ type: 'message_end', message: malformed })
+    eq(sentMessages.length, 1, '畸形输出（无 toolCall）必须真的发出重发消息（不是只加计数器）')
+    if (sentMessages.length > 0) {
+      eq(sentMessages[0].txt, AUTO_RETRY_TEXT, '重发文本用 AUTO_RETRY_TEXT（确认它真的定义过）')
+      eq(sentMessages[0].opts?.deliverAs, 'followUp', '用 followUp 排队，避免打断正在流式收尾的轮次')
+    }
+    eq(autoRetryState().count, before + 1, '计数必须同步增长')
+
+    // ② 有 toolCall 的畸形输出 → **一条都不许发**
+    resetAutoRetryRunState()
+    onMessageEnd({ type: 'message_end', message: { role: 'assistant', stopReason: 'toolUse',
+      content: [{ type: 'toolCall', id: 'x', name: 'bash', arguments: {} }] } })
+    sentMessages.length = 0
+    onMessageEnd({ type: 'message_end', message: malformed })
+    eq(sentMessages.length, 0, '本轮已有 toolCall 时绝不自动重发（重复执行风险不为零）')
+
+    // ③ 正常输出 → 不重发
+    resetAutoRetryRunState()
+    sentMessages.length = 0
+    onMessageEnd({ type: 'message_end', message: { role: 'assistant', stopReason: 'stop',
+      content: [{ type: 'text', text: '正常回复' }] } })
+    eq(sentMessages.length, 0, '正常输出不重发')
+
+    // ④ agent_start 必须清安全判据（否则上一轮的 toolCall 会污染下一轮判定）
+    onMessageEnd({ type: 'message_end', message: { role: 'assistant', stopReason: 'toolUse',
+      content: [{ type: 'toolCall', id: 'y', name: 'bash', arguments: {} }] } })
+    eq(autoRetryState().hadToolCall, true, '记录到 toolCall 后 hadToolCall 为真')
+    if (onAgentStart !== undefined) onAgentStart()
+    eq(autoRetryState().hadToolCall, false, 'agent_start 必须清零 hadToolCall（否则下一轮永远不重发）')
+  }
 }
 
 /* ---- 0.15.7：识别到 ≠ 生效，事件处理器必须真的改动状态 ---- */
@@ -1645,7 +1818,7 @@ const guardLogModule = await import(pathToFileURL(path.join(root, 'extensions', 
   const { editor } = makeEditor('')
   const submitted = []
   editor.onSubmit = command => submitted.push(command)
-  eq(HOME_COMMAND, '/new', 'home 对应 pi 的 /new（起新会话树 = 刚启动时的界��）')
+  eq(HOME_COMMAND, '/new', 'home 对应 pi 的 /new（起新会话树 = 刚启动时的界面）')
   editor.runCommand(HOME_COMMAND)
   eq(submitted.at(-1), HOME_COMMAND, '空闲时提交 /new')
 

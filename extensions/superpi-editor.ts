@@ -149,6 +149,29 @@ export const runState: {
 }
 
 /**
+ * 自动重发的运行时状态（0.15.9，模块级）。
+ *
+ * `currentRunHadToolCall` 是**安全判据的唯一依据**：畸形输出时若本轮已产生过 toolCall，
+ * 说明可能已经有副作用落地，绝不能自动重发（否则 `write` / `git push` 会再来一次）。
+ * 它在 `agent_start`（新一轮开始）时清零，在每条 assistant 消息里累加。
+ *
+ * `lastAutoRetryAt` 用于冷却，`autoRetryCount` 仅供观测（日志/门禁可断言"只重发一次"）。
+ */
+let currentRunHadToolCall = false
+let lastAutoRetryAt = 0
+let autoRetryCount = 0
+
+/** 只读快照，供门禁断言。 */
+export function autoRetryState(): { hadToolCall: boolean; lastAutoRetryAt: number; count: number } {
+  return { hadToolCall: currentRunHadToolCall, lastAutoRetryAt, count: autoRetryCount }
+}
+
+/** 新一轮开始时清安全判据（冷却与计数保留，它们是跨轮的）。 */
+export function resetAutoRetryRunState(): void {
+  currentRunHadToolCall = false
+}
+
+/**
  * 从 `tool_execution_start` 的 args 里取命令自带的上限（秒）。
  *
  * pi 的 bash 工具把 `timeout` 当**秒**用且没有上限钳制 —— 实测模型给过
@@ -168,7 +191,7 @@ export function markRunStart(now = Date.now()): void {
   runState.malformed = false
   runState.startedAt = now
   runState.tool = null
-  // 开始干活就要转起来（幂等：重复调用不会叠加定时��）。
+  // 开始干活就要转起来（幂等：重复调用不会叠加定时器）。
   startAnimation()
 }
 
@@ -219,7 +242,7 @@ export function markToolError(): void {
  * 模型输出了畸形工具调用（0.15.1）。
  *
  * 与 `markToolError` 的区别在**责任归属**：工具失败是"命令跑挂了"，畸形输出是
- * "模型没按协议说话"。两者都该让状态变红，但后者还需要在文案��说清原因 ——
+ * "模型没按协议说话"。两者都该让状态变红，但后者还需要在文案里说清原因 ——
  * 否则用户看到红色 ✖ 却不知道"为什么这轮没执行任何工具就结束了"。
  *
  * 记一个标记，让 `workingLabel` 能给出可行动的说明（见 `workingLabel` 的 malformed 分支）。
@@ -2017,6 +2040,99 @@ export function formatTokens(count: number): string {
 const GUARD_DIR_NAME = '.superpi'
 const GUARD_LOG_FILE_NAME = 'context-guard.log.jsonl'
 const GUARD_LOG_TAIL_BYTES = 128 * 1024
+const GUARD_FILE_NAME = 'context-guard.json'
+
+/**
+ * 自动重发相关的**内联配置读取**（0.15.9）。
+ *
+ * ---------------------------------------------------------------------------
+ * 为什么不 import `./superpi-context-guard.mjs`：
+ * 与 footer 那个理由完全一样 —— 静态 import 会让「守卫模块缺失或语法坏」
+ * 直接拖垮**整个编辑器扩展**，用户丢掉的是 Ctrl+A / 粘贴路径 / footer 全部能力，
+ * 只为了一个"畸形输出后自动重试"的可选行为。**代价与收益完全不成比例。**
+ *
+ * 所以这里只做一件事：读一个 JSON 文件的两个布尔/数字字段，读不到就用默认值。
+ * 配置语义的**唯一真相**仍在守卫模块（`autoRetryOnMalformed` / `autoRetryCooldownMs`），
+ * 门禁 `test/tui-editor.mjs` 会断言两边的默认值一致，防止这里悄悄漂移。
+ */
+export const AUTO_RETRY_DEFAULTS = {
+  /** 默认开启（用户明确要求）。 */
+  autoRetryOnMalformed: true,
+  autoRetryCooldownMs: 30000,
+}
+
+
+/**
+ * 自动重发时发出去的文本。
+ *
+ * **必须在 editor 里定义一份**，不能引用守卫模块的 `AUTO_RETRY_TEXT`：
+ * 不 import 守卫模块是本文件既有的架构约束（见上）。0.15.9 第一版就踩了 ——
+ * 代码里写了 `AUTO_RETRY_TEXT` 却没定义，`ReferenceError` 被 `try/catch` 静默吞掉，
+ * 于是"判据通过了、计数器也加了，但消息一条都没发出去"。
+ * **这是同一类静默失效在本文件的第三次复发**（前两次：`markRunFailed`、
+ * `markMalformedOutput` 调错名），所以这次连门禁一起补（见 test 的接线段）。
+ *
+ * 刻意**不**复述用户的原话：原话可能很长、且可能含敏感内容，
+ * 自动重发只需要一个"继续"的指令。
+ */
+export const AUTO_RETRY_TEXT = '继续'
+
+export function resolveGuardConfigPath({ env = process.env, home = os.homedir() }: { env?: any; home?: string } = {}): string {
+  const override = typeof env?.SUPERPI_CONTEXT_GUARD === 'string' ? env.SUPERPI_CONTEXT_GUARD.trim() : ''
+  const dir = override !== '' ? path.dirname(path.resolve(override)) : path.join(home, GUARD_DIR_NAME)
+  return path.join(dir, GUARD_FILE_NAME)
+}
+
+/**
+ * 读自动重发开关。**永不抛**：任何异常都退回默认值。
+ *
+ * 刻意不缓存：这个文件只在「发生了畸形输出」那一刻读一次，
+ * 频率极低（实测一个长会话几十次），缓存反而会因为保存后不生效而让人困惑。
+ */
+export function readAutoRetrySettings({ env = process.env, home = os.homedir() }: { env?: any; home?: string } = {}): {
+  autoRetryOnMalformed: boolean
+  autoRetryCooldownMs: number
+} {
+  const fallback = { ...AUTO_RETRY_DEFAULTS }
+  try {
+    const file = resolveGuardConfigPath({ env, home })
+    if (!fs.existsSync(file)) return fallback
+    const raw = JSON.parse(fs.readFileSync(file, 'utf8'))
+    if (raw === null || typeof raw !== 'object') return fallback
+    const enabled = raw.autoRetryOnMalformed === undefined
+      ? fallback.autoRetryOnMalformed
+      : raw.autoRetryOnMalformed === true
+    const rawCooldown = Number(raw.autoRetryCooldownMs)
+    const cooldown = Number.isFinite(rawCooldown)
+      ? Math.min(600000, Math.max(0, Math.round(rawCooldown)))
+      : fallback.autoRetryCooldownMs
+    return { autoRetryOnMalformed: enabled, autoRetryCooldownMs: cooldown }
+  } catch {
+    return fallback
+  }
+}
+
+/**
+ * 畸形输出后该不该自动重发 —— 与守卫模块 `shouldAutoRetryOnMalformed` **同语义**。
+ *
+ * 这里重写一份而不是 import，理由见 `AUTO_RETRY_DEFAULTS`。
+ * 两份实现的一致性由门禁断言（对同一组用例必须给出相同结论）。
+ *
+ * **安全边界是不可配置的**：`hadToolCall === true` 一律不重发。
+ * 用户能改的只有"要不要启用"和"冷却多久"，**不能**把这条安全边界打开。
+ */
+export function decideAutoRetry(
+  settings: { autoRetryOnMalformed: boolean; autoRetryCooldownMs: number },
+  state: { hadToolCall?: boolean; lastAutoRetryAt?: number; now?: number } = {},
+): { retry: boolean; reason: string } {
+  if (settings.autoRetryOnMalformed !== true) return { retry: false, reason: 'disabled' }
+  if (state.hadToolCall === true) return { retry: false, reason: 'had-tool-call' }
+  const now = Number.isFinite(state.now) ? (state.now as number) : Date.now()
+  const last = Number.isFinite(state.lastAutoRetryAt) ? (state.lastAutoRetryAt as number) : 0
+  const cooldown = settings.autoRetryCooldownMs
+  if (cooldown > 0 && last > 0 && now - last < cooldown) return { retry: false, reason: 'cooldown' }
+  return { retry: true, reason: 'ok' }
+}
 
 export function resolveGuardLogPath({ env = process.env, home = os.homedir() }: { env?: any; home?: string } = {}): string {
   const override = typeof env?.SUPERPI_CONTEXT_GUARD === 'string' ? env.SUPERPI_CONTEXT_GUARD.trim() : ''
@@ -2723,7 +2839,11 @@ export default function superpiEditor(pi: any): void {
     applyWindowTitle(ctx)
   }
   if (typeof pi?.on !== 'function') return
-  pi.on('agent_start', () => markRunStart())
+  pi.on('agent_start', () => {
+    markRunStart()
+    // 新一轮开始 → 清安全判据（冷却时间与重发计数是跨轮的，保留）。
+    resetAutoRetryRunState()
+  })
   /**
    * **识别模型的畸形工具调用**（0.15.1）—— 这是「会话莫名中断」的真正原因之一。
    *
@@ -2758,6 +2878,15 @@ export default function superpiEditor(pi: any): void {
     try {
       const message = event?.message
       if (message?.role !== 'assistant') return undefined
+      /**
+       * 记录「本轮到目前为止是否产生过 toolCall」。
+       *
+       * 这是自动重发**安全判据的唯一依据**，必须来自真实消息内容，不能靠猜。
+       * 放在 isMalformedToolCall 之前：哪怕这一条不是畸形，也要记（畸形可能出现在后续条）。
+       */
+      if ((message.content || []).some((block: any) => block?.type === 'toolCall')) {
+        currentRunHadToolCall = true
+      }
       if (!isMalformedToolCall(message)) return undefined
       /**
        * 调 `markMalformedOutput`，不是 `markRunFailed`（后者不存在）。
@@ -2771,6 +2900,25 @@ export default function superpiEditor(pi: any): void {
        * 那样名字写错会直接红，而不是靠人眼看。
        */
       markMalformedOutput()
+      /**
+       * 自动重发一次（0.15.9，默认开启，可在设置里关）。
+       *
+       * 判据全在 `shouldAutoRetryOnMalformed` 里，其中**「本轮无 toolCall」是硬拦截**：
+       * 畸形输出时无法确定工具执行了没有，若已有 toolCall，重发可能让它再执行一遍
+       * （`write` / `git push` / `rm` 都可能重复生效）。那种情况宁可停下让人决定。
+       *
+       * 用 `deliverAs: 'followUp'`：此刻 agent 可能还在流式收尾，直接 send 会打断它；
+       * followUp 会排在本轮结束之后 —— 这才是"接着往下跑"的语义。
+       */
+      const decision = decideAutoRetry(readAutoRetrySettings(), {
+        hadToolCall: currentRunHadToolCall,
+        lastAutoRetryAt: lastAutoRetryAt,
+      })
+      if (decision.retry === true) {
+        lastAutoRetryAt = Date.now()
+        autoRetryCount += 1
+        void Promise.resolve(pi.sendUserMessage(AUTO_RETRY_TEXT, { deliverAs: 'followUp' })).catch(() => {})
+      }
       return undefined
     } catch {
       return undefined

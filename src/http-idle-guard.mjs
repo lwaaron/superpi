@@ -31,7 +31,7 @@
  *
  * `httpIdleTimeoutMs` 是 pi **官方支持的设置项**（`settings-manager.js:713-722` 有 getter/setter，
  * 且 `main.js:765` 会用 `configureHttpDispatcher(settingsManager.getHttpIdleTimeoutMs())`
- * 在进入 `runRpcMode` 之前重新配置调度器）。所以这��**配置面**，不是补丁 ——
+ * 在进入 `runRpcMode` 之前重新配置调度器）。所以这是**配置面**，不是补丁 ——
  * 符合 AGENTS.md §5「禁止给 pi 打补丁」的边界。
  *
  * ---------------------------------------------------------------------------
@@ -83,7 +83,7 @@ export function parseIdleTimeoutSetting(value) {
  *
  *   - **未设置** → 抬到下限。这是绝大多数情况（本机实测 `settings.json` 里根本没有这个键），
  *     而 pi 的默认 300s 会误杀长思考。补默认值是纯收益。
- *   - **显式设了非零值** → **一律尊重，不改**。哪怕它小于我���的下限。
+ *   - **显式设了非零值** → **一律尊重，不改**。哪怕它小于我们的下限。
  *     理由：显式配置是用户的明确意图，可能就是想「快点失败好重试」。
  *     我们无权替用户判定他错了 —— 「只抬不降」如果变成「小的也抬」，
  *     就成了 docs/anti-product-patterns.md 的 C5（用配置掩盖设计问题）。

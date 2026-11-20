@@ -80,7 +80,7 @@ export const MODALITIES_MODULE_FILE_NAME = 'superpi-modalities.mjs'
  * 实测：项目级 skill 一个都不出现，模型只会列出用户级的那几个。用户级目录
  * 不经过信任判定，所以「装了就一定生效」。
  *
- * 为什么是复制而不是符号链接：Windows 上创建符号链接需要开发者模式或管理员��
+ * 为什么是复制而不是符号链接：Windows 上创建符号链接需要开发者模式或管理员权限
  * 失败后 cp 会静默退化成复制 —— **一份源码两份字节**，改一处就会分叉。这里
  * 显式复制并由 `status()` 逐文件比对，分叉会立刻显示「内容不一致，需要 --install」。
  */
@@ -153,7 +153,50 @@ export function status(options = {}) {
     const same = fromExists && toExists && fs.readFileSync(from, 'utf8') === fs.readFileSync(to, 'utf8')
     return { label: entry.label, source: from, target: to, sourceExists: fromExists, targetExists: toExists, identical: same }
   })
-  const skillsDir = options.skillsDir ?? resolveUserSkillsDir(options.env ?? process.env)
+  /**
+   * skills 目录的解析：**必须与 `dir` 联动**（0.16.0，修一个长期未定位的数据丢失事故）。
+   *
+   * ---------------------------------------------------------------------------
+   * 事故：2026-11-19 一天内两个 skill 从 `~/.agents/skills` 消失 3 次，
+   * 每次都在 `npm test` / commit 前后。当时复现序列连跑 3 遍没再现，根因记为"未确定"。
+   *
+   * 真正的根因就是这里：`test/rules.mjs` 用 `installer.remove({ dir: tmpDir })` 测卸载，
+   * 而旧实现里 `skillsDir` **只看 `options.skillsDir` / 环境，完全不看 `options.dir`**。
+   * 于是：扩展文件被正确删在 tmp 里，**skill 却被删在用户真实的 `~/.agents/skills`**。
+   * 测试表面全绿，用户的两份 skill 悄悄没了 —— 最难查的那种：
+   * **副作用发生在被测参数的作用域之外。**
+   *
+   * 修法：只要调用了显式给了 `dir`（说明"我要在指定目录里模拟一整套安装面"），
+   * skill 就落到 `<dir>/../skills` 这种与真实布局同构的位置，而不是真实 home。
+   * 显式 `skillsDir` 仍然最高优先（保持既有调用方语义）。
+   *
+   * 门禁 `test/rules.mjs` 里加了一条断言：传 tmp dir 时，**真实 skill 目录的 mtime 不变**。
+   */
+  const skillsDir = options.skillsDir
+    ?? (options.env !== undefined
+      /**
+       * **显式 `env` 优先**：调用方给了 `env` 就说明它在模拟"另一个 home"，
+       * 这时 skill 应落到那个 home 下的 `.agents/skills`（与真实布局一致）。
+       * `test/tui-editor.mjs` 正是这么用的：`{ dir: fakeExtDir, env: { USERPROFILE: fakeHome } }`
+       * —— 它要验证的恰恰是"真实安装会装到 home 下"，所以必须尊重 env。
+       */
+      ? resolveUserSkillsDir(options.env)
+      : options.dir !== undefined
+        /**
+         * 只给了 `dir`、没给 `env` → skill 落到 `<dir>/skills/`，**完全隔离**。
+         *
+         * 这条是为 `test/rules.mjs` 补的：它用 `installer.remove({ dir: tmpDir })` 测卸载，
+         * 而旧实现里 `skillsDir` **完全不看 `dir`**，于是扩展文件删在 tmp、
+         * **skill 删在用户真实的 `~/.agents/skills`** ——
+         * 2026-11-19 一天内两个 skill 消失 3 次、根因记为"未确定"，真凶就是这里。
+         * 测试全绿、用户的两份 skill 没了，副作用发生在被测参数的作用域之外。
+         *
+         * 不模仿真实层级（`<base>/agent/extensions` + `<base>/../skills`）：
+         * 测试传的常是平铺临时目录，猜错层级会让 `../skills` 跑到 `C:\tmp\skills` 这种共享位置，
+         * 又变成"多个测试互相踩"。放 `dir` 内部最可预测：**谁传 dir，谁就在自己的沙箱里**。
+         */
+        ? path.join(path.resolve(options.dir), 'skills')
+        : resolveUserSkillsDir(process.env))
   const skills = SKILL_NAMES.map(name => {
     const from = path.join(pluginRoot, 'skills', name, SKILL_FILE_NAME)
     const to = path.join(skillsDir, name, SKILL_FILE_NAME)

@@ -716,6 +716,55 @@ for (const file of installer.EXTENSION_FILES) {
 }
 eq(installer.remove({ dir: installDir }).code, 0, 'remove 幂等（未安装不报错）')
 
+/* ---- 0.16.0：`dir` 参数必须隔离 skill，不许碰真实 home ---- */
+
+/**
+ * 这一条是为一个**长期未定位的数据丢失事故**补的。
+ *
+ * 现象：2026-11-19 一天内两个 skill 从 `~/.agents/skills` 消失 3 次，
+ * 都在 `npm test` 前后；复现序列连跑 3 遍没再现，根因当时记为"未确定"。
+ *
+ * 真因：`status()` 里 `skillsDir` **只看 `options.skillsDir` / 环境，完全不看 `options.dir`**。
+ * 于是本段下面那句 `installer.remove({ dir: installDir })`
+ * 删扩展文件删在 tmp 里、**删 skill 却删在用户真实的 `~/.agents/skills`**。
+ * 测试全绿，用户的两份 skill 没了 —— 副作用发生在被测参数的作用域之外。
+ *
+ * 所以这里不只测"install/remove 返回 0"，而要测**作用域边界**：
+ * 传 tmp dir 跑完一整套 install → remove，真实 skill 目录必须**一个字节都没变**。
+ */
+{
+  const realSkillsDir = path.join(os.homedir(), '.agents', 'skills')
+  const snapshot = () => {
+    if (!fs.existsSync(realSkillsDir)) return '(absent)'
+    return fs.readdirSync(realSkillsDir, { withFileTypes: true })
+      .filter(entry => entry.isDirectory())
+      .map(entry => {
+        const file = path.join(realSkillsDir, entry.name, 'SKILL.md')
+        const exists = fs.existsSync(file)
+        const size = exists ? fs.statSync(file).size : -1
+        return entry.name + ':' + String(size)
+      })
+      .sort()
+      .join('|')
+  }
+
+  const before = snapshot()
+  const sandbox = path.join(tmp, 'iso-sandbox')
+  installer.install({ dir: sandbox })
+  installer.remove({ dir: sandbox })
+  const after = snapshot()
+  eq(after, before, '传 dir 跑 install+remove 后，真实 ~/.agents/skills 必须完全不变（不许跨作用域删除）')
+
+  // 反向断言：skills 确实被隔离到了 sandbox 内部，而不是"两边都没装"。
+  // 否则上面那条可能因为"根本没动 skill"而假绿。
+  installer.install({ dir: sandbox })
+  const sandboxSkill = path.join(sandbox, 'skills', 'verified-delivery', 'SKILL.md')
+  ok(fs.existsSync(sandboxSkill), 'skill 必须装进 dir 内部（' + sandboxSkill + '），而不是真实 home')
+  installer.remove({ dir: sandbox })
+  ok(fs.existsSync(sandboxSkill) === false, '卸载时也只删 dir 内部那一份')
+  eq(snapshot(), before, '整套装/卸走完，真实 skill 目录仍不变')
+}
+
 // 面板不许自带默认规则文案：默认文案的唯一真相在 extensions/superpi-rules.mjs。
 const clientSource = fs.readFileSync(path.join(root, 'client.js'), 'utf8')
 const copyLeaks = ['User-defined rules：', 'git revert', '业务编号'].filter(sentence => clientSource.includes(sentence))

@@ -485,7 +485,7 @@ section('C9. 裁剪后的预算利用率不得出现断崖')
       const drop = (ra - rb) * 100
       if (drop > worst) { worst = drop; worstPair = String(sizes[i - 1]) + '→' + String(sizes[i]) }
     }
-    ok(worst < 20, '相邻规模间利用率跌幅 < 20 个百���点（实测最大 ' + worst.toFixed(1) + '，' + worstPair + '）')
+    ok(worst < 20, '相邻规模间利用率跌幅 < 20 个百分点（实测最大 ' + worst.toFixed(1) + '，' + worstPair + '）')
   }
 
   // ③ 兜底路径不应再被触发 —— 渐进折叠足够填满预算，不需要整轮丢弃。

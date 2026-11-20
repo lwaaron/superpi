@@ -460,6 +460,82 @@ const editorSource = fs.readFileSync(path.join(root, 'extensions', 'superpi-edit
 check('settings 菜单里有 rules 条且标明来源 superpi', editorSource.includes("command: '/superpi-rules', source: 'superpi'") === true)
 check('pi 自带的四条仍标 source pi', (editorSource.match(/source: 'pi'/g) ?? []).length === 4)
 
+// ── 9. 文本卫生：不许有 U+FFFD / 控制字符 ────────────────────────────────
+section('9. 文本卫生（坏字节一律当缺陷）')
+// 为什么必须有这段：两类坏字节都是「人写文档时混进来的」，肉眼发现不了，
+// 但后果都是真实的 ——
+//   ① **U+0007（BEL）**：0.15.3 实测让整个请求体变成 `400 invalid JSON request body`
+//      （AGENTS.md 被拼进 `project_context` section 再序列化进 HTTP 体，JSON 规范禁止未转义控制字符）；
+//   ② **U+FFFD**：汉字被写坏后的替换符，用户会在界面/账本里直接看到「颜色」这种乱码；
+//      2026-11-20 一次性扫出 9 个（docs/parity.md 7 / docs/rules.md 3 / client.js 2，部分重合）。
+// 当时全靠人肉扫描，所以补成机器判据 —— 修一次、以后永远不再复发。
+const HYGIENE_ROOTS = ['src', 'extensions', 'skills', 'docs', 'tools', 'test']
+const HYGIENE_TOP = ['client.js', 'index.js', 'AGENTS.md', 'README.md', 'package.json']
+const HYGIENE_EXT = /\.(c|m)?js$|\.ts$|\.md$|\.json$|\.ps1$|\.ya?ml$|\.sh$|\.html$/
+function listHygieneFiles() {
+  const files = HYGIENE_TOP.filter((rel) => fs.existsSync(path.join(root, rel)))
+  const walk = (dir) => {
+    let entries = []
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }) } catch { return }
+    for (const entry of entries) {
+      if (entry.name === 'node_modules' || entry.name === '.git' || entry.name === '_scratch' || entry.name === '_archive') continue
+      const abs = path.join(dir, entry.name)
+      if (entry.isDirectory()) { walk(abs); continue }
+      // 钩子没有扩展名，但它是 sh 脚本，同样不许带坏字节。
+      if (HYGIENE_EXT.test(entry.name) || entry.name === 'post-commit') files.push(path.relative(root, abs))
+    }
+  }
+  for (const dir of HYGIENE_ROOTS) walk(path.join(root, dir))
+  return files
+}
+const hygieneFiles = listHygieneFiles()
+// 反空转：扫不到文件时「零坏字节」是假的，必须自己验一次覆盖量。
+// 阈值取 60：实测当前 79 个文件（src 7 / extensions 7 / skills 2 / docs 6 / tools 28 / test 24 + 顶层 5）。
+// 不用 >100 那种拍脑袋的数字 —— 它一开始就是红的，只是被别的失败掩盖了；
+// 门槛的作用是「抓扫描器坏掉」，不是「要求仓库膨胀」。
+check('文本卫生：扫描清单非空（否则「零坏字节」无意义）', hygieneFiles.length > 60, 'files=' + String(hygieneFiles.length))
+check('文本卫生：清单里真的含 client.js / AGENTS.md / docs/parity.md', ['client.js', 'AGENTS.md', path.join('docs', 'parity.md')].every((rel) => hygieneFiles.includes(rel) === true))
+
+let hygieneFffd = 0
+let hygieneCtrl = 0
+const hygieneOffenders = []
+for (const rel of hygieneFiles) {
+  let raw = ''
+  try { raw = fs.readFileSync(path.join(root, rel), 'utf8') } catch { continue }
+  /**
+   * `test/` 下的 **ESC（U+001B）**放行，这是刻意的、唯一的例外（0.16.0）。
+   *
+   * 为什么必须放行：`test/tui-editor.mjs` 要验证「终端转义序列的宽度计算」，
+   * 必须能构造出真实的 `ESC [ 38 ; 2 ; ... m` 这类序列 —— **不写 ESC 就测不了**。
+   * 那不是"混进来的坏字节"，是**被测对象本身**。
+   *
+   * 为什么只放 ESC、只在 test/：
+   * ① U+0007（BEL）才是 0.15.3 那个 `400 invalid JSON` 的元凶，**绝不放行**；
+   * ② 业务代码（src/extensions/client.js）里 ESC 也一律不许 —— 那里出现 ESC
+   *    通常意味着把转义序列当普通字符串拼，是真 bug；
+   * ③ 例外范围越窄，越不容易被后来者当成"反正 test 目录不管"来滥用。
+   */
+  const allowEsc = rel.startsWith('test' + path.sep) || rel.startsWith('test/')
+  raw.split('\n').forEach((line, index) => {
+    for (let column = 0; column < line.length; column += 1) {
+      const code = line.codePointAt(column)
+      if (code === 0xfffd) {
+        hygieneFffd += 1
+        // 只留前几处，报错信息别把终端刷屏
+        if (hygieneOffenders.length < 12) hygieneOffenders.push(rel + ':' + (index + 1) + ' U+FFFD')
+      } else if (allowEsc && code === 0x1b) {
+        // 见上面的说明：测试要构造终端转义序列，ESC 是被测对象而非脏数据。
+        continue
+      } else if (code < 0x20 && code !== 0x09 && code !== 0x0d) {
+        hygieneCtrl += 1
+        if (hygieneOffenders.length < 12) hygieneOffenders.push(rel + ':' + (index + 1) + ' U+' + code.toString(16).toUpperCase().padStart(4, '0'))
+      }
+    }
+  })
+}
+check('文本卫生：全仓无 U+FFFD（汉字被写坏的替换符）', hygieneFffd === 0, 'count=' + String(hygieneFffd) + ' 见 ' + hygieneOffenders.join(', '))
+check('文本卫生：全仓无 C0 控制字符（U+0007 就是它让请求体变成 invalid JSON）', hygieneCtrl === 0, 'count=' + String(hygieneCtrl) + ' 见 ' + hygieneOffenders.join(', '))
+
 // ── 汇总 ──────────────────────────────────────────────────────────────────
 console.log('')
 if (failures.length === 0) {
