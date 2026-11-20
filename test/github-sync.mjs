@@ -33,7 +33,7 @@ function check(name, ok, detail) {
 const eq = (name, actual, expected) => check(name, Object.is(actual, expected), 'got ' + JSON.stringify(actual) + ' want ' + JSON.stringify(expected))
 
 const mod = await import(pathToFileURL(toolPath).href)
-const { syncOnce, inspectSync, installHook, classifyGitError, parseLsRemote, exitCodeFor } = mod
+const { syncOnce, inspectSync, installHook, classifyGitError, parseLsRemote, exitCodeFor, parseProxyTarget, readProxyConfig } = mod
 
 // ── 0. 文件层：格式约定与「不许做的事」──────────────────────────────────
 console.log('0. 文件层')
@@ -79,6 +79,21 @@ eq('分叉：fetch first → rejected', classifyGitError(' ! [rejected]        m
 eq('其它 → failed（不许装成离线）', classifyGitError('fatal: not a git repository (or any of the parent directories)'), 'failed')
 eq('空 stderr → failed', classifyGitError(''), 'failed')
 
+// 代理：实测事故（2026-11-19）—— `~/.gitconfig` 指向 socks5h://127.0.0.1:10808，
+// 代理没启动，而直连 github 是通的，同步却永远报「没网」并静默重试。
+const realProxyStderr = 'fatal: unable to access \'https://github.com/lwaaron/superpi.git/\': Failed to connect to 127.0.0.1 port 10808 after 2088 ms: Could not connect to server'
+eq('代理：代理指向的那个端点在 stderr 里 → proxy（不是 offline）', classifyGitError(realProxyStderr, { proxy: parseProxyTarget('socks5h://127.0.0.1:10808') }), 'proxy')
+eq('代理：没配代理时同一条 stderr → offline（真断网）', classifyGitError(realProxyStderr, {}), 'offline')
+eq('代理：没给 extra 也不许崩', classifyGitError(realProxyStderr), 'offline')
+eq('代理：git 自己的 proxy 报错 → proxy', classifyGitError('fatal: unable to access \'https://github.com/x\': Proxy CONNECT aborted'), 'proxy')
+eq('代理：配了代理但故障不涉及它 → offline（不许乱推给代理）', classifyGitError('fatal: unable to access \'https://github.com/x\': Could not resolve host: github.com', { proxy: parseProxyTarget('socks5h://127.0.0.1:10808') }), 'offline')
+eq('代理：host 对上但 port 不对 → offline（宁可少判）', classifyGitError('fatal: unable to access \'x\': Failed to connect to 127.0.0.1 port 9999: Connection refused', { proxy: parseProxyTarget('socks5h://127.0.0.1:10808') }), 'offline')
+eq('代理：auth 优先于 proxy（凭据问题不许被代理掩盖）', classifyGitError('fatal: could not read Username for \'https://github.com\' port 10808: terminal prompts disabled', { proxy: parseProxyTarget('socks5h://127.0.0.1:10808') }), 'auth')
+eq('代理解析：socks5h 带端口', JSON.stringify(parseProxyTarget('socks5h://127.0.0.1:10808')), JSON.stringify({ raw: 'socks5h://127.0.0.1:10808', host: '127.0.0.1', port: '10808' }))
+eq('代理解析：带帐号密码与路径', JSON.stringify(parseProxyTarget('http://user:pw@proxy.local:8080/')), JSON.stringify({ raw: 'http://user:pw@proxy.local:8080/', host: 'proxy.local', port: '8080' }))
+eq('代理解析：只有主机', JSON.stringify(parseProxyTarget('proxy.local')), JSON.stringify({ raw: 'proxy.local', host: 'proxy.local', port: '' }))
+eq('代理解析：空串', JSON.stringify(parseProxyTarget('')), JSON.stringify({ raw: '', host: '', port: '' }))
+
 const refs = parseLsRemote('1111111111111111111111111111111111111111\trefs/heads/master\n2222222222222222222222222222222222222222\trefs/heads/dev\nnot a ref line\n')
 eq('ls-remote：master 的 sha', refs.get('refs/heads/master'), '1111111111111111111111111111111111111111')
 eq('ls-remote：dev 的 sha', refs.get('refs/heads/dev'), '2222222222222222222222222222222222222222')
@@ -88,6 +103,7 @@ eq('ls-remote：空输入', parseLsRemote('').size, 0)
 eq('退出码：pushed → 0', exitCodeFor('pushed'), 0)
 eq('退出码：up-to-date → 0', exitCodeFor('up-to-date'), 0)
 eq('退出码：offline → 2（留给下次补推，不算失败）', exitCodeFor('offline'), 2)
+eq('退出码：proxy → 3（要人处理，不能当成离线永远重试）', exitCodeFor('proxy'), 3)
 eq('退出码：rejected → 3（要人处理）', exitCodeFor('rejected'), 3)
 eq('退出码：auth → 3（要人处理）', exitCodeFor('auth'), 3)
 eq('退出码：busy → 0（另一个同步在跑不是错）', exitCodeFor('busy'), 0)

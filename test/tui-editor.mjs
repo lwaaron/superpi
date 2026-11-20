@@ -506,6 +506,68 @@ ok(FRAME_INTERVAL_MS <= 250, '帧间隔 <= 250ms（再慢看起来是卡顿）')
   eq(isMalformedToolCall({ role: 'user', content: [{ type: 'text', text: REAL }] }), false, 'user 消息不检测')
   eq(isMalformedToolCall(null), false, 'null 不崩')
 
+
+  /* ---- 0.15.6：真机抓到的两种「静默结束」形态 ---- */
+
+  /**
+   * 形态一：provider 在 **thinking 通道**里吐出闭合标记，然后没有正文。
+   *
+   * 真机原文（`stop=stop`，content 只有一个 thinking 块，长 1238）：
+   *     But wait: will git actually attempt DNS... No — with a proxy configured it connects to the proxy.
+   *     Let me verify empirically.</thinking>
+   *     </｜｜DSML｜｜ calls>
+   *
+   * 用户看到的就是屏幕上多了一段独白，然后会话无声结束。
+   * 旧判据只看 text 块且要求 text !== ''，**整条漏掉**。
+   */
+  {
+    const thinkingOnly = {
+      role: 'assistant',
+      stopReason: 'stop',
+      content: [{ type: 'thinking', thinking: 'Let me verify empirically.</thinking>\n</｜｜DSML｜｜ calls>' }],
+    }
+    eq(isMalformedToolCall(thinkingOnly), true, 'thinking 通道里的 DSML 闭合标记也要识别')
+
+    // 变体：thinking 里有完整三段（parameter/invoke/calls）
+    const deep = {
+      role: 'assistant',
+      stopReason: 'stop',
+      content: [{ type: 'thinking', thinking: 'x</｜｜DSML｜｜ parameter>\n</｜｜DSML｜｜ invoke>\n</｜｜DSML｜｜ calls>' }],
+    }
+    eq(isMalformedToolCall(deep), true, 'thinking 里的完整 DSML 三段也要识别')
+  }
+
+  /**
+   * 形态二：`stop` 收尾但**既没有正文也没有工具调用**（只有 thinking）。
+   *
+   * 这一条不依赖任何关键词 —— 它抓的是「空转」：
+   * 模型要么该回答（有 text），要么该调工具（有 toolCall），两者都没有就是故障。
+   * 标记可能被 provider 吞掉，所以不能只靠字符串匹配。
+   */
+  {
+    const emptyTurn = { role: 'assistant', stopReason: 'stop', content: [{ type: 'thinking', thinking: '纯思考，无正文' }] }
+    eq(isMalformedToolCall(emptyTurn), true, '只有 thinking、没有正文与工具调用 → 判定为空转故障')
+
+    const emptyAll = { role: 'assistant', stopReason: 'stop', content: [] }
+    eq(isMalformedToolCall(emptyAll), true, '完全空的消息也是空转')
+
+    // 反例：有正文就正常（哪怕很短）
+    const hasText = { role: 'assistant', stopReason: 'stop', content: [{ type: 'text', text: '好的' }] }
+    eq(isMalformedToolCall(hasText), false, '有正文的正常回复不判故障')
+
+    // 反例：有工具调用就正常
+    const hasCall = { role: 'assistant', stopReason: 'toolUse', content: [{ type: 'toolCall', id: 'x', name: 'bash', arguments: {} }] }
+    eq(isMalformedToolCall(hasCall), false, '有工具调用（toolUse）不判故障')
+
+    // 反例：thinking + 正文 = 正常（这是最常见的形态）
+    const thinkPlusText = {
+      role: 'assistant',
+      stopReason: 'stop',
+      content: [{ type: 'thinking', thinking: '想了想' }, { type: 'text', text: '答案是这样' }],
+    }
+    eq(isMalformedToolCall(thinkPlusText), false, 'thinking + 正文 是正常形态')
+  }
+
   // 错误态：要让本轮变成红色且能解释
   resetRunState()
   markRunStart(Date.now())

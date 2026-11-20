@@ -249,14 +249,44 @@ export function isMalformedToolCall(message: any): boolean {
   const content = message.content
   if (!Array.isArray(content)) return false
   let text = ''
+  let thinking = ''
   for (const block of content) {
     if (block?.type === 'text' && typeof block.text === 'string') text += block.text
+    if (block?.type === 'thinking' && typeof block.thinking === 'string') thinking += block.thinking
   }
-  if (text === '') return false
-  // 必须同时有「调用块的开始」与「结束」，才是完整的畸形结构。
-  const hasOpen = text.includes('DSML') && (text.includes('invoke') || text.includes('parameter'))
-  const hasClose = text.includes('DSML') && text.includes('calls')
-  return hasOpen && hasClose
+  /**
+   * ① 关键词判据：**text 与 thinking 都要看**（0.15.6 修正）。
+   *
+   * 真机抓到的形态（`stop=stop`，content 只有一个 thinking 块，长 1238）：
+   *     Let me verify empirically.</thinking>
+   *     </｜｜DSML｜｜ calls>
+   *
+   * 也就是 provider 在 **thinking 通道**里吐出了闭合标记，然后**没有生成任何正文**。
+   * 旧判据只看 `text` 块，且要求 `text !== ''`，于是这种最典型的故障被整条漏掉 ——
+   * 用户看到的就是"屏幕上莫名其妙多了一段独白，然后会话结束，没有任何提示"。
+   */
+  const marker = (source) => {
+    if (source === '') return false
+    const hasOpen = source.includes('DSML') && (source.includes('invoke') || source.includes('parameter'))
+    const hasClose = source.includes('DSML') && source.includes('calls')
+    return hasOpen && hasClose
+  }
+  if (marker(text) || marker(thinking)) return true
+  /**
+   * ② 空转判据：`stop` 收尾但**既没有正文也没有工具调用**。
+   *
+   * 这一条覆盖"标记被 provider 吞掉、只留下空转"的情况：
+   * 模型要么该回答（有 text），要么该调工具（有 toolCall）。两者都没有，
+   * 而 `stopReason` 却是 `stop` —— 这一轮什么也没产出，用户看到的就是"卡住后无声结束"。
+   *
+   * 注意必须排除 thinking：只有 thinking 没有正文是**合理**的中间态吗？不是 ——
+   * 对 assistant 消息而言，thinking 是"过程"而不是"交付"。
+   * 真机上这种消息后面紧跟的就是本轮终止，所以它就是故障信号。
+   */
+  const hasText = text.trim() !== ''
+  const hasToolCall = content.some((block: any) => block?.type === 'toolCall')
+  if (message.stopReason === 'stop' && hasText !== true && hasToolCall !== true) return true
+  return false
 }
 
 export function markRunSettled(): void {
