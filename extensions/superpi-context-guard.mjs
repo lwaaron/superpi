@@ -679,12 +679,32 @@ export function protectedFromIndex(messages, keepRecentTurns) {
  * 只按轮次是不够的：一次「轮」里模型可能连续跑上百次工具调用，实测 17 轮的会话里
  * 「最近 10 轮」覆盖了 2413 条消息中的 2000+ 条 —— 保护区自己就把窗口吃光了。
  * 所以再压两条硬上限：消息条数与 token 数。
+ *
+ * ---------------------------------------------------------------------------
+ * **token 上限的基准必须是「预算」而不是「窗口」**（0.15.4 修正，这是真 bug）
+ *
+ * 旧实现：`tokenLimit = windowTokens * protectedTokenRatio`（= 窗口的 30%）
+ * 而预算 = `窗口 × targetRatio − 固定开销`（= 46.7%）。
+ * 两个口径的**分母不同**，于是保护区吃掉了预算的 **64%**，只剩 36% 可自由分配。
+ *
+ * 实测后果（构造 200/250/300 轮三组）：
+ *   200 轮 → 裁剪后占预算 **90.2%**（正常）
+ *   250 轮 → 裁剪后占预算 **6.6%**（断崖）
+ * 从 90% 直接掉到 6.6%：因为非保护区不够用时，`dropOldestTurns` 只能一路丢到
+ * 保护区边界，而边界离起点太近 —— **模型瞬间失去几乎全部历史**。
+ * 上下文被掏空后模型开始输出畸形工具调用（DSML），用户看到的就是「会话中断」。
+ *
+ * 所以 `budget` 参数要传进来，保护区按**预算**的比例算，让两个口径同源。
+ * 不传 budget 时退回旧行为（仅为兼容既有单测的调用方式），但门禁会断言
+ * 生产路径必须传 budget。
  */
-export function protectionStartIndex(messages, settings = DEFAULT_GUARD_SETTINGS, windowTokens = 0) {
+export function protectionStartIndex(messages, settings = DEFAULT_GUARD_SETTINGS, windowTokens = 0, budget = 0) {
   const list = Array.isArray(messages) ? messages : []
   const byTurns = protectedFromIndex(list, settings.keepRecentTurns)
   const byCount = Math.max(0, list.length - settings.keepRecentMessages)
-  const tokenLimit = windowTokens > 0 ? Math.floor(windowTokens * settings.protectedTokenRatio) : 0
+  // 基准优先用 budget（与裁剪预算同源）；没有就退回窗口比例（兼容旧调用）。
+  const base = budget > 0 ? budget : (windowTokens > 0 ? windowTokens : 0)
+  const tokenLimit = base > 0 ? Math.floor(base * settings.protectedTokenRatio) : 0
   let byTokens = 0
   if (tokenLimit > 0) {
     let accumulated = 0
@@ -692,6 +712,7 @@ export function protectionStartIndex(messages, settings = DEFAULT_GUARD_SETTINGS
     for (let i = list.length - 1; i >= 0; i -= 1) {
       accumulated += estimateMessageTokens(list[i], settings)
       if (accumulated > tokenLimit) {
+
         byTokens = i + 1
         break
       }
@@ -900,7 +921,8 @@ function dropOldestTurns(messages, { settings, windowTokens, budget, estimate })
    * 防御判据立刻 break —— 兜底看起来"跑了"，实际一条都没删（`droppedTurns` 恒 0 或恒 1）。
    */
   while (total > budget) {
-    const protectFrom = protectionStartIndex(current, settings, windowTokens)
+    // 与 planContextWindow 同基准（budget），否则保护区边界算得靠前，一丢就塌。
+    const protectFrom = protectionStartIndex(current, settings, windowTokens, budget)
     const bodyStart = prefix.length
     // 可丢区里的第一条 user（= 要丢的那一轮的开头）。
     let turnStart = -1
@@ -1016,9 +1038,34 @@ export function planContextWindow(messages, options = {}) {
   }
   if (settings.enabled !== true) return { messages: list, stats: { ...emptyStats, disabled: true } }
   if (budget <= 0) return { messages: list, stats: { ...emptyStats, noWindow: true } }
-  if (before <= budget) return { messages: list, stats: emptyStats }
+  /**
+   * 提前返回只在「没有无条件规则要执行」时才成立。
+   *
+   * `keepRecentImagesPerTurn`（本轮图片限额）是**与预算无关的硬规则**：
+   * 一个视觉迭代任务会在同一轮里堆几十张图（实测 48 张 = 576k tokens），
+   * 哪怕总量没超预算也要裁到限额 —— 否则「当前轮不受裁剪」会让图片无限堆积。
+   *
+   * 0.15.4 踩过：把渐进折叠接进来时，这里仍然是无条件 `return`，
+   * 于是「没超预算」时图片限额整段被跳过，门禁 C2 立刻红（10 张 / 限额 4）。
+   * 所以判断要看「是否真的无事可做」，而不是只看 token。
+   */
+  const hasTurnImageOverflow = (() => {
+    let lastUserIndex = -1
+    for (let i = list.length - 1; i >= 0; i -= 1) {
+      if (list[i]?.role === 'user') { lastUserIndex = i; break }
+    }
+    if (lastUserIndex < 0) return false
+    let seen = 0
+    for (let i = list.length - 1; i >= lastUserIndex; i -= 1) {
+      seen += countImages(list[i])
+    }
+    return seen > settings.keepRecentImagesPerTurn
+  })()
+  if (before <= budget && hasTurnImageOverflow !== true) return { messages: list, stats: emptyStats }
 
-  const protectedFrom = protectionStartIndex(list, settings, windowTokens)
+  // budget 必须传：保护区的 token 上限要以「预算���为基准（与裁剪同源），
+  // 否则保护区会吃掉预算的 64%，一触发兜底就塌到 6%（见 protectionStartIndex 注释）。
+  const protectedFrom = protectionStartIndex(list, settings, windowTokens, budget)
   const callIndex = indexToolCalls(list)
 
   // 最近 N 张图片所在消息豁免（无论轮次），保证"当前正在看的那张"不会被换掉。
@@ -1057,37 +1104,92 @@ export function planContextWindow(messages, options = {}) {
     }
   }
 
-  const apply = (stage, transform, wholeList = false) => {
-    let touched = 0
-    // images 阶段要覆盖整份列表（本轮图片也要按限额裁），其余阶段只动保护区之前。
+  /**
+   * 分批渐进折叠（0.15.4 核心修正）。
+   *
+   * ---------------------------------------------------------------------------
+   * 旧实现是「一刀切」：对保护区之前的**全部**消息执行某个阶段，然后看是否达标。
+   * 问题在**粒度 vs 预算的错配**：一个阶段一旦启动就作用于所有历史消息，
+   * 于是经常出现「我只超了一点，但它把全部思考都删了、全部工具结果都折了」。
+   *
+   * 实测断崖（构造 250 轮、预算 490117）：
+   *   after = 32268 = **预算的 6.6%**，而 droppedTurns = 0
+   * 即：它明明有 93% 的预算没用，却把上下文掏空了。
+   * 模型拿到一个「只剩骨架」的历史，于是开始吐畸形工具调用（DSML）——
+   * 用户看到的就是「会话又中断了」。
+   *
+   * ---------------------------------------------------------------------------
+   * 改成按**从旧到新的批次**推进：每批只处理 chunkSize 条消息，
+   * 处理完立刻估算；一达标就停手，保留尽可能多的原始信息。
+   *
+   * 为什么从旧往新：旧消息的信息价值低（模型早已写成结论），先动它们
+   * 对答案质量影响最小；同时保持「前缀只会后退」的单调性，prompt cache 不被击穿。
+   */
+  const CHUNK = 24
+  const progressApply = (stage, transform, wholeList = false) => {
+    let touchedTotal = 0
     const end = wholeList ? current.length : protectedFrom
-    for (let i = 0; i < end; i += 1) {
-      if (stage === 'images') {
-        // 历史图的豁免：最近 keepRecentImages 张（跨轮际）。
-        if (i < lastUserIndex && imageProtected.has(i)) continue
-        // 本轮图片的豁免：最近 keepRecentImagesPerTurn 张。
-        if (i >= lastUserIndex && turnImageProtected.has(i)) continue
+    /**
+     * `wholeList` 的阶段（只��� images）必须**跑完全部批次**，不允许"达标就停"。
+     *
+     * 为什么：本轮图片限额 `keepRecentImagesPerTurn` 是**与预算无关的硬规则**。
+     * 一个视觉迭代任务会在同一轮堆几十张图（实测 48 张 = 576k tokens）；
+     * 若按"达标就停"，总量没超预算时它只裁掉前面几张就收手 ——
+     * 实测 48 张只裁到 25 张，而限额是 4（门禁 C2 因此红）。
+     * 图片是付费与带宽最贵的一类，必须无条件压到限额。
+     */
+    /**
+     * 两类阶段，判据不同（0.15.4 的架构性区分）：
+     *
+     * **① 无条件规则类（mustComplete）** —— 与预算无关，必须跑完全部批次。
+     *    判据是「留着它有独立的价值损害」，不是「token 够不够」：
+     *    · `images`：图片是付费与带宽最贵的一类；本轮几十张图会让上下文无限堆积，
+     *      哪怕总量没超预算也要压到 `keepRecentImagesPerTurn`。
+     *    · `toolCallArgs`：write/edit 的正文**已经落盘**，上下文里留副本零价值
+     *      （需要时重新 read 文件即可）。留着它只是在为同一份内容付两次 token。
+     *
+     * **② 预算救急类（其余）** —— 纯粹为了不超限，能少动就少动：
+     *    thinking / toolText / toolFold / replies 都是「有信息价值但可降级」的内容，
+     *    一旦达标就该立刻停手，否则会重演 0.15.4 之前的"一刀切把上下文掏空"。
+     *
+     * 为什么必须区分：实测两类混在一起的后果是**双向出错**——
+     * 预算救急类被全量执行 → 250 轮塌到预算的 6.6%（模型失去全部历史 → 吐 DSML）；
+     * 无条件规则类被"达标就停" → 48 张图只裁到 25 张（超限额 6 倍）。
+     */
+    const mustComplete = wholeList === true || stage === 'toolCallArgs'
+    for (let start = 0; start < end; start += CHUNK) {
+      const stop = Math.min(start + CHUNK, end)
+      let touched = 0
+      for (let i = start; i < stop; i += 1) {
+        if (stage === 'images') {
+          if (i < lastUserIndex && imageProtected.has(i)) continue
+          if (i >= lastUserIndex && turnImageProtected.has(i)) continue
+        }
+        const next = transform(current[i], i)
+        if (next !== null) {
+          current[i] = next
+          touched += 1
+        }
       }
-      const next = transform(current[i], i)
-      if (next !== null) {
-        current[i] = next
-        touched += 1
-      }
+      touchedTotal += touched
+      if (touched === 0) continue
+      stats.stages[stage] += touched
+      stats.after = estimateMessagesTokens(current, settings)
+      // 达标就立刻停，不再继续啃后面的批次 —— 但 mustComplete 的阶段除外。
+      if (mustComplete !== true && stats.after <= budget) return true
     }
-    stats.stages[stage] += touched
-    stats.after = estimateMessagesTokens(current, settings)
     return stats.after <= budget
   }
 
   const done = () =>
-    apply('images', message => replaceImages(message, callIndex), true) ||
-    apply('thinking', message => dropThinking(message)) ||
-    apply('toolText', message => truncateToolText(message, settings.maxTextChars)) ||
-    apply('toolFold', message => foldToolResult(message)) ||
+    progressApply('images', message => replaceImages(message, callIndex), true) ||
+    progressApply('thinking', message => dropThinking(message)) ||
+    progressApply('toolText', message => truncateToolText(message, settings.maxTextChars)) ||
+    progressApply('toolFold', message => foldToolResult(message)) ||
     // 参数折叠排在回复折叠之前：已落盘的文件正文（write/edit 的 arguments）
     // 比模型结论更没有在上下文里留副本的价值。
-    apply('toolCallArgs', message => foldToolCallArgs(message, callIndex)) ||
-    apply('replies', message => foldReply(message))
+    progressApply('toolCallArgs', message => foldToolCallArgs(message, callIndex)) ||
+    progressApply('replies', message => foldReply(message))
 
   done()
 

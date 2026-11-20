@@ -332,6 +332,93 @@ ok(liveCall !== undefined && liveCall.arguments._omitted !== true, '本轮的 wr
 
 /* -------------------- C4. overBudget 兜底（0.14.0） */
 
+
+/* -------------------- C9. 裁剪必须「填满预算」，不许断崖掏空（0.15.4） */
+
+section('C9. 裁剪后的预算利用率不得出现断崖')
+
+/**
+ * 这条判据来自一次真机事故，而且是**我自己上一轮修复引入的**。
+ *
+ * 用户截图：`~46.0%/1.0M` 的上下文，仍然出现畸形工具调用（DSML）→ 会话中断。
+ * 46% 远低于我上一轮认定的 77.8% 退化线 —— 说明「占用高导致退化」是错的归因。
+ *
+ * 真因（构造数据复现）：五阶段折叠是**一刀切**的 ——
+ * 某个阶段一旦启动就作用于保护区之前的**全部**消息，然后才看是否达标。
+ * 于是出现：**明明有 93% 的预算没用，却把上下文掏空了。**
+ *
+ * 实测断崖（构造 N 轮、窗口 1M、预算 490117）：
+ *   200 轮 → 占预算 **90.2%**（正常）
+ *   250 轮 → 占预算 ** 6.6%**（断崖，droppedTurns=0）
+ *   300 轮 → 占预算 ** 7.4%**
+ *
+ * 模型拿到一个「只剩骨架」的历史，就失去了任务上下文 → 开始吐 DSML。
+ * 所以这不是"裁剪有效性"问题，是**裁剪粒度与预算严重错配**。
+ *
+ * 修法：改为按批次（24 条）从旧到新推进，每批处理完立刻估算，达标即停。
+ * 同时区分两类阶段（见 progressApply 的注释）：
+ *   ① 无条件规则类（images / toolCallArgs）必须跑完 —— 它们的判据是"留着有独立价值损害"
+ *   ② 预算救急类（thinking / toolText / toolFold / replies）达标即停
+ *
+ * 本段门禁锁住「利用率不许断崖」这个性质本身，而不是锁住某个具体实现。
+ */
+{
+  // 构造 N 轮会话：每轮 = user + (thinking + toolCall) + toolResult + assistant 回复
+  const buildTurns = (n) => {
+    const out = []
+    for (let i = 0; i < n; i += 1) {
+      out.push({ role: 'user', content: [{ type: 'text', text: '任务' + String(i) }] })
+      out.push({
+        role: 'assistant',
+        content: [
+          { type: 'thinking', thinking: '思考'.repeat(300) },
+          { type: 'toolCall', id: 't' + String(i), name: 'bash', arguments: { command: 'cmd' + String(i) } },
+        ],
+      })
+      out.push({ role: 'toolResult', toolCallId: 't' + String(i), toolName: 'bash', content: [{ type: 'text', text: '结果'.repeat(3000) }] })
+      out.push({ role: 'assistant', content: [{ type: 'text', text: '完成' + String(i) }] })
+    }
+    return out
+  }
+
+  // ① 只要触发了裁剪，利用率就必须接近预算（>= 80%）。
+  //    改前 250/300 轮只有 6.6%/7.4%，这条会直接红。
+  const sizes = [220, 240, 250, 300, 400]
+  for (const n of sizes) {
+    const planned = planContextWindow(buildTurns(n), { windowTokens: 1048576, settings })
+    const used = planned.stats.after
+    const ratio = used / planned.stats.budget
+    const trimmed = used < planned.stats.before
+    if (trimmed !== true) continue // 没触发裁剪就不用填满
+    ok(ratio >= 0.8,
+      'n=' + String(n) + '：触发裁剪后必须填满预算（实测 ' + (ratio * 100).toFixed(1) + '%，要求 >= 80%）')
+  }
+
+  // ② 相邻规模之间不许出现"利用率暴跌"（这是断崖的数学定义）。
+  //    改前 200→250 是 90.2% → 6.6%，跌幅 83.6 个百分点。
+  {
+    let worst = 0
+    let worstPair = ''
+    for (let i = 1; i < sizes.length; i += 1) {
+      const a = planContextWindow(buildTurns(sizes[i - 1]), { windowTokens: 1048576, settings })
+      const b = planContextWindow(buildTurns(sizes[i]), { windowTokens: 1048576, settings })
+      const ra = a.stats.after / a.stats.budget
+      const rb = b.stats.after / b.stats.budget
+      if (ra < 0.8) continue
+      const drop = (ra - rb) * 100
+      if (drop > worst) { worst = drop; worstPair = String(sizes[i - 1]) + '→' + String(sizes[i]) }
+    }
+    ok(worst < 20, '相邻规模间利用率跌幅 < 20 个百���点（实测最大 ' + worst.toFixed(1) + '，' + worstPair + '）')
+  }
+
+  // ③ 兜底路径不应再被触发 —— 渐进折叠足够填满预算，不需要整轮丢弃。
+  //    （droppedTurns > 0 意味着模型真的丢了整轮历史，代价最高。）
+  {
+    const planned = planContextWindow(buildTurns(300), { windowTokens: 1048576, settings })
+    eq(planned.stats.droppedTurns, 0, '渐进折叠足够时不需要丢整轮（droppedTurns 应为 0）')
+  }
+}
+
 section('C4. 兜底：裁到最狠仍超预算时按整轮丢弃，而不是只举一只手')
 
 /**
