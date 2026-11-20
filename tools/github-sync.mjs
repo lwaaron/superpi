@@ -145,7 +145,49 @@ function blamesProxy(text, proxy) {
   if (!text.includes(host)) return false
   const port = String(proxy.port || '')
   if (port === '') return true
-  return text.includes('port ' + port) || text.includes(':' + port)
+  // 边界必须卡住：代理端口是 1 时，`port 1` 也是 `port 10808` 的前缀，
+  // 用 includes 就会把别人的端口当成自己的（误判比不判更坏）。
+  const atPort = new RegExp('port ' + port + '(?![0-9])', 'i')
+  const atColon = new RegExp(':' + port + '(?![0-9])')
+  if (atPort.test(text) || atColon.test(text)) return true
+  /**
+   * host 对上了，但 stderr 里**没提端口** —— 该算代理故障（0.15.7）。
+   *
+   * 真实报错（本机，`http.proxy=socks5h://127.0.0.1:10808`）：
+   *     Failed to connect to github.com:443 over proxy 127.0.0.1 after 2052 ms:
+   *     Could not connect to server
+   *
+   * **git 只报了 host，没有报端口。** 旧实现要求 host 与 port 都匹配，
+   * 于是这一条被判成 `offline`（"网断了，等下次"），而真相是"代理挂了，要人去看"。
+   * 两者处置相反：offline 是等待自动补推，proxy 是必须由人修配置。
+   *
+   * 所以：只要 stderr 明说 "over proxy <我们配的那台>"，就足以断定是代理问题。
+   * 反过来必须严格 —— 不许因为"文本里出现过 127.0.0.1"就判代理，
+   * 因为那可能只是正常的本机端口报错。所以只在**明确出现 proxy 语义**时放宽。
+   */
+  const overProxy = /over proxy\s+([^\s:]+)(?::(\d+))?/i.exec(text)
+  if (overProxy !== null) {
+    const saidHost = overProxy[1]
+    const saidPort = overProxy[2]
+    if (saidHost !== host) return false
+    if (saidPort === port) return true
+    if (saidPort !== undefined) return false
+    /**
+     * 报错只给了 host、没给端口。此时**不能无条件认定是我方代理** ——
+     * 若把 10808 误配成 9999，旧逻辑会照样报 proxy，等于把"配置写错"也说成"代理挂了"，
+     * 用户只会去重启代理，永远修不好。
+     *
+     * 判据收紧成：host 相同、且端口**没有被文本否定**。
+     * 文本里若出现了任何 `:数字` 形式的端口且不等于我方端口，就已经被上面的分支挡掉了
+     * （`saidPort !== undefined`）；走到这里说明文本压根没提端口，
+     * 那它**最可能**就是同一台代理（git 的 socks 报错确实会省略端口）。
+     *
+     * 保留这条的原因：误判成 proxy 的代价是"让人去看代理配置"，
+     * 误判成 offline 的代价是"永远静默等待补推"。前者可恢复，后者不可。
+     */
+    return true
+  }
+  return false
 }
 
 /**

@@ -586,6 +586,81 @@ ok(FRAME_INTERVAL_MS <= 250, '帧间隔 <= 250ms（再慢看起来是卡顿）')
   eq(runState.malformed, false, 'resetRunState 也清掉')
 }
 
+/* ---- 0.15.7：识别到 ≠ 生效，事件处理器必须真的改动状态 ---- */
+
+/**
+ * 这条判据来自一次「静默失效」事故（0.15.6）。
+ *
+ * `message_end` 处理器里写的是 `markRunFailed()` —— 一个**不存在的函数**。
+ * 它被 `try/catch` 包着，`ReferenceError` 被吞掉，于是：
+ *   识别到了畸形输出 → 什么也没做 → 用户看到 `✖ Working` 变红、文案仍是 `Working`
+ *   → 完全不知道发生了什么。
+ *
+ * 更糟的是门禁当时是绿的：因为判据只测了 `isMalformedToolCall` 的返回值，
+ * 没测「处理器被执行后状态是否真的变了」。
+ *
+ * 所以这里改为**通过事件处理器驱动**、再断言状态，而不是只测纯函数：
+ * 纯函数对 + 接线错 = 功能不存在。
+ */
+{
+  const handlers = new Map()
+  const fakePi = {
+    on: (name, fn) => { handlers.set(name, fn); return () => handlers.delete(name) },
+    registerCommand: () => {},
+    registerTool: () => {},
+    sendMessage: () => {},
+    setStatus: () => {},
+    getContext: () => ({}),
+  }
+  const fakeCtx = {
+    ui: {
+      setEditorComponent: () => {},
+      setWorkingVisible: () => {},
+      setFooter: () => {},
+      setStatus: () => {},
+      select: async () => undefined,
+      editor: async () => undefined,
+      confirm: async () => false,
+      notify: () => {},
+      custom: () => ({}),
+      theme: { fg: (_k, t) => t },
+    },
+    cwd: process.cwd(),
+    sessionId: 'gate-test',
+  }
+  const entry = extensionModule.default ?? extensionModule.activate ?? extensionModule
+  const activate = typeof entry === 'function' ? entry : extensionModule.activate
+  if (typeof activate === 'function') {
+    try { activate(fakePi, fakeCtx) } catch { /* 假 ctx 覆盖不全时忽略 */ }
+  }
+
+  const onMessageEnd = handlers.get('message_end')
+  ok(onMessageEnd !== undefined, 'message_end 处理器已注册')
+
+  if (onMessageEnd !== undefined) {
+    // 故障形态（thinking 型）：处理器跑完后，状态必须真的变成"畸形失败"
+    resetRunState()
+    markRunStart(Date.now())
+    onMessageEnd({ type: 'message_end', message: {
+      role: 'assistant',
+      stopReason: 'stop',
+      content: [{ type: 'thinking', thinking: 'x</thinking>\n</｜｜DSML｜｜ calls>' }],
+    } })
+    eq(runState.malformed, true, '处理器识别到畸形输出后 malformed 必须真的置位（防止调错函数名被 try/catch 吞掉）')
+    eq(runState.failed, true, '同时 failed 必须为真（图标才会变红）')
+    ok(workingLabel(Date.now(), true).includes('DSML'), '文案必须点明原因，而不是只显示 Working')
+
+    // 正常消息不应误伤
+    resetRunState()
+    markRunStart(Date.now())
+    onMessageEnd({ type: 'message_end', message: {
+      role: 'assistant', stopReason: 'stop', content: [{ type: 'text', text: '正常回复' }],
+    } })
+    eq(runState.malformed, false, '正常回复不应把本轮标记为畸形')
+    resetRunState()
+  }
+}
+
 // --- 定时器生命周期：这才是「动效不会静止」的真正保障
 {
   resetRunState()

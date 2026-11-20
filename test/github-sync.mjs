@@ -88,6 +88,7 @@ eq('代理：没给 extra 也不许崩', classifyGitError(realProxyStderr), 'off
 eq('代理：git 自己的 proxy 报错 → proxy', classifyGitError('fatal: unable to access \'https://github.com/x\': Proxy CONNECT aborted'), 'proxy')
 eq('代理：配了代理但故障不涉及它 → offline（不许乱推给代理）', classifyGitError('fatal: unable to access \'https://github.com/x\': Could not resolve host: github.com', { proxy: parseProxyTarget('socks5h://127.0.0.1:10808') }), 'offline')
 eq('代理：host 对上但 port 不对 → offline（宁可少判）', classifyGitError('fatal: unable to access \'x\': Failed to connect to 127.0.0.1 port 9999: Connection refused', { proxy: parseProxyTarget('socks5h://127.0.0.1:10808') }), 'offline')
+eq('代理：端口是 1 时不许把 10808 当自己（边界）', classifyGitError('fatal: unable to access \'x\': Failed to connect to 127.0.0.1 port 10808: Could not connect to server', { proxy: parseProxyTarget('socks5h://127.0.0.1:1') }), 'offline')
 eq('代理：auth 优先于 proxy（凭据问题不许被代理掩盖）', classifyGitError('fatal: could not read Username for \'https://github.com\' port 10808: terminal prompts disabled', { proxy: parseProxyTarget('socks5h://127.0.0.1:10808') }), 'auth')
 eq('代理解析：socks5h 带端口', JSON.stringify(parseProxyTarget('socks5h://127.0.0.1:10808')), JSON.stringify({ raw: 'socks5h://127.0.0.1:10808', host: '127.0.0.1', port: '10808' }))
 eq('代理解析：带帐号密码与路径', JSON.stringify(parseProxyTarget('http://user:pw@proxy.local:8080/')), JSON.stringify({ raw: 'http://user:pw@proxy.local:8080/', host: 'proxy.local', port: '8080' }))
@@ -112,6 +113,15 @@ eq('退出码：failed → 1', exitCodeFor('failed'), 1)
 // ── 2. 真 git：临时仓库里跑完整流程 ──────────────────────────────────────
 console.log('2. 真 git（临时仓库）')
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'superpi-sync-'))
+// 门禁必须与环境无关：本机 `~/.gitconfig` 里可能配着代理（实测就有一台机器指向
+// 已停的 `socks5h://127.0.0.1:10808`，那会让「127.0.0.1:1 = 断网」这条用例
+// 真的走代理、真的报 proxy）—— 门禁读本机配置，等于结论由别人的机器决定。
+// GIT_CONFIG_GLOBAL 指向临时空文件 + GIT_CONFIG_NOSYSTEM 一起封掉外部影响。
+const emptyGitConfig = path.join(tmp, 'gitconfig-empty')
+fs.writeFileSync(emptyGitConfig, '')
+process.env.GIT_CONFIG_GLOBAL = emptyGitConfig
+process.env.GIT_CONFIG_NOSYSTEM = '1'
+for (const key of ['HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy', 'ALL_PROXY', 'all_proxy']) delete process.env[key]
 const ID = ['-c', 'user.name=Sync Test', '-c', 'user.email=sync@example.test', '-c', 'commit.gpgsign=false', '-c', 'init.defaultBranch=master']
 function git(cwd, args) {
   const res = spawnSync('git', [...ID, ...args], { cwd, encoding: 'utf8', windowsHide: true, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } })
@@ -178,6 +188,7 @@ try {
 
   // 2.7 断网：本地提交必须留住，结论必须是 offline
   const offlineRepo = makeRepo('offline', 'http://127.0.0.1:1/none.git')
+  eq('门禁用例的前提：这个仓库读不到任何代理', (await readProxyConfig(offlineRepo)).raw, '')
   let refusal = git(offlineRepo, ['ls-remote', '--heads', 'origin'])
   if (refusal.code === 0) {
     check('断网用例可用（本机 127.0.0.1:1 必须是拒连）', false, 'ls-remote 竟然成功了，这条用例失效')
@@ -190,6 +201,23 @@ try {
     eq('离线时的退出码是 2', exitCodeFor(offline.status), 2)
     check('离线也写进日志（下次补推有据可查）', fs.readFileSync(path.join(offlineRepo, '.git', 'superpi-sync.log'), 'utf8').includes('offline'))
   }
+
+  // 2.7b 代理坏了：必须报 proxy，不许报 offline（实测事故：代理配了但没启动，
+  // 同步永远以为「没网」、永远静默重试，而直连是通的）
+  const bare3 = path.join(tmp, 'remote3.git')
+  mustGit(tmp, ['init', '-q', '--bare', 'remote3.git'])
+  const proxied = makeRepo('proxied', 'http://127.0.0.1:9/none.git')
+  mustGit(proxied, ['config', 'http.proxy', 'socks5h://127.0.0.1:1'])
+  eq('读得到仓库自己的代理配置', (await readProxyConfig(proxied)).raw, 'socks5h://127.0.0.1:1')
+  const proxiedHead = mustGit(proxied, ['rev-parse', 'HEAD']).out
+  const proxiedResult = await syncOnce({ cwd: proxied, timeoutMs: 15000 })
+  eq('代理连不上 → proxy（不是 offline）', proxiedResult.status, 'proxy')
+  eq('代理故障的退出码是 3（要人处理，不是等下次）', exitCodeFor(proxiedResult.status), 3)
+  eq('代理故障时本地提交仍在', mustGit(proxied, ['rev-parse', 'HEAD']).out, proxiedHead)
+  eq('结论里带出代理串（用户要知道去看哪一项）', proxiedResult.proxy && proxiedResult.proxy.raw, 'socks5h://127.0.0.1:1')
+  check('日志记的是 proxy 而不是 offline', fs.readFileSync(path.join(proxied, '.git', 'superpi-sync.log'), 'utf8').includes('proxy'))
+  const proxiedInfo = await inspectSync({ cwd: proxied, timeoutMs: 15000 })
+  eq('只读状态也报 proxy', proxiedInfo.error, 'proxy')
 
   // 2.8 线上分叉：拒绝 + 绝不强推
   const bare2 = path.join(tmp, 'remote2.git')

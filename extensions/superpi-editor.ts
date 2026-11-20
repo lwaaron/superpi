@@ -2759,7 +2759,18 @@ export default function superpiEditor(pi: any): void {
       const message = event?.message
       if (message?.role !== 'assistant') return undefined
       if (!isMalformedToolCall(message)) return undefined
-      markRunFailed()
+      /**
+       * 调 `markMalformedOutput`，不是 `markRunFailed`（后者不存在）。
+       *
+       * 0.15.6 这里写错了名字，而它被 `try/catch` 包着 —— `ReferenceError` 被静默吞掉，
+       * 于是"识别到了却没做任何事"：用户看到 `✖ Working` 变红，但文案仍是 `Working`，
+       * 完全不知道发生了什么。**这正是本节要消除的"静默失效"本人。**
+       *
+       * 教训：`try/catch` 里不要调用未定义的函数；更稳的是让门禁断言
+       * 「`isMalformedToolCall` 为真时 `runState.malformed` 必须为真」，
+       * 那样名字写错会直接红，而不是靠人眼看。
+       */
+      markMalformedOutput()
       return undefined
     } catch {
       return undefined
