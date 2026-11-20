@@ -26,6 +26,8 @@ import { PiProcess, timeoutLimitMs } from './src/pi-rpc.mjs'
 import {
   BASH_SHORTCUTS,
   ASSISTANT_EVENT_TYPES,
+  MALFORMED_DETECTION,
+  MALFORMED_NOTICE,
   PI_VERSION as PI_CONTRACT_VERSION,
   RPC_COMMANDS,
   RPC_EVENTS,
@@ -78,7 +80,7 @@ const API_PREFIX = '/api/' + PLUGIN_ID
 const MAX_SESSIONS = 8
 const MAX_BODY_BYTES = 4 * 1024 * 1024
 /** GET /contract 里 version 字段的取值：本插件对外的契约版本，与 package.json 解耦。 */
-const CONTRACT_VERSION = '0.16.0'
+const CONTRACT_VERSION = '0.16.2'
 /** 历史会话列表的条数窗口（与 src/session-store.mjs 的 DEFAULT_LIMIT/MAX_LIMIT 一致）。 */
 const HISTORY_DEFAULT_LIMIT = 20
 const HISTORY_MAX_LIMIT = 200
@@ -741,7 +743,43 @@ export function apply(ctx, config = {}) {
       label: typeof options.label === 'string' && options.label !== '' ? options.label : path.basename(cwd),
     })
     sessions.set(proc.id, proc)
-    proc.on('exit', () => log('info', 'session ' + proc.id + ' exited'))
+    /**
+     * 子进程退出 → **立刻**从池里摘掉（0.16.1 修的 P0）。
+     *
+     * ── 为什么这是结构性缺陷，而不是「忘了写 delete」───────────────
+     *
+     * `sessions` 的语义是「当前能接受命令的会话池」，成员资格应当由**存活**决定。
+     * 0.16.0 及之前它由**曾经被创建**决定 —— exit 只记了一条日志，永不摘除。
+     * 实测后果：8 个崩溃过的会话占满上限后，`POST /sessions` 直接 429
+     * 「会话数已达上限（8），先关掉一个」，而面板的会话列表来自 pi 的会话文件、
+     * 根本看不到这些死进程的 id，用户没有任何入口释放它们。
+     * 同一份缺陷还有第二个面：`/state` 仍把它们列为可用会话，客户端
+     * `startSession()` 取 existing[0] 会**优先复用死会话**（一操作就报
+     * "pi process is not running"）。
+     *
+     * ── 为什么不是「在 stateOf / startSession 里过滤掉 exit !== null」───────
+     *
+     * 那是把成本转嫁给读侧，而且有三个读侧（stateOf / requireSession / 客户端），
+     * 漏一个就是新的静默失效。池本身只装活进程，读侧就不需要任何判据。
+     *
+     * ── 崩溃现场不能因此丢失（这是本修法的硬约束）───────────────
+     *
+     * 用户必须能看出「刚才发生了什么」。所以顺序是：
+     *   ① 先把最后的 exit / stderr 打进 host 日志（可事后查）
+     *   ② 摘池之前让 proc 保留 exitInfo（对象本身还在，SSE 已连上的客户端
+     *      仍会收到 exit 事件并显示 "crashed (code N)"）
+     *   ③ 客户端收到 exit 后主动 api.close(id) —— 让「关掉」这件事有明确归属，
+     *      而不是靠这里单方面摘除造成「本地还拿着 id 但 host 404」
+     */
+    proc.on('exit', info => {
+      log('info', 'session ' + proc.id + ' exited'
+        + (info === null || info === undefined ? '' : ' (code=' + String(info.code) + ', signal=' + String(info.signal) + ')'))
+      // 末 3 行 stderr 通常是真正的死因（MODULE_NOT_FOUND / 端口占用 / 权限）。
+      // 只进日志不进日志文件：完整 stderr 已经在 proc.stderrLines 里，SSE 也会带出去。
+      const tail = Array.isArray(proc.stderrLines) ? proc.stderrLines.slice(-3) : []
+      for (const line of tail) log('warn', '[' + proc.id.slice(0, 8) + '] last stderr: ' + line)
+      if (sessions.get(proc.id) === proc) sessions.delete(proc.id)
+    })
     proc.on('log', entry => log(entry.level === 'stderr' ? 'info' : entry.level, '[' + proc.id.slice(0, 8) + '] ' + entry.message))
     ctx.effect(() => () => { sessions.delete(proc.id); void proc.close({ timeoutMs: 4000 }) }, PLUGIN_ID + ': session ' + proc.id)
     proc.start()
@@ -1046,6 +1084,15 @@ export function createHandler(deps) {
           assistantEvents: ASSISTANT_EVENT_TYPES,
           tuiCommands: TUI_COMMANDS,
           bashShortcuts: BASH_SHORTCUTS,
+          /**
+           * 畸形输出的判定表与文案（0.16.2）。
+           *
+           * 面板只能 `require('react')`，拿不到 `extensions/superpi-malformed.mjs`，
+           * 而「这个故障长什么样」的知识必须只有一份。所以照 `classifyInput` 的范式：
+           * 表在契约、算法在面板，`test/parity.mjs` 用同一批真实样本双向对账。
+           */
+          malformed: MALFORMED_DETECTION,
+          malformedNotice: MALFORMED_NOTICE,
         })
       }
       /**

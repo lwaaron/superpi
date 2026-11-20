@@ -8,7 +8,8 @@
  *  2. 文案键缺失 / 中英文键集不一致。
  *
  * 依赖位置：react 与 react-dom 从 pi 的 node_modules 借（superpi 自己刻意不带 node_modules）。
- * 借不到就 skip —— 不是失败，因为这不是插件运行时需要的依赖。
+ * **借不到就失败，不 SKIP**（0.16.1 起）：本文件是「面板能不能画出来」的唯一机器保障，
+ * 跳过它等于把界面正确性退回人肉承诺。修法见缺失时的诊断输出。
  *
  * 跑法：node test/client-render.mjs
  */
@@ -36,8 +37,21 @@ function findReactHome() {
 
 const reactHome = findReactHome()
 if (reactHome === null) {
-  console.log('SKIP: 找不到 react / react-dom（试过 ' + REACT_HOMES.filter(home => home !== '').join(', ') + '）')
-  process.exit(0)
+  /**
+   * 曾经是 SKIP + exit 0（0.16.1 修）。
+   *
+   * 本文件是「面板能不能画出来」的**唯一**机器保障（1013 条断言），
+   * 缺 react 就整段不跑却报绿，等于把「界面正确」退回人肉承诺。
+   * react 是可直接安装的（npm install），不是不可得的外部资源，
+   * 所以「缺」这件事本身就是环境没配好，应当失败并把修法说清楚。
+   */
+  console.error('')
+  console.error('FAIL[preflight] 找不到 react / react-dom')
+  console.error('  试过：' + REACT_HOMES.filter(home => home !== '').join(', '))
+  console.error('  本文件是面板渲染的唯一机器保障（1013 条断言），不能跳过。')
+  console.error('  修法：在仓库根 npm install（或把 react/react-dom 放到上面任一路径）')
+  console.error('')
+  process.exit(1)
 }
 console.log('react home =', reactHome)
 
@@ -1285,6 +1299,250 @@ assert(panelHtml.includes(zh('loading')), 'PiPanel 首帧应是 loading 文案')
   assert(v.messageTotal === 0, 'createView 应初始化 messageTotal=0')
   assert(v.loadingEarlier === false, 'createView 应初始化 loadingEarlier=false')
   assert(v.activeTool === null, 'createView 应初始化 activeTool=null')
+}
+
+/* ═══════════════════════════════════════════════════ 12. 事件摄入层（0.16.1） */
+
+/**
+ * 这一段补的是**整条门禁链的空白地带**。
+ *
+ * 0.16.0 的对抗性审查证实：本文件此前只做首帧 SSR（renderToStaticMarkup），
+ * 从不驱动事件流 —— 于是「attach() 先把 lastSeq 抬到 eventSeq 再 applyBatch，
+ * 导致缓冲事件 100% 丢弃」这个 P0 在 1013 条断言下安然存活。
+ *
+ * 下面每条断言都对应一个**真实发生过的缺陷**或一个必须守住的契约。
+ * 它们之能成立，是因为 client.js 的 __internals 导出了 applyBatch / advanceSeq。
+ */
+{
+  const { applyBatch, advanceSeq } = internals
+  assert(typeof applyBatch === 'function', 'applyBatch 必须导出（否则事件摄入层无法被门禁覆盖）')
+  assert(typeof advanceSeq === 'function', 'advanceSeq 必须导出')
+
+  const ev = (seq, type) => ({ seq, at: 1, record: { type } })
+
+  // 12a. 核心回归：先回放、后补水位 —— 缓冲事件必须真的落地。
+  //      这是 0.16.0 的 P0：旧顺序（先抬 lastSeq）会让这里 0 条被应用。
+  {
+    const v = internals.createView()
+    v.lastSeq = 0
+    const buffered = [ev(1, 'agent_start'), ev(2, 'turn_end'), ev(3, 'agent_settled')]
+    applyBatch(v, buffered)
+    advanceSeq(v, 3)
+    assert(v.lastSeq === 3, '回放 3 条后水位应为 3，实际 ' + String(v.lastSeq))
+    // 事件真的被 applyRecord 处理过的证据：agent_start → busy，agent_settled → idle
+    assert(v.busy === false, 'agent_settled 落地后应回到 idle（证明事件真的被应用过）')
+  }
+
+  // 12b. 反证：故意用旧顺序（先补水位再回放），必须一条都进不去。
+  //      把「修复前的行为」钉在门禁里 —— 将来谁改回去，这条会立刻红。
+  {
+    const v = internals.createView()
+    v.lastSeq = 0
+    advanceSeq(v, 3)                    // ← 旧实现的错误顺序
+    applyBatch(v, [ev(1, 'agent_start'), ev(2, 'turn_end'), ev(3, 'agent_settled')])
+    assert(v.lastSeq === 3, '旧顺序下水位仍是 3（表面看不出问题）')
+    assert(v.busy === false, '旧顺序下 agent_start 被丢弃 → busy 保持 false（这正是缺陷本身）')
+  }
+
+  // 12c. 去重仍然有效：SSE 重连会重放，同一批事件二次 apply 不能重复生效。
+  {
+    const v = internals.createView()
+    v.lastSeq = 0
+    const batch = [ev(1, 'agent_start'), ev(2, 'agent_settled')]
+    applyBatch(v, batch)
+    const afterFirst = v.lastSeq
+    applyBatch(v, batch)                 // 重放
+    assert(v.lastSeq === afterFirst, '重放同一批事件水位不应变化')
+  }
+
+  // 12d. 水位只前进不后退：advanceSeq 收到更小的值必须忽略。
+  //      会话被 resetEvents 后 eventSeq 归零，若这里允许后退，
+  //      客户端会把已处理的事件再放一遍（弹窗重复弹出）。
+  {
+    const v = internals.createView()
+    v.lastSeq = 87
+    advanceSeq(v, 3)
+    assert(v.lastSeq === 87, 'advanceSeq 不得让水位后退（87 → 3 应被忽略）')
+    advanceSeq(v, 100)
+    assert(v.lastSeq === 100, 'advanceSeq 应能前进')
+  }
+
+  // 12e. 非法入参不得污染水位（快照字段缺失时 eventSeq 是 undefined）。
+  {
+    const v = internals.createView()
+    v.lastSeq = 5
+    advanceSeq(v, undefined)
+    advanceSeq(v, null)
+    advanceSeq(v, NaN)
+    advanceSeq(v, 0)
+    advanceSeq(v, -1)
+    assert(v.lastSeq === 5, '非法 eventSeq 不得改动水位，实际 ' + String(v.lastSeq))
+  }
+
+  // 12f. applyBatch 收到非数组不得抛（snapshot.events 可能缺失）。
+  {
+    const v = internals.createView()
+    v.lastSeq = 0
+    let threw = false
+    try {
+      applyBatch(v, undefined)
+      applyBatch(v, null)
+    } catch (failure) { threw = true }
+    assert(threw === false, 'applyBatch 收到非数组不应抛异常')
+    assert(v.lastSeq === 0, '非数组入参不得改动水位')
+  }
+
+  // 12g. seq 缺失的事件（老路径用数组下标当 seq）仍然要被应用，但不推进水位。
+  {
+    const v = internals.createView()
+    v.lastSeq = 10
+    applyBatch(v, [{ record: { type: 'agent_start' } }])
+    assert(v.lastSeq === 10, '没有 seq 的条目不得改动水位')
+    assert(v.busy === true, '没有 seq 的条目仍须被 applyRecord 处理')
+  }
+
+  /* ── 12h. 装配层：hydrateFromSnapshot —— 这一段才真正防住 0.16.0 的 P0 ──
+   *
+   * 上一批断言（12a-12g）测的是 applyBatch / advanceSeq 各自的零件行为。
+   * 但 0.16.0 的缺陷不在零件，在**装配**：attach() 里两行的顺序反了。
+   * 实测过：把 attach() 改回旧顺序，仅靠 12a-12g 这套断言**不会红**。
+   *
+   * 所以现在 client.js 把装配收进 hydrateFromSnapshot，门禁直接测这个函数。
+   * 将来谁把它内部的 ②③ 两步换序，12h 立刻红。
+   */
+  const { hydrateFromSnapshot } = internals
+  assert(typeof hydrateFromSnapshot === 'function', 'hydrateFromSnapshot 必须导出（装配顺序的唯一守卫）')
+
+  // 12h-1 核心：快照里带 3 条缓冲事件 + eventSeq=3，三条都必须落地，水位到 3。
+  {
+    const v = internals.createView()
+    v.lastSeq = 999                      // 故意留一个脏水位：装配函数必须自己归零
+    hydrateFromSnapshot(v, {
+      eventSeq: 3,
+      events: [ev(1, 'agent_start'), ev(2, 'turn_end'), ev(3, 'agent_settled')],
+      pendingUi: [],
+    })
+    assert(v.lastSeq === 3, '装配后水位应为 3，实际 ' + String(v.lastSeq))
+    // agent_start 落地会把 view 置为 busy，agent_settled 再置回 idle。
+    // 若顺序反了（先抬水位），两条都被丢弃，busy 会一直是 false —— 但这里
+    // 分不出「两条都没跑」和「两条都跑了」，所以下面用只出现一次的事件做判据。
+    assert(v.busy === false, '装配后应回到 idle')
+  }
+
+  // 12h-2 严格判据：用**只有一条且会留下痕迹**的事件，证明它真的被应用了。
+  //        extension_ui_request（dialog）会往 view.pendingUi 里加东西，
+  //        而 pendingUi 是装配函数另一个副作用（④）也会碰的字段 —— 所以这里
+  //        用 pendingUi: [] 的快照，让唯一来源只能是回放。
+  {
+    const v = internals.createView()
+    hydrateFromSnapshot(v, {
+      eventSeq: 1,
+      events: [{ seq: 1, at: 1, record: { type: 'extension_ui_request', id: 'from-event', method: 'confirm', title: 'T' } }],
+      pendingUi: [],
+    })
+    assert(v.pendingUi.length === 1, '缓冲事件里的弹窗必须落地（顺序反了就会是 0），实际 ' + String(v.pendingUi.length))
+    assert(v.pendingUi[0].id === 'from-event', '落地的应是事件里那个弹窗')
+  }
+
+  // 12h-3 反证：旧顺序（先补水位再回放）必须让 12h-2 的判据失败。
+  //       这里手工复刻旧顺序，锁住「为什么不能那么做」。
+  {
+    const v = internals.createView()
+    v.lastSeq = 0
+    advanceSeq(v, 1)                     // ← 旧实现的错误顺序
+    applyBatch(v, [{ seq: 1, at: 1, record: { type: 'extension_ui_request', id: 'from-event', method: 'confirm', title: 'T' } }])
+    assert(v.pendingUi.length === 0, '旧顺序下事件被丢弃 → 弹窗 0 个（这正是 0.16.0 的缺陷）')
+  }
+
+  // 12h-4 快照里的 pendingUi 与事件里的不重复叠加（同一 id 只留一个）。
+  {
+    const v = internals.createView()
+    hydrateFromSnapshot(v, {
+      eventSeq: 1,
+      events: [{ seq: 1, at: 1, record: { type: 'extension_ui_request', id: 'same', method: 'confirm', title: 'T' } }],
+      pendingUi: [{ id: 'same', method: 'confirm', title: 'T' }],
+    })
+    assert(v.pendingUi.length === 1, '同 id 的弹窗不得出现两次，实际 ' + String(v.pendingUi.length))
+  }
+
+  // 12h-5 快照只有 pendingUi、没有事件时也要补挂（面板刷新时 pi 正等弹窗）。
+  {
+    const v = internals.createView()
+    hydrateFromSnapshot(v, {
+      eventSeq: 40,
+      events: [],
+      pendingUi: [{ id: 'waiting', method: 'select', title: '选一个', options: ['a', 'b'] }],
+    })
+    assert(v.lastSeq === 40, '没有事件时水位仍应补齐到 eventSeq')
+    assert(v.pendingUi.length === 1, '仅有 pendingUi 时也必须补挂')
+    assert(v.pendingUi[0].options.length === 2, '补挂的弹窗应保留 options')
+  }
+
+  // 12h-6 空/畸形快照不得抛（host 返回不完整时面板不能白屏）。
+  {
+    let threw = false
+    try {
+      const v = internals.createView()
+      hydrateFromSnapshot(v, null)
+      hydrateFromSnapshot(v, {})
+      hydrateFromSnapshot(v, { eventSeq: 'x', events: 'not-an-array', pendingUi: 42 })
+    } catch (failure) { threw = true }
+    assert(threw === false, '畸形快照不得让 hydrateFromSnapshot 抛异常')
+  }
+}
+
+/* ═══════════════════════════════════════════ 13. 扩展弹窗的补挂（0.16.1） */
+
+/**
+ * host 的 snapshot() 一直下发 pendingUi（src/pi-rpc.mjs:603），
+ * 但 0.16.0 及之前客户端**从未读过这个字段**（全文件 0 处引用）。
+ *
+ * 后果不是「少个弹窗」这么轻：面板刷新时 pi 若正等用户点弹窗，
+ * 用户看不到任何东西，命令挂到 12 轮续期（约 12 分钟）耗尽才报
+ * `N dialog(s) never answered`。
+ *
+ * 这里钉住的是「至少有一条路径能把 snapshot.pendingUi 变成 view.pendingUi」。
+ */
+{
+  const { pendingUiOf, addPendingUi, createView } = internals
+  assert(typeof pendingUiOf === 'function', 'pendingUiOf 必须导出')
+  assert(typeof addPendingUi === 'function', 'addPendingUi 必须导出')
+
+  // 13a. 四种 dialog 都必须能被补挂（select/confirm/input/editor）。
+  for (const method of ['select', 'confirm', 'input', 'editor']) {
+    const v = createView()
+    addPendingUi(v, pendingUiOf({ id: 'req-' + method, method, title: 'T', message: null, options: ['a'] }))
+    assert(v.pendingUi.length === 1, method + ' 弹窗应被补挂进 view.pendingUi')
+    assert(v.pendingUi[0].id === 'req-' + method, method + ' 弹窗 id 应保留')
+    assert(v.pendingUi[0].method === method, method + ' 弹窗 method 应保留')
+  }
+
+  // 13b. 同一个 id 重复补挂不得产生两个弹窗（面板刷新 + 实时事件可能同时到）。
+  {
+    const v = createView()
+    const req = { id: 'dup', method: 'confirm', title: 'T' }
+    addPendingUi(v, pendingUiOf(req))
+    addPendingUi(v, pendingUiOf(req))
+    assert(v.pendingUi.length === 1, '同 id 重复补挂应覆盖而不是追加，实际 ' + String(v.pendingUi.length))
+  }
+
+  // 13c. 空 id 必须被拒（否则会渲染出一个无法应答的幽灵弹窗）。
+  {
+    const v = createView()
+    addPendingUi(v, pendingUiOf({ method: 'select' }))
+    assert(v.pendingUi.length === 0, '空 id 不得进入 pendingUi')
+  }
+
+  // 13d. 有上限：host 侧异常堆积时不能让面板无限增长。
+  //      MAX_PENDING_UI = 12（client.js:1642）。断言取「不超过 12 且确实被封顶」，
+  //      而不是写死某个数 —— 上限可以调，但「必须有上限且真的生效」不可协商。
+  {
+    const v = createView()
+    for (let i = 0; i < 20; i += 1) addPendingUi(v, pendingUiOf({ id: 'r' + i, method: 'select' }))
+    assert(v.pendingUi.length <= 12, 'pendingUi 应有上限，实际 ' + String(v.pendingUi.length))
+    assert(v.pendingUi.length < 20, '堆积 20 个时必须被截断，实际 ' + String(v.pendingUi.length))
+    assert(v.pendingUi[v.pendingUi.length - 1].id === 'r19', '截断应保留最新的（末尾）而不是最旧的')
+  }
 }
 
 if (failed > 0) {

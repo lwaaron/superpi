@@ -23,13 +23,16 @@ DSH（DeepSeek Runtime）插件：把 pi 编码 agent 装进 DSH 的侧栏面板
 | `docs/parity.md` | 能力矩阵。两端对齐的唯一账本。 |
 | `src/http-idle-guard.mjs` | **HTTP idle 超时下限**（0.15.0）：pi 默认 `httpIdleTimeoutMs = 300_000`（5 分钟）会误杀长思考 —— 实测 4 次 `BODY_TIMEOUT` 的静默时长是 317/323/331/503s，刚过线且**与上下文规模无关**（最浅一次仅 7.3%）。`ensureHttpIdleTimeout({agentDir})` 在 spawn 前把它抬到 **30 分钟**。边界严格：只补「未设置」的、显式配置一律尊重（哪怕小于下限）、显式关闭（`0`/`"disabled"`）一律保留、坏 JSON **绝不覆盖**、幂等不重复写盘（已达标不刷 mtime）。设置项本身是 pi 官方支持的（`settings-manager.js:713-722` + `main.js:765` 会在进 `runRpcMode` 前重新配置调度器），所以这是**配置面不是补丁**。详见 `docs/session-interruption.md`。 |
 | `src/runtime-files.mjs` | **运行时文件清单的唯一来源**（0.15.0）：`listRuntimeFiles(root)` 按目录自动发现（根文件 + `src/` 与 `extensions/` 下全部 `.mjs`/`.ts`），`copyRuntimeFiles(root,target)` 供 `test/selfcheck.mjs` 与 `test/version.mjs` 共用。**为什么需要**：这两处原各硬编码一份复制清单，实测已漂移（16 vs 15 项），新增一个源文件就同时让两个门禁报 `Cannot find module` —— 而修法是每处各补一条，下一个人必然再漏。门禁断言「不许退回硬编码」。 |
+| `test/preflight.mjs` | **门禁依赖的唯一判据**（0.16.1）：`probeRuntime()` / `probeJiti()` / `probeReact()` 永不退出、只返回事实；`requireRuntime()` / `requireJiti()` / `requireReact()` 缺失即**失败**（不是 SKIP）。**为什么需要**：0.16.0 审查证实 6 套门禁缺依赖时整段跳过并 exit 0 —— 实测隐藏 `.runtime/` 后 `tui-editor` 的 521 条检查一条没跑，`npm test` 仍是绿的；而 `.runtime/` 是 gitignore 的，**新机器 clone 下来必然命中**。修法刻意**不是**给 6 个文件各加一个 `exit(1)`（那是 6 个补丁，第 7 个必然再漏，与 `runtime-files.mjs` 修「硬编码清单漂移」同构），而是让「依赖就绪」成为一个可查询的事实。三种终态：通过 / 失败 / **显式**跳过（`skipOptional()` 必须标 `[可选]` 并给理由）。 |
+| `test/gate-inventory.mjs` + `test/gate-inventory.json` | **门禁规模的唯一真源与对账判据**（0.16.1）：登记表给每套门禁一条**下限**，`npm test` 末尾实跑全部门禁、读它们自己打印的 `PASS (N checks)`，**实测 < 登记即红**。**为什么需要**：0.16.0 审查发现 AGENTS.md 里散落的 check 数已全面漂移（parity 98→102、host-parity 412→430、context-guard 150→179、tui-editor 459→521）而无人校验 —— 数字分散在多处手写副本就必然漂移，而本文恰恰把它们加粗当作「对齐强度」的证据。判据取下限而非相等：上升=补了用例（正常，顺手抬高登记值），下降=能力被削弱或门禁漏跑（必须拦）。`--list` 看登记表，`--print` 打印实测值。 |
 | `src/ui-prefs.mjs` | 面板偏好的落盘层（0.8.0）：项目显示名 / 会话显示名 / 会话置顶的唯一真相，落在 `<home>/.superpi/ui-prefs.json`（`SUPERPI_UI_PREFS` 可覆盖路径，`UI_PREFS_DIR_NAME` = `.superpi`，版本号 `UI_PREFS_VERSION = 1` 供将来迁移）。对外只经 host 的 `/ui-prefs` 三条路由（`index.js:991-1007`：GET 只读、`POST /ui-prefs/project`、`POST /ui-prefs/session` 走合并式补丁），校验与 400 语义都收在这一层（`MAX_PROJECT_NAME_LENGTH` 120 / `MAX_SESSION_PATH_LENGTH` 4096）。**它不归 pi 的 RPC 面管** —— 偏好是「面板自己的账」。 |
-| `extensions/superpi-editor.ts` | 命令行会话窗口（pi TUI）的**输入框增强**（0.9.2 起）：继承 pi 公开的 `CustomEditor`，通过官方扩展点 `ctx.ui.setEditorComponent()` 替换输入框 —— **不改 pi 任何文件、不打补丁、不碰 `node_modules`**。①输入语义：Ctrl+A 全选、Shift+方向/Home/End 扩选、Ctrl+C 复制（不再清空内容）、Ctrl+X 剪切、Backspace/Delete 删选区、可打印字符与粘贴替换选区、Windows 下 Ctrl+V 粘贴**剪贴板里的文件**时插入绝对路径（读 PowerShell 的 `GetFileDropList`，因为 pi-tui 的 Windows native 模块没有 `getFilePaths`）。②外观与入口（0.9.4，0.9.7 收口）：四边闭合的**直角**框（`┌─┐ │ │ └─┘`）+ 框线 80% 白（`FRAME_RGB=[204,204,204]`，pi 原本只有上下两条线，滚动提示保留）；Working 行**回到 pi 原来的位置（上边框内侧左侧）**并按状态换色（正常白 `[255,255,255]` / 成功绿 `[126,211,133]` / 出错红 `[236,94,94]`，图标同色，状态来自 `agent_start`/`tool_execution_end.isError`/`agent_settled`，并 `setWorkingVisible(false)` 关掉 pi 内置那条）；粘贴进来的绝对路径加浅灰底色（`PATH_CHIP_RGB=[104,104,104]`，`trimPathToken()` 保证**只染路径本身**、不溢出到后面打的字，圆角格只在确实是空白时才吃）；`settings` / `home` 两个入口（**全小写**）放在**框外右下角、模型上方**，颜色**与模型名一致**（`theme.fg('dim', …)`）：`settings` 展开 pi 自己的四条斜杠命令（`/settings` `/model` `/thinking` `/scoped-models`，点了走 `editor.onSubmit`），`home` 提交 `/new`（回启动界面）。③**Ctrl+V 判定归扩展自己**（0.9.7）：`resolveClipboardPaste()` 先问 native 快路径（位图落成临时 PNG），失败才起 PowerShell 探头 `readWindowsClipboard()` 一次性拿文件/文本/位图 —— 因为 pi-tui 的 Windows native 模块既没有 `getFilePaths`，实测连 `getImage`/`getText` 也会读不到，pi 自己的 `handleClipboardPaste` 于是「截图后 Ctrl+V 没反应」。三者都没有才回落 `onPasteImage`。安装面 `tools/install-pi-extension.mjs`（`--install/--remove/--status`）落到 `<piAgentDir>/extensions/`（0.10.0 起一次装三个文件：editor + `superpi-rules.ts` + `superpi-rules.mjs`，`status.complete` 才算完整）；门禁 `test/tui-editor.mjs` 459 checks（0.9.11 起；footer 接管见 0.9.9，底部那行回归见 0.9.10，点击命中区回归见 0.9.11；0.14.1 起含等待可见性：Working 行显示当前工具与命令自设上限）。 |
+| `extensions/superpi-editor.ts` | 命令行会话窗口（pi TUI）的**输入框增强**（0.9.2 起）：继承 pi 公开的 `CustomEditor`，通过官方扩展点 `ctx.ui.setEditorComponent()` 替换输入框 —— **不改 pi 任何文件、不打补丁、不碰 `node_modules`**。①输入语义：Ctrl+A 全选、Shift+方向/Home/End 扩选、Ctrl+C 复制（不再清空内容）、Ctrl+X 剪切、Backspace/Delete 删选区、可打印字符与粘贴替换选区、Windows 下 Ctrl+V 粘贴**剪贴板里的文件**时插入绝对路径（读 PowerShell 的 `GetFileDropList`，因为 pi-tui 的 Windows native 模块没有 `getFilePaths`）。②外观与入口（0.9.4，0.9.7 收口）：四边闭合的**直角**框（`┌─┐ │ │ └─┘`）+ 框线 80% 白（`FRAME_RGB=[204,204,204]`，pi 原本只有上下两条线，滚动提示保留）；Working 行**回到 pi 原来的位置（上边框内侧左侧）**并按状态换色（正常白 `[255,255,255]` / 成功绿 `[126,211,133]` / 出错红 `[236,94,94]`，图标同色，状态来自 `agent_start`/`tool_execution_end.isError`/`agent_settled`，并 `setWorkingVisible(false)` 关掉 pi 内置那条）；粘贴进来的绝对路径加浅灰底色（`PATH_CHIP_RGB=[104,104,104]`，`trimPathToken()` 保证**只染路径本身**、不溢出到后面打的字，圆角格只在确实是空白时才吃）；`settings` / `home` 两个入口（**全小写**）放在**框外右下角、模型上方**，颜色**与模型名一致**（`theme.fg('dim', …)`）：`settings` 展开 pi 自己的四条斜杠命令（`/settings` `/model` `/thinking` `/scoped-models`，点了走 `editor.onSubmit`），`home` 提交 `/new`（回启动界面）。③**Ctrl+V 判定归扩展自己**（0.9.7）：`resolveClipboardPaste()` 先问 native 快路径（位图落成临时 PNG），失败才起 PowerShell 探头 `readWindowsClipboard()` 一次性拿文件/文本/位图 —— 因为 pi-tui 的 Windows native 模块既没有 `getFilePaths`，实测连 `getImage`/`getText` 也会读不到，pi 自己的 `handleClipboardPaste` 于是「截图后 Ctrl+V 没反应」。三者都没有才回落 `onPasteImage`。安装面 `tools/install-pi-extension.mjs`（`--install/--remove/--status`）落到 `<piAgentDir>/extensions/`（0.10.0 起一次装三个文件：editor + `superpi-rules.ts` + `superpi-rules.mjs`，`status.complete` 才算完整）；门禁 `test/tui-editor.mjs`（规模见 `test/gate-inventory.json`；0.9.11 起 footer 接管见 0.9.9，底部那行回归见 0.9.10，点击命中区回归见 0.9.11；0.14.1 起含等待可见性：Working 行显示当前工具与命令自设上限）。 |
 
 | `extensions/superpi-rules.mjs` | **用户自定义规则**（0.10.0）的唯一模型层：`DEFAULT_RULES_TEXT`（用户手写的 21 条）、`OVERRIDE_PREFIX`（「优先级最高、覆盖上文、冲突以本段为准」的开场声明）、`normalizeRulesText()`（去 BOM / 统一换行 / 去行尾空白 / 压缩空行 / trim，**必须幂等**否则每次保存都改 checksum）、`isRulesEmptyText()`（`#` 注释行算空）、`checksumOf()`（sha256，写入时自己算不收客户端）、`renderRulesBlock()`（**不自带 `<user_defined_rules>` 标签** —— pi 组装 section 时会包，自己再包就是同名嵌套两次，实测抓到过）、`createRulesStore()`（串行写队列 + tmp/rename 原子落盘 + 读盘容错永不抛 + 幂等写不刷 `updatedAt`）与 `readRulesTextSync()`（扩展每轮读盘用，mtime+size 缓存）。落盘 `<home>/.superpi/rules.json`（`SUPERPI_RULES` 可覆盖），与 ui-prefs 同目录。**它同时被 `index.js`（`/rules` 三条路由）与 pi 扩展引用，所以放在 `extensions/` 而不是 `src/`** —— 扩展被原样复制到 `<piAgentDir>/extensions/` 后，`./superpi-rules.mjs` 这条相对引用在仓库里与安装后指向同一份内容，零复制、零分叉。只管 node 内建依赖（jiti 的 alias 表里没有第三方包）。 |
 | `extensions/superpi-rules.ts` | 把规则送进 pi 的**系统提示**（0.10.0）：`pi.on('before_agent_start')` 每轮读盘 → 写进 `systemPromptOptions.sections.user_defined_rules`（**不返回 `systemPrompt`**：那会走 `forceSystemPrompt` 整份重放 = 每轮一次缓存 miss，而 section 只发一次补丁）；位置由 pi 的组装顺序保证 —— 自定义 section 排在 `cwd` 之后，即整份提示末尾。另注册 `/superpi-rules`（看级别与字数 / 编辑 / 恢复默认 / 只显示全文），读写的是**面板那一份文件**。按 `ctx.ui.select/editor/confirm` 分级退化：没有交互 UI 就明确告知文件路径，**任何异常都不外抛**（规则读不出来不能让 pi 起不来或一轮对话失败）。不 import `@earendil-works/*`（只依赖 `pi.on` / `pi.registerCommand` / `ctx.ui.*` 三个运行时参数），所以多份 pi 副本都能加载、也能在 `test/rules.mjs` 里用假 pi 单测。 |
 | `extensions/superpi-context-guard.mjs` | **上下文窗口化**（0.12.0）的模型层：`planContextWindow(messages, {windowTokens, settings})` 在请求前按「信息价值/成本」分级折叠 —— ①旧图片→一行占位（带路径，可重读）②旧 thinking→丢弃 ③超长工具结果→头尾保留 ④旧工具结果→折成首行 ⑤旧回复→折叠；保护区由**三条约束取最严**（最近 `keepRecentTurns` 轮 / `keepRecentMessages` 条 / `protectedTokenRatio` 窗口），本轮（最后一条 user 之后）的图片一张不动。估算口径刻意与 pi 不同：图片按 `imageTokens=12000`（pi 记 4800 chars≈1200，实测低估十几倍）、文本 `charsPerToken=3`。设 `targetRatio=0.72`，**保证请求不超预算**。纯函数、幂等、单调（前缀只后退，prompt cache 不击穿）；`hygiene` 段落 `DEFAULT_HYGIENE_TEXT` 写死边界「只清理本次任务自己生成的中间产物」。落盘 `<home>/.superpi/context-guard.json`（`SUPERPI_CONTEXT_GUARD` 可覆盖）+ 观测日志 `context-guard.log.jsonl`（滚 240 行）。 |
-| `extensions/superpi-context-guard.ts` | 接线层：`pi.on('context')` 返回裁剪后的 messages（**不写 session、不调模型、不联网** —— 所以超限那一刻它必然能成功，而压缩/重试都要再用一次已被超限的资源）；无需裁剪时返回 `undefined`（不触发 pi 重放提示）；`pi.on('before_agent_start')` 把「图片用完即弃」准则写进 `sections.superpi_context_hygiene`（与用户规则并列、不抢 key）；`/superpi-context` 看真实占用与释放量。异常一律吞掉。门禁 `test/context-guard.mjs` **150 checks**（0.14.0 起：新增 C2 本轮图片限额 / C3 参数折叠 / C4 兜底三段）。**0.12.2 起**：TUI footer 第 2 行的上下文百分比也取这份日志（`readGuardUsageSync`，2 秒节流、按 sessionId 过滤、拿不到就退回 pi 原值），显示成 `~60.0%/1.0M` —— `~` 表示守卫估算，不是 provider 的 usage。 |
+| `extensions/superpi-context-guard.ts` | 接线层：`pi.on('context')` 返回裁剪后的 messages（**不写 session、不调模型、不联网** —— 所以超限那一刻它必然能成功，而压缩/重试都要再用一次已被超限的资源）；无需裁剪时返回 `undefined`（不触发 pi 重放提示）；`pi.on('before_agent_start')` 把「图片用完即弃」准则写进 `sections.superpi_context_hygiene`（与用户规则并列、不抢 key）；`/superpi-context` 看真实占用与释放量。异常一律吞掉。门禁 `test/context-guard.mjs`（规模见 `test/gate-inventory.json`；0.14.0 起含 C2 本轮图片限额 / C3 参数折叠 / C4 兜底三段）。**0.12.2 起**：TUI footer 第 2 行的上下文百分比也取这份日志（`readGuardUsageSync`，2 秒节流、按 sessionId 过滤、拿不到就退回 pi 原值），显示成 `~60.0%/1.0M` —— `~` 表示守卫估算，不是 provider 的 usage。 |
+| `extensions/superpi-malformed.mjs` | **畸形输出的唯一判据**（0.16.2）：四类形态 —— A 正文型（text 块含完整 DSML）、B thinking 型（闭合标记在 thinking 里）、C 空转型（`stopReason==='stop'` 但既无正文也无 toolCall）、**D 残片型**（开标记被网关吞掉，只剩 `</parameter>` + `</｜｜DSML｜｜ calls>` 收尾 —— 2026-11-20 真机新形态，前三条全部漏掉）；五类排除项（`toolUse` / 正常回复 / **正文里讨论 DSML** / `error` 态 / 有 toolCall）。**为什么单独成一个文件**：同一判据曾被抄三处（editor 有、面板**一条也没有**），于是同一故障在命令行亮红字、在面板完全静默 —— 判据不是文案，它必须只有一份。导出 `detectMalformedOutput()`（带 kind）、`isMalformedOutput()`（布尔兼容）、`MALFORMED_DETECTION`（判定表）、`MALFORMED_NOTICE`（中英文案）。**面板拿不到它**（只许 `require('react')`），所以同一份表也登记进 `src/rpc-contract.mjs` 并由 `GET /contract` 下发 ——「表在契约、算法在面板」，与 `classifyInput` 同一范式。**两条判据细节不可退化**：① 开标记必须绑定在 `DSML` 标记**之后**（全文字符串 `includes` 会把 D 类的 `</parameter>` 误认成开标记）；② 残片必须落在**消息末尾**（`residueTailChars=40`），否则「正文里讨论 DSML」会被误判成故障。门禁 `test/malformed.mjs`（规模见 `test/gate-inventory.json`）。 |
 
 | `extensions/superpi-modalities.mjs` | **模型模态开关**（0.13.0）的唯一模型层：`RUNTIME_MODALITIES=['text','image']`（pi 运行时**实际能发**的，与 `ContentBlock` 联合类型对账，`test/modalities.mjs` F 段防过期）、`resolveModelModalities(model, overrides)`（可用模态 = `model.input` ∩ 运行时；`unsupported` 显式列出「协议声明但发不出去」的，**不画假开关**）、`allowedModalities()`、`filterMessagesByModalities()`（关掉的模态块→占位文本，非破坏性、text 永不过滤）、`normalizeModalitiesState()`（幂等 + 稀疏：只存非默认项，默认规则将来变了没动过的模型自动跟随）、`createModalitiesStore()`（串行队列 + 原子落盘 + 400 语义）、`readModalitiesStateSync()`（扩展每轮用，mtime+size 缓存）。落盘 `<home>/.superpi/modalities.json`（`SUPERPI_MODALITIES` 可覆盖）。**host 与两个扩展共用它**，所以放 `extensions/`（复制后相对引用仍指向同一份）。 |
 | `extensions/superpi-modalities.ts` | 命令行窗口的 `/superpi-modalities`：列模型（scoped 优先，否则全量）→ 选模型 → 逐个切模态（文本锁定、`unsupported` 只读、`恢复这个模型的默认`）。读写与面板**同一份** JSON。**不 hook `context`** —— 过滤只在守卫里执行一次（单一执行点）。异常不外抛。 |
@@ -41,7 +44,16 @@ DSH（DeepSeek Runtime）插件：把 pi 编码 agent 装进 DSH 的侧栏面板
 - 一条能力要么两端都有，要么两端都明确没有。**不存在「先做一端，另一端以后再说」**。
 - 任何当前缺口必须在 `docs/parity.md` 里是一条显式记录（能力名 + 缺什么 + 补齐版本），不允许静默存在。
 - 目标态是 `docs/parity.md` 里 **零缺口**。你新增任何能力，同步把另一端补齐，不许把缺口转嫁给下一任。
-- 检查动作：`npm test`。它含三套机器门禁 —— `test/parity.mjs`（98 checks，契约 ↔ pi 类型与官方文档 ↔ `client.js`/`index.js` 的面板覆盖，三向对账）、`test/host-parity.mjs`（**412 checks**，`buildSpawnArgs` 与 HTTP 面，0.14.0 起含切帧器线性耗时与历史分页）与 `test/timeout.mjs`（167 行 / 28 checks，用 `test/fixtures/fake-pi-rpc.mjs` 协议替身把 5 分钟的超时/弹窗时序压到毫秒级实测）。**这三套门禁是本仓库对齐的机器保障，不是可选装饰**：删掉或绕过它，等于把"100% 对齐"退回人肉承诺。
+- 检查动作：`npm test`。它含三套机器门禁 —— `test/parity.mjs`（契约 ↔ pi 类型与官方文档 ↔ `client.js`/`index.js` 的面板覆盖，三向对账）、`test/host-parity.mjs`（`buildSpawnArgs` 与 HTTP 面，0.14.0 起含切帧器线性耗时与历史分页）与 `test/timeout.mjs`（用 `test/fixtures/fake-pi-rpc.mjs` 协议替身把 5 分钟的超时/弹窗时序压到毫秒级实测）。**这三套门禁是本仓库对齐的机器保障，不是可选装饰**：删掉或绕过它，等于把"100% 对齐"退回人肉承诺。
+
+  > **各套门禁的当前规模不写在这里**（0.16.1）。唯一真源是 **`test/gate-inventory.json`**，
+  > 由 `test/gate-inventory.mjs` 在 `npm test` 末尾实测对账：**实测值低于登记值即红**。
+  > 为什么改成这样：0.16.0 的审查发现本文里散落的 check 数已全面漂移
+  > （parity 98→102、host-parity 412→430、context-guard 150→179、tui-editor 459→521），
+  > 而没有任何门禁校验它们 —— 数字分散在多处手写副本就必然漂移，
+  > 而本文恰恰把这些数字加粗当作「对齐强度」的证据。数字一旦能自由漂移，
+  > 它就从「可校验的事实」退化成「曾经的印象」。
+  > 查看当前真实规模：`node test/gate-inventory.mjs --list`。
 
 ## 4. 新增一个能力的固定流程（顺序不可换）
 
@@ -50,9 +62,11 @@ DSH（DeepSeek Runtime）插件：把 pi 编码 agent 装进 DSH 的侧栏面板
 3. **客户端接 UI**：`client.js` 三处——`api` 对象（`:932-1006`）加方法、`applyRecord`（`:1708-1857`）加事件分支、面板加控件与 i18n 词条（`ZH` `:36-256` / `EN` `:257-474`，两套键集必须一致）。
 4. **更新账本**：`docs/parity.md` 对应行的「面板端状态」改成已实现，补「门禁用例」，并按需改 `## 1/3/4` 末尾的统计数字。
 5. **跑门禁**：`npm test`。红了不许提交。
-6. **新文件三处登记**：①`SELF_FILES`（`index.js:135-147`，决定 `/selfcheck` 是否盯着它、改动后要不要重启 DSH）；②`tools/install-pi-extension.mjs` 的 `EXTENSION_FILES`（只对 `extensions/` 下的文件）；③`npm test` 流水线（新门禁脚本）与 `test/version.mjs` / `test/selfcheck.mjs` / `test/fresh-boot.mjs` 的 `COPY` 清单（复制插件的测试要带上它）。漏一处就会出现「本地绿、装出来缺文件」或「改了没生效」——0.10.0 加 `extensions/superpi-rules.mjs` 时这三处都要动。
-7. **提交**：`git add` 你实际改的文件。**改代码必须同时升 `package.json` 的 version**（pnpm 对 `file:` 依赖按 lock 里的 integrity 复用 store，版本号不变会把旧内容装回来且 exit=0；`test/version.mjs` 与 `test/parity.mjs:213-218` 都断言版本单一真相）。提交之后跑 **`npm run sync`** 把这次提交同步到线上 GitHub（见第 9 节）——装了钩子的话它会自动在后台推一次，但**离线时不会告诉你欠了多少**，手动跑一次才能看到结论。
-8. **推线上**：`npm run sync`（有网）/ 只提交本地（无网，退出码 2）。发布一个新版本时顺手 `git tag -a v<version>` —— tag 由同一条 push 带上去。
+6. **新文件三处登记**：①`SELF_FILES`（`index.js:167-193`，决定 `/selfcheck` 是否盯着它、改动后要不要重启 DSH）；②`tools/install-pi-extension.mjs` 的 `EXTENSION_FILES`（只对 `extensions/` 下的文件）；③`npm test` 流水线（新门禁脚本）。复制清单**不再是手写项** —— `test/version.mjs` / `test/selfcheck.mjs` / `test/fresh-boot.mjs` 统一走 `src/runtime-files.mjs` 的 `copyRuntimeFiles()` 自动发现（0.16.1 把最后一个手写副本也消掉了）。漏一处就会出现「本地绿、装出来缺文件」或「改了没生效」。
+7. **新门禁必须登记规模**（0.16.1）：在 `test/gate-inventory.json` 加一条「下限」。判据是**实测 ≥ 登记**，`npm test` 末尾的 `gate-inventory` 会红。若新门禁天然没有数量概念（以抛错为失败方式，如 `selfcheck`），把它加进 `test/version.mjs` 的 `STRUCTURAL_GATES` **并写明理由** —— 两条路必须选一条，不接受「什么都不做」（那正是 F-06 的成因）。
+8. **新依赖必须进 preflight**（0.16.1）：门禁需要的 pi / react / jiti 之外的任何外部依赖，加进 `test/preflight.mjs` 的 `DEPENDENCIES`。**禁止在门禁里写「缺了就 skip 并 exit 0」** —— `.runtime/` 是 gitignore 的，新机器必然命缺，那样等于门禁在全新环境下静默不跑而 `npm test` 是绿的（0.16.0 实测：隐藏 `.runtime` 后 521 条 TUI 检查一条没跑，仍 exit 0）。
+9. **提交**：`git add` 你实际改的文件。**改代码必须同时升 `package.json` 的 version**（pnpm 对 `file:` 依赖按 lock 里的 integrity 复用 store，版本号不变会把旧内容装回来且 exit=0；`test/version.mjs` 与 `test/parity.mjs:213-218` 都断言版本单一真相）。提交之后跑 **`npm run sync`** 把这次提交同步到线上 GitHub（见第 9 节）——装了钩子的话它会自动在后台推一次，但**离线时不会告诉你欠了多少**，手动跑一次才能看到结论。
+10. **推线上**：`npm run sync`（有网）/ 只提交本地（无网，退出码 2）。发布一个新版本时顺手 `git tag -a v<version>` —— tag 由同一条 push 带上去。
 
 ## 5. 禁止项
 
@@ -79,6 +93,29 @@ DSH（DeepSeek Runtime）插件：把 pi 编码 agent 装进 DSH 的侧栏面板
 - **禁止静默失效。** 一个机制「跑了但没生效」比它不存在更危险（它会让日志看起来
   一切正常）。实例：`dropOldestTurns` 因三个叠加缺陷从未生效，`droppedTurns` 恒 0，
   而日志里 `overBudget` 恒 true 达上百行。
+
+- **禁止把「管道通了」当成「交付到了」。**（0.16.1 血的教训）
+  闭环判据必须落在**用户能感知到的那一端**。实例：`docs/parity.md` 的 D-05 曾把
+  「`pendingUi` 随 `snapshot()` 下发」记为已闭环（0.3.0），而面板**从来没有读过这个字段**
+  —— 全文件 0 处引用。协议字段发了出去、门禁也断言了 host 侧登记与超时续期，
+  但没有一条断言「面板会渲染这个弹窗」。后果：面板刷新时 pi 若正等扩展弹窗，
+  弹窗在 UI 上不存在，用户无法应答，命令挂 12 分钟才报 `N dialog(s) never answered`。
+  **自检问法**：这条证据说的是「数据发出去了」还是「用户看到了 / 用上了」？
+  只有后者算闭环。
+
+- **禁止把「无法验证」当成「验证通过」。**（0.16.1）
+  门禁缺依赖时 `SKIP + exit 0` 不是「跳过」，是把这条保障删掉却不告诉任何人。
+  实测：隐藏 `.runtime/`（gitignore 的，**新机器必然没有**）后，`parity` 从 102 掉到 87
+  仍 PASS，`tui-editor` 的 521 条检查**一条没跑**仍 exit 0 —— 而 AGENTS.md §3 正宣称
+  这三套门禁是「100% 对齐的机器保障，不是可选装饰」。
+  唯一合法做法：依赖前置断言（`test/preflight.mjs`），缺失即失败；
+  真要跳过必须显式标记 `[可选]` 并给出理由。
+
+- **禁止用「文档里的数字」当证据。**（0.16.1）
+  同一事实的副本必然漂移：AGENTS.md 里散落的 check 数实测已全面过时
+  （parity 98→102、host-parity 412→430、context-guard 150→179、tui-editor 459→521），
+  而没有任何门禁校验它们。数字要么只登记一处（`test/gate-inventory.json`），
+  要么不写。**本文不再写各套门禁的具体 check 数**，只指向登记表。
 
 ### 5.0.1 DSML 畸形工具调用的真因：**上下文被裁剪掏空**（0.15.4 纠正，务必记住）
 
@@ -287,7 +324,7 @@ return sections ? { role: "system", content: "", sections } : undefined
   `piConfig.name` 可以改 CLI 品牌名，并说明它影响 "the CLI banner, configuration paths,
   and derived environment variable names"。这是**配置面而不是补丁**：不改任何 .js、不 wrap 任何方法。
   工具 `tools/brand-pi-runtime.mjs`（`--apply/--revert/--status`，幂等），门禁
-  `test/brand-pi-runtime.mjs`（20 checks）。两条铁律：
+  `test/brand-pi-runtime.mjs`（规模见 `test/gate-inventory.json`）。两条铁律：
   ① **只改 `piConfig.name`，`configDir` 必须保持 `.pi`** —— 用户的 9 个项目历史会话都在
   `~/.pi/agent/sessions`，把 configDir 改成 `.superpi` 会让 pi 去新目录找、历史会话全部读不到；
   ② **必须幂等且可重跑** —— `pnpm add` / `npm install` 会用 registry 上的原始 package.json
@@ -313,16 +350,26 @@ return sections ? { role: "system", content: "", sections } : undefined
 ## 7. 验证命令
 
 ```powershell
-npm test                                        # 14 项离线门禁，全程实测 ~20 秒：
-                                                # selfcheck → client-render(926) → css-tokens(98)
-                                                # → runtime-resolve → config-hot → host-parity(325)
-                                                # → session-projects(55) → timeout(28) → rules(193)
-                                                # → parity(96) → tui-editor(293) → restart-lib(31×2 引擎)
-                                                # → github-sync(82) → version
-                                                # 耗时大头：restart-lib ~9.1 s（起 pwsh 7 + 5.1 各跑一遍 fixture）、
-                                                # github-sync ~6.3 s（临时仓库里用真 git 跑完整同步流程）、
-                                                # timeout ~3.1 s（真等超时周期）、tui-editor ~2.6 s（jiti 加载 .ts + 起两次 PowerShell 读剪贴板）；其余合计 <1.5 s
-npm run test:all                                # 上面 14 项 + 真起 pi 子进程跑一轮 LLM
+npm test                                        # 20 项离线门禁（顺序即依赖顺序）：
+                                                # preflight（依赖前置断言，缺 pi/react 直接红）
+                                                # → check-carriers → selfcheck → client-render
+                                                # → css-tokens → runtime-resolve → config-hot
+                                                # → host-parity → session-projects → session-lifecycle
+                                                # → timeout → rules → context-guard → modalities
+                                                # → parity → tui-editor → brand-pi-runtime
+                                                # → restart-lib → github-sync → version
+                                                # → gate-inventory（各套规模对账，收口）
+                                                #
+                                                # 各套的 check 数不写在这里：唯一真源是
+                                                # test/gate-inventory.json（实测低于登记值即红）。
+                                                # 看当前真实规模：node test/gate-inventory.mjs --list
+                                                # 耗时大头：github-sync（真 git 跑完整同步）、
+                                                # restart-lib（起 pwsh 7 + 5.1 各跑一遍）、
+                                                # gate-inventory（把所有门禁再跑一遍做对账，约 40 s）
+npm run test:all                                # 上面 20 项 + 真起 pi 子进程跑一轮 LLM
+npm run test:preflight                          # 只做依赖探测（缺什么、怎么装）
+npm run test:inventory                          # 只做门禁规模对账（--print 打印实测值）
+npm run test:lifecycle                          # 只跑会话池生命周期门禁
 npm run test:rules                              # 只跑用户自定义规则门禁（含真 .ts 扩展层）
 npm run test:tui                                # 只跑输入框扩展门禁（jiti 加载真 .ts + pi 真 CustomEditor + 真按键序列）
 npm run pi:editor                               # 把 extensions/superpi-editor.ts 装进 pi（<piAgentDir>/extensions/）

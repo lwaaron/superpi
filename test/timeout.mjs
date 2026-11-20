@@ -19,8 +19,11 @@ const root = path.dirname(here)
 const fake = path.join(root, 'test', 'fixtures', 'fake-pi-rpc.mjs')
 
 let failures = 0
+/** 通过数（0.16.1）：让规模可被 test/gate-inventory.mjs 核对，而不是只报一句 PASS。 */
+let passed = 0
 const check = (condition, message) => {
   if (condition === true) {
+    passed += 1
     console.log('  ok   ' + message)
     return
   }
@@ -163,4 +166,4 @@ if (failures > 0) {
   console.error(String(failures) + ' 条断言失败')
   process.exit(1)
 }
-console.log('PASS')
+console.log('PASS (' + String(passed) + ' checks)')

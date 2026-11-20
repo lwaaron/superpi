@@ -213,7 +213,12 @@ section('F. 防过期：运行时模态清单必须与 pi 的类型一致')
 
 const pi = resolvePiRuntime({ pluginRoot: root })
 if (!pi.packageDir) {
-  console.log('SKIP 类型对账：没有 pi 运行时')
+  /** 曾经是 SKIP（0.16.1 修）：这段测的是「RUNTIME_MODALITIES 有没有过期」，缺 pi 就无法对账。 */
+  console.error('')
+  console.error('FAIL[preflight] pi 运行时不可用 —— 运行时模态清单无法与 pi 的类型对账')
+  console.error('  这一层是本门禁的核心（防 RUNTIME_MODALITIES 过期），不能跳过。修法：npm run test:runtime')
+  console.error('')
+  process.exit(1)
 } else {
   const typesFile = path.join(pi.packageDir, '..', 'pi-ai', 'dist', 'types.d.ts')
   const schemaFile = path.join(pi.packageDir, '..', 'pi-ai', 'dist', 'providers', 'model-schema.d.ts')
@@ -239,10 +244,13 @@ process.env.SUPERPI_MODALITIES = stateFile
 fs.writeFileSync(stateFile, JSON.stringify({ version: 1, models: { 'odys-deepseek/Deepseek-V4.1-Flash': { image: false } } }), 'utf8')
 
 let extensionModule = null
-let skipped = false
 if (!pi.cliPath || !pi.packageDir) {
-  console.log('SKIP 扩展层：没有 pi 运行时')
-  skipped = true
+  /** 曾经是 SKIP（0.16.1 修）：扩展层测的是「开关真的生效」，缺 pi 等于完全未验证。 */
+  console.error('')
+  console.error('FAIL[preflight] pi 运行时不可用 —— 扩展层（superpi-context-guard.ts）无法加载')
+  console.error('  这一层是本门禁的被测对象，不能跳过。修法：npm run test:runtime')
+  console.error('')
+  process.exit(1)
 } else {
   let jitiPath = ''
   let dir = path.resolve(pi.packageDir)
@@ -253,7 +261,13 @@ if (!pi.cliPath || !pi.packageDir) {
     if (parent === dir) break
     dir = parent
   }
-  if (jitiPath === '') { console.log('SKIP 扩展层：找不到 jiti'); skipped = true }
+  if (jitiPath === '') {
+    console.error('')
+    console.error('FAIL[preflight] 找不到 jiti —— 扩展层无法加载')
+    console.error('  修法：重装 pi 运行时（npm run test:runtime）')
+    console.error('')
+    process.exit(1)
+  }
   else {
     const { createJiti } = await import(pathToFileURL(jitiPath).href)
     const extensionFile = path.join(root, 'extensions', 'superpi-context-guard.ts')
@@ -293,7 +307,12 @@ if (extensionModule !== null) {
 
 section('H. TUI：/superpi-modalities 菜单真的能改状态')
 
-if (pi.cliPath && pi.packageDir) {
+/**
+ * 外层 `if (pi.cliPath && pi.packageDir)` 已删（0.16.1）：上面缺 pi 时已经 exit 1，
+ * 这个守卫恒为真，留着只会让人以为「这一层可能不跑」。
+ * jiti 缺失同理不再是 SKIP —— TUI 命令是本门禁的被测对象之一。
+ */
+{
   let jitiPath = ''
   let dir = path.resolve(pi.packageDir)
   for (let depth = 0; depth < 8; depth += 1) {
@@ -304,7 +323,11 @@ if (pi.cliPath && pi.packageDir) {
     dir = parent
   }
   if (jitiPath === '') {
-    console.log('SKIP TUI 层：找不到 jiti')
+    console.error('')
+    console.error('FAIL[preflight] 找不到 jiti —— TUI 扩展（superpi-modalities.ts）无法加载')
+    console.error('  修法：重装 pi 运行时（npm run test:runtime）')
+    console.error('')
+    process.exit(1)
   } else {
     const { createJiti } = await import(pathToFileURL(jitiPath).href)
     const tuiFile = path.join(root, 'extensions', 'superpi-modalities.ts')
@@ -371,8 +394,6 @@ if (pi.cliPath && pi.packageDir) {
     })
     ok(notices.length === 1 && notices[0][1] === 'warning', '没有模型时给出 warning（不是空白菜单）')
   }
-} else {
-  console.log('SKIP TUI 层：没有 pi 运行时')
 }
 
 if (previousEnv === undefined) delete process.env.SUPERPI_MODALITIES
@@ -381,7 +402,6 @@ else process.env.SUPERPI_MODALITIES = previousEnv
 /* ═════════════════════════════════════════════════════ 收尾 */
 
 try { fs.rmSync(tmp, { recursive: true, force: true }) } catch { /* 清理失败不影响结论 */ }
-if (skipped) console.log('\n（扩展层被跳过：' + String(checks) + ' checks 已跑）')
 
 if (failed === 0) {
   console.log('')

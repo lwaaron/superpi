@@ -69,6 +69,15 @@ window.__ModuleLoader__.load({
       error: '出错了',
       reconnect: '重新连接',
       failed: '失败',
+      /**
+       * 畸形输出（0.16.2）。文案本体由契约下发（`malformedNotice`），
+       * 这里只放两条**兜底**与那个按钮的字：
+       *  - 契约没下发时用兜底（绝不让用户看到空白或英文乱入）
+       *  - 但兜底文本必须与契约里那份**逐字同文**，否则渠道一变就两边不一致
+       */
+      malformedTitle: '本轮未执行：模型输出格式错乱（DSML），工具调用没被识别 · 直接重发即可',
+      malformedRetry: '继续',
+      malformedDetail: '这是模型侧的偶发输出异常（不是网络、超时或上下文超限），重发通常就好。',
       procThink: '思考',
       procBash: '运行命令',
       procRead: '读取',
@@ -88,6 +97,8 @@ window.__ModuleLoader__.load({
       durSec: '{n}秒',
       tokens: 'tokens',
       crashed: 'SuperPi 子进程已退出',
+      sessionEnded: '这个会话已经结束（SuperPi 子进程退出了）',
+      sessionEndedHint: '会话文件已保存，历史记录不会丢。点「重新连接」起一个新进程，或到「历史会话」里挑一条继续。',
       synced: '代码已同步',
       syncedHint: '运行时文件与磁盘一致',
       staleCode: '代码有改动未生效',
@@ -337,6 +348,9 @@ window.__ModuleLoader__.load({
       error: 'Something went wrong',
       reconnect: 'Reconnect',
       failed: 'failed',
+      malformedTitle: 'Nothing ran: the model emitted malformed tool-call syntax (DSML), so no tool was called · just send it again',
+      malformedRetry: 'Continue',
+      malformedDetail: 'This is an intermittent output glitch on the model side (not network, timeout or context overflow). Resending usually clears it.',
       procThink: 'Thinking',
       procBash: 'Run command',
       procRead: 'Read',
@@ -356,6 +370,8 @@ window.__ModuleLoader__.load({
       durSec: '{n}s',
       tokens: 'tokens',
       crashed: 'SuperPi child process exited',
+      sessionEnded: 'This session has ended (the SuperPi child process exited)',
+      sessionEndedHint: 'The session file is safe — history is not lost. Reconnect to start a fresh process, or pick a session from History.',
       synced: 'Code in sync',
       syncedHint: 'Runtime files match disk',
       staleCode: 'Code changed but not loaded',
@@ -823,6 +839,18 @@ window.__ModuleLoader__.load({
 
       // ── 提示 ────────────────────────────────────────────────────────────────
       '.superpi-alert{padding:8px 12px;border:0;border-radius:var(--dsw-radius-sm);background:color-mix(in srgb,var(--dsw-alias-state-error-primary) 10%,transparent);color:var(--dsw-alias-state-error-primary);font-size:var(--dsw-font-xxs-12-font-size);line-height:var(--dsw-font-xxs-12-line-height);white-space:pre-wrap;word-break:break-word}',
+      /**
+       * 畸形输出告警（0.16.2）。
+       *
+       * 用 warn 色而不是 error 色：这不是「出错了」，而是「这一轮没执行、重发即可」——
+       * 用户在 error 红条下会以为程序坏了，然后去查网络（实测已两次误归因）。
+       * 布局用 column + gap，让文字、按钮、说明各占一行；窄面板下不换行错位。
+       */
+      '.superpi-malformed-box{display:flex;flex-direction:column;gap:6px;padding:10px 12px;border-radius:var(--dsw-radius-sm);background:color-mix(in srgb,var(--dsw-alias-state-warn-primary) 12%,transparent);color:var(--dsw-alias-state-warn-primary);font-size:var(--dsw-font-xxs-12-font-size);line-height:var(--dsw-font-xxs-12-line-height)}',
+      '.superpi-malformed-text{word-break:break-word}',
+      '.superpi-malformed-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}',
+      '.superpi-malformed-retry{flex:0 0 auto}',
+      '.superpi-malformed-detail{flex:1 1 auto;min-width:0;color:var(--dsw-alias-label-caption);font-size:var(--dsw-font-xxxs-11-font-size);line-height:var(--dsw-font-xxxs-11-line-height)}',
       '.superpi-notice{padding:8px 12px;border:0;border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-secondary);font-size:var(--dsw-font-xxs-12-font-size);line-height:var(--dsw-font-xxs-12-line-height)}',
       '.superpi-notice[data-tone="err"]{background:color-mix(in srgb,var(--dsw-alias-state-error-primary) 10%,transparent);color:var(--dsw-alias-state-error-primary)}',
       '.superpi-notice[data-tone="warn"]{background:color-mix(in srgb,var(--dsw-alias-state-warn-primary) 12%,transparent);color:var(--dsw-alias-state-warn-primary)}',
@@ -1704,6 +1732,15 @@ window.__ModuleLoader__.load({
         dropped: 0,
         thinkingLevel: '',
         lastError: null,
+        /**
+         * 本轮是否发生了畸形输出，以及是四类中的哪一类
+         * （`text` / `thinking` / `residue` / `idle`，`null` = 正常）。
+         *
+         * 它只描述**当前这一轮**：`agent_start` 清空，`message_end` 重新判定。
+         * 不挂在 message 上是刻意的 —— 提示属于「本轮没有执行」，
+         * 而那一轮可能一条 assistant 消息都没有（空转就是这种）。
+         */
+        malformed: null,
         // 0.14.0 分页状态：总条数 / 还有更早的 / 下一次翻页的游标 / 是否正在翻。
         // 这几个字段只用于「加载更早」入口与「共 N 条」提示，不影响消息渲染本身。
         messageTotal: 0,
@@ -1905,7 +1942,7 @@ window.__ModuleLoader__.load({
       var current = null
       var entry = null
 
-      if (type === 'agent_start') { markBusy(view); view.lastError = null; return }
+      if (type === 'agent_start') { markBusy(view); view.lastError = null; view.malformed = null; return }
       if (type === 'turn_start') { markBusy(view); return }
       if (type === 'turn_end') {
         // 一轮结束：关掉流式指针，但 busy 不归零（agent 可能还有后续轮次）。
@@ -1963,6 +2000,19 @@ window.__ModuleLoader__.load({
         }
         view.openIndex = -1
         view.streamingIndex = -1
+        /**
+         * 畸形输出的**唯一接缝**（0.16.2）。
+         *
+         * 此前这里什么也没做（`grep -c DSML client.js` = 0）：模型吐 DSML → pi 把它当
+         * 普通文本收尾 → agent loop 结束 → **面板一句话不说就停了**。
+         * 而命令行窗口同一时刻会让 Working 行变红并写「本轮未执行，直接重发即可」。
+         * 同一个故障，两个前端一个解释、一个静默 —— 这就是本次事故要修的东西。
+         *
+         * 记在 view 上（而不是 message 上）：提示属于「本轮」而不是「那条消息」，
+         * 下一轮 agent_start 要能干净地把上一次清掉（见那一条分支）。
+         */
+        var malformed = detectMalformedOutput(record.message, contractRef.current)
+        view.malformed = malformed.malformed ? malformed.kind : null
         return
       }
       if (type === 'tool_execution_start') {
@@ -2079,7 +2129,24 @@ window.__ModuleLoader__.load({
       if (type === 'extension_ui_request') { applyExtensionUi(view, record); return }
     }
 
+    /**
+     * 回放一批事件，并**独占**推进水位 view.lastSeq。
+     *
+     * ── 为什么水位只能由这里推进（0.16.1 修掉的 P0）───────────────
+     *
+     * 旧实现在 attach() 里先 `view.lastSeq = snapshot.eventSeq` 再调本函数
+     * （原来的 client.js:5551-5553），于是缓冲里每条事件的 seq 都 ≤ 水位，
+     * 全部命中下面的 `continue` —— **缓冲事件 100% 被丢弃**，且不报错。
+     *
+     * 为什么不是「改一下那两行的顺序」了事：所有调用点都得自己维护水位，
+     * 就必然有下一个人再写错一次（resync 已经踩过同一个坑）。所以把水位收进
+     * 本函数：调用方一律不写 view.lastSeq，只调用 applyBatch，必要时调
+     * advanceSeq()。这样「水位」与「回放」在结构上不可能再分家。
+     *
+     * 判据 `seq <= view.lastSeq` 仍然保留：SSE 重连会重放，去重是必需的。
+     */
     function applyBatch(view, entries) {
+      if (Array.isArray(entries) === false) return
       for (var i = 0; i < entries.length; i += 1) {
         var entry = entries[i]
         if (entry === null || typeof entry !== 'object') continue
@@ -2090,6 +2157,70 @@ window.__ModuleLoader__.load({
         }
         if (entry.record !== undefined && entry.record !== null) applyRecord(view, entry.record)
       }
+    }
+
+    /**
+     * 用一份 snapshot **重建**一个 view 的事件态（纯函数：不碰 DOM、不发请求、不读时钟）。
+     *
+     * ── 为什么要有这个函数（0.16.1）───────────────
+     *
+     * 0.16.0 的 P0 是「attach() 里两行的顺序写反了」。但真正的缺陷不是那两行，
+     * 而是**「顺序」这个概念本身需要人来维护** —— 谁都能再写反一次（resync 就踩过）。
+     *
+     * 所以把「从快照重建状态」收紧成一个函数，内部顺序写死一次、只写一次：
+     *   ① 水位归零
+     *   ② 回放快照里带的事件（applyBatch 独占推进水位）
+     *   ③ 把水位补齐到快照声称的位置（advanceSeq 只前进）
+     *   ④ 补挂快照里已挂起的扩展弹窗
+     *
+     * 调用方只调 `hydrateFromSnapshot(view, snapshot)`，没有顺序可以写错。
+     * 这也是它必须能被门禁直接调用的原因：装配逻辑本身要可测，
+     * 而不是「测了 applyBatch 和 advanceSeq 各自没问题，就假定组装起来没问题」。
+     */
+    function hydrateFromSnapshot(view, snapshot) {
+      var snap = snapshot !== null && typeof snapshot === 'object' ? snapshot : {}
+      view.lastSeq = 0
+      /**
+       * ② 先回放。0.16.0 及之前这里是「先把 lastSeq 抬到 snapshot.eventSeq，再 applyBatch」，
+       * 于是缓冲里每条事件的 seq 都 ≤ 水位、全被去重判据 continue 掉 ——
+       * 缓冲事件 100% 丢弃且不报错（探针实测：3 条缓冲事件应用 0 条）。
+       * 正文当时靠 hydrate()（get_messages）兜住了所以没人发现，
+       * 但运行态与扩展弹窗兜不住：agent_start / extension_ui_request 在事件流之外没有副本。
+       */
+      applyBatch(view, Array.isArray(snap.events) ? snap.events : [])
+      // ③ 再补水位（只前进，所以上一步应用过的位置不会被回退）。
+      advanceSeq(view, snap.eventSeq)
+      /**
+       * ④ 补挂「已挂起但还没被应答」的扩展弹窗（0.16.1 修的 P1）。
+       *
+       * host 的 snapshot() 一直带着 pendingUi（src/pi-rpc.mjs:603），但客户端
+       * 从来没有读过这个字段 —— 于是「面板刷新时 pi 正等着用户点弹窗」的场景下，
+       * 弹窗在 UI 上不存在，用户无法应答，命令只能挂到 12 轮续期耗尽
+       * （约 12 分钟）才报 `N dialog(s) never answered`。
+       *
+       * 走与实时事件完全相同的路径（pendingUiOf + addPendingUi），不另起一套：
+       * 否则「补挂的弹窗」与「实时弹窗」会分叉出两种行为。
+       * 排在 applyBatch 之后：实时事件里的弹窗优先，补挂的只在 id 不重复时覆盖。
+       */
+      if (Array.isArray(snap.pendingUi)) {
+        for (var p = 0; p < snap.pendingUi.length; p += 1) addPendingUi(view, pendingUiOf(snap.pendingUi[p]))
+      }
+      return view
+    }
+
+    /**
+     * 把水位补齐到「快照声称的」位置（**只前进，不后退**）。
+     *
+     * 唯一合法用途：snapshot 响应里带着 `eventSeq`，表示 host 那边已经产出到第几条。
+     * 而 SSE 从 `since=eventSeq` 开始推，所以水位必须先到那里，
+     * 否则重连时会把已经处理过的事件再放一遍。
+     *
+     * 调用顺序铁律（0.16.1）：见 hydrateFromSnapshot —— 装配只有那一个入口。
+     * 单独调本函数时务必先 applyBatch，反过来会把回放整个作废（0.16.0 的 P0）。
+     */
+    function advanceSeq(view, seq) {
+      if (typeof seq !== 'number' || Number.isFinite(seq) === false || seq <= 0) return
+      if (seq > view.lastSeq) view.lastSeq = seq
     }
 
 
@@ -4969,7 +5100,119 @@ window.__ModuleLoader__.load({
         events: Array.isArray(source.events) ? source.events : [],
         rpcCommands: Array.isArray(source.rpcCommands) ? source.rpcCommands : [],
         assistantEvents: Array.isArray(source.assistantEvents) ? source.assistantEvents : [],
+        /** 畸形输出判定表（0.16.2）：host 下发，面板**不许**再拄一份。 */
+        malformed: source.malformed !== null && typeof source.malformed === 'object' ? source.malformed : null,
+        malformedNotice: source.malformedNotice !== null && typeof source.malformedNotice === 'object' ? source.malformedNotice : null,
       }
+    }
+
+    /**
+     * 判断一条 assistant 消息是否为「畸形输出」——**算法在面板、表在契约**。
+     *
+     * 与 `extensions/superpi-malformed.mjs` 的 `detectMalformedOutput` **逐条同构**：
+     * 同一个故障在命令行窗口与面板必须得出同一结论，否则「100% 对齐」就是空话。
+     * 一致住由 `test/parity.mjs` 拿同一批真实样本（四类形态 + 五类排除项）双向对账，
+     * 不是靠人工比对。
+     *
+     * ---------------------------------------------------------------------------
+     * 四类形态（缺一类就漏掉一类真实故障）
+     *
+     *   `text`     正文型：text 块含 DSML 完整结构
+     *   `thinking` thinking 型：只有 thinking 块，闭合标记在 thinking 里
+     *   `residue`  残片型：**只剩闭侧残片**（开标记被网关吞掉）—— 本次事故的直接成因
+     *   `idle`     空转型：`stop` 收尾但既无正文也无 toolCall
+     *
+     * 排除项与模块里完全一致：`toolUse` / 正常回复 / 正文里讨论 DSML / `error` 态。
+     * 特别注意最后一条：**正文里讨论**这个 bug 是合法行为，而讨论时引用
+     * `</parameter>` 是再自然不过的写法。所以残片必须落在**消息末尾**才算数
+     * （`residueTailChars`），否则任何一次「我在解释 DSML 是什么」的正常回复
+     * 都会被判成故障 —— 那比漏判更糟，会让用户对本提示彻底失去信任。
+     */
+    function detectMalformedOutput(message, contract) {
+      var none = { malformed: false, kind: 'none' }
+      if (message === null || typeof message !== 'object') return none
+      if (message.role !== 'assistant') return none
+      var table = contract !== null && contract !== undefined && contract.malformed !== null && contract.malformed !== undefined
+        ? contract.malformed
+        : null
+      // 契约未下发时**不判**：绝不内置一份默认表（那就是又一次分叉）。
+      if (table === null) return none
+
+      var stopReason = typeof message.stopReason === 'string' ? message.stopReason : ''
+      if (stopReason === 'toolUse') return none
+      var terminals = Array.isArray(table.terminalStopReasons) ? table.terminalStopReasons : []
+      if (terminals.indexOf(stopReason) < 0) return none
+
+      var content = Array.isArray(message.content) ? message.content : []
+      var text = ''
+      var thinking = ''
+      for (var i = 0; i < content.length; i += 1) {
+        var block = content[i]
+        if (block === null || typeof block !== 'object') continue
+        if (block.type === 'text' && typeof block.text === 'string') text += block.text
+        if (block.type === 'thinking' && typeof block.thinking === 'string') thinking += block.thinking
+      }
+      var hasToolCall = false
+      for (var j = 0; j < content.length; j += 1) {
+        var probe = content[j]
+        if (probe !== null && typeof probe === 'object' && probe.type === 'toolCall') { hasToolCall = true; break }
+      }
+
+      var marker = typeof table.marker === 'string' ? table.marker : ''
+      var openTokens = Array.isArray(table.openTokens) ? table.openTokens : []
+      var closeTokens = Array.isArray(table.closeTokens) ? table.closeTokens : []
+      var residueTokens = Array.isArray(table.residueTokens) ? table.residueTokens : []
+      var tailChars = typeof table.residueTailChars === 'number' && table.residueTailChars > 0 ? table.residueTailChars : 40
+
+      /**
+       * 标记 token 必须是**紧跟**在 `DSML` 之后的那个，不能全文 indexOf。
+       * 与模块同一条理由：D 类残片 `</parameter>` 里本身就含 `parameter`，
+       * 用 includes 判会把残片误归成「开闭齐全的正文型」。
+       */
+      function tokenAfter(source, at) {
+        var p = at + marker.length
+        while (p < source.length) {
+          var ch = source.charAt(p)
+          if (ch === '｜' || ch === '|' || ch === '<' || ch === '>' || ch === '/' || ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r') p += 1
+          else break
+        }
+        return source.slice(p, p + 16)
+      }
+      function hasMarkerFollowedBy(source, keywords) {
+        if (source === '' || marker === '' || keywords.length === 0) return false
+        if (source.indexOf(marker) < 0) return false
+        var from = 0
+        while (from < source.length) {
+          var at = source.indexOf(marker, from)
+          if (at < 0) return false
+          var token = tokenAfter(source, at)
+          for (var k = 0; k < keywords.length; k += 1) {
+            if (token.slice(0, keywords[k].length) === keywords[k]) return true
+          }
+          from = at + marker.length
+        }
+        return false
+      }
+      function hasFullStructure(source) {
+        return hasMarkerFollowedBy(source, openTokens) && hasMarkerFollowedBy(source, closeTokens)
+      }
+      function hasResidue(source) {
+        if (source === '' || residueTokens.length === 0) return false
+        var tail = source.replace(/\s+$/, '')
+        tail = tail.slice(-tailChars)
+        for (var m = 0; m < residueTokens.length; m += 1) {
+          if (tail.indexOf(residueTokens[m]) >= 0) return true
+        }
+        return false
+      }
+
+      if (hasFullStructure(text)) return { malformed: true, kind: 'text' }
+      if (hasFullStructure(thinking)) return { malformed: true, kind: 'thinking' }
+      if (hasMarkerFollowedBy(thinking, closeTokens)) return { malformed: true, kind: 'thinking' }
+      if (hasToolCall !== true && hasResidue(text)) return { malformed: true, kind: 'residue' }
+      if (hasToolCall !== true && hasResidue(thinking)) return { malformed: true, kind: 'residue' }
+      if (text.trim() === '' && hasToolCall !== true) return { malformed: true, kind: 'idle' }
+      return none
     }
 
     /**
@@ -5331,6 +5574,18 @@ window.__ModuleLoader__.load({
       var viewRef = useRef(null)
       if (viewRef.current === null) viewRef.current = createView()
       var pendingRef = useRef([])
+      /**
+       * 契约的 ref 副本（0.16.2）。
+       *
+       * `applyRecord` 在**事件应用**那一拍就需要畸形判定表，而那里不是 React
+       * 组件体（是纯函数），拿不到 `contract` 这个 state。三种选择：
+       *   ① 把 contract 沿 applyBatch / hydrateFromSnapshot / ingest / resync / attach
+       *      四条调用链逐层下传 —— 四个函数签名都要改，下一个人漏传一处就是静默退化；
+       *   ② 在面板里内置一份默认表 —— 那就是**又一次分叉**，正是你要消除的毛病；
+       *   ③ 一个 ref：写入点只有一个（loadContract 成功那一拍），读取点是只读的。
+       * 选③。它不引入隐式全局状态：这个 ref 与 viewRef 同源，生命周期完全跟随会话。
+       */
+      var contractRef = useRef(null)
       var timerRef = useRef(null)
       var sourceRef = useRef(null)
       var sessionRef = useRef(null)
@@ -5505,7 +5760,16 @@ window.__ModuleLoader__.load({
 
       var resync = function (id) {
         return api.snapshot(id, viewRef.current.lastSeq).then(function (snapshot) {
-          applyBatch(viewRef.current, Array.isArray(snapshot.events) ? snapshot.events : [])
+          /**
+           * 走与 attach 同一个装配函数（0.16.1）。
+           *
+           * 注意这里 hydrateFromSnapshot 会把 lastSeq 归零再回放 —— 对 resync 也正确：
+           * snapshot 已经按 since=lastSeq 裁过，events 里只有增量；
+           * 归零只是让「本函数不依赖调用前的水位」，随后 advanceSeq 补齐到 snapshot.eventSeq。
+           * 若 self 的缓冲已把这段丢掉（droppedEvents），水位靠 advanceSeq 前进，
+           * 不会永远停在原地、每次重连都重要同一段。
+           */
+          hydrateFromSnapshot(viewRef.current, snapshot)
           if (snapshot.state === 'busy') markBusy(viewRef.current)
           else markIdle(viewRef.current)
           setMeta(snapshot)
@@ -5534,10 +5798,37 @@ window.__ModuleLoader__.load({
         source.addEventListener('exit', function (event) {
           var detail = null
           try { detail = JSON.parse(event.data) } catch (failure) { detail = null }
+          /**
+           * 子进程已退出（0.16.1 起 host 会把它从会话池里摘掉，见 index.js 的 exit 处理）。
+           *
+           * 这里**不再 resync**：会话已经不在池里，snapshot 会 404 ——
+           * 继续调只会白跑一次请求、并在控制台留下一个 404。
+           * 旧实现正是靠 resync 把界面「修回 idle」，于是用户看到的是
+           * 「一切正常但什么都不能做」；真正该说的是「这个会话已经结束了」。
+           *
+           * 三条信息必须同时给到，缺一条用户就看不出发生了什么：
+           *   ① 结果是崩溃（crashed + code）
+           *   ② 现在这个会话不可用了（sessionEnded）
+           *   ③ 下一步该做什么（重连 / 新会话都在顶栏与更多菜单里，这里只指路）
+           */
           markIdle(viewRef.current)
           viewRef.current.notice = detail === null ? t('crashed') : t('crashed') + ' (code ' + String(detail.code) + ')'
+          /**
+           * 主动关掉一个已经死掉的会话：让「关掉」有明确归属。
+           *
+           * 不做的话，本地 sessionRef 仍指向那个 id，后续任何 rpc 都会 404；
+           * 而「重连」走的是 endSession（内部已经 api.close + 重新 create）——
+           * 这里先 close 一次是为了让**点「新会话」**也能立刻工作：
+           * 面板是「一个会话一个子进程」的模型，死进程不清掉，
+           * 用户点新会话就会又看到一个死会话（0.16.0 的实测现象）。
+           * 失败静默（404 = 已经被摘掉了，正是我们想要的结果）。
+           */
+          if (sessionRef.current === id) {
+            sessionRef.current = null
+            setPhase('ended')
+            api.close(id).catch(function () { return null })
+          }
           flush()
-          resync(id)
         })
         source.onerror = function () {
           if (source.readyState === 2) setBroken(true)
@@ -5548,11 +5839,16 @@ window.__ModuleLoader__.load({
         return api.snapshot(id, 0).then(function (snapshot) {
           var view = viewRef.current
           view.messages = []
-          view.lastSeq = 0
           view.openIndex = -1
           view.streamingIndex = -1
-          view.lastSeq = typeof snapshot.eventSeq === 'number' ? snapshot.eventSeq : 0
-          applyBatch(view, Array.isArray(snapshot.events) ? snapshot.events : [])
+          /**
+           * 事件态整块交给 hydrateFromSnapshot（0.16.1）。
+           *
+           * 不要在这里再写 `view.lastSeq = ...` 或单独调 applyBatch ——
+           * 「先回放后补水位」的顺序已经收进那个函数，这里一旦插手就又有了写错的机会
+           * （0.16.0 的 P0 正是这么来的：两行顺序反了，缓冲事件 100% 丢弃）。
+           */
+          hydrateFromSnapshot(view, snapshot)
           if (snapshot.state === 'busy') markBusy(view)
           else markIdle(view)
           sessionRef.current = id
@@ -5616,7 +5912,9 @@ window.__ModuleLoader__.load({
 
       var loadContract = function () {
         return api.contract().then(function (body) {
-          setContract(buildContract(body))
+          var built = buildContract(body)
+          contractRef.current = built
+          setContract(built)
           return null
         }, function () { return null })
       }
@@ -6557,6 +6855,31 @@ window.__ModuleLoader__.load({
       }
 
       /**
+       * 会话已结束（子进程退出，0.16.1）。
+       *
+       * 为什么必须有这个显式分支：host 现在会把死进程从会话池摘掉（这是修掉
+       * 「死会话占满 8 个上限」的正确做法），于是这个会话的 id 不再可用。
+       * 若没有这个分支，phase 会落到默认路径、渲染出**一个看起来正常但什么都不能做**
+       * 的面板 —— 那正是对抗性审查里点名的「静默失效」：比报错更危险。
+       *
+       * 三个动作按「最可能有用」排序，且都必须能一次点通：
+       *   reconnect = 换一个新子进程（endSession → api.close + startSession）
+       *   newSession = 同进程 /new，但进程已死，所以这里同样走 startSession
+       * 两者的差别对用户是「要不要保留上下文」，此时已经没有上下文可保留，故并列。
+       */
+      if (phase === 'ended') {
+        return h('div', { className: 'superpi-root' },
+          head,
+          h('div', { className: 'superpi-scroll' },
+            h('div', { className: 'superpi-inner' },
+              h('div', { className: 'superpi-alert' }, t('sessionEnded')),
+              h('div', { className: 'superpi-notice', 'data-tone': 'warn' }, t('sessionEndedHint')),
+              h('div', { className: 'superpi-row2' },
+                h('button', { type: 'button', className: 'superpi-btn superpi-btn-primary', onClick: function () { startSession() } }, t('reconnect')),
+                h('button', { type: 'button', className: 'superpi-btn', onClick: function () { setDrawer('sessions') } }, t('sessions'))))))
+      }
+
+      /**
        * 点文件路径标签之后做什么。
        *
        * 主路径 = DSH 右侧预览区：内置 documentpreview 认领 dsh-resource://file/session/... 地址，
@@ -6721,6 +7044,44 @@ window.__ModuleLoader__.load({
       }
       if (view.compacting === true) notices.push(h('div', { key: 'compact', className: 'superpi-notice', 'data-tone': 'warn' }, t('compacting')))
       if (view.retrying === true) notices.push(h('div', { key: 'retry', className: 'superpi-notice', 'data-tone': 'warn' }, t('retrying')))
+      /**
+       * 畸形输出告警（0.16.2）—— 本次事故的直接修复点。
+       *
+       * 起手前的真实情形：模型吐 DSML → pi 当普通文本收尾 → agent loop 结束 →
+       * **面板一句话不说就停了**（`grep -c DSML client.js` 当时 = 0）。
+       * 命令行窗口同一时刻会亮红字写「本轮未执行，直接重发即可」。
+       *
+       * 三条要求在实现上都是必须有而不是“体验优化”：
+       *  ① 文案取**契约**下发的 `malformedNotice` —— 与命令行那份逐字同文；
+       *     只有契约没下发时才用 i18n 兜底（那一份也逐字同文，门禁对账）。
+       *  ② 必须带**可点的方式**：只提示不解决，用户仍得自己敲「继续」。
+       *     那个按钮走 `submit('继续')` —— 与用户手打完全同一条路径，
+       *     没有第二条发送通道（多一条通道就是下一次静默失效）。
+       *  ③ 说明**不是**网络/超时/超限：用户第一反应总是去查那些，
+       *     实测这件事已经被误归因过两次（0.15.1 的「77.8% 退化线」、
+       *     0.15.4 的「裁剪掏空」）。把排除项写在用户看得到的地方。
+       */
+      if (view.malformed !== null && view.malformed !== undefined) {
+        /**
+         * 文案取 `t()`，而 `t()` 的那两份在 ZH / EN 里 —— 那两份与本契约里那份**逐字相同**，
+         * 由 `test/parity.mjs` 断言（拿 MALFORMED_NOTICE 直接对照 ZH / EN）。
+         *
+         * 为什么不在这里判 `locale === 'en'`：面板拿到的只是一个已将语言绑定的 `t(key)`，
+         * 它不暴露语言码（见 `translate`，`client.js:7314`）。为了一个字符串去猜语言，
+         * 下一个人把语言默认值改了就默默显示错语言 —— 那是为了省一步而引入的隐性耦合。
+         * 用 i18n 自己的机制选语言，是唯一不需要我知道它内部实现的做法。
+         */
+        notices.push(h('div', { key: 'malformed', className: 'superpi-malformed-box', role: 'status', 'aria-live': 'polite' },
+          h('div', { className: 'superpi-malformed-text' }, t('malformedTitle')),
+          h('div', { className: 'superpi-malformed-actions' },
+            h('button', {
+              type: 'button',
+              className: 'superpi-btn superpi-btn-primary superpi-malformed-retry',
+              onClick: function () { if (view.busy !== true) submit(t('malformedRetry')) },
+              disabled: view.busy === true,
+            }, t('malformedRetry')),
+            h('span', { className: 'superpi-malformed-detail' }, t('malformedDetail')))))
+      }
       for (var n = 0; n < view.notices.length; n += 1) {
         var item = view.notices[n]
         notices.push(h('div', { key: item.id, className: 'superpi-notice', 'data-tone': String(item.tone === undefined ? 'info' : item.tone) }, String(item.text)))
@@ -7063,6 +7424,21 @@ window.__ModuleLoader__.load({
       markBusy: markBusy,
       markIdle: markIdle,
       createView: createView,
+      /**
+       * 事件摄入层的三个入口（0.16.1 起导出）。
+       *
+       * 为什么必须导出：0.16.0 的 P0（缓冲事件 100% 丢弃）之所以能活下来，
+       * 是因为 `test/client-render.mjs` 只做首帧 SSR，**结构上无法覆盖「事件摄入」**。
+       * 不把这三个函数暴露给门禁，「水位会不会吃掉事件」就永远只能靠人肉发现。
+       * 宿主只读 name / inject / apply，不碰 __internals。
+       */
+      applyBatch: applyBatch,
+      advanceSeq: advanceSeq,
+      hydrateFromSnapshot: hydrateFromSnapshot,
+      applyRecord: applyRecord,
+      applyExtensionUi: applyExtensionUi,
+      pendingUiOf: pendingUiOf,
+      addPendingUi: addPendingUi,
       SparkIcon: SparkIcon,
       WhaleTailIcon: WhaleTailIcon,
       TerminalIcon: TerminalIcon,
@@ -7084,6 +7460,14 @@ window.__ModuleLoader__.load({
       RenameDialog: RenameDialog,
       pathCrumbs: pathCrumbs,
       buildContract: buildContract,
+      /**
+       * 畸形输出判据（0.16.2 起导出）。
+       *
+       * 为什么必须导出给门禁：判据分叉是本次事故的根因，而「表与文案一致」
+       * 不能证明「面板真的按同一批样本得出同一结论」。只有拿真函数跑同一批样本，
+       * 才能把「两边实现逐条同构」变成机器可判的事实（见 `test/parity.mjs` §10）。
+       */
+      detectMalformedOutput: detectMalformedOutput,
       messagesFromHistory: messagesFromHistory,
       classifyInput: classifyInput,
       slashItems: slashItems,

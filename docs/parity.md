@@ -257,7 +257,7 @@ payload 取值优先级 `cancelled` → `confirmed` → `value`（`index.js:1093
 | `D-02` | `disposition` 出现未文档化的第 6 种取值 `unsupported` | 原 `src/rpc-contract.mjs:147` vs 注释 `:128-139` | **已闭环**。`DISPOSITIONS`（`:283`）声明 6 种，注释 `:128-146` 已枚举 6 种，`validateContract()`（`:286-323`）校验取值合法性 |
 | `D-03` | 顶栏「新会话」按钮走 `close`+`create` 换子进程，而非 `new_session` | 原 `client.js:2958`（onClick）→ `endSession`（现 `client.js:5248`）（**注**：`2958` 在任何已发布版本里都不是顶栏「新会话」的 onClick —— v0.3.0 顶栏是两个按钮：「重连」`onClick: endSession` 在 `client.js:3036`、「新会话」`onClick: runNewSession` 在 `client.js:3037`；v0.2.5 的 `client.js` 只有 1128 行、根本没有这个按钮。数字保留作历史记录，别当坐标） | **已闭环（0.3.0，0.7.0 收口）**。「新会话」→ `runNewSession`（`client.js:5236`，`new_session`，与命令行 `/new` 同一条路径）；**「重连」不再占顶栏明面** —— 它退进 `⋯` 更多菜单 `moreItems`（`client.js:5700-5703`）并要过 `ConfirmDialog` 二次确认（`client.js:3190`），因为换子进程是恢复手段而不是日常动作。同一件事不再有两个入口两种结果 |
 | `D-04` | `src/session-store.mjs`（只读会话枚举）零引用 | 原全仓 grep 无 import | **已闭环**。`index.js:34-45` import 八个函数（`listAllSessions` / `groupSessionsByProject` / `readSessionCwd` 于 0.5.0 追加），`GET /sessions/history?scope=`（`index.js:870`）暴露，面板 `SessionsSheet`（`client.js:3659`）消费 |
-| `D-05` | `index.js` 未暴露 `pendingUi`，无扩展 UI 专用应答面 | 原 `index.js:484-567` | **已闭环**。`POST /sessions/:id/respond`（`index.js:1083-1102`，409/400/415）、`POST /sessions/:id/reset`（`index.js:1103`）；`pendingUi` 随 `snapshot()` 下发（`src/pi-rpc.mjs:561`） |
+| `D-05` | `index.js` 未暴露 `pendingUi`，无扩展 UI 专用应答面 | 原 `index.js:484-567` | **已闭环**（host 面 0.3.0）+ **面板面 0.16.1 才真闭环**。`POST /sessions/:id/respond`、`POST /sessions/:id/reset`；`pendingUi` 随 `snapshot()` 下发（`src/pi-rpc.mjs:603`）。<br>⚠️ **原记录在这里犯过一个错，务必记住**：它把「`pendingUi` 随 snapshot() 下发」当作闭环依据，但**面板从来没有读过这个字段**（0.16.0 实测：`client.js` 里 `snapshot.pendingUi` 出现 0 次）。验收只覆盖到「管道通了」，没覆盖到「交付到了」。真实后果：面板刷新时若 pi 正等扩展弹窗，弹窗在 UI 上不存在、用户无法应答，命令挂到 12 轮续期耗尽（约 12 分钟）才报 `N dialog(s) never answered`。<br>0.16.1 修法：`hydrateFromSnapshot()` 里消费 `snapshot.pendingUi`，走与实时事件**同一条**路径（`pendingUiOf` + `addPendingUi`）。门禁 `test/client-render.mjs` §13 四条断言钉死。**教训**：闭环判据必须落在「用户能感知到的那一端」，不是「协议字段发出去了」。 |
 | `D-06` | `test/parity.mjs` 不存在，`npm test` 不含门禁 | 原 `package.json` `scripts.test` | **已闭环**。`test/parity.mjs` 78 checks + `test/host-parity.mjs` 291 checks + `test/session-projects.mjs` 55 checks（0.5.0 起）+ `test/timeout.mjs` 28 checks + `test/restart-lib.mjs`（0.4.2 起），都在 `npm test` 的 11 项里 |
 | `D-07` | `RpcSessionState` 无 `autoRetryEnabled`，设置弹窗的自动重试开关无法回读 | pi `dist/modes/rpc/rpc-types.d.ts:148`（12 字段，实测无该字段）；`agent-session.ts:4122` 有 getter 但 RPC 面未暴露 | **开放（上游）**。后果：`client.js:4232` 读 `state.autoRetryEnabled` 恒为 `undefined`，开关永远显示 off —— 点一下会发 `set_auto_retry`（`client.js:5988`）确实生效，但刷新后仍显示 off。面板侧今天连乐观本地态都没有（`loadState` `client.js:4974-4986` 只回填 model / thinkingLevel / sessionName / sessionFile 四个字段），所以唯一出路是上游补字段 + 面板加一份乐观态。`test/parity.mjs:290` 用断言把这个缺口**锁住**：pi 哪天补了字段，这条会红，届时可闭环 |
 | `D-09` | 点开历史会话后对话区空白：`switch_session` 成功后 host 清空事件缓冲，面板只重放缓冲 | 原 `client.js:2881-2884` `reload`（只 `attach`，无 `get_messages`）；根因在 `index.js:100` `SESSION_REPLACING_COMMANDS` → `proc.resetEvents()`（`index.js:1074`） | **已闭环（0.4.1）**。`attach` 末尾接 `hydrate(id)`（≈ `get_messages` 整表重建，剔除 `system`），覆盖首次进入 / `switch_session` / `fork` / `clone` / `new_session` 五个入口；两道防线：响应回来时会话已切走则丢弃（`sessionRef.current !== id`）、`busy` 期间不覆盖流式气泡（挂 `hydratePendingRef`，`agent_settled` 后由 `drainHydrate()` 补）。命令行 pi 不受影响：它从 jsonl 恢复 `messages`。`test/parity.mjs` §7 用 12 条断言钉死接线，`test/client-render.mjs` §9.16 用 14 条断言钉死数据整形 |
@@ -400,6 +400,89 @@ pi 只提供 `SYSTEM.md`（整份替换）、`APPEND_SYSTEM.md`（静态文件�
 
 ---
 
+## 5.5 畸形输出识别与一键继续（0.16.2 · 第七层：不是协议面，是**模型吐出来的东西本身**）
+
+需求来源（用户 2026-11-20）：「workbuddy 客户端的这个会话窗口在运行的时候出现了中断的现象，请检查是什么原因」。
+
+**诊断结论（分层定位，逐层排除）**：
+
+| 层 | 是不是问题层 | 依据 |
+| --- | --- | --- |
+| ① 模型输出协议 | **是** | 两个平级前端（pi/SuperPi 与 WorkBuddy）**同时复现**，模型端同为 `odys-deepseek` / `Deepseek-V4.1-Flash`；残片形状证明是网关流式转换漏转 |
+| ② pi 的 RPC / agent loop | 否 | `stopReason: stop` 是**正确**行为：没有结构化 toolCall 就该收尾。`grep -rln DSML node_modules/@earendil-works` 为空，pi 本来就不认识 DSML |
+| ③ 扩展（editor / guard） | 否（但**只有一部分**是） | 守卫过滤正常（占用 23~27%，未触发裁剪）；判据正确（4/4 命中）；`hadToolCall` 硬拦截按设计生效 |
+| ④ host（index.js / pi-rpc） | 否 | 事件已通过 SSE 完整下发 |
+| ⑤ **面板渲染（client.js）** | **是** | `grep -c "DSML\|malformed\|畸形" client.js` = **0** —— 面板对畸形输出**零处理**：既不提示，也没有一键继续 |
+
+**能力矩阵**：
+
+| 维度 | 面板端 | 命令行 TUI | 门禁用例 |
+| --- | --- | --- | --- |
+| 判据的来源 | `GET /contract` 的 `malformed` 表 + 面板内算法 | 直接 import `extensions/superpi-malformed.mjs` | `test/malformed.mjs` §1/§3/§4 |
+| A 正文型 | ✅ | ✅ | `test/malformed.mjs` · §3/§4 |
+| B thinking 型 | ✅ | ✅ | 同上 |
+| C 空转型 | ✅ | ✅ | 同上 |
+| **D 残片型**（0.16.2 新） | ✅ | ✅ | 同上 + 真机 4 条样本 |
+| 五类排除项不误报 | ✅ | ✅ | 同上（含「正文里讨论 DSML」） |
+| 用户可见提示 | ✅ `superpi-malformed-box` 告警条 | ✅ Working 行变红 | `test/malformed.mjs` §5 |
+| 一键继续 | ✅ 按钮 → `submit(t('malformedRetry'))` | ⚠️ 需手打「继续」（无按钮语义） | `test/malformed.mjs` §5 |
+| 文案单一真相 | ✅ 与契约逐字相同 | ✅ 与契约逐字相同 | `test/malformed.mjs` §1（含 i18n 兜底那份） |
+| 自动重发（0.16.0） | ⚠️ **仅扩展内**（rpc 模式也加载扩展，但面板拿不到 TUI 的 runState） | ✅ 默认开启，`hadToolCall` 硬拦截 | `test/tui-editor.mjs` |
+
+### 5.5.1 为什么「自动重发」在这些场景全被拦住了（这是设计，不是缺陷）
+
+判据在 `shouldAutoRetryOnMalformed`：开关 → **无 toolCall（硬拦截）** → 冷却。
+真机 4 次畸形发生时，本轮**已经跑过 5 / 10 / 13 / 42 次工具调用** ——
+而畸形输出时无法确定工具到底执行了没有，重发可能让 `write` / `git push` / `rm` **再执行一遍**。
+在编码 agent 里那比中断危险得多，所以这条**不可配置**。
+能救的是「还没执行任何工具就畸形」的那一类（`hadToolCall === false`）。
+
+### 5.5.2 为什么面板不能在渲染时才判定
+
+提示属于**本轮**而不是某条消息：C 类空转那一轮可能**一条 assistant 消息都没有**。
+所以判据挂在 `message_end` 上、结果记进 `view.malformed`，
+由 `agent_start` 清空 —— 否则提示会永久钉在面板上。
+门禁 `test/malformed.mjs` §5 用**单调 cursor** 断言这条数据流（定义 → 判定 → 记录 → 渲染），
+顺序错了就红；这是 0.16.1「管道通了 ≠ 交付到了」那条教训的具体落地。
+
+### 5.5.4 验收清单（机器判定 vs 真机人工）
+
+**已由机器判定（全部通过）**：
+
+| 项 | 判据 |
+| - | - |
+| 判定表 模块 ≡ 契约 | `test/malformed.mjs` §1 |
+| 文案 模块 ≡ 契约 ≡ 面板 i18n 兜底（逐字） | `test/malformed.mjs` §1 |
+| 四类形态 + 五类排除项（模块） | `test/malformed.mjs` §3 |
+| 面板**真函数**与模块逐条一致 | `test/malformed.mjs` §4 |
+| 契约没下发时面板不判（不内置默认表） | `test/malformed.mjs` §4 |
+| 接线：message_end → view.malformed → 渲染（单调 cursor） | `test/malformed.mjs` §5 |
+| agent_start 清空（提示不永久钉住） | `test/malformed.mjs` §5 |
+| 安装面：模块排在 editor 之前 + editor 真 import | `test/malformed.mjs` §6 |
+| 真机 4 条畸形全部命中（1 text + 3 residue） | 端到端脚本，见 0.16.2 变更记录 |
+| 真 host `GET /contract` 真下发（起真 HTTP 服务） | 同上 |
+| pi **真加载器**装入后 0 错误 | 同上 |
+| 真 pi RPC 子进程事件流上 面板 ≡ 模块 | 同上（2/2 message_end） |
+
+**未验证 —— 必须真机人工确认（本账本不为它打勾）**：
+
+- ❌ **像素级渲染**：DSH 侧栏里，告警条是否真的出现在屏幕上、位置/配色是否与设计一致。
+  原因：`PiPanel` 自建 view 与十余个 state、大量异步副作用，node 里组装不出宿主等价的渲染环境；
+  硬渲染得到的 HTML **不含面板内容**，那种「断言通过」是假的（第一版就试着这样糊过去，已删）。
+- ❌ **点「继续」真的能发出**：按钮 → `submit(t('malformedRetry'))` → `prompt` 的整链。
+  机器只能断言「这个调用存在且与手打同路径」，无法断言宿主侧真的发出。
+- ❌ **busy 时按钮禁用**的视觉与行为。
+
+人工确认做法：DSH 侧栏打开一个会话 → 让模型吐 DSML（或临时把 `contract.malformed` 置空，验证**不**触发）→
+确认告警条出现、文案正确、点「继续」发出且按钮在 busy 时不可点。
+
+### 5.5.3 交给上游的部分
+
+WorkBuddy 是第三方客户端，本仓库改不了它：它的会话文件里**没有落 stopReason**
+（`finishReason` 为空），接入诊断需要它自己加。
+provider 侧（`https://api.odys.work/v1`）应当把 DSML 转成结构化 `tool_calls`，
+漏转的 4 段原文 + 时间戳已具备可提交的证据形态。
+
 ## 5.4 模型模态开关（0.13.0 · 第六层：不是 RPC 面，是**每个模型允许收什么**）
 
 需求（用户 2026-11-18）：「每一个模型都增加一个模态启用功能，具体有哪些模态根据对应模型协议解析，
@@ -445,13 +528,14 @@ pi 只提供 `SYSTEM.md`（整份替换）、`APPEND_SYSTEM.md`（静态文件�
 | 日期 | 版本 | 变更 |
 | --- | --- | --- |
 | 2026-11-12 | 0.2.5 | 建立本账本。实测基线：RPC 33 条 / 已实现 5 / 部分 1 / 缺口 27；扩展 UI 9 请求 3 应答全部缺口（host 已就绪）；事件 25 种 / 已实现 12 / 部分 3 / 显式忽略 2 / 缺口 8；TUI 27 条 / 缺口 14 / 部分 3 / 仅命令行 10。登记 `D-01`..`D-06`。（行号为 0.2.5 落地当时的坐标，非当前坐标） |
-| 2026-11-20 | 0.15.6 | **「静默结束」的第二种形态：DSML 落在 thinking 通道，旧判据整条漏掉**。真机原文（`stop=stop`，content **只有一个 thinking 块**，长 1238）：`Let me verify empirically.</thinking>
+| 2026-11-20 | 0.16.2 | **面板端从来没有认过畸形输出 —— 命令行会亮红字，面板完全静默**（`grep -c DSML client.js` = **0**）。这是同一故障的**第四次**记录，前三次（0.15.1 / 0.15.6 / 0.16.0）的修法都是**在需要它的那个文件里再抄一份判据**，于是「三处分叉」是必然结果：`superpi-editor.ts` 有、面板没有。**真机现场**（WorkBuddy 会话 `~/.workbuddy/projects/.../73864e66-*.jsonl` 4 次 + pi 会话 37 次，同一模型 `odys-deepseek` / `Deepseek-V4.1-Flash`）：模型把工具调用写成 DSML → pi 当普通文本收尾（`stopReason: stop`）→ agent loop 结束 →**屏幕上一句话说完就停住，没有任何提示**。用户只能自己补一句「继续」——4 次中断后紧跟 4 条 `<user_query>继续</user_query>`，间隔 7.5 / 4.3 / 10 分钟。**量化排除了两条旧猜测**：4 次发生时的窗口占用只有 **26.0% / 26.6% / 27.2% / 23.0%**（远离 1M 上限）；且 WorkBuddy 里 `grep -rl superpi` = **0 命中**（没装本项目扩展），上下文**根本没被裁剪过** —— 再次印证 0.15.4/0.15.6 的结论：与上下文规模、裁剪**无关**。真正的共同点是「一轮里已经连跑 5~42 次工具调用之后，输出只有 21~67 token」。**新增第四类形态 D（残片型）**：网关把**开标记整段吞掉**，只剩 `</parameter>` + `</｜｜DSML｜｜ calls>` 结尾 ——旧判据要求「开闭齐全」（`hasOpen && hasClose`），于是这一类**整条漏掉**（4 条真机样本里 3 条属此类）。**两处判据缺陷**：① 只用全文 `includes('parameter')` 判开标记，而 D 类的 `</parameter>` 本身就含 `parameter` →残片被误归成正文型，D 类永远分不出来；现改为「跳过 `DSML` 后的分隔符，看紧跟的 token」；② 残片必须落在**消息末尾**（`residueTailChars=40`）才算数 —— 本仓库文档里到处在**讨论** DSML，只看「全文出现」会把任何一次解释性回复判成故障，那比漏判更糟。**结构性修法（不是再抄一份）**：判据收进新文件 `extensions/superpi-malformed.mjs`（四类形态 + 五类排除项 + 中英文案，唯一真相源）；editor 改成 `isMalformedToolCall` 转发；**面板按「表在契约、算法在面板」的既成范式**（同 `classifyInput`）从 `GET /contract` 的 `malformed` / `malformedNotice` 取表，`client.js` 实现 `detectMalformedOutput` 并在 `message_end` 记 `view.malformed`、渲染 `superpi-malformed-box` 告警条 + **可点的「继续」按钮**（走 `submit(t('malformedRetry'))`，与手打完全同一条路径，**不开第二条发送通道**）。**门禁**：新增 `test/malformed.mjs` **69 checks**（数据层 模块≡契约 / 行为层A 模块逐条 /行为层B **面板真函数**逐条 / 接线层 10 条 / 安装面顺序与内容），并已进 `npm test`；**门禁自验**两次：复原 `message_end` 不判定 → 立即红（2 条接线失败）；删掉 D 类残片判据 → 立即红（`D 残片型` got `none`）。**真机验收 17 项**：真 host `GET /contract` 真下发（起真 HTTP 服务实测）、4 条真机畸形全部命中（1 条 `text` + 3 条 `residue`）、面板真函数与模块 **4/4 结论一致**、pi **真加载器**装入后 `superpi-editor` 0 错误（证明 `./superpi-malformed.mjs` 解析正常）。安装面 7 → **8 文件**（模块必须排在 editor 之前，否则重演 0.15.3 的 `resetMeterMemo is not a function`）。 || 2026-11-20 | 0.15.6 | **「静默结束」的第二种形态：DSML 落在 thinking 通道，旧判据整条漏掉**。真机原文（`stop=stop`，content **只有一个 thinking 块**，长 1238）：`Let me verify empirically.</thinking>
 </｜｜DSML｜｜ calls>` —— provider 在 **thinking 通道**里吐出闭合标记，然后**没有生成任何正文**；用户看到的是「屏幕上多了一段独白，然后会话无声结束」。**旧判据两个缺陷**：① 只遍历 `text` 块，thinking 通道完全不看；② `text === ''` 时直接 `return false`，于是「thinking-only」这种最典型的故障被整条漏过。**修法**：把 thinking 也纳入关键词判据（`marker(text) || marker(thinking)`），并新增**空转判据** —— `stopReason==='stop'` 但**既无正文也无 toolCall** 即判故障（标记可能被 provider 吞掉，不能只靠字符串匹配）。**排除项**：`thinking + 正文` 是正常形态、有 toolCall 正常、有正文正常。**重要事实**：本次故障发生在**全新会话、86 条消息、8.2% 占用**下，与上下文规模和裁剪**完全无关** —— 是模型长链工具调用后的固有偶发输出异常；我们能做的是**让它可见**（明确告知「本轮未执行，重发即可」），而不是假装能修模型。**门禁**：`tui-editor` 474→**481**（新增 5 类真实形态判据）；**门禁自验**：模拟旧判据 → 立即红（`thinking 通道里的 DSML 闭合标记也要识别` got false），恢复后全绿。`npm test` 17 项全绿 EXIT=0。 |
 | 2026-11-20 | 0.15.5 | **裁剪顺序按「单位损失换来的空间」重排：thinking 必须最后才牺牲**。刺眼的实测现象：预算很宽松时（594,974，实际只需 592,582）**thinking 仍被删掉 294 条**，而 `toolFold` 只折 6 条就达标了 —— 「先牺牲了最不该牺牲的东西，然后马上就够了」。**量化依据**（真实会话单条消息估算 token）：单条 thinking ≈ **206**、单条 toolResult ≈ **2,000**（**9.7 倍**）；折一条 toolResult 换来的空间相当于删掉近 10 条 thinking，而 toolResult 折叠后**仍保留首行摘要**（"当时跑了什么、结果是什么"的线索），thinking 删掉则是**彻底消失**。**新顺序**（信息可恢复性从高到低）：`images` → `toolText` → `toolFold` → `toolCallArgs` → `replies` → **`thinking`（最后）**。**效果**：`targetRatio=0.72` 时 thinking 删除量 **294 → 0**（代价：toolFold 6→36）；`0.62` 时 **294 → 0**（toolFold 6→90）—— **thinking 完全保住**，纯质量提升。**顺带证明 0.15.1 的「77.8% 退化线」不存在**：占用 **74.2%~86.2%** 区间内 **369 次成功、0 次 DSML**，而 DSML 全部钉在 77.4~77.9% 的极窄区间 —— 若真是占用导致退化，86.2% 应比 77.8% 更容易出错，事实相反。**新门禁 C10**（`context-guard` 172→**179**）：工具结果够折时 thinking 必须为 0（改前删 594 条）、单条 toolResult token 必须 > thinking 3 倍（顺序依据的前提，口径变了会先红）、只有 thinking 可删时它仍须能被删（防线不被架空）；**门禁自验**：复原旧顺序 → C10 立即红（实测删 594 条），恢复后全绿。`targetRatio` **保持 0.62 不动**（证据不足以支持更激进值；它只影响折多少工具结果，不影响 thinking）。**真机 4 轮：assistant 4 / 错误 0 / DSML 0**。`npm test` 17 项全绿 EXIT=0。 |
 | 2026-11-20 | 0.15.4 | **推翻 0.15.1 的错误归因：DSML 真因是「裁剪把上下文掏空」，不是 77.8% 占用**（用户截图 `~46.0%/1.0M` 仍出 DSML —— 46% 远低于旧认定的退化线，故「占用高导致退化」不成立；那 33 次全落 77.4~77.9% 只是**相关**：该会话每次都被裁到 77.8% 附近）。**构造数据复现断崖**（窗口 1M、预算 490117）：n=200→**90.2%**、n=250→**6.6%**（droppedTurns=0）、n=300→**7.4%** —— **明明有 93% 预算没用却把上下文掏空**，模型失去任务上下文 → 吐 DSML。**两处结构性缺陷**：①**五阶段折叠「一刀切」**：旧 `apply()` 对保护区之前全部消息执行某阶段才看是否达标，「只超一点」也会删光 thinking、折光工具结果 → 改为按 **24 条一批、从旧到新**推进、每批估算、达标即停（从旧到新保证前缀只后退，prompt cache 不击穿）；②**保护区 token 基准与预算不同源**：旧 `windowTokens×protectedTokenRatio`（窗口 30%）vs 预算 `窗口×targetRatio−开销`（46.7%），分母不同 → 保护区吃掉预算 **64%**，一触发兜底就只能丢到保护区边界 → `protectionStartIndex` 增 `budget` 参数，同源。**顺带架构性区分两类阶段**（混在一起会双向出错，实测都抓到）：**无条件规则类**（images / toolCallArgs）必须跑完 —— 判据是「留着有独立价值损害」而非「token 够不够」（图片最贵且本轮会无限堆积；write/edit 正文已落盘，留副本零价值），被「达标就停」害到 48 张图只裁到 25 张、参数只降 52.5%；**预算救急类**（thinking / toolText / toolFold / replies）达标即停，被「一刀切」害到塌到 6.6%。**新门禁 C9**（`context-guard` 150→**172**）：触发裁剪后利用率 >=80%、相邻规模跌幅 <20 个百分点、渐进折叠足够时 `droppedTurns` 必须为 0；**门禁自验**：CHUNK 改回 1e9 复原一刀切 → C9 立即红（6.7%、跌幅 85.8），恢复后全绿。**验证**：220→99.2% / 240→99.9% / 250→98.1% / 300→99.7% / 400→98.1% / 600→99.7%；真机 5 轮 assistant 5 / system 3 / 错误 0 / **DSML 0**。`npm test` 17 项全绿 EXIT=0。 |
 | 2026-11-20 | 0.15.3 | **`400 invalid JSON request body` 的真正根因：文档里混入 U+0007 控制字符**（与体积/网络/上下文超限全部无关）。`AGENTS.md`@39374 与 `README.md`@29813 各有一个 **U+0007（BEL）** —— pi 把 AGENTS.md 拼进 `project_context` section 再序列化进 HTTP 体，JSON 规范禁止未转义的 `U+0000`~`U+001F`，provider 解析直接失败。来源是笔误：想写示例路径 `D:<文件名>.png`，被当成转义 `\a` 解析成 BEL。**关键事实：逐版扫描确认 `fb0a558`(11:33) / `7f4ceb1` / `0e56786` / `cae25ab` / `7d85617`(12:58) 的 AGENTS.md 都含这 1 个 U+0007** → **回滚到 13:06 之前无法解决 400**（会把根因一起带回来），故未执行回滚。**第二个 bug**：`/reload` 后报 `resetMeterMemo is not a function` —— 根因不是代码，是 `EXTENSION_FILES` 里 `context-guard.ts`（依赖方）排在 `context-guard.mjs`（被依赖模块）**前面**，装到一半时磁盘是「新 .ts + 旧 .mjs」，扩展加载即抛错、守卫静默失效 → 七个条目重排为「模块先于扩展」。**新门禁 2 条**（`host-parity` 412→**430**）：3.97 每个 `.ts` 的 `.mjs` 依赖必须排在前面且清单满 7 项；3.98 AGENTS.md / README / 两份 docs 必须合法 UTF-8、无控制字符、无 U+FFFD、无孤立代理项 —— **该门禁一上线就抓到 README 的第二处 U+0007**，证明有效。**真机验证**：spawn 真实 `pi --mode rpc` 5 轮，assistant 5 / system 3 / **错误 0**，400 已消失。`npm test` 17 项全绿 EXIT=0。 |
 | 2026-11-19 | 0.15.2 | **`400 invalid JSON request body` 的真因：扩展每轮往会话历史里追加 system 消息**（用户截图报错；与 0.15.1 的 DSML 是两回事）。**真机复现**：启动真实 `pi --mode rpc` 跑多轮并统计 `message_end` 的 system —— 改前 **5 轮 10 条（每轮 2 条）**，改后 **5 轮 3 条（每轮 0.6 条）**、零错误。**机制**（读 pi 源码确认）：`agent-session.js:1392` 用 `diffSystemPromptSections(getCurrentSystemMessage(messages)?.sections, buildSystemPromptSections(options))` 决定是否追加一条 `{role:"system", content:"", sections}` —— 这是好的增量协议（缓存因此满血：实测 cacheRead 813k / cacheWrite ~200），但「每轮都变的内容」必然「每轮一条 system」，请求体持续膨胀；真机触发点：历史累积 9 条 system、其中一条 45KB。**三个叠加原因全部是我 0.15.0/0.15.1 引入的**：① **「当前目标」每轮必变**（`回复 ok1→ok2→ok3`）且**零收益**（模型刚读完用户消息，不需要系统提示复述）→ 直接移除，目标改由面板/Working 行呈现；② **精确百分比每轮都变**（53.4→54.4→55.3）→ 量化到 5% 档、构成 10% 档、**不报绝对 token 数**、原始折叠量 25% 档；③ **`sections[METER_SECTION_NAME]===block` 短路永不命中** —— `runner.js:1130` 每轮用 `normalizeBuildSystemPromptOptions` **重建** options，拿到的 sections 不含上一轮扩展临时塞的 key → 新增模块级 `lastMeterText` 与历史对账 + `resetMeterMemo()` 供会话切换。**试过但否决**：`forceSystemPrompt` 确实不写历史，但它要每轮整份重放提示、直接击穿上面那个缓存，成本上升一个量级（C 类反模式）。**新门禁 C8**：同档内文本逐字节一致、连续 20 轮文本变化 ≤10 次、系统提示不得含「当前目标」、换目标同档文本必须相同、同内容二次调用必须返回 `null`。**RPC 矩阵一行未改**。门禁：`context-guard` 157→**168**。`npm test` 17 项全绿 EXIT=0。 |
 | 2026-11-19 | 0.15.1 | **「还是会中断」的真因：模型在 77.8% 处退化成 DSML 原生格式**（用户截图显示屏幕上有 `<｜｜DSML｜｜ parameter>` 被当文本输出）。**与 0.15.0 修的网络超时完全不同**：`grep -rln DSML node_modules/@earendil-works` 为空（pi 根本不认识这种格式），会话里 34 次 assistant 消息含 DSML 且 `stopReason` 全是 `stop` —— 模型把工具调用写成 DeepSeek 原生语法而非 pi 要求的 JSON，pi 当普通回复收尾 → agent loop 结束 → **用户看到「中断」且无任何错误提示**。**量化（n=1993 次调用）**：0%~68% 共 1574 次 DSML **0.0%**；74%~76% 共 40 次 0.0%；**76%~78% 共 264 次 12.9%（34 次全部落在 77.8~77.9%）**；78%+ 共 98 次 0.0%（守卫已裁回）。DSML 组平均 `totalTokens` 815071（77.7%）、含 thinking 比例 **0%**（正常组 372622 / 35.5% / 16%）→ **这是远早于 1M 上限的能力退化**。**上一轮为什么没挡住**：0.15.0 把 `targetRatio` 定在 0.72 是从「别撞上限」推出来的 —— **只防崩溃、不防退化**，实测发送 71.5% 加估算误差就滑进 76%+ 退化区（D 类反模式）。**修法**：①治因 `targetRatio` 0.72 → **0.62**（退化线 ~74%，留 14 个百分点），并修正语义为「**最终总占用**（含固定开销）的上限」而非「messages 占窗口」，顺带修掉 floor(30%) 可能突破 targetRatio 的隐患；实测该会话发送量 **71.5% → 61.8%**。②治症 新增 `message_end` 上的 DSML 识别：以前静默结束，现在明确写「本轮未执行：模型输出格式错乱（DSML），工具调用没被识别 · 直接重发即可」；**只提示不修复** —— 把 DSML 还原成工具调用要猜参数边界，猜错就执行错误命令，在编码 agent 里比中止危险得多；判据保守（role=assistant ∧ stopReason≠toolUse ∧ 开闭标记齐全），否则「正文里讨论这个 bug」会被误判。③新增门禁 **C7**：`targetRatio` 必须 ≤ 实测退化线 − 10 个百分点、**实际发送量**（messages + 开销）也必须落在退化线以下、四种窗口尺寸下预算不超 `targetRatio` —— 把「只防崩溃不防退化」变成机器红。**RPC 矩阵一行未改**。门禁：`context-guard` 150→**157**、`tui-editor` 461→**474**。`npm test` 17 项全绿 EXIT=0。 |
+| 2026-11-20 | 0.16.1 | **对抗性审查后的架构级修复（2 个 P0 + 1 个 P1 全部落在门禁盲区）**。①**F-02 事件水位与回放序颠倒**：`attach()` 先把 `lastSeq` 抬到 `snapshot.eventSeq` 再 `applyBatch`，缓冲事件 100% 被去重判据丢掉（探针实测 3 条应用 0 条）。正文被 `hydrate()` 兜住所以没暴露，但**运行态与弹窗兜不住**。修法不是改那两行的顺序，而是把装配收进 `hydrateFromSnapshot()`：顺序写死一次，调用方没有顺序可写错（`attach` / `resync` 共用）。②**F-03 `snapshot.pendingUi` 零消费**（见 D-05 的纠错）：补 `hydrateFromSnapshot` 第 ④ 步，走与实时事件同一条路径。③**F-01 会话池以「创建」为界而非「存活」**：`exit` 只记日志永不摘除，8 个死会话后新建 **429**；改为 exit 即摘池（带「池里那个还是我」的幂等判据），并把死因末 3 行 stderr 打进日志以保留现场；客户端收到 exit 后主动 `api.close` 并进 `ended` 态（新增显式分支 + 中英文案，不再渲染「看起来正常但什么都不能做」的面板）。④**F-05/F-06 门禁把「无法验证」当成「验证通过」**：新增 `test/preflight.mjs` 作为依赖的唯一判据，6 处 `SKIP + exit 0` 全部改为失败（实测隐藏 `.runtime/` 后 `tui-editor` 521 条整段跳过仍为绿）。⑤**F-07 文档 check 数漂移**：新增 `test/gate-inventory.json` + `gate-inventory.mjs`，数字收成唯一真源、判据为「实测 ≥ 登记」，本文改为引用而非复制。门禁：新增 `session-lifecycle`（19 checks）、`preflight`、`gate-inventory`；`client-render` 补事件摄入层 §12/§13（含一条**反证**：故意用旧顺序必须红）；`timeout` 起回报规模（31）。`npm test` 从 18 项增到 20 项。 |
 | 2026-11-19 | 0.15.0 | **会话中断治理 + 进度心跳 + 每轮上下文仪表**（用户报「正在运行的会话总是中断」，并明确要求「隔一段时间反馈进度，别让用户觉得卡着」）。①**先穷举归因再动手**：17 次中断逐条分类 —— `ECONNRESET` 6 / `BODY_TIMEOUT` 4 / `CONNECT_TIMEOUT` 3 / `CONTEXT_OVERFLOW` 2 / `RATE_LIMIT` 1 / **`timeout 900` 与 bash 上限 = 0**。用户怀疑的 `timeout` 是**命令级**限制（`bash.js:101-140` 超时 kill 进程树后 throw `ShellTimeoutError`，被工具层捕获成 `isError` 的工具结果，agent 继续下一轮），**不可能中断会话**；`stopReason` 统计（`toolUse` 1903 / `stop` 69 / `error` 17）里没有一次来自工具超时。详见 `docs/session-interruption.md`。②**BODY_TIMEOUT 根治**：pi 默认 `httpIdleTimeoutMs = 300_000`，而实测 4 次的静默时长是 317/323/331/503s —— 刚过线，且**与上下文规模无关**（最浅一次仅 7.3%）；根因是长思考期间零字节流出。新增 `src/http-idle-guard.mjs`：spawn 前把该值抬到 **30 分钟**，边界严格 —— 只补「未设置」的、显式配置一律尊重（哪怕小于下限）、显式关闭一律保留、坏 JSON 绝不覆盖、幂等不重复写盘（`test/host-parity.mjs` 23 条覆盖全分支）。③**守卫系统性低估 157,128 tokens（15 个百分点）**：它只估 messages，不含系统提示 + 工具定义，于是「守卫算 62.6% 安全」对应「实际 77.6%」，再走几轮撞 1,048,576 硬墙 —— 历史 2 次 `CONTEXT_OVERFLOW` 正是这么来的。新增 `reservedOverheadTokens`（默认 160k）：预算 = 窗口×targetRatio − 开销；边界是**小窗口不扣**（否则预算失真）、扣完不低于窗口 40%。实测预测精度从偏差 15 个百分点降到 **1.47**。④**兜底 `dropOldestTurns` 从来没有生效过**（`droppedTurns` 恒 0），三个叠加缺陷每个都静默：索引失效（缓存绝对下标，slice 后失效）、空切片死锁（`slice(start,cut)` 恒空 → break）、**丢任务目标**（`slice(1,cut)` 把首条 user 也包进被丢区间，实测 `dropped:9` 后剩余从「轮9」开始）。重写为「前缀（system + 首条 user）/ 可丢区 / 保护区」三段、每轮重算边界、一次丢一条完整轮次；真实会话实测 **589066 ≤ 594974、dropped:3、任务目标保留**。⑤**进度心跳**：先查清能力边界 —— bash 每 100ms 发一次 `tool_execution_update`（`bash.js:15`），所以**有输出时本来就有实时内容**；用户觉得卡住的是**长时间零输出**。故判据是「距上次输出多久」：静默 ≥20s（`HEARTBEAT_AFTER_MS`）显示「已静默 3m 20s，仍在运行」，**不编造百分比**；两端同值同文案；`ActiveTool` 加 `lastOutputAt` 并**按 toolCallId 精确匹配**（否则并行调用时 B 的输出会不断重置 A 的静默计时）。⑥**每轮上下文仪表**：`before_agent_start` 的 event **不带 messages**（`types.d.ts:738-760`），所以由 `context` 事件算好存快照、`before_agent_start` 取用。注入「当前目标 + 实际发送 X%」；≥50% 加按类拆解并**指明最贵的一类**；≥85% 额外警告。**双数字**是关键修正：第一版只报裁剪前 96% 而实际 69.5%，等于造假警报（D1 类失真），现在同时报「实际发送」与「原始内容 + 守卫已折叠多少」。⑦**顺带消除结构问题**：`test/selfcheck.mjs` 与 `test/version.mjs` 各硬编码一份复制清单、实测已漂移（16 vs 15 项），新增 `src/runtime-files.mjs` 按目录自动发现，并加断言锁住「不许退回硬编码」。⑧新增 `docs/anti-product-patterns.md`：把用户「中断 / 能力降级 / 委屈求全 / 降质量 / 降指标都不符合产品方向」展开成 6 类 31 条可判定清单，每条带真实事故对照。**RPC 矩阵 / 事件表 / 斜杠表一行未改**（33 / 25 / 27 / 9 不变）。门禁：`context-guard` 100→150、`host-parity` 377→412、`tui-editor` 442→459、`client-render` 1005→1013。`npm test` 17 项全绿 EXIT=0。 |
 | 2026-11-18 | 0.14.2 | **状态图标放大 + 动效流畅 + 根治「发送消息后动效静止」**（用户三条反馈）。①**更大**：旧帧 `◐◓◑◒` 实测 `visibleWidth=1`，换成**月相 8 帧** `🌑🌒🌓🌔🌕🌖🌗🌘` —— 全部 `visibleWidth=2`（终端里没有字号可调，换双宽字符是唯一可靠的"变大"手段），且都不含 VS16（含它的 emoji 在不同终端宽度会跳变、把框线挤歪）。②**更流畅**：4 帧 → 8 帧，帧间隔 250ms → **120ms**（8×120ms ≈ 1 秒转一圈），月相盈亏天生闭环（`🌘→🌑` 无缝），不像四分圆那样有明显接缝。③**根治静止**（真缺陷，不是调参）：`statusIcon()` 是按时间取帧的纯函数，但**取帧只在有人重绘时发生**，而 pi-tui 的 `requestRender()` 是**被动**的（`tui.js:658-669` 只置标志等下次 `scheduleRender`）—— 模型跑一条 5 分钟 bash 期间既无输入也无 token → 不重绘 → **图标永远停在最后一帧**。新增**自驱动动画定时器**（`startAnimation` / `stopAnimation` / `isAnimating` / `bindFrameTarget`）：`running` 时每 120ms 敲一次 `tui.requestRender()`（pi 自身 16ms 节流会合并），`markRunStart` 自动开、`markRunSettled` / `resetRunState` / `dispose` 自动停，**幂等**（重复 start 不叠加定时器，否则每轮泄漏一个），渲染通道抛错时自停不留悬空定时器。取帧改用「距 `startedAt` 的时长」而非绝对时间，保证每轮都从第 0 帧起转、不随机跳格。面板端（`client.js`）同步：图标 14px → **18px**、`superpi-pulse`（呼吸）→ **`superpi-spin` 旋转**且 `infinite`；面板的 CSS 动画由浏览器合成线程驱动、与 SSE 无关，所以本来就不会静止 —— TUI 端的被动重绘才是病根。门禁 `test/tui-editor.mjs` 399 → **442**：八帧互不相同 / 帧序 / 双宽（逐帧量 `visibleWidth`）/ 无 VS16、一个周期内八帧按序且循环回起点、`sampleFrames` 采样（修掉一个真 bug：它原本没对齐 `startedAt`，采出来是 `◴◴◴◴`）、定时器生命周期（idle 不开 / 幂等 / 重复停不抛 / 无目标启动失败 / 渲染抛错自停）、**真实时间里敲了 ≥2 次渲染通道**、状态变迁自动开关、编辑器构造即绑定、**六种宽度（120/80/60/40/30/20）下每行 `visibleWidth` 恒等于目标宽度**（双宽图标最容易把上边框算歪 1 列）。`client-render` 1004 → **1005**（18px + 旋转 + `infinite` 三条）。`npm test` 17 项全绿 EXIT=0。 |
 | 2026-11-18 | 0.14.1 | **补齐 TUI 端的等待可见性 —— 0.14.0 只做了面板端，违反 §3 两端对齐**。用户复报「总卡在 Elapsed 6m 0s / Working · 2287s」。查真实会话：**没有卡死** —— 那一轮 25 次工具执行累计 **2028 秒（33.8 分钟）**，其中 `timeout=960` 的 `node test/mutation.test.mjs` 单次跑 371~494 秒，是合法的长任务。病在**可解释性**：TUI 的 Working 行只显示一个一直涨的秒数，用户无法区分「在跑」与「卡死」。①`extensions/superpi-editor.ts` 新增订阅 `tool_execution_start`（**唯一带 `args` 的事件**，`args.timeout` 即命令自设上限），状态机加 `activeTool: { name, startedAt, limitSeconds }`；`workingLabel()` 输出三段 `Working · 38m 7s · bash · 上限 16m`，超限时改口「已超出上限 N」。②`formatRunDuration()` 口径与 pi 自己的 `formatToolDuration`（`dist/core/tools/render-utils.js:97-106`）**逐字一致**（`4.2s` / `5m 41s` / `1h 2m 0s`；分界是 60s 不是 10s）—— 否则同一条命令 pi 写 `Elapsed 5m 41s`、Working 写另一种格式，用户会以为是两个计时。③窄终端三档退让：完整三段 → 去掉工具段（保留累计）→ 只剩图标，每行显示宽度恒定不让框线歪。④`markToolEnd()` **只清工具不改 phase**：否则工具结束到下一轮开始之间 Working 行会消失又出现（闪烁）。两端取同一个字段 `args.timeout`，字段名一致（面板端 `view.activeTool.limitSeconds` ↔ TUI 端 `runState.tool.limitSeconds`）。门禁 `test/tui-editor.mjs` 348 → **399**：事件注册数 6 → 7 并新增「必须订阅 tool_execution_start」防删断言、`toolLimitSeconds` 九条边界（含 `Infinity` / 字符串 / null 不崩）、`formatRunDuration` 八档、`workingLabel` 三段与超限互斥、真入口事件驱动 activeTool、**走真 `render()` 从渲染结果里读上边框确实画出了工具段**（纯函数通过 ≠ 画出来了，0.9.4~0.9.7 就栽在这条缝上）、窄宽度框线等宽。`npm test` 17 项全绿 EXIT=0。**RPC 矩阵 / 事件表 / 斜杠表一行未改**（33 / 25 / 27 / 9 不变）。 |

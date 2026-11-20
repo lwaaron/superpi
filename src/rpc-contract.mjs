@@ -183,6 +183,45 @@ export const BASH_SHORTCUTS = [
   { prefix: '!!', excludeFromContext: true, command: 'bash', note: 'bash，输出不进上下文' },
 ];
 
+/**
+ * 畸形输出的判定表（0.16.2）—— 面板与 `extensions/superpi-malformed.mjs` 共用的一份。
+ *
+ * ---------------------------------------------------------------------------
+ * 为什么要把这张表下发到浏览器
+ *
+ * 同一份判据曾散在 `extensions/superpi-editor.ts`（命令行用），而 `client.js`
+ * **一条也没有**（`grep -c DSML client.js` = 0）。后果是真实存在的：
+ * 同一个模型、同一个故障，命令行窗口亮红字并告知「本轮未执行，直接重发即可」，
+ * 而面板端完全静默 —— 用户只看到一句话说完然后会话不动。
+ *
+ * `client.js` 只能 `require('react')`，不能 import 仓库模块，所以这里照拄
+ * `classifyInput` 的既成范式：**算法在面板、表在契约**。
+ * `test/parity.mjs` 拿同一批真实样本同时喂两边（`detectMalformedOutput` 与
+ * 面板实现）并逐条对账 —— 表改了而面板没跟上，它第一个红。
+ *
+ * `superpi-malformed.mjs` 的 `MALFORMED_DETECTION` 与此处必须**逐字段相等**，
+ * 由 `test/parity.mjs` 双向对账（任一方向漂移都红）。
+ */
+export const MALFORMED_DETECTION = {
+  marker: 'DSML',
+  openTokens: ['invoke', 'parameter'],
+  closeTokens: ['calls'],
+  residueTokens: ['</parameter>', '</invoke>'],
+  residueTailChars: 40,
+  terminalStopReasons: ['stop'],
+};
+
+/**
+ * 畸形输出时的提示文案（中/英）。
+ *
+ * 与 `extensions/superpi-malformed.mjs` 的 `MALFORMED_NOTICE` 必须逐字相等：
+ * 同一个故障在两个前端说两句话，用户会以为是两个不同的问题（D1 类失真）。
+ */
+export const MALFORMED_NOTICE = {
+  zh: '本轮未执行：模型输出格式错乱（DSML），工具调用没被识别 · 直接重发即可',
+  en: 'Nothing ran: the model emitted malformed tool-call syntax (DSML), so no tool was called · just send it again',
+};
+
 const TUI_BY_TEXT = new Map(TUI_COMMANDS.map((entry) => [entry.text, entry]));
 
 /**

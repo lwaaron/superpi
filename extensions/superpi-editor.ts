@@ -65,6 +65,18 @@ import { execFile } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+/**
+ * 畸形输出的判据移到共用模块（0.16.2）。
+ *
+ * 这个 import 与 `superpi-rules.ts` / `superpi-context-guard.ts` 同一个范式：
+ * 扩展与模块**成对安装**（`tools/install-pi-extension.mjs` 的 `EXTENSION_FILES`
+ * 里每对相邻登记，`status.complete` 要求全部逐字节同步）。
+ *
+ * 为什么这一次不能像 `AUTO_RETRY_TEXT` 那样内联一份：标题判断本身（四类形态 +
+ * 收尾位置约束）在本仓库已经因为「每个需要它的文件各拄一份」分叉过 ——
+ * 命令行有、面板完全没有。判据不是文案，它必须只有一份。
+ */
+import { detectMalformedOutput, isMalformedOutput } from './superpi-malformed.mjs'
 
 /* ------------------------------------------------------------------ 外观 */
 
@@ -255,61 +267,25 @@ export function markMalformedOutput(): void {
 /**
  * 判断一条 assistant 消息是否是「畸形工具调用」。
  *
- * 判据只认 DSML 标记（DeepSeek 原生工具调用语法），不做模糊匹配：
- *  - 模型在**正文里讨论** DSML 是合法行为（比如现在这段代码的注释），
- *    所以必须要求它出现在 `stopReason === 'stop'`（本该收尾）且**同时**含
- *    开标签与闭标签的完整结构，才判为畸形；
- *  - 只认 `stop`：`toolUse` 说明 pi 已经成功解析出结构化调用，那不是畸形。
+ * **实现已搬到 `extensions/superpi-malformed.mjs`（0.16.2）。**
+ * 这里保留这个导出名只为一件事：`test/tui-editor.mjs` 与面板门禁都用它，
+ * 改名会让一百多条既有断言同时失效 —— 那是「为了整洁而降低门禁强度」。
  *
- * 这样误判面极小：正常回复里几乎不可能同时出现 `<｜｜DSML｜｜ invoke>` 与
- * `</｜｜DSML｜｜ calls>` 两个完整标记。
+ * 真正的价值在于：从现在起，命令行窗口、面板、host **共用同一份判据**。
+ * 此前的形状是「每个需要它的文件各拄一份」，实测结果是：
+ *   - 命令行有两条（正文型 / thinking 型）
+ *   - 面板**一条也没有**（`grep -c DSML client.js` = 0）
+ * 同一个故障在两个前端一个亮红字、一个完全静默。
+ *
+ * 四类形态与排除项的定义见 `superpi-malformed.mjs` 头部注释（那里是唯一真相源）。
  */
 export function isMalformedToolCall(message: any): boolean {
-  if (message === null || typeof message !== 'object') return false
-  if (message.role !== 'assistant') return false
-  // 已经解析出结构化工具调用 → 不是畸形（哪怕正文里提过 DSML）。
-  if (message.stopReason === 'toolUse') return false
-  const content = message.content
-  if (!Array.isArray(content)) return false
-  let text = ''
-  let thinking = ''
-  for (const block of content) {
-    if (block?.type === 'text' && typeof block.text === 'string') text += block.text
-    if (block?.type === 'thinking' && typeof block.thinking === 'string') thinking += block.thinking
-  }
-  /**
-   * ① 关键词判据：**text 与 thinking 都要看**（0.15.6 修正）。
-   *
-   * 真机抓到的形态（`stop=stop`，content 只有一个 thinking 块，长 1238）：
-   *     Let me verify empirically.</thinking>
-   *     </｜｜DSML｜｜ calls>
-   *
-   * 也就是 provider 在 **thinking 通道**里吐出了闭合标记，然后**没有生成任何正文**。
-   * 旧判据只看 `text` 块，且要求 `text !== ''`，于是这种最典型的故障被整条漏掉 ——
-   * 用户看到的就是"屏幕上莫名其妙多了一段独白，然后会话结束，没有任何提示"。
-   */
-  const marker = (source) => {
-    if (source === '') return false
-    const hasOpen = source.includes('DSML') && (source.includes('invoke') || source.includes('parameter'))
-    const hasClose = source.includes('DSML') && source.includes('calls')
-    return hasOpen && hasClose
-  }
-  if (marker(text) || marker(thinking)) return true
-  /**
-   * ② 空转判据：`stop` 收尾但**既没有正文也没有工具调用**。
-   *
-   * 这一条覆盖"标记被 provider 吞掉、只留下空转"的情况：
-   * 模型要么该回答（有 text），要么该调工具（有 toolCall）。两者都没有，
-   * 而 `stopReason` 却是 `stop` —— 这一轮什么也没产出，用户看到的就是"卡住后无声结束"。
-   *
-   * 注意必须排除 thinking：只有 thinking 没有正文是**合理**的中间态吗？不是 ——
-   * 对 assistant 消息而言，thinking 是"过程"而不是"交付"。
-   * 真机上这种消息后面紧跟的就是本轮终止，所以它就是故障信号。
-   */
-  const hasText = text.trim() !== ''
-  const hasToolCall = content.some((block: any) => block?.type === 'toolCall')
-  if (message.stopReason === 'stop' && hasText !== true && hasToolCall !== true) return true
-  return false
+  return isMalformedOutput(message)
+}
+
+/** 带上形态（`text` / `thinking` / `residue` / `idle`），供 Working 行说清是哪一类。 */
+export function malformedKindOf(message: any): string {
+  return detectMalformedOutput(message).kind
 }
 
 export function markRunSettled(): void {

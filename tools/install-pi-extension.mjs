@@ -33,6 +33,15 @@ const source = path.join(pluginRoot, 'extensions', 'superpi-editor.ts')
 export const EXTENSION_FILE_NAME = 'superpi-editor.ts'
 
 /**
+ * 共享的「畸形输出判据」模块（0.16.2）。
+ *
+ * 为什么值得单独一个文件：同一份判据曾散在 1 处、另 1 处压根没有（面板），
+ * 于是同一个故障在命令行亮红字、在面板完全静默。
+ * 判据不是文案，它必须只有一份 —— 见 `extensions/superpi-malformed.mjs` 头部注释。
+ */
+export const MALFORMED_MODULE_FILE_NAME = 'superpi-malformed.mjs'
+
+/**
  * 一并安装的「用户自定义规则」扩展与它的共享模块（0.10.0）。
  *
  * 三者的关系：`superpi-rules.ts` 用 pi 的 `pi.on('before_agent_start')` 把规则追加进
@@ -112,6 +121,10 @@ export function resolveUserSkillsDir(env = process.env) {
  * 门禁 `test/host-parity.mjs` 会断言「每个 .ts 的 .mjs 依赖排在它前面」。
  */
 export const EXTENSION_FILES = [
+  // 判据模块：**必须排在最前** —— editor 静态 import 它（0.16.2）。
+  // 顺序反了就是 0.15.3 那个坑的重演：装到一半是「新 .ts + 旧/缺 .mjs」，
+  // 扩展加载即抛，且 pi 会直接 exit(1)（main.js:804）。
+  { label: 'malformed-module', source: 'extensions/superpi-malformed.mjs', name: MALFORMED_MODULE_FILE_NAME },
   { label: 'editor', source: 'extensions/superpi-editor.ts', name: EXTENSION_FILE_NAME },
   // 规则：模块先于扩展
   { label: 'rules-module', source: 'extensions/superpi-rules.mjs', name: RULES_MODULE_FILE_NAME },

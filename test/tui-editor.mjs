@@ -11,15 +11,16 @@
  * 以及「空编辑器 Ctrl+C 必须放行给 pi」。
  *
  * 跑法：node test/tui-editor.mjs
- * 需要 pi 运行时（.runtime 或宿主 node_modules）；找不到就 SKIP 并退出 0。
+ * 需要 pi 运行时（.runtime 或宿主 node_modules）。**缺了直接失败，不 SKIP**（0.16.1 起）：
+ * 本文件用 pi 真实的 CustomEditor 渲染扩展，缺它等于 521 条检查一条都没跑。
  */
 
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { resolvePiRuntime } from '../src/pi-runtime.mjs'
 import { resolveExtensionDir, EXTENSION_FILE_NAME } from '../tools/install-pi-extension.mjs'
+import { requireRuntime } from './preflight.mjs'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const root = path.dirname(here)
@@ -35,19 +36,26 @@ function eq(actual, expected, message) {
   ok(actual === expected, `${message} (got ${JSON.stringify(actual)}, want ${JSON.stringify(expected)})`)
 }
 
-function skip(reason) {
-  console.log('SKIP: ' + reason)
-  process.exit(0)
-}
-
 /* --------------------------------------------------------------- 定位运行时 */
 
-const pi = resolvePiRuntime({ pluginRoot: root })
-if (!pi.cliPath || !pi.packageDir) skip('没有 pi 运行时（先跑一键安装），跳过 TUI 编辑器门禁')
+/**
+ * 依赖判据统一由 test/preflight.mjs 给出（0.16.1）。
+ *
+ * 旧实现在缺 pi / 缺 pi-tui / 缺 jiti 时各调一次 `skip()` 并 `exit 0` ——
+ * 而 `.runtime/` 是 gitignore 的，新机器 clone 下来必然命中第一条，
+ * 于是本文件 **521 条检查一条都没跑，`npm test` 却是绿的**。
+ * 这三层都是必需层（它们测的是「装完 pi 真的能认」），不是可选项，必须失败。
+ */
+const pi = requireRuntime()
+if (!pi.cliPath || !pi.packageDir) throw new Error('preflight: pi 运行时信息不完整（cliPath/packageDir 为空）')
 
 const piTuiDir = path.join(pi.packageDir, '..', 'pi-tui')
 const piTuiEntry = path.join(piTuiDir, 'dist', 'index.js')
-if (!fs.existsSync(piTuiEntry)) skip('找不到 @earendil-works/pi-tui，跳过')
+if (!fs.existsSync(piTuiEntry)) {
+  console.error('FAIL: 找不到 @earendil-works/pi-tui（' + piTuiEntry + '）')
+  console.error('      本门禁用 pi 真实的 CustomEditor 渲染扩展，缺它等于整段未验证。')
+  process.exit(1)
+}
 
 /** 从 pi 包目录逐级向上找 jiti（pi 的依赖可能被提升到上层 node_modules）。 */
 function findJitiEntry(startDir) {
@@ -63,7 +71,11 @@ function findJitiEntry(startDir) {
 }
 
 const jitiPath = findJitiEntry(pi.packageDir)
-if (!jitiPath) skip('找不到 jiti（pi 用 jiti 加载 TS 扩展），跳过')
+if (!jitiPath) {
+  console.error('FAIL: 找不到 jiti（pi 用 jiti 加载 TS 扩展）')
+  console.error('      extensions/superpi-editor.ts 是本门禁的被测对象，缺 jiti 等于整段未验证。')
+  process.exit(1)
+}
 
 /* -------------------------------------------------------------- 加载真扩展 */
 
@@ -1257,16 +1269,16 @@ const stripAnsi = text => text.replace(/\x1b\[[0-9;:?]*[A-Za-z]/g, '').replace(/
   })()
   const state = status({ dir, env: testEnv })
   ok(state.sourceExists, '扩展源文件可读')
-  // 0.12.0 起安装面是五个文件（输入框 + 规则两枚 + 上下文守卫两枚）。
-  eq(EXTENSION_FILES.length, 7, '安装面七个文件')
-  eq(EXTENSION_FILES.map(file => file.name).sort().join(','), 'superpi-context-guard.mjs,superpi-context-guard.ts,superpi-editor.ts,superpi-modalities.mjs,superpi-modalities.ts,superpi-rules.mjs,superpi-rules.ts', '文件清单固定')
+  // 0.16.2 起安装面是八个文件（畸形判据模块 + 输入框 + 规则两枚 + 上下文守卫两枚 + 模态两枚）。
+  eq(EXTENSION_FILES.length, 8, '安装面八个文件')
+  eq(EXTENSION_FILES.map(file => file.name).sort().join(','), 'superpi-context-guard.mjs,superpi-context-guard.ts,superpi-editor.ts,superpi-malformed.mjs,superpi-modalities.mjs,superpi-modalities.ts,superpi-rules.mjs,superpi-rules.ts', '文件清单固定')
   const installed = install({ dir, env: testEnv })
   eq(installed.code, 0, 'install 成功')
   for (const file of EXTENSION_FILES) {
     ok(fs.existsSync(path.join(dir, file.name)), '安装后有 ' + file.name)
   }
   eq(status({ dir, env: testEnv }).identical, true, '安装后 editor 内容与源一致')
-  eq(status({ dir, env: testEnv }).complete, true, '七个文件全部一致 → complete')
+  eq(status({ dir, env: testEnv }).complete, true, '八个文件全部一致 → complete')
   eq(install({ dir, env: testEnv }).code, 0, 'install 幂等')
 
   // 真机那一步：装到临时 agentDir 后，用 **pi 自己的扩展加载器**加载一遍。

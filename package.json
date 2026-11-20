@@ -1,6 +1,6 @@
 {
   "name": "superpi",
-  "version": "0.16.0",
+  "version": "0.16.2",
   "type": "module",
   "description": "SuperPi：把 pi 编码代理接进 DSH 侧栏——整页聊天面板 + 过程流，底层是常驻的 pi --mode rpc 子进程。pi runtime is resolved from the plugin itself (.runtime), so the panel works on any machine without a hand-written path.",
   "icon": "./assets/icon.svg",
@@ -23,7 +23,11 @@
     "LICENSE"
   ],
   "scripts": {
-    "test": "node tools/check-carriers.mjs && node test/selfcheck.mjs && node test/client-render.mjs && node test/css-tokens.mjs && node test/runtime-resolve.mjs && node test/config-hot.mjs && node test/host-parity.mjs && node test/session-projects.mjs && node test/timeout.mjs && node test/rules.mjs && node test/context-guard.mjs && node test/modalities.mjs && node test/parity.mjs && node test/tui-editor.mjs && node test/brand-pi-runtime.mjs && node test/restart-lib.mjs && node test/github-sync.mjs && node test/version.mjs",
+    "test": "node test/preflight.mjs && node tools/check-carriers.mjs && node test/selfcheck.mjs && node test/client-render.mjs && node test/css-tokens.mjs && node test/runtime-resolve.mjs && node test/config-hot.mjs && node test/host-parity.mjs && node test/session-projects.mjs && node test/session-lifecycle.mjs && node test/timeout.mjs && node test/rules.mjs && node test/context-guard.mjs && node test/modalities.mjs && node test/malformed.mjs && node test/parity.mjs && node test/tui-editor.mjs && node test/brand-pi-runtime.mjs && node test/restart-lib.mjs && node test/github-sync.mjs && node test/version.mjs && node test/gate-inventory.mjs",
+    "test:preflight": "node test/preflight.mjs",
+    "test:inventory": "node test/gate-inventory.mjs",
+    "test:malformed": "node test/malformed.mjs",
+    "test:lifecycle": "node test/session-lifecycle.mjs",
     "test:client": "node test/client-render.mjs",
     "test:host": "node test/host-smoke.mjs",
     "test:runtime": "node test/runtime-resolve.mjs",

@@ -17,14 +17,15 @@ const root = path.dirname(here)
 const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'superpi-fresh-'))
 
 // 只拷运行期需要的文件，刻意不带 node_modules / .runtime —— 就是「刚下载下来的插件包」。
-const COPY = ['index.js', 'client.js', 'package.json', 'cordis.patch.yml', 'src/pi-rpc.mjs', 'src/pi-runtime.mjs', 'src/session-store.mjs', 'src/rpc-contract.mjs', 'src/ui-prefs.mjs', 'extensions/superpi-rules.mjs', 'extensions/superpi-rules.ts', 'extensions/superpi-context-guard.mjs', 'extensions/superpi-context-guard.ts', 'extensions/superpi-modalities.mjs', 'extensions/superpi-modalities.ts']
+//
+// 清单**不再手写**（0.16.1）：改用 src/runtime-files.mjs 的 copyRuntimeFiles。
+// 手写清单必然漂移 —— 0.15.0 的实测就是 selfcheck 16 项 vs version 15 项，
+// 新增一个源文件就同时让两个门禁报 Cannot find module，而修法是每处各补一条，
+// 下一个人必然再漏。sibling 门禁（selfcheck / version）早已改掉，这里漏了一处。
+const { copyRuntimeFiles } = await import(pathToFileURL(path.join(root, 'src', 'runtime-files.mjs')).href)
 const pluginRoot = path.join(tempRoot, 'superpi')
 fs.mkdirSync(pluginRoot, { recursive: true })
-for (const rel of COPY) {
-  const target = path.join(pluginRoot, rel)
-  fs.mkdirSync(path.dirname(target), { recursive: true })
-  fs.copyFileSync(path.join(root, rel), target)
-}
+copyRuntimeFiles(root, pluginRoot)
 
 let failures = 0
 const expect = (ok, message) => { if (!ok) { failures += 1; console.error('FAIL: ' + message) } else console.log('ok  ' + message) }

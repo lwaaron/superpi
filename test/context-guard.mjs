@@ -13,7 +13,8 @@
  * 而这正是本项目历史上反复出现的失败模式（面板写了、pi 读不到）。
  *
  * 跑法：node test/context-guard.mjs
- * 需要 pi 运行时（jiti 从它那儿借）；找不到就 SKIP 第 ③ 层，①② 照跑。
+ * 需要 pi 运行时（jiti 从它那儿借）。**缺了直接失败，不 SKIP**（0.16.1 起）：
+ * 扩展层是本门禁的被测对象，跳过等于「守卫有没有真生效」完全未验证。
  */
 
 import fs from 'node:fs'
@@ -948,11 +949,21 @@ const previousGuardEnv = process.env.SUPERPI_CONTEXT_GUARD
 process.env.SUPERPI_CONTEXT_GUARD = guardFile
 
 const pi = resolvePiRuntime({ pluginRoot: root })
-let skippedExtension = false
 let extensionModule = null
 if (!pi.cliPath || !pi.packageDir) {
-  console.log('SKIP 扩展层：没有 pi 运行时（先跑一键安装）')
-  skippedExtension = true
+  /**
+   * 这里曾经是 `skippedExtension = true` 然后继续跑（0.16.1 修）。
+   *
+   * 扩展层测的是**真实接线**：`pi.on('context')` 返回裁剪后的 messages、
+   * `before_agent_start` 把准则写进系统提示。缺 pi 时整段跳过，
+   * 等于「守卫到底有没有真的生效」完全未验证，而 `npm test` 是绿的。
+   * 而 `.runtime/` 是 gitignore 的 —— 新机器 clone 下来必然走到这条分支。
+   */
+  console.error('')
+  console.error('FAIL[preflight] pi 运行时不可用 —— 扩展层（superpi-context-guard.ts）无法加载')
+  console.error('  这一层是本门禁的被测对象，不能跳过。修法：npm run test:runtime')
+  console.error('')
+  process.exit(1)
 } else {
   function findJitiEntry(startDir) {
     let dir = path.resolve(startDir)
@@ -967,8 +978,11 @@ if (!pi.cliPath || !pi.packageDir) {
   }
   const jitiPath = findJitiEntry(pi.packageDir)
   if (jitiPath === '') {
-    console.log('SKIP 扩展层：找不到 jiti')
-    skippedExtension = true
+    console.error('')
+    console.error('FAIL[preflight] 找不到 jiti —— 扩展层（superpi-context-guard.ts）无法加载')
+    console.error('  修法：重装 pi 运行时（npm run test:runtime）')
+    console.error('')
+    process.exit(1)
   } else {
     const { createJiti } = await import(pathToFileURL(jitiPath).href)
     const extensionFile = path.join(root, 'extensions', 'superpi-context-guard.ts')
@@ -1054,7 +1068,6 @@ ok(!/appendContextEdit|writeFileSync\([^)]*session/i.test(extensionSource), '扩
 try { fs.rmSync(tmp, { recursive: true, force: true }) } catch { /* 清理失败不影响结论 */ }
 if (previousGuardEnv === undefined) delete process.env.SUPERPI_CONTEXT_GUARD
 else process.env.SUPERPI_CONTEXT_GUARD = previousGuardEnv
-if (skippedExtension) console.log('\n（扩展层被跳过：' + String(checks) + ' checks 已跑）')
 
 if (failed === 0) {
   console.log('')

@@ -143,6 +143,59 @@ try {
   console.log('4) README 应含', tarball, '→', readme.includes(tarball))
   assert(readme.includes(tarball), 'README 里没有 ' + tarball + '，照着文档装会找不到文件')
 
+  // ── 5. 门禁规模登记表：documented check 数的唯一真源（0.16.1）────────
+  //
+  // 为什么要有这一段：0.16.0 的对抗性审查发现 AGENTS.md 里声称的 check 数
+  // 已全面漂移（parity 98→102、host-parity 412→430、context-guard 150→179、
+  // tui-editor 459→521），而**没有任何门禁校验这些数字**。
+  //
+  // 那不只是「数字不准」：AGENTS.md 把「412 checks」加粗当作对齐强度的证据。
+  // 数字漂移后，文档从「可校验的事实」退化为「曾经的印象」——
+  // 而它恰恰是接手者唯一的行为指南。
+  //
+  // 修法（结构性，不是把数字改一遍）：
+  //   · 数字**只登记在这里一处**，AGENTS.md 引用它而不是各自维护副本；
+  //   · 判据是**下限**而不是相等：修复会让数字上升（合理），
+  //     下降才说明某条能力被削弱或某个门禁漏跑（那才是要拦的）；
+  //   · 下面是「实测值」，由各门禁自己打印。这里跑一遍并比对登记值。
+  //
+  // 注意：本段只做登记与自校验，不重跑子进程（那会让 npm test 翻倍）。
+  // 「登记值 ≤ 实测值」这条由 test/version.mjs 在**拿到各门禁输出后**判断 ——
+  // 见 test/gate-inventory.mjs（它读 package.json 的 scripts.test 按序跑并汇总）。
+  const inventory = JSON.parse(fs.readFileSync(path.join(root, 'test', 'gate-inventory.json'), 'utf8'))
+  // 以下划线开头的是元数据（_comment / _why / _how_to_update ...），不是门禁名。
+  const inventoryGates = Object.keys(inventory).filter(key => key.startsWith('_') === false)
+  const missingGates = inventoryGates.filter(name => {
+    const script = 'test/' + name + '.mjs'
+    return fs.existsSync(path.join(root, script)) === false
+  })
+  console.log('5) 门禁登记表覆盖', inventoryGates.length, '套 → 文件缺失', JSON.stringify(missingGates))
+  assert(missingGates.length === 0, '登记表里有门禁文件不存在：' + missingGates.join(', '))
+
+  // 登记表必须覆盖 npm test 里跑到的每一套（漏登记 = 那套的规模没人看着）
+  const pkgForScripts = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
+  const testScript = String(pkgForScripts.scripts?.test ?? '')
+  const runGates = Array.from(testScript.matchAll(/test\/([a-z0-9-]+)\.mjs/g)).map(m => m[1])
+  const unregistered = runGates.filter(name => Object.prototype.hasOwnProperty.call(inventory, name) === false)
+  /**
+   * 「规模可核对」的门禁 = 登记表里的那些。其余的分两类，都**显式**列在下面，
+   * 而不是悄悄放过：
+   *
+   *  A. STRUCTURAL：断言以「抛错」为失败方式，天然没有数量概念
+   *     （selfcheck 验的是文件清单一致、runtime-resolve 验的是解析链分支、
+   *      config-hot 验的是热更新能否穿透快照）。强行给它们加计数只会制造假的精确。
+   *  B. META：本对账体系自身的构件（preflight 探测依赖、gate-inventory 做汇总）。
+   *
+   * 两类都必须在这里**点名**：新增一套门禁若既不登记规模、也不在名单里，仍然会红。
+   * 这样「漏登记」不可能静默发生 —— 那正是 F-06 的教训。
+   */
+  const STRUCTURAL_GATES = ['selfcheck', 'runtime-resolve', 'config-hot', 'restart-lib', 'version']
+  const META_GATES = ['preflight', 'gate-inventory']
+  const exempt = new Set(STRUCTURAL_GATES.concat(META_GATES))
+  const unregisteredSizeGates = runGates.filter(name => exempt.has(name) === false && Object.prototype.hasOwnProperty.call(inventory, name) === false)
+  console.log('5) npm test 跑了', runGates.length, '套 → 未登记规模', JSON.stringify(unregisteredSizeGates))
+  assert(unregisteredSizeGates.length === 0, '这些门禁跑了但没登记规模：' + unregisteredSizeGates.join(', ') + '（在 test/gate-inventory.json 补一条，或加进 STRUCTURAL_GATES 并说明理由）')
+
   console.log('PASS')
 } catch (error) {
   failed = 1

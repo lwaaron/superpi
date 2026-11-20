@@ -1095,7 +1095,7 @@ try {
     eq('每个 .ts 的 .mjs 依赖都排在它前面', problems, [])
     // 完整清单不能漏文件（漏了就是"装了但没生效"）
     const labels = files.map(f => f.label).sort()
-    eq('安装清单包含全部七个文件', labels.length, 7)
+    eq('安装清单包含全部八个文件', labels.length, 8)
   }
 
   // ── 3.98 发布文本文档里不得有控制字符（0.15.3，这是 400 的真因）

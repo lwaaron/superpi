@@ -12,7 +12,8 @@
  * 第 ③ 层是重点：只测 ①② 的话，「面板保存了、pi 却读不到」这类断链完全测不出来。
  *
  * 跑法：node test/rules.mjs
- * 需要 pi 运行时（jiti 从它那儿借）；找不到就 SKIP 掉第 ③ 层，①② 照跑。
+ * 需要 pi 运行时（jiti 从它那儿借）。**缺了直接失败，不 SKIP**（0.16.1 起）：
+ * 扩展层是本门禁的被测对象，跳过等于「规则有没有真进系统提示」完全未验证。
  */
 
 import fs from 'node:fs'
@@ -308,10 +309,19 @@ section('G. 扩展：before_agent_start 与 /superpi-rules（真 .ts）')
 
 const pi = resolvePiRuntime({ pluginRoot: root })
 let extensionModule = null
-let skippedExtension = false
 if (!pi.cliPath || !pi.packageDir) {
-  console.log('SKIP 扩展层：没有 pi 运行时（先跑一键安装）')
-  skippedExtension = true
+  /**
+   * 这里曾经是 `skippedExtension = true` 然后继续跑（0.16.1 修）。
+   *
+   * 为什么必须失败：扩展层是本门禁的**被测对象**（superpi-rules.ts 把规则送进系统提示）。
+   * 缺 pi 时整段跳过，等于「规则能否真正生效」完全未验证，而 `npm test` 是绿的。
+   * 而 `.runtime/` 是 gitignore 的 —— 新机器 clone 下来必然走到这条分支。
+   */
+  console.error('')
+  console.error('FAIL[preflight] pi 运行时不可用 —— 扩展层（superpi-rules.ts）无法加载')
+  console.error('  这一层是本门禁的被测对象，不能跳过。修法：npm run test:runtime')
+  console.error('')
+  process.exit(1)
 } else {
   function findJitiEntry(startDir) {
     let dir = path.resolve(startDir)
@@ -326,8 +336,11 @@ if (!pi.cliPath || !pi.packageDir) {
   }
   const jitiPath = findJitiEntry(pi.packageDir)
   if (jitiPath === '') {
-    console.log('SKIP 扩展层：找不到 jiti')
-    skippedExtension = true
+    console.error('')
+    console.error('FAIL[preflight] 找不到 jiti —— 扩展层（superpi-rules.ts）无法加载')
+    console.error('  修法：重装 pi 运行时（npm run test:runtime）')
+    console.error('')
+    process.exit(1)
   } else {
     const { createJiti } = await import(pathToFileURL(jitiPath).href)
     const extensionFile = path.join(root, 'extensions', 'superpi-rules.ts')
@@ -691,7 +704,7 @@ try {
 section('H. 安装面与单一真相')
 
 const installer = await import(pathToFileURL(path.join(root, 'tools', 'install-pi-extension.mjs')).href)
-eq(installer.EXTENSION_FILES.length, 7, '安装面是七个文件（editor + rules/guard/modalities 各两枚）')
+eq(installer.EXTENSION_FILES.length, 8, '安装面是八个文件（malformed + editor + rules/guard/modalities 各两枚）')
 eq(installer.RULES_EXTENSION_FILE_NAME, 'superpi-rules.ts', '规则扩展文件名固定')
 eq(installer.RULES_MODULE_FILE_NAME, 'superpi-rules.mjs', '共享模块文件名固定')
 eq(installer.GUARD_EXTENSION_FILE_NAME, 'superpi-context-guard.ts', '上下文守卫扩展文件名固定')
@@ -708,7 +721,7 @@ eq(
   fs.readFileSync(path.join(root, 'extensions', 'superpi-rules.mjs'), 'utf8'),
   '装出来的共享模块与仓库逐字节一致',
 )
-eq(installer.status({ dir: installDir }).complete, true, 'status.complete 反映七个文件全部一致')
+eq(installer.status({ dir: installDir }).complete, true, 'status.complete 反映八个文件全部一致')
 eq(installer.install({ dir: installDir }).code, 0, 'install 幂等')
 eq(installer.remove({ dir: installDir }).code, 0, 'remove 成功')
 for (const file of installer.EXTENSION_FILES) {
@@ -784,7 +797,6 @@ ok(rulesExtensionSource.includes("./superpi-rules.mjs"), '扩展引用同目录�
 /* ═══════════════════════════════════════════════════════════ 收尾 */
 
 try { fs.rmSync(tmp, { recursive: true, force: true }) } catch { /* 清理失败不影响结论 */ }
-if (skippedExtension) console.log('\n（扩展层被跳过：' + (checks) + ' checks 已跑）')
 
 if (failed === 0) {
   console.log('')
