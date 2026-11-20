@@ -1181,15 +1181,40 @@ export function planContextWindow(messages, options = {}) {
     return stats.after <= budget
   }
 
+  /**
+   * 裁剪顺序（0.15.5 按「单位损失换来的空间」重排）。
+   *
+   * ---------------------------------------------------------------------------
+   * 旧顺序把 `thinking` 排第 2，实测后果很刺眼：预算很宽松（594,974，只需 592,582）
+   * 时 **thinking 仍被删掉 294 条**，而 `toolFold` 只折 6 条就达标了 ——
+   * 也就是"先牺牲了最不该牺牲的东西，然后马上就够了"。
+   *
+   * 量化依据（真实会话实测）：
+   *   单条 thinking 消息     ≈   206 tokens
+   *   单条 toolResult 消息   ≈ 2,000 tokens   ← 是前者的 **9.7 倍**
+   *
+   * 也就是说：折一条 toolResult 换来的空间，相当于删掉近 10 条 thinking。
+   * 而 toolResult 折叠后仍保留首行摘要（"当时跑了什么、结果是什么"的线索），
+   * thinking 删掉则是彻底消失。**先动大块且可降级的，才对。**
+   *
+   * ---------------------------------------------------------------------------
+   * 最终顺序（每一步都是"还能读回/还能推断"→"彻底丢失"）：
+   *   1. images       （无条件；占位带路径，可重读，最贵）
+   *   2. toolText     （超长工具结果截头尾，保留关键中间段）
+   *   3. toolFold     （旧工具结果折首行，大块且低成本）
+   *   4. toolCallArgs （无条件；已落盘正文，留副本零价值）
+   *   5. replies      （旧回复折叠，仍有结论线索）
+   *   6. thinking     （最后才动；一旦删就是彻底消失，信息损失最高）
+   */
   const done = () =>
     progressApply('images', message => replaceImages(message, callIndex), true) ||
-    progressApply('thinking', message => dropThinking(message)) ||
     progressApply('toolText', message => truncateToolText(message, settings.maxTextChars)) ||
     progressApply('toolFold', message => foldToolResult(message)) ||
-    // 参数折叠排在回复折叠之前：已落盘的文件正文（write/edit 的 arguments）
-    // 比模型结论更没有在上下文里留副本的价值。
+    // 参数折叠必须完整执行（无条件规则类），见 progressApply 的 mustComplete 说明。
     progressApply('toolCallArgs', message => foldToolCallArgs(message, callIndex)) ||
-    progressApply('replies', message => foldReply(message))
+    progressApply('replies', message => foldReply(message)) ||
+    // thinking 放最后：信息损失最高的一类，只有前面都不够时才牺牲它。
+    progressApply('thinking', message => dropThinking(message))
 
   done()
 

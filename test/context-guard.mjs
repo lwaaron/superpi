@@ -335,6 +335,83 @@ ok(liveCall !== undefined && liveCall.arguments._omitted !== true, '本轮的 wr
 
 /* -------------------- C9. 裁剪必须「填满预算」，不许断崖掏空（0.15.4） */
 
+
+/* -------------------- C10. 裁剪顺序：thinking 必须最后才牺牲（0.15.5） */
+
+section('C10. 裁剪顺序按「单位损失换来的空间」排序')
+
+/**
+ * 这条来自一个刺眼的实测现象：
+ *
+ * 预算很宽松时（594,974，实际只需 592,582）—— **thinking 仍被删掉 294 条**，
+ * 而 `toolFold` 只折 6 条就达标了。
+ * 也就是"先牺牲了最不该牺牲的东西，然后马上就够了"。
+ *
+ * 量化依据（真实会话实测单条消息的估算 token）：
+ *   单条 thinking 消息     ≈   206 tokens
+ *   单条 toolResult 消息   ≈ 2,000 tokens   ← **9.7 倍**
+ *
+ * 折一条 toolResult 换来的空间相当于删掉近 10 条 thinking；
+ * 而 toolResult 折叠后**仍保留首行摘要**（"当时跑了什么、结果是什么"的线索），
+ * thinking 删掉则是**彻底消失**。所以顺序必须是「先动大块且可降级的」。
+ *
+ * 正确顺序（信息可恢复性从高到低）：
+ *   images → toolText → toolFold → toolCallArgs → replies → **thinking（最后）**
+ */
+{
+  const buildRich = (n) => {
+    const out = []
+    for (let i = 0; i < n; i += 1) {
+      out.push({ role: 'user', content: [{ type: 'text', text: '任务' + String(i) }] })
+      out.push({
+        role: 'assistant',
+        content: [
+          { type: 'thinking', thinking: '思考'.repeat(300) },
+          { type: 'toolCall', id: 't' + String(i), name: 'bash', arguments: { command: 'cmd' + String(i) } },
+        ],
+      })
+      out.push({ role: 'toolResult', toolCallId: 't' + String(i), toolName: 'bash', content: [{ type: 'text', text: '结果'.repeat(3000) }] })
+      out.push({ role: 'assistant', content: [{ type: 'text', text: '完成' + String(i) }] })
+    }
+    return out
+  }
+
+  // ① 只要「折工具结果」还够用，thinking 就一条都不该动。
+  //    改前：targetRatio=0.72 时 thinking 被删 294 条（而 toolFold 只折了 6 条）。
+  for (const ratio of [0.72, 0.62]) {
+    const tuned = { ...settings, targetRatio: ratio }
+    // 600 轮：测试用 charsPerToken=4（比生产默认 3 更省），300 轮不会超预算、测不到裁剪。
+    const planned = planContextWindow(buildRich(600), { windowTokens: 1048576, settings: tuned })
+    eq(planned.stats.stages.thinking, 0,
+      'targetRatio=' + String(ratio) + '：工具结果够折时，thinking 不应被删（实测删了 ' +
+      String(planned.stats.stages.thinking) + ' 条）')
+    const degradable = planned.stats.stages.toolFold + planned.stats.stages.toolText + planned.stats.stages.replies
+    ok(degradable > 0, 'targetRatio=' + String(ratio) + '：确实通过可降级阶段（折工具结果/截文本/折回复）达标了')
+  }
+
+  // ② 单个 toolResult 的 token 必须显著高于单条 thinking —— 这是上面顺序的**前提**。
+  //    若哪天估算口径改了导致这个关系翻转，顺序就该重新评估，此断言会先红。
+  {
+    const sample = buildRich(3)
+    const thinkTok = estimateMessagesTokens([sample[1]], settings)
+    const resultTok = estimateMessagesTokens([sample[2]], settings)
+    ok(resultTok > thinkTok * 3,
+      '单条 toolResult(' + String(resultTok) + ') 应显著大于单条 thinking(' + String(thinkTok) + ')，否则裁剪顺序的依据不成立')
+  }
+
+  // ③ 极端情况：只有 thinking 可删时才允许删它（防线不能被"永远不删"架空）。
+  {
+    const onlyThinking = []
+    for (let i = 0; i < 900; i += 1) {
+      onlyThinking.push({ role: 'user', content: [{ type: 'text', text: 'q' + String(i) }] })
+      onlyThinking.push({ role: 'assistant', content: [{ type: 'thinking', thinking: '深思'.repeat(1500) }, { type: 'text', text: 'a' }] })
+    }
+    const planned = planContextWindow(onlyThinking, { windowTokens: 1048576, settings })
+    ok(planned.stats.stages.thinking > 0, '只有 thinking 可删时，它仍然要能被删（防线不能被架空）')
+    ok(planned.stats.after <= planned.stats.budget, '这种情况下仍须落在预算内')
+  }
+}
+
 section('C9. 裁剪后的预算利用率不得出现断崖')
 
 /**

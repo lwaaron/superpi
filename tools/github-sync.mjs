@@ -68,6 +68,19 @@ const REJECT_PATTERNS = [
   /shallow update not allowed/i,
   /refusing to update checked out branch/i,
 ]
+/**
+ * 代理出错：**这不是「没网」**。代理是用户配的一层，它自己坏了要人去看。
+ * 两者的处置完全相反：offline = 等下次自动补推；proxy = 永远重试都不会好。
+ * 实测事故（2026-11-19）：`~/.gitconfig` 指向 `socks5h://127.0.0.1:10808`，
+ * 代理没启动 → 每次同步都判 offline、静默重试，而直连 github 是通的（curl 200），
+ * 于是永远推不上去、日志还写着「没网」。这正是 AGENTS.md §9 禁止的那一类混淆。
+ */
+const PROXY_PATTERNS = [
+  /proxy\s*(?:error|connect(?:ion)?\s*(?:failed|refused|aborted)|authentication required|failed)/i,
+  /proxyconnect/i,
+  /connect tunnel failed/i,
+  /socks\s*(?:connect|connection)\s*(?:failed|refused)/i,
+]
 /** 连不上：这正是「先提交本地，等联网再推」那种情况。 */
 const OFFLINE_PATTERNS = [
   /could not resolve host/i,
@@ -89,15 +102,68 @@ const OFFLINE_PATTERNS = [
 ]
 
 /**
- * 把 git 的 stderr 归一成四种结论：auth / rejected / offline / failed。
+ * 把 `socks5h://127.0.0.1:10808` 这类代理串拆成 host / port（拆不出来就给空串）。
+ * 只做判断用，不改写配置、不替用户连接。
+ */
+export function parseProxyTarget(raw) {
+  const text = String(raw || '').trim()
+  if (text === '') return { raw: '', host: '', port: '' }
+  const withoutScheme = text.replace(/^[a-z0-9+.-]+:\/\//i, '')
+  const authority = withoutScheme.split('/')[0]
+  const at = authority.lastIndexOf('@')
+  const hostPort = at === -1 ? authority : authority.slice(at + 1)
+  const hit = /^\[([^\]]+)\](?::(\d+))?$/.exec(hostPort) || /^(.*?)(?::(\d+))?$/.exec(hostPort)
+  const host = hit === null ? '' : (hit[1] || '')
+  const port = hit === null || hit[2] === undefined ? '' : hit[2]
+  return { raw: text, host, port }
+}
+
+/**
+ * 读这个仓库**实际会用**的代理：git 的 http/https.proxy，没有再看环境变量。
+ * 只读一条命令（--get-regexp 一次拿全），钩子预算里也就几毫秒。
+ */
+export async function readProxyConfig(cwd, options = {}) {
+  const timeoutMs = Number.isFinite(options.timeoutMs) ? options.timeoutMs : 8000
+  const fromGit = await runGit(['config', '--get-regexp', '^(http|https)\\.proxy$'], { cwd, timeoutMs })
+  if (fromGit.code === 0) {
+    const lines = fromGit.stdout.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
+    const pick = lines.find((line) => /^https\.proxy\s/i.test(line)) || lines.find((line) => /^http\.proxy\s/i.test(line))
+    if (pick !== undefined) {
+      const value = pick.replace(/^[a-z.]+proxy\s+/i, '').trim()
+      if (value !== '') return parseProxyTarget(value)
+    }
+  }
+  const env = process.env.HTTPS_PROXY || process.env.https_proxy || process.env.HTTP_PROXY || process.env.http_proxy || ''
+  return parseProxyTarget(env)
+}
+
+/** stderr 里点的就是那个代理吗？host 与 port 都要对上 —— 猜错比不猜更坏。 */
+function blamesProxy(text, proxy) {
+  if (!proxy || typeof proxy !== 'object') return false
+  const host = String(proxy.host || '')
+  if (host === '') return false
+  if (!text.includes(host)) return false
+  const port = String(proxy.port || '')
+  if (port === '') return true
+  return text.includes('port ' + port) || text.includes(':' + port)
+}
+
+/**
+ * 把 git 的 stderr 归一成五种结论：auth / rejected / proxy / offline / failed。
  * 顺序有意义：认证与分叉的具体症状里也常含 "unable to access"，
  * 先判更具体的，最后才落到「连不上」。
+ *
+ * `extra.proxy`（readProxyConfig 的返回值）只为区分 proxy 与 offline 而存在：
+ * 同一条 "Failed to connect to 127.0.0.1 port 10808"，代理指向它 → 代理坏了；
+ * 没配代理 → 真的是网断了。两者处置相反，不许合并。
  */
 export function classifyGitError(stderr, extra = {}) {
   const text = String(stderr || '')
   if (extra.killed === true) return 'offline'
   if (AUTH_PATTERNS.some((re) => re.test(text))) return 'auth'
   if (REJECT_PATTERNS.some((re) => re.test(text))) return 'rejected'
+  if (PROXY_PATTERNS.some((re) => re.test(text))) return 'proxy'
+  if (blamesProxy(text, extra.proxy)) return 'proxy'
   if (OFFLINE_PATTERNS.some((re) => re.test(text))) return 'offline'
   return 'failed'
 }
@@ -126,6 +192,7 @@ export function exitCodeFor(status) {
       return 2
     case 'rejected':
     case 'auth':
+    case 'proxy':
     case 'detached':
       return 3
     default:
@@ -220,6 +287,7 @@ export function appendLog(gitDir, line) {
  *   pushed      刚把本地提交推到线上
  *   up-to-date  线上已经是这份提交（可能顺手补了 tag）
  *   offline     连不上，本地提交保留，等下次
+ *   proxy       代理配了但连不上（不是没网），要人处理
  *   rejected    线上有新提交（非快进），拒绝自动处理
  *   auth        凭据失效 / 无权限
  *   no-remote   仓库没有配 origin
@@ -269,10 +337,14 @@ export async function syncOnce(options = {}) {
     if (urlResult.code !== 0 || urlResult.stdout.trim() === '') return finish({ status: 'no-remote', head, branch })
     const remoteUrl = urlResult.stdout.trim()
 
+    // 代理配置：只为把「代理坏了」与「没网」分开，读不到就当没配（不猜）。
+    const proxy = await readProxyConfig(cwd, { timeoutMs: 8000 })
+
     // 先探一次线上 refs：既是连通性探测，也避免「线上已是最新还硬推」。
     const probe = await runGit(['ls-remote', '--heads', remote, 'refs/heads/' + branch], { cwd, timeoutMs })
     if (probe.code !== 0) {
-      return finish({ status: classifyGitError(probe.stderr, probe), head, branch, remoteUrl, reason: probe.stderr.trim() })
+      const status = classifyGitError(probe.stderr, { ...probe, proxy })
+      return finish({ status, head, branch, remoteUrl, proxy, reason: probe.stderr.trim() })
     }
     const remoteSha = parseLsRemote(probe.stdout).get('refs/heads/' + branch) || ''
     if (remoteSha === head) {
@@ -282,7 +354,8 @@ export async function syncOnce(options = {}) {
 
     const push = await runGit(['push', remote, 'HEAD:refs/heads/' + branch], { cwd, timeoutMs })
     if (push.code !== 0) {
-      return finish({ status: classifyGitError(push.stderr, push), head, branch, remoteUrl, remoteSha, reason: (push.stderr || push.stdout).trim() })
+      const status = classifyGitError(push.stderr, { ...push, proxy })
+      return finish({ status, head, branch, remoteUrl, remoteSha, proxy, reason: (push.stderr || push.stdout).trim() })
     }
     const tags = pushTags ? await pushTagRefs({ cwd, remote, timeoutMs }) : { status: 'skipped' }
     return finish({ status: 'pushed', head, branch, remoteUrl, remoteSha, tags })
@@ -306,7 +379,7 @@ export async function inspectSync(options = {}) {
   const cwd = options.cwd || REPO_ROOT
   const remote = options.remote || DEFAULT_REMOTE
   const timeoutMs = Number.isFinite(options.timeoutMs) ? options.timeoutMs : 15000
-  const out = { gitDir: '', branch: '', head: '', remoteUrl: '', remoteSha: '', ahead: null, behind: null, reachable: false, hookInstalled: false, lastLog: [] }
+  const out = { gitDir: '', branch: '', head: '', remoteUrl: '', remoteSha: '', ahead: null, behind: null, reachable: false, hookInstalled: false, proxy: { raw: '', host: '', port: '' }, lastLog: [] }
 
   const gitDir = await resolveGitDir(cwd)
   if (gitDir === '') return { ...out, error: 'not a git repository' }
@@ -328,9 +401,11 @@ export async function inspectSync(options = {}) {
   if (url.code !== 0) return { ...out, error: 'no remote "' + remote + '"' }
   out.remoteUrl = url.stdout.trim()
 
+  const proxy = await readProxyConfig(cwd, { timeoutMs: 8000 })
+  out.proxy = proxy
   const probe = await runGit(['ls-remote', '--heads', remote, 'refs/heads/' + out.branch], { cwd, timeoutMs })
   if (probe.code !== 0) {
-    return { ...out, error: classifyGitError(probe.stderr, probe), reason: probe.stderr.trim() }
+    return { ...out, error: classifyGitError(probe.stderr, { ...probe, proxy }), reason: probe.stderr.trim() }
   }
   out.reachable = true
   out.remoteSha = parseLsRemote(probe.stdout).get('refs/heads/' + out.branch) || ''
@@ -434,7 +509,14 @@ async function main(argv) {
     if (info.error !== undefined) {
       console.log('状态：' + info.error + (info.reason ? '（' + info.reason.split(/\r?\n/)[0] + '）' : ''))
       if (info.head) console.log('  本地 ' + info.branch + ' @ ' + info.head.slice(0, 8))
-      return exitCodeFor(info.error === 'detached HEAD' ? 'detached' : info.error === 'no commits yet' ? 'no-commit' : 'offline')
+      if (info.error === 'proxy') {
+        console.log('  代理 ' + (info.proxy && info.proxy.raw ? info.proxy.raw : '（读不到具体配置）'))
+        console.log('  处置 启动代理，或 git config --global --unset http.proxy（直连可用时）')
+      }
+      // 不许把 auth / proxy / rejected 都报成「离线」：它们处置完全不同。
+      const known = ['auth', 'proxy', 'rejected', 'offline', 'failed', 'detached', 'no-commit', 'no-remote']
+      const mapped = info.error === 'detached HEAD' ? 'detached' : info.error === 'no commits yet' ? 'no-commit' : info.error === 'no-remote' ? 'no-remote' : known.includes(info.error) ? info.error : 'offline'
+      return exitCodeFor(mapped)
     }
     console.log('分支     ' + info.branch + ' @ ' + info.head.slice(0, 8))
     console.log('远端     ' + info.remoteUrl)
@@ -468,6 +550,7 @@ async function main(argv) {
       pushed: '已推送',
       'up-to-date': '线上已是最新',
       offline: '连不上网：本地提交已保留，联网后再跑一次即可',
+      proxy: '代理连不上：这不是「没网」，而是代理那一层坏了',
       rejected: '线上有本地没有的提交（非快进），不会自动强推',
       auth: '凭据失效或没有权限，需要人工处理',
       'no-remote': '仓库没有配 origin（npm run sync -- --init）',
@@ -485,6 +568,10 @@ async function main(argv) {
     }
     if (result.reason && result.status !== 'offline') {
       console.log('  详情 ' + result.reason.split(/\r?\n/).slice(0, 3).join(' / '))
+    }
+    if (result.status === 'proxy') {
+      console.log('  代理 ' + (result.proxy && result.proxy.raw ? result.proxy.raw : '（读不到具体配置）'))
+      console.log('  处置 启动代理，或 git config --global --unset http.proxy（直连可用时）')
     }
   }
   return exitCodeFor(result.status)
