@@ -95,15 +95,33 @@ export function resolveUserSkillsDir(env = process.env) {
   return path.join(home, '.agents', 'skills')
 }
 
-/** 需要同步的文件清单：`[源相对路径（相对仓库根）, 安装后的文件名]`。 */
+/**
+ * 需要同步的文件清单：`[源相对路径（相对仓库根）, 安装后的文件名]`。
+ *
+ * ---------------------------------------------------------------------------
+ * **顺序不能随便改：被依赖的 `.mjs` 必须排在依赖它的 `.ts` 之前**（0.15.3）。
+ *
+ * 真机踩到的坑：用户 `/reload` 之后报 `resetMeterMemo is not a function`。
+ * 原因是清单里 `context-guard.ts`（扩展入口）排在 `context-guard.mjs`（它 import 的模块）**前面**：
+ * 装到一半时磁盘上是「新 .ts + 旧 .mjs」，而 `.ts` 里已经 `import { resetMeterMemo }` ——
+ * 于是扩展加载即抛错，整个上下文守卫失效。
+ *
+ * 这类错误特别难查：报错信息只说"不是函数"，看起来像代码写错了，
+ * 实际是**安装过程的一个瞬时中间状态**。所以顺序是契约的一部分，不是排版。
+ *
+ * 门禁 `test/host-parity.mjs` 会断言「每个 .ts 的 .mjs 依赖排在它前面」。
+ */
 export const EXTENSION_FILES = [
   { label: 'editor', source: 'extensions/superpi-editor.ts', name: EXTENSION_FILE_NAME },
-  { label: 'rules', source: 'extensions/superpi-rules.ts', name: RULES_EXTENSION_FILE_NAME },
+  // 规则：模块先于扩展
   { label: 'rules-module', source: 'extensions/superpi-rules.mjs', name: RULES_MODULE_FILE_NAME },
-  { label: 'context-guard', source: 'extensions/superpi-context-guard.ts', name: GUARD_EXTENSION_FILE_NAME },
+  { label: 'rules', source: 'extensions/superpi-rules.ts', name: RULES_EXTENSION_FILE_NAME },
+  // 守卫：模块先于扩展（就是这里曾颠倒过）
   { label: 'context-guard-module', source: 'extensions/superpi-context-guard.mjs', name: GUARD_MODULE_FILE_NAME },
-  { label: 'modalities', source: 'extensions/superpi-modalities.ts', name: MODALITIES_EXTENSION_FILE_NAME },
+  { label: 'context-guard', source: 'extensions/superpi-context-guard.ts', name: GUARD_EXTENSION_FILE_NAME },
+  // 模态：模块先于扩展
   { label: 'modalities-module', source: 'extensions/superpi-modalities.mjs', name: MODALITIES_MODULE_FILE_NAME },
+  { label: 'modalities', source: 'extensions/superpi-modalities.ts', name: MODALITIES_EXTENSION_FILE_NAME },
 ]
 
 /**

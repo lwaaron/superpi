@@ -1065,6 +1065,90 @@ try {
     }
   }
 
+
+  // ── 3.97 安装顺序：被依赖的 .mjs 必须排在 .ts 之前（0.15.3）
+
+  /**
+   * 真机事故：用户 `/reload` 后报 `resetMeterMemo is not a function`。
+   * 根因不是代码，而是**安装清单的顺序** —— `context-guard.ts` 排在它 import 的
+   * `context-guard.mjs` 前面，装到一半时磁盘上是「新 .ts + 旧 .mjs」，
+   * 扩展加载即抛错，整个上下文守卫静默失效。
+   *
+   * 这种错误极难查：报错像代码 bug，实际是安装过程的瞬时中间状态。
+   * 所以把顺序写成断言，而不是靠人记住。
+   */
+  {
+    const installer = await import(pathToFileURL(path.join(root, 'tools', 'install-pi-extension.mjs')).href)
+    const files = installer.EXTENSION_FILES
+    const indexOfName = new Map(files.map((f, i) => [f.name, i]))
+    const problems = []
+    for (const [i, entry] of files.entries()) {
+      if (!entry.source.endsWith('.ts')) continue
+      // 找同目录同基名的 .mjs（扩展通常 import 它）
+      const base = entry.source.slice(0, -3)
+      const modSource = base + '.mjs'
+      const mod = files.find(f => f.source === modSource)
+      if (mod === undefined) continue
+      const modIndex = indexOfName.get(mod.name)
+      if (modIndex > i) problems.push(entry.label + ' 排在它的模块 ' + mod.label + ' 之前')
+    }
+    eq('每个 .ts 的 .mjs 依赖都排在它前面', problems, [])
+    // 完整清单不能漏文件（漏了就是"装了但没生效"）
+    const labels = files.map(f => f.label).sort()
+    eq('安装清单包含全部七个文件', labels.length, 7)
+  }
+
+  // ── 3.98 发布文本文档里不得有控制字符（0.15.3，这是 400 的真因）
+
+  /**
+   * 真机事故：`400 invalid JSON request body`，重试多次仍在。
+   *
+   * 根因不是体积、不是网络、不是上下文超限 —— 是 `AGENTS.md` 里混进了
+   * 一个 **U+0007（BEL）控制字符**。它被 pi 拼进 `project_context` 这个
+   * 系统提示 section，再序列化进 HTTP 请求体；JSON 规范禁止未转义的
+   * `U+0000`~`U+001F`，provider 解析直接失败。
+   *
+   * 那个字符的来源很蠢：文档里想写示例路径 `D:\<文件>.png`，
+   * 写成了 `D:\x07.png` 之类，`\x07` 在写入时被当转义序列解析成了 BEL。
+   * **一次笔误，让整个会话再也发不出请求，而且报错完全不指向文档。**
+   *
+   * 所以必须机器检查：凡是会进系统提示的文本文档，都不许含控制字符、
+   * 孤立代理项、U+FFFD。
+   */
+  {
+    const docs = ['AGENTS.md', 'README.md', 'docs/anti-product-patterns.md', 'docs/session-interruption.md']
+    for (const rel of docs) {
+      const abs = path.join(root, rel)
+      if (!fs.existsSync(abs)) { check(rel + ' 存在', false); continue }
+      const buf = fs.readFileSync(abs)
+      // ① 合法 UTF-8
+      let utf8Ok = true
+      try { new TextDecoder('utf-8', { fatal: true }).decode(buf) } catch { utf8Ok = false }
+      check(rel + ' 是合法 UTF-8', utf8Ok)
+      const text = buf.toString('utf8')
+      // ② 无控制字符（\t \n \r 除外）
+      const ctrl = []
+      for (let i = 0; i < text.length; i += 1) {
+        const c = text.charCodeAt(i)
+        if ((c < 0x20 && c !== 9 && c !== 10 && c !== 13) || c === 0x7f) ctrl.push('U+' + c.toString(16).toUpperCase().padStart(4, '0') + '@' + String(i))
+      }
+      eq(rel + ' 无控制字符（否则请求体 JSON 非法，provider 报 400）', ctrl.slice(0, 5), [])
+      // ③ 无 U+FFFD（说明曾有一次写入已损坏）
+      check(rel + ' 无 U+FFFD 替换字符', text.indexOf('\uFFFD') < 0)
+      // ④ 无孤立代理项（JSON 里非法）
+      let lone = false
+      for (let i = 0; i < text.length; i += 1) {
+        const c = text.charCodeAt(i)
+        if (c >= 0xd800 && c <= 0xdbff) {
+          const n = text.charCodeAt(i + 1)
+          if (!(n >= 0xdc00 && n <= 0xdfff)) lone = true
+          else i += 1
+        } else if (c >= 0xdc00 && c <= 0xdfff) lone = true
+      }
+      check(rel + ' 无孤立代理项', lone === false)
+    }
+  }
+
   // ── 3.99 运行时文件清单自动发现（防止两个门禁再次漂移）
 
   /**
