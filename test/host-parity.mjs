@@ -317,12 +317,18 @@ try {
     const respondNoJson = await request(server.base, '/sessions/sess-1/respond', { method: 'POST', body: { id: 'a' }, contentType: 'text/plain' })
     eq('respond 非 JSON → 415', respondNoJson.status, 415)
 
-    // 3.5 /reset
-    proc.eventSeq = 42
-    const reset = await request(server.base, '/sessions/sess-1/reset', { method: 'POST', body: {} })
-    eq('reset 200', reset.status, 200)
-    eq('reset 体', reset.body, { ok: true, eventSeq: 0 })
-    eq('reset 调用了 proc.resetEvents', proc.resetCount, 1)
+    // 3.5 `/sessions/:id/reset` 这条 HTTP 路由在 0.16.1 被删除。
+    //
+    // 为什么删：面板从未调用它（client.js 里 api.reset 只有定义、零调用），
+    // 而 host 内部触发 resetEvents 走的是**另一条路径** —— 会话替换命令成功后
+    // 在 command 处理里直接 proc.resetEvents?.()（见下一段 3.6）。
+    // 一个没有任何消费者的公开路由等于把「协议面」开出一个假入口：
+    // 它会被误当成公共 API、被误以为面板在用、也让「33 条命令 ↔ 面板入口」的对账失真。
+    //
+    // 这里断言它**确实没了**（回归守卫）：如果谁把它加回来，这条会红并提醒
+    // 「先想清楚谁消费它」。
+    const removedReset = await request(server.base, '/sessions/sess-1/reset', { method: 'POST', body: {} })
+    eq('reset 路由已移除（0.16.1）', removedReset.status, 404)
 
     // 3.6 会话替换命令成功后自动 reset；失败/取消不 reset
     for (const type of ['new_session', 'switch_session', 'fork', 'clone']) {

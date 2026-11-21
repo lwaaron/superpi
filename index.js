@@ -1464,10 +1464,6 @@ export function createHandler(deps) {
           proc.respond(payload)
           return send(200, { ok: true })
         }
-        if (method === 'POST' && tail === '/reset') {
-          const result = proc.resetEvents()
-          return send(200, { ok: true, eventSeq: result.eventSeq })
-        }
         return send(404, { error: 'no such route: ' + routePath })
       }
 

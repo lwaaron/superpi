@@ -1118,7 +1118,6 @@ window.__ModuleLoader__.load({
       respond: function (id, body) {
         return requestJson('/sessions/' + encodeURIComponent(id) + '/respond', { method: 'POST', body: body, timeoutMs: 20000 })
       },
-      reset: function (id) { return requestJson('/sessions/' + encodeURIComponent(id) + '/reset', { method: 'POST', body: {}, timeoutMs: 20000 }) },
       close: function (id) { return requestJson('/sessions/' + encodeURIComponent(id), { method: 'DELETE', timeoutMs: 20000 }) },
       /**
        * 读历史会话。
