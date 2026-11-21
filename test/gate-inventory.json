@@ -6,7 +6,7 @@
   "_2026_11_20_host_parity": "430 → 428 是本轮**有意削减**：删掉了 POST /sessions/:id/reset 这条 HTTP 路由（面板从未调用它，api.reset 只有定义零调用；host 内部走会话替换命令里的 proc.resetEvents?.()），对应 2 条断言移除、新增 1 条「路由已移除」回归守卫。归零的是「假入口」，不是能力。",
   "brand-pi-runtime": 20,
   "client-render": 1067,
-  "context-guard": 179,
+  "context-guard": 201,
   "css-tokens": 98,
   "github-sync": 103,
   "host-parity": 428,

@@ -1051,6 +1051,182 @@ if (extensionModule !== null) {
   ok(tolerant !== null && Array.isArray(tolerant.messages), '设置文件坏掉时退回默认并继续守护（不抛）')
 }
 
+/* ═══════════════════════════════════════ G. 写入时图片限额（tool_result，0.17.0） */
+
+/**
+ * 为什么必须在这一层做（取证见 docs/context-overload.md）：
+ *
+ * `context` 事件的契约是 **Modify messages non-destructively** —— 它每轮从
+ * *完整历史* 重新算一遍。实测一个真实会话：`before` 恒定在 284.9 万 tokens、
+ * `imagesDropped` 240 轮里恒为 117（总图数 118，只留 1 张）。两个"恒定"就是
+ * 「每轮重算同一件事」的指纹 —— 裁剪压到 65 万发出去，但历史本体仍是 285 万，
+ * 下一轮照样从 285 万开始切。压缩比恒定 4.40x，永不复原。
+ *
+ * pi 的 `tool_result` 事件（extensions.md:1040）契约是
+ * 「after tool execution finishes and **before** the final tool result message
+ * events are emitted. **Can modify result**」—— 这是唯一能在**写入时**处置图片的入口。
+ *
+ * 为什么复用 `keepRecentImagesPerTurn` 而不是新增配置：
+ * 「保留几张图」是一个决策，不能有两个真源。若 context 层按 4 张、写时按另一个数，
+ * 两套规则就会互相打脸（写时留 4、读时又丢 3），这正是本仓库反复消除的形态。
+ */
+section('G. 写入时图片限额：图片在进入历史时就换成路径占位')
+
+/**
+ * 为什么必须在这一层做（取证见 docs/context-overload.md）：
+ *
+ * `context` 事件的契约是 **Modify messages non-destructively** —— 每轮从
+ * *完整历史* 重新算一遍。实测一个真实会话：`before` 恒定在 284.9 万 tokens、
+ * `imagesDropped` 240 轮里恒为 117（总图数 118，只留 1 张）。两个"恒定"就是
+ * 「每轮重算同一件事」的指纹 —— 裁剪压到 65 万发出去，历史本体仍是 285 万。
+ *
+ * pi 的 `tool_result`（extensions.md:1040）在最终 toolResult 写入**之前**触发，
+ * 且明确 "Can modify result" —— 唯一能在图片进入历史那一刻处置它的入口。
+ *
+ * ⚠️ **限额必须按「会话累计」而不是「单条消息」**。第一版按单条做，
+ * 实测收益为 0：真实形状是 118 条消息各含 1 张图，每条都没超限额。
+ * 这个错误是探针抓出来的（`_scratch/probe-write-limit-gain.mjs`），不是推理。
+ */
+if (extensionModule !== null) {
+  const handlers = {}
+  const fakePi = {
+    on: (name, handler) => { handlers[name] = handler },
+    registerCommand: () => {},
+  }
+  extensionModule.default(fakePi)
+
+  ok(typeof handlers.tool_result === 'function', 'G1 订阅了 tool_result 事件（写入时处置图片的唯一入口）')
+
+  const imgBlock = (data, mimeType) => ({ type: 'image', data, mimeType: mimeType ?? 'image/png' })
+  const textBlock = text => ({ type: 'text', text })
+
+  /** 每段用独立进程状态的做法：重新调一次 default() 拿到干净的计数器。 */
+  const freshHandlers = () => {
+    const map = {}
+    extensionModule.default({ on: (name, fn) => { map[name] = fn }, registerCommand: () => {} })
+    return map
+  }
+
+  // G2. 未达限额：一张都不动，且返回 undefined（不产生无谓补丁）
+  {
+    fs.writeFileSync(guardFile, JSON.stringify({ enabled: true, keepRecentImagesPerTurn: 4 }), 'utf8')
+    const h = freshHandlers()
+    const out = await h.tool_result({ toolName: 'read', input: { path: 'D:/a.png' }, content: [textBlock('Read image file'), imgBlock('AAA')] }, {})
+    eq(out, undefined, 'G2 只读 1 张图（未达限额）时不动结果')
+  }
+
+  // G3. 累计恰好等于限额：仍不动
+  {
+    fs.writeFileSync(guardFile, JSON.stringify({ enabled: true, keepRecentImagesPerTurn: 4 }), 'utf8')
+    const h = freshHandlers()
+    for (let i = 0; i < 4; i += 1) {
+      const out = await h.tool_result({ toolName: 'read', input: { path: 'D:/m' + String(i) + '.png' }, content: [imgBlock('M' + String(i))] }, {})
+      eq(out, undefined, 'G3 第 ' + String(i + 1) + ' 张（累计未超限额）不动')
+    }
+  }
+
+  // G4. 累计超过限额：新图置换为占位 —— 这是「累计」与「单条」的关键区别。
+  //     真实形状是每条各 1 张图，单条做法在这里会全部放过（收益 0）。
+  {
+    fs.writeFileSync(guardFile, JSON.stringify({ enabled: true, keepRecentImagesPerTurn: 4 }), 'utf8')
+    const h = freshHandlers()
+    const results = []
+    for (let i = 0; i < 9; i += 1) {
+      results.push(await h.tool_result({ toolName: 'read', input: { path: 'D:/shots/' + String(i) + '.png' }, content: [textBlock('Read image file'), imgBlock('P' + String(i))] }, {}))
+    }
+    const passed = results.filter(r => r === undefined).length
+    const patched = results.filter(r => r !== undefined).length
+    eq(passed, 4, 'G4 前 4 张原样保留（额度用尽前）')
+    eq(patched, 5, 'G4 第 5 张起被置换（累计超限）')
+    const firstPatch = results.find(r => r !== undefined)
+    const textOut = (firstPatch?.content ?? []).filter(b => b?.type === 'text').map(b => String(b.text)).join('\n')
+    ok(textOut.includes('D:/shots/4.png'), 'G4 占位必须带该图自己的路径')
+    ok(/omitted|省略/i.test(textOut), 'G4 占位必须明确说明图片被省略')
+    eq((firstPatch?.content ?? []).filter(b => b?.type === 'image').length, 0, 'G4 被置换的那条不再留位图')
+  }
+
+  // G5. 只返回 content 补丁，不碰 details / isError / structuredContent
+  {
+    fs.writeFileSync(guardFile, JSON.stringify({ enabled: true, keepRecentImagesPerTurn: 0 }), 'utf8')
+    const h = freshHandlers()
+    const out = await h.tool_result({
+      toolName: 'read',
+      input: { path: 'D:/b.png' },
+      content: [imgBlock('X')],
+      details: { keep: 'me' },
+      isError: false,
+      structuredContent: { also: 'keep' },
+    }, {})
+    eq(out?.details, undefined, 'G5 不得覆盖 details（省略即保留原值）')
+    eq(out?.isError, undefined, 'G5 不得覆盖 isError')
+    eq(out?.structuredContent, undefined, 'G5 不得覆盖 structuredContent')
+  }
+
+  // G6. 非图片结果一字不动
+  {
+    fs.writeFileSync(guardFile, JSON.stringify({ enabled: true, keepRecentImagesPerTurn: 4 }), 'utf8')
+    const h = freshHandlers()
+    const out = await h.tool_result({ toolName: 'bash', input: { command: 'ls' }, content: [textBlock('a'.repeat(5000))] }, {})
+    eq(out, undefined, 'G6 没有图片的结果不动')
+  }
+
+  // G7. 畸形入参不得抛
+  {
+    fs.writeFileSync(guardFile, JSON.stringify({ enabled: true, keepRecentImagesPerTurn: 4 }), 'utf8')
+    const h = freshHandlers()
+    let threw = null
+    try {
+      await h.tool_result({ toolName: 'read', input: {}, content: [] }, {})
+      await h.tool_result({ toolName: 'read', input: {}, content: null }, {})
+      await h.tool_result({ toolName: 'read', input: undefined, content: [imgBlock('A')] }, {})
+      await h.tool_result({}, {})
+    } catch (error) { threw = error }
+    eq(threw, null, 'G7 畸形入参不得抛（守护失效不能让一轮对话失败）')
+  }
+
+  // G8. 没有路径时占位仍要说明省略
+  {
+    fs.writeFileSync(guardFile, JSON.stringify({ enabled: true, keepRecentImagesPerTurn: 0 }), 'utf8')
+    const h = freshHandlers()
+    const out = await h.tool_result({ toolName: 'read', input: {}, content: [imgBlock('N')] }, {})
+    const textOut = (out?.content ?? []).filter(b => b?.type === 'text').map(b => String(b.text)).join('\n')
+    ok(/omitted|省略/i.test(textOut), 'G8 没有路径时占位仍须说明「图片已省略」')
+  }
+
+  // G9. 限额 0 = 一张都不留
+  {
+    fs.writeFileSync(guardFile, JSON.stringify({ enabled: true, keepRecentImagesPerTurn: 0 }), 'utf8')
+    const h = freshHandlers()
+    const out = await h.tool_result({ toolName: 'read', input: { path: 'D:/c.png' }, content: [imgBlock('A'), imgBlock('B')] }, {})
+    eq((out?.content ?? []).filter(b => b?.type === 'image').length, 0, 'G9 限额 0 时一张图都不留在历史里')
+  }
+
+  // G10. 停用后完全不动
+  {
+    fs.writeFileSync(guardFile, JSON.stringify({ enabled: false }), 'utf8')
+    const h = freshHandlers()
+    const out = await h.tool_result({ toolName: 'read', input: { path: 'D:/d.png' }, content: [imgBlock('D')] }, {})
+    eq(out, undefined, 'G10 停用后不动任何图片')
+  }
+
+  // G11. 会话切换必须清零额度（否则新会话一开始就"额度已满"）
+  {
+    fs.writeFileSync(guardFile, JSON.stringify({ enabled: true, keepRecentImagesPerTurn: 2 }), 'utf8')
+    const h = freshHandlers()
+    // 先用满额度
+    for (let i = 0; i < 2; i += 1) await h.tool_result({ toolName: 'read', input: { path: 'D:/e' + String(i) + '.png' }, content: [imgBlock('E' + String(i))] }, {})
+    const beforeSwitch = await h.tool_result({ toolName: 'read', input: { path: 'D:/e2.png' }, content: [imgBlock('E2')] }, {})
+    ok(beforeSwitch !== undefined, 'G11 切换前额度已满（第 3 张被置换）')
+    // 会话切换
+    ok(typeof h.session_switch === 'function', 'G11 订阅了 session_switch')
+    await h.session_switch({}, {})
+    const afterSwitch = await h.tool_result({ toolName: 'read', input: { path: 'D:/f.png' }, content: [imgBlock('F')] }, {})
+    eq(afterSwitch, undefined, 'G11 会话切换后额度重置（新会话第 1 张原样保留）')
+  }
+
+  fs.writeFileSync(guardFile, JSON.stringify({ enabled: true }), 'utf8')
+}
+
 /* ═════════════════════════════════════════════════════ F. 源码约束 */
 
 section('F. 源码约束：不许依赖第三方，不许写 session')

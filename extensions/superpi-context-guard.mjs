@@ -165,6 +165,91 @@ export function imagePlaceholder({ filePath = '', kilobytes = 0 } = {}) {
   return `[image omitted${where}${size} — released from context to stay under the model window; re-read the file if you need it again]`
 }
 
+/**
+ * 写入时图片限额：把**累计**超过 `keepRecentImagesPerTurn` 的图片换成路径占位（0.17.0）。
+ *
+ * ── 为什么必须按「累计」而不是「单条消息」───────────────
+ *
+ * 第一版实现按「单条 toolResult 内的图片数」限额，实测**收益为 0**：
+ * 真实会话的形状是 **118 条消息各含 1 张图**，而不是 1 条消息含 118 张。
+ * 每条都没超限额，于是一条都不改。这个错误是靠探针
+ * （`_scratch/probe-write-limit-gain.mjs`）抓到的，不是靠推理。
+ *
+ * ── 为什么必须由调用方传累计状态 ───────────────────────────
+ *
+ * `tool_result` 的 event **不含会话历史**（只有当前这一条结果），
+ * pi 也**没有**提供改写历史的 API。所以「当前已经留下几张图」这个事实
+ * 只能由扩展自己在进程内累计。本函数保持纯函数：由调用方传入并更新计数。
+ *
+ * ── 为什么在**写入时**做（而不是继续靠 context 层）─────────
+ *
+ * `context` 的契约是 "Modify messages **non-destructively**"：每轮从完整历史重算。
+ * 实测 240 轮裁剪日志：`before` 恒定 2,849,944~2,919,604、`imagesDropped` 恒为 117、
+ * 压缩比恒定 4.40x —— 两个"恒定"= 每轮重算同一件事，**历史本体永不被改**。
+ * 想在根上降低 `before`，只能在图片进入历史那一刻处置。
+ *
+ * ── 语义 ────────────────────────────────────────────────
+ *
+ * 累计保留**最近** `limit` 张（模型正在看的是最新那几张；更早的它已写成结论）。
+ * 超出部分全部置换为带路径的占位，模型需要时可重新 `read`（可逆）。
+ *
+ * 纯函数：不改入参、不读盘、不看时钟。
+ *
+ * @param {Array} content      toolResult 的 content 数组
+ * @param {string} filePath    该结果对应的文件路径（可为空）
+ * @param {object} settings    归一化后的守卫设置
+ * @param {object} counter     累计状态 `{ kept: number }`；**会被就地更新**
+ * @returns {Array|null}       需要替换时返回新 content，否则 null
+ */
+export function limitImagesForWrite(content, filePath = '', settings = DEFAULT_GUARD_SETTINGS, counter = { kept: 0 }) {
+  if (Array.isArray(content) === false) return null
+  const normalized = normalizeGuardSettings(settings)
+  const limit = Math.max(0, normalized.keepRecentImagesPerTurn)
+
+  const imageIndexes = []
+  for (let i = 0; i < content.length; i += 1) {
+    const block = content[i]
+    if (block !== null && typeof block === 'object' && block.type === 'image') imageIndexes.push(i)
+  }
+  if (imageIndexes.length === 0) return null
+
+  /**
+   * 决定这一条里哪几张能留下。
+   *
+   * `counter.kept` 是「本会话已经写入历史且尚未被置换的图片数」。
+   * 从**后往前**分配剩余额度：最新的图最可能仍被需要，所以先给它们。
+   * 一旦额度用尽，同一条里更早的图也要置换 —— 这就是"累计"与"单条"的差别。
+   */
+  const keep = new Set()
+  let remaining = limit - (Number(counter.kept) || 0)
+  for (let k = imageIndexes.length - 1; k >= 0; k -= 1) {
+    if (remaining <= 0) break
+    keep.add(imageIndexes[k])
+    remaining -= 1
+  }
+
+  // 全部都能留下 → 无需改动，只更新计数
+  if (keep.size === imageIndexes.length) {
+    counter.kept = (Number(counter.kept) || 0) + imageIndexes.length
+    return null
+  }
+
+  const out = []
+  let dropped = 0
+  for (let i = 0; i < content.length; i += 1) {
+    const block = content[i]
+    const isImage = block !== null && typeof block === 'object' && block.type === 'image'
+    if (isImage === false || keep.has(i) === true) { out.push(block); continue }
+    dropped += 1
+    // 写入时拿不到可靠的体积（data 已是 base64，长度换算会误导），
+    // 所以只带路径 —— 报一个错数比不报更糟。
+    out.push({ type: 'text', text: imagePlaceholder({ filePath: String(filePath ?? '') }) })
+  }
+  counter.kept = (Number(counter.kept) || 0) + keep.size
+  if (dropped > 0) counter.dropped = (Number(counter.dropped) || 0) + dropped
+  return out
+}
+
 /* ---------------------------------------------------- 上下文卫生（行为准则） */
 
 /** 注入 pi 系统提示的 section 名（与规则扩展的 `user_defined_rules` 并列，互不覆盖）。 */

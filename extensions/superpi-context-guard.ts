@@ -39,6 +39,7 @@ import {
   applyMeterToOptions,
   breakdownMessages,
   goalFromMessages,
+  limitImagesForWrite,
   resetMeterMemo,
 } from './superpi-context-guard.mjs'
 import {
@@ -100,6 +101,31 @@ export default function contextGuard(pi) {
     goal: string
     afterTokens: number
   } = null
+
+  /**
+   * 写入时图片限额的累计状态（0.17.0）。
+   *
+   * ── 为什么必须是进程内状态 ────────────────────────────────
+   *
+   * `tool_result` 的 event **不含会话历史**（只有当前这一条工具结果），
+   * pi 也**没有**提供改写历史的 API。而「本会话已经留下几张图」正是需要跨
+   * 多次 `tool_result` 共享的事实，只能由扩展自己记账。
+   *
+   * ── 为什么第一版做错了（记下来，避免重犯）───────────────
+   *
+   * 第一版按「单条消息内的图片数」限额，实测**收益为 0**：真实会话是
+   * **118 条消息各含 1 张图**，不是 1 条含 118 张 —— 每条都没超限额，一条都不改。
+   * 这个错误是被 `_scratch/probe-write-limit-gain.mjs` 当场抓出来的，
+   * 不是靠推理发现的。所以「先写探针量收益」这一步不能省。
+   *
+   * ── 为什么要在会话切换时清零 ──────────────────────────────
+   *
+   * `kept` 的语义是「当前这棵会话树里还留着的图片数」。`/new`、`switch_session`、
+   * `fork`、`clone` 会在**同一进程**内换掉整棵会话树；不清零就会把旧会话的
+   * 记账带进新会话，导致新会话一开始就"额度已满、一张图都不留"——
+   * 那是比不限额更糟的静默失效。
+   */
+  const writeImageCounter = { kept: 0, dropped: 0 }
 
   pi.on('context', (event, ctx) => {
     try {
@@ -176,6 +202,48 @@ export default function contextGuard(pi) {
    * 用 sections（不是 systemPrompt）：pi 会对 section 做 diff，只有变化的段才作为补丁
    * 发出；返回整份 prompt 会走 forceSystemPrompt，每轮一次缓存 miss。
    */
+  /**
+   * 写入时图片限额（0.17.0）—— 在图片**进入历史那一刻**就换成路径占位。
+   *
+   * ── 为什么这一条不能省（取证见 docs/context-overload.md）──────────
+   *
+   * 上面的 `context` 监听是**读时**钩子，pi 对它的契约是
+   * "Modify messages **non-destructively**"：每轮从完整历史重算。
+   * 实测一个真实会话的 240 轮裁剪日志：
+   *
+   *   · `before` 恒定 2,849,944 ~ 2,919,604 tokens（几乎不涨）
+   *   · `imagesDropped` **只有一个取值：117**（总图 118，只留 1 张）
+   *   · 压缩比恒定 4.40x
+   *
+   * 两个"恒定"= 每轮重算同一件事。压到 65 万发出去，历史本体仍是 285 万，
+   * 下轮从头再切。裁剪本身没错（它保证了不超限），但它**改不动历史**，
+   * 所以永远无法降低 `before`。
+   *
+   * `tool_result` 是 pi 唯一在「工具执行结束、最终 toolResult 写入之前」触发的钩子，
+   * 且明确 "Can modify result"（docs/extensions.md:1040）。在这里处置，
+   * 图片根本不会以位图形式进入历史。
+   *
+   * ── 只返回 content 补丁 ───────────────────────────────
+   *
+   * 按 pi 的链式契约，省略的字段保留原值。所以这里**不返回** details / isError /
+   * structuredContent —— 返回它们反而会覆盖掉其它扩展（或 pi 自己）写好的值。
+   * 无需改动时返回 `undefined`（不是 `{ content }`），避免无谓补丁。
+   */
+  pi.on('tool_result', (event, _ctx) => {
+    try {
+      const settings = readGuardSettingsSync({ cache })
+      if (settings.enabled !== true) return undefined
+      const input = event?.input
+      const filePath = input !== undefined && input !== null && typeof input.path === 'string' ? input.path : ''
+      const next = limitImagesForWrite(event?.content, filePath, settings, writeImageCounter)
+      if (next === null) return undefined
+      return { content: next }
+    } catch {
+      // 与其它钩子同一原则：守护失效最多是"没限额"，绝不能让一轮对话因此失败。
+      return undefined
+    }
+  })
+
   pi.on('before_agent_start', (event, _ctx) => {
     try {
       const settings = readGuardSettingsSync({ cache })
@@ -234,6 +302,15 @@ export default function contextGuard(pi) {
     // 仪表记忆也必须清：新会话的系统提示是全新的，
     // 留着旧文本会让它误判"已经写过同样内容"而跳过注入。
     resetMeterMemo()
+    /**
+     * 写入时图片额度也必须清零（0.17.0）。
+     *
+     * `kept` 记的是「当前这棵会话树里还留着几张图」。`/new`、`switch_session`、
+     * `fork`、`clone` 在同一进程里换掉整棵树，不清零就会把旧会话的记账带过去，
+     * 让新会话一开始就"额度已满、一张图都不留" —— 比不限额更糟的静默失效。
+     */
+    writeImageCounter.kept = 0
+    writeImageCounter.dropped = 0
   }
   pi.on('session_start', resetSessionCaches)
   pi.on('session_switch', resetSessionCaches)
