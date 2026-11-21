@@ -470,6 +470,18 @@ section('9. 文本卫生（坏字节一律当缺陷）')
 //      2026-11-20 一次性扫出 9 个（docs/parity.md 7 / docs/rules.md 3 / client.js 2，部分重合）。
 // 当时全靠人肉扫描，所以补成机器判据 —— 修一次、以后永远不再复发。
 const HYGIENE_ROOTS = ['src', 'extensions', 'skills', 'docs', 'tools', 'test']
+/**
+ * 记忆目录也要扫（0.17.2）。
+ *
+ * 为什么补这一条：`.workbuddy/memory/` 是**跨会话的唯一载体** ——
+ * 未来的我读它来恢复上下文。它一旦写坏，坏的不是界面而是**记忆本身**：
+ * 「§5.0」会变成「§5.0」后面紧跟三个替换符，而下一个会话读到时会当成正常文本照抄下去。
+ *
+ * 实测：2026-11-20 归档 0.17.1 经历时，一条 `heredoc` 里出现了 2 处 U+FFFD，
+ * 而当时的 HYGIENE_ROOTS 不含 `.workbuddy/`，**门禁完全没有报**。
+ * 是我手工 node -e 扫出来的 —— 又一次「靠人肉检查」。
+ */
+const HYGIENE_EXTRA_ROOTS = [path.join('.workbuddy', 'memory')]
 const HYGIENE_TOP = ['client.js', 'index.js', 'AGENTS.md', 'README.md', 'package.json']
 const HYGIENE_EXT = /\.(c|m)?js$|\.ts$|\.md$|\.json$|\.ps1$|\.ya?ml$|\.sh$|\.html$/
 function listHygieneFiles() {
@@ -486,15 +498,33 @@ function listHygieneFiles() {
     }
   }
   for (const dir of HYGIENE_ROOTS) walk(path.join(root, dir))
+  // 记忆目录：不存在时 walk 内部 try/catch 会静默跳过（新 clone 还没有记忆文件）
+  for (const dir of HYGIENE_EXTRA_ROOTS) walk(path.join(root, dir))
   return files
 }
 const hygieneFiles = listHygieneFiles()
 // 反空转：扫不到文件时「零坏字节」是假的，必须自己验一次覆盖量。
-// 阈值取 60：实测当前 79 个文件（src 7 / extensions 7 / skills 2 / docs 6 / tools 28 / test 24 + 顶层 5）。
+// 阈值取 60：实测当前 94 个文件（src 7 / extensions 7 / skills 2 / docs 8 /
+// tools 28 / test 25 + 顶层 5 + .workbuddy/memory 4）。
 // 不用 >100 那种拍脑袋的数字 —— 它一开始就是红的，只是被别的失败掩盖了；
 // 门槛的作用是「抓扫描器坏掉」，不是「要求仓库膨胀」。
 check('文本卫生：扫描清单非空（否则「零坏字节」无意义）', hygieneFiles.length > 60, 'files=' + String(hygieneFiles.length))
 check('文本卫生：清单里真的含 client.js / AGENTS.md / docs/parity.md', ['client.js', 'AGENTS.md', path.join('docs', 'parity.md')].every((rel) => hygieneFiles.includes(rel) === true))
+/**
+ * 反空转（0.17.2）：记忆目录必须在清单里。
+ *
+ * 这一条是「扫描器坏掉」的第二道判据。`HYGIENE_EXTRA_ROOTS` 若被误删、
+ * 或路径写错（`walk` 内部 catch 会静默跳过不存在的目录），
+ * 上一条仍会通过 —— 因为其它目录的文件数足够 >60。
+ * 所以必须**直接断言记忆文件在清单里**，否则「记忆不许有坏字节」这条等于没生效。
+ *
+ * 只在记忆目录存在时断言：新 clone 下来的仓库还没有 .workbuddy/memory，
+ * 此时不该红（那是「还没有记忆」，不是「检查失效」）。
+ */
+if (fs.existsSync(path.join(root, '.workbuddy', 'memory'))) {
+  const memoryFiles = hygieneFiles.filter(rel => rel.startsWith(path.join('.workbuddy', 'memory')))
+  check('文本卫生：记忆文件已纳入扫描（否则记忆写坏不会被发现）', memoryFiles.length > 0, 'memoryFiles=' + String(memoryFiles.length))
+}
 
 let hygieneFffd = 0
 let hygieneCtrl = 0
