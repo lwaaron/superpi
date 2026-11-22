@@ -276,6 +276,57 @@ const editorSource = fs.readFileSync(path.join(root, 'extensions', 'superpi-edit
 check('editor 真的 import 了共用判据模块', editorSource.includes('superpi-malformed.mjs'))
 check('editor 不再自己实现一份判据（isMalformedToolCall 只做转发）', !editorSource.includes("source.includes('DSML') && (source.includes('invoke')"));
 
+section('7. 依赖顺序：契约必须先于事件流就位（0.17.3 修的竞态）')
+/**
+ * 这是一个**真实缺陷**，不是防御性编程：
+ *
+ * 原来的面板启动是两行并行：
+ *
+ *     loadContract()
+ *     startSession()
+ *
+ * 而 `contractRef.current` 是判据的唯一输入。`message_end` 一旦早于 `/contract` 到达
+ * （典型：从侧栏切到一个「之前中断过」的会话，attach 的 snapshot 里带着历史事件），
+ * 判据只能返回 `none`，**而 message_end 只处理一次、不会重算** ——
+ * 那一轮的畸形提示永久消失。用户看到的是那个会话「好好地」接着跑。
+ *
+ * 所以门禁断言的是**顺序关系**，不是某一行代码存在：
+ * 契约加载必须链在 startSession 之前（同一个 promise 链）。
+ */
+const boot = clientSource.slice(
+  clientSource.indexOf('useEffect(function () {', clientSource.indexOf('var startSession = function'))
+)
+check('找到面板启动的 useEffect', boot !== '')
+const contractAt = boot.indexOf('loadContract()')
+const startAt = boot.indexOf('startSession()')
+check('启动时调用了 loadContract', contractAt >= 0)
+check('启动时调用了 startSession', startAt >= 0)
+// 契约调用必须在 startSession 之前出现（同一段里）
+check('loadContract 排在 startSession 之前', contractAt >= 0 && startAt >= 0 && contractAt < startAt, 'contractAt=' + String(contractAt) + ' startAt=' + String(startAt))
+// 必须是**同一条 promise 链**：loadContract 之后出现 .then(... startSession ...)
+// 必须是**同一条 promise 链**：startSession 只能出现在 loadContract 的 then 里
+/**
+ * 这里刻意用**结构位置**而不是正则文本匹配（0.17.3 自己踩过一次）。
+ *
+ * 第一版写的是 /\.then\(function \(\) \{[^}]*return startSession\(\)/，
+ * 看着很像样，实测**对「并行发起」的旧形状也返回 true** —— 因为 [^}]* 跨过了
+ * .catch() 收尾的那个 }，一路匹配到后面任意位置。那就是一条永远为真的空断言：
+ * bug 回来时它保持绿色，比没有门禁更糟（会让人以为已经守住了）。
+ *
+ * 改成两条能真正区分两种形状的判据：
+ *   ① startSession() **不得**以语句起始形式出现（行首 + 恰好 8 空格缩进）
+ *      并行版 = 8 空格 + startSession()；链式版 = 12 空格 + return startSession()
+ *   ② loadContract() 之后必须紧跟 .catch(（证明它是链的起点，不是独立语句）
+ */
+check('startSession 不是语句级调用（并行发起的特征）', !/\n {8}startSession\(\)/.test(boot), '行首+8空格+startSession() 就是并行发起')
+check('loadContract 后面紧跟 .catch（说明它是链的起点）', /loadContract\(\)\s*\n?\s*\.catch\(/.test(boot))
+check('startSession 在 .then 回调里被 return', /\.then\(function \(\) \{[\s\S]{0,240}?return startSession\(\)/.test(boot), '需要 .then(function () { ... return startSession() })')
+// 契约失败必须被记录下来并可见（静默降级 = 功能不存在）
+check('契约失败时记录原因（不静默）', boot.includes('setContractError('))
+check('契约失败在界面上可见', clientSource.includes("t('contractFailed')"))
+check('契约失败文案中英各有词条', (clientSource.match(/contractFailed:/g) ?? []).length === 2)
+// 取消标记：卸载后不许再 setState（否则会向已卸载组件写状态）
+check('启动 effect 有 cancelled 守卫', boot.includes('var cancelled = false') && boot.includes('cancelled = true'))
 /* ───────────────────────────────── 汇总 ───────────────────────────────── */
 
 console.log('')

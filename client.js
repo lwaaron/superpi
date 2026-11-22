@@ -78,6 +78,7 @@ window.__ModuleLoader__.load({
       malformedTitle: '本轮未执行：模型输出格式错乱（DSML），工具调用没被识别 · 直接重发即可',
       malformedRetry: '继续',
       malformedDetail: '这是模型侧的偶发输出异常（不是网络、超时或上下文超限），重发通常就好。',
+      contractFailed: '契约加载失败，畸形输出提示不可用',
       procThink: '思考',
       procBash: '运行命令',
       procRead: '读取',
@@ -351,6 +352,7 @@ window.__ModuleLoader__.load({
       malformedTitle: 'Nothing ran: the model emitted malformed tool-call syntax (DSML), so no tool was called · just send it again',
       malformedRetry: 'Continue',
       malformedDetail: 'This is an intermittent output glitch on the model side (not network, timeout or context overflow). Resending usually clears it.',
+      contractFailed: 'Contract load failed — malformed-output notice unavailable',
       procThink: 'Thinking',
       procBash: 'Run command',
       procRead: 'Read',
@@ -5455,6 +5457,17 @@ window.__ModuleLoader__.load({
       var contractState = useState(null)
       var contract = contractState[0]
       var setContract = contractState[1]
+      /**
+       * 契约加载失败的原因（`null` = 正常）。
+       *
+       * 为什么要专门记它：契约是畸形判据的**唯一输入**。它没到时判据只能返回
+       * `none`，于是“本轮未执行”这个提示就不存在 —— 而用户看不到的东西等于不存在。
+       * 把失败原因记下来并在界面上明确说出来，比默默不提示强：
+       * 前者是“功能不可用，原因是 X”，后者是“功能不存在”。
+       */
+      var contractErrorState = useState(null)
+      var contractError = contractErrorState[0]
+      var setContractError = contractErrorState[1]
       var dynamicState = useState([])
       var dynamic = dynamicState[0]
       var setDynamic = dynamicState[1]
@@ -5973,10 +5986,50 @@ window.__ModuleLoader__.load({
         })
       }
 
+      /**
+       * 面板启动：**契约必须先于事件流就位**（0.17.3 修一个真实竞态）。
+       *
+       * ---------------------------------------------------------------------------
+       * 原来的形状是两行并行：
+       *
+       *     loadContract()
+       *     startSession()
+       *
+       * 看着对（各管各的），实际留了一个**永久丢失提示**的窗口：
+       * `message_end` 一旦早于 `/contract` 到达，`contractRef.current` 还是 null，
+       * 判据只能返回 `none`；而 `message_end` **只处理一次、不会重算**，
+       * 于是那一轮的畸形提示永远不出现。
+       *
+       * 真实影响场景：用户从侧栏切到一个「之前中断过」的会话 ——
+       * `attach()` 拉的 snapshot 里带着历史的 message_end 事件，
+       * 它们会在一瞬内被回放完，而 `/contract` 还在路上。
+       * 后果是：用户看到的就是那个会话“好好地”接着往下跑，
+       * 完全不知道上一轮其实什么都没执行。
+       *
+       * ---------------------------------------------------------------------------
+       * 为什么不是在 detectMalformedOutput 里内置一份默认表
+       *
+       * 那是“让依赖缺失也能跑”的补丁，而且会**制造第二个真相源** ——
+       * 默认表哪天改了，契约与面板就各说一套，而两边都有值、门禁反而绿。
+       * 正确的层次是**依赖顺序**：契约是判据的输入，那就必须先到。
+       *
+       * 契约失败时也不能静默：明确记下原因，面板仍可正常对话，
+       * 只是畸形提示不可用 —— 而这件事本身要能被看见（见 renderGate）。
+       */
       useEffect(function () {
+        var cancelled = false
         loadContract()
-        startSession()
+          .catch(function (failure) {
+            if (cancelled) return null
+            setContractError(String(failure !== null && failure !== undefined && failure.message !== undefined ? failure.message : failure))
+            return null
+          })
+          .then(function () {
+            if (cancelled) return null
+            return startSession()
+          })
         return function () {
+          cancelled = true
           closeStream()
           if (timerRef.current !== null) window.clearTimeout(timerRef.current)
         }
@@ -7043,6 +7096,19 @@ window.__ModuleLoader__.load({
       }
       if (view.compacting === true) notices.push(h('div', { key: 'compact', className: 'superpi-notice', 'data-tone': 'warn' }, t('compacting')))
       if (view.retrying === true) notices.push(h('div', { key: 'retry', className: 'superpi-notice', 'data-tone': 'warn' }, t('retrying')))
+      /**
+       * 契约加载失败 → **必须说出来**（0.17.3）。
+       *
+       * 契约是畸形判据的唯一输入：它没到，判据就永远返回 `none`，
+       * 「本轮未执行」这个提示就不存在。**而用户看不到的东西等于不存在** ——
+       * 静默降级与功能没做，对用户是同一件事，但对排查是两件完全不同的事。
+       *
+       * 用 warn 而不是 error：面板仍可正常对话，丢的只有一项诊断能力。
+       */
+      if (contractError !== null && contractError !== undefined && contractError !== '') {
+        notices.push(h('div', { key: 'contract', className: 'superpi-notice', 'data-tone': 'warn', role: 'status' },
+          t('contractFailed') + '：' + String(contractError)))
+      }
       /**
        * 畸形输出告警（0.16.2）—— 本次事故的直接修复点。
        *
