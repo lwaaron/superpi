@@ -155,6 +155,7 @@ export class PiProcess extends EventEmitter {
    *   cliPath: string, nodePath: string, cwd: string, args?: string[],
    *   env?: Record<string,string>, label?: string,
    *   maxEvents?: number, maxEventBytes?: number,
+   *   decorateEvent?: ((record: object) => object) | null,
    * }} options
    */
   constructor(options) {
@@ -170,12 +171,29 @@ export class PiProcess extends EventEmitter {
     this.createdAt = Date.now()
     this.pending = new Map()
     this.events = []
+    this.lastVerdict = null
     /** 与 events 等长的字节数，用于 O(1) 维护字节预算。 */
     this.eventSizes = []
     this.eventBytes = 0
     this.droppedEvents = 0
     this.maxEvents = options.maxEvents ?? DEFAULT_MAX_EVENTS
     this.maxEventBytes = options.maxEventBytes ?? DEFAULT_MAX_EVENT_BYTES
+    /**
+     * 事件装饰器（0.18.0）—— host 往 pi 的事件上**附加**自己的判读（目前只有
+     * `message_end.verdict`：这一轮交付了吗）。
+     *
+     * ── 为什么挂在协议层而不是在 index.js 里再订阅一次 ────────────────
+     *
+     * 事件有两条出口：SSE 实时推送，以及 `snapshot()` 的环形缓冲回放。
+     * 只在 SSE 侧装饰的话，重连/切会话回放出来的历史事件就没有 verdict ——
+     * 那正是「窗口里好好的，历史里少了提示」这类静默缺口的形状。
+     * `pushEvent` 是唯一同时喂这两条出口的地方，所以它也是**唯一**该装饰的地方。
+     *
+     * 装饰器只加字段、不改 pi 的原有字段，且**永不外抛**：它挂在每一条事件的
+     * 热路径上，抛一次就会让整条流断掉 —— 那时用户丢的是整个会话，不是一个提示。
+     * 协议层不认识 verdict 是什么，只负责调用一个注入的纯函数（依赖方向：host → 协议）。
+     */
+    this.decorateEvent = typeof options.decorateEvent === 'function' ? options.decorateEvent : null
     this.eventSeq = 0
     this.stderrLines = []
     this.exitInfo = null
@@ -298,16 +316,33 @@ export class PiProcess extends EventEmitter {
 
   pushEvent(record, sizeHint) {
     this.eventSeq += 1
-    const entry = { seq: this.eventSeq, at: Date.now(), record }
-    const size = typeof sizeHint === 'number' && sizeHint > 0 ? sizeHint : Buffer.byteLength(JSON.stringify(record))
+    /**
+     * 装饰发生在**入环之前**：`events` 里的对象与 SSE 推出去的是同一个，
+     * 所以回放与实时两条路看到的是同一份判读（见构造函数的注释）。
+     */
+    const decorated = this.decorateEvent === null ? record : (() => {
+      try {
+        const next = this.decorateEvent(record)
+        return next !== null && typeof next === 'object' ? next : record
+      } catch {
+        return record
+      }
+    })()
+    const entry = { seq: this.eventSeq, at: Date.now(), record: decorated }
+    if (decorated.type === 'agent_start' || (decorated.type === 'agent_settled' && decorated.aborted)) {
+      this.lastVerdict = null
+    } else if (decorated.type === 'message_end' && decorated.message?.role === 'assistant') {
+      this.lastVerdict = decorated.verdict?.delivered === false ? decorated.verdict : null
+    }
+    const size = typeof sizeHint === 'number' && sizeHint > 0 ? sizeHint : Buffer.byteLength(JSON.stringify(decorated))
     this.events.push(entry)
     this.eventSizes.push(size)
     this.eventBytes += size
-    this.trackUi(record, entry.seq)
-    this.trackState(record)
+    this.trackUi(decorated, entry.seq)
+    this.trackState(decorated)
     this.trimEvents()
-    if (record.type === 'agent_start') this.state = 'busy'
-    if (record.type === 'agent_settled') {
+    if (decorated.type === 'agent_start') this.state = 'busy'
+    if (decorated.type === 'agent_settled') {
       this.state = 'ready'
       // 轮次已结束：不可能还有待应答的弹窗（pi 侧超时会自行 resolve 默认值），
       // 继续留着只会让重连的客户端弹出已经失效的对话框。
@@ -576,6 +611,7 @@ export class PiProcess extends EventEmitter {
    */
   resetEvents() {
     this.events = []
+    this.lastVerdict = null
     this.eventSizes = []
     this.eventBytes = 0
     this.droppedEvents = 0
@@ -601,6 +637,7 @@ export class PiProcess extends EventEmitter {
       sessionName: this.lastState?.sessionName ?? null,
       sessionFile: this.lastState?.sessionFile ?? null,
       pendingUi: [...this.pendingUi.values()],
+      lastVerdict: this.lastVerdict,
       exit: this.exitInfo,
       stderr: this.stderrLines.slice(-20),
       events: includeEvents ? this.events.filter(entry => entry.seq > sinceSeq) : [],

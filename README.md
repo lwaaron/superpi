@@ -232,10 +232,10 @@ New-Item -ItemType Junction `
 ### 方式三：手工 pnpm add（不想跑脚本时）
 
 ```powershell
-npm pack                                        # 得到 superpi-0.17.3.tgz
+npm pack                                        # 得到 superpi-0.19.0.tgz
 cd "$env:USERPROFILE\.dsh\profiles\desktop"
 node "$env:USERPROFILE\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\pnpm\bin\pnpm.cjs" `
-  add "file:C:\path\to\superpi-0.17.3.tgz" --ignore-scripts
+  add "file:C:\path\to\superpi-0.19.0.tgz" --ignore-scripts
 ```
 
 不要在 profile 里用 `npm install`：npm 会另写一份 `package-lock.json`，而宿主插件管理器用的是 pnpm，两套锁文件互相看不见，下次插件安装就会把 node_modules 重建成 pnpm 理解的样子。
@@ -419,15 +419,23 @@ npm install --prefix <插件>/.runtime --save-exact --no-audit --no-fund --logle
 | `git` | 不用 spawn git，直接读 `.git/HEAD` 与 `refs`；`available:false` 表示没有仓库 |
 | `pi.buildFresh` | bundle 目录里最新文件 vs `src` 目录里最新文件；`null` = 判断不了，`false` = 源码比构建新 |
 
+## 会话恢复与写入保护（0.19.0）
+
+- **恢复同一任务**。Pi 在收尾时识别空响应、乱码、畸形工具标记或输出截断。没有发起工具调用时，默认从已有上下文自动续跑一次。已有工具结果或连续异常时，两端都显示原因和「继续」入口。主动停止会结束本次运行。
+- **保护工作区**。`write` 和 `edit` 在写盘前检查目标路径和新内容，失败会给出行号与码位。`edit.oldText` 可以匹配已损坏内容。Shell 命令仍可用于修复，检测到乱码时会提示核对文件。`/superpi-integrity` 可查看诊断。
+- **降低长任务的重复输入**。成功写入的大段正文在下一次请求中用文件引用表示，原调用保留在 Pi 的会话记录里。原生压缩生成的摘要计入上下文预算。多步骤任务沿用同一会话和工具结果，收尾前按用户要求核对交付。
+- **同一套 Pi 扩展**。面板启动子进程前同步包内扩展。终端可用 `npm run pi:editor` 同步，随后重新打开会话或执行 `/reload`。`autoRetryOnMalformed` 和 `autoRetryCooldownMs` 沿用 `~/.superpi/context-guard.json`。排查和复现见 [输出完整性](docs/output-integrity.md)。
+
 ## 测试
 
 ```powershell
-npm test            # 20 项离线门禁（顺序即依赖顺序）：
+npm test            # 离线门禁（顺序即依赖顺序）：
                     # preflight（依赖前置断言，缺 pi/react 直接红）
                     # → check-carriers → selfcheck → client-render + css-tokens
                     # → runtime-resolve + config-hot + host-parity
                     # → session-projects + session-lifecycle + timeout
-                    # → rules + context-guard + modalities + parity + tui-editor
+                    # → rules + context-guard + modalities
+                    # → turn-verdict + text-integrity + reliability + parity + tui-editor
                     # → brand-pi-runtime + restart-lib + github-sync + version
                     # → gate-inventory（各套规模对账，收口）
                     #
@@ -435,7 +443,7 @@ npm test            # 20 项离线门禁（顺序即依赖顺序）：
                     # 由 gate-inventory 实测对账（实测低于登记值即红）。
                     # 看当前真实规模：node test/gate-inventory.mjs --list
                     #
-                    # 全离线（不起 pi、不打 LLM、不推 GitHub）。三个大头：
+                    # 全离线（真实 pi 子进程经回环接口测试，不用模型账号）。主要门禁：
                     #   test/restart-lib.mjs（pwsh 7 与 PowerShell 5.1 各起一遍跑 fixture）
                     #   test/github-sync.mjs（临时仓库里用真 git 跑完整同步流程：裸仓库当远端、
                     #                          127.0.0.1:1 拒连当断网、另一个 clone 当分叉的那一方）
@@ -475,6 +483,8 @@ pwsh -NoProfile -File .\tools\standalone-verify.ps1   # 全新 DSH_HOME 里只�
 | `test/host-parity.mjs` | host 侧离线一致性（规模见 `test/gate-inventory.json`）：`buildSpawnArgs` 19 条（`persist=false` 不吃 `--continue`、用户自带 `--fork`/`--no-session` 不重复生成、空 `--name` 不传）、`pickCurrentSessionFile` 8 条、以及 `/respond` 的 409/400/415/200、`/reset` 路由已移除（回归守卫）、四条替换命令的 reset+refresh、`/files` 排序与 404、`/file` 预览 28 条（文本截断 / 二进制探测 / 目录 400 / ENOENT 404 / MIME 映射 / `~` 与 `%VAR%` 展开）、`/pi/changelog` 三情形、未知路由 404、`/ui-prefs` 三条路由 33 条（GET 空文件回落、项目改名 trim 与键白名单、会话置顶与「只给 name 不许凭空置顶」的合并语义、四类 400）。**路由与参数拼错了只会静默跑偏，所以单独立门禁** |
 | `test/parity.mjs` | 与 pi 的三向对账（规模见 `test/gate-inventory.json`）：以 pi 的 `RpcCommand` 联合类型、`RpcSessionState` 接口、`docs/json.md` 事件表为事实来源，双向比对（我们缺的 = 缺口，我们编的 = 幻觉），再断言契约里 33 条命令 / 25 类事件 / 12 种 assistant 事件 / 27 条斜杠 / 9 个扩展 UI method 在面板里都有落地字面量，且 `CONTRACT_VERSION` 与 `package.json` 同步。0.2.5 时「只发 5/33 命令、只处理 12/25 事件、27 条斜杠一条没接而 `npm test` 全绿」正是这个门禁要拦的事 |
 | `test/rules.mjs` | 用户自定义规则门禁（规模见 `test/gate-inventory.json`；0.10.0）：三层都测 —— ①纯函数（归一必须幂等、默认文案逐条覆盖用户给的 21 条要点、`checksum` 自算与 drift 检测、超长回落默认而不截断、空规则渲染成空串「零痕迹」）；②`createRulesStore` 真读写临时文件（读不写盘、createdAt 不因更新而变、相同文本幂等不刷 `updatedAt`、坏 JSON 回落 + 告警、并发写不互相截断、不残留 tmp）；③**真 `.ts` 扩展**（jiti 加载 `extensions/superpi-rules.ts` + 假 `pi`/假 `ctx.ui`）断言 `before_agent_start` 把规则放进 `systemPromptOptions.sections`、改完文件**下一轮**就拿到新文本、坏文件/读盘异常都**不抛给 pi**、`/superpi-rules` 的编辑/只看/恢复默认/无 UI 四条路径；外加 HTTP 三路由（归一回显、空 = rank 0、reset、drift、坏文件仍 200 带 warning、415/400）与安装面（三个文件、装出来的 `.mjs` 与仓库逐字节一致、`client.js` 不复制默认文案）。**扩展层不跳过就一定要跑**：只测纯函数的话，「面板保存了、pi 却读不到」这类断链完全测不出来 |
+| `test/turn-verdict.mjs` | 回合判据门禁（规模见 `test/gate-inventory.json`；前身是 `test/malformed.mjs`）：六类形态（`dsml-text` / `dsml-thinking` / `dsml-residue` / `idle` / `corrupt` / `truncated`）+ 七类排除项逐条断言；**坏字节扫描的边界**（合法代理对、BOM、制表/换行/回车不算坏；计数全量、位置截断）；**单点判定**（`src/event-verdict.mjs` 只给 `message_end` 附 `verdict`，其它事件不挂，冻结对象也不抛）；**接线**（面板里不许再有判据实现、不读 `contract.malformed`、i18n 键中英各一）；**真渲染**（`react-dom/server` 渲 `VerdictNotice`：中文/英文文案、按钮文案、运行中禁用、空 verdict 不渲染）——「用户能看见」在这一层是机器事实，不是 `indexOf` 一个字符串 |
+| `test/text-integrity.mjs` | 写入闸门禁（规模见 `test/gate-inventory.json`）：①纯函数（`write.content` / `edit.newText` 拦，`edit.oldText` 放行，`bash`/`powershell` 只提醒不拦，转义写法算干净）；②**真 `.ts` 扩展**（jiti + 假 pi）：注册表、block 理由（行号/码位/总数 + 「文件未写入」+ 「不要原样重发」）、`tool_result` 追加警告且 `structuredContent` 原样带回、同一 `toolCallId` 只提醒一次；③**pi 真 `ExtensionRunner`** 跑一遍 `emitToolCall`，断言它返回 block；④**pi 源码事实**：`beforeResult.block` 会变成 `createErrorToolResult(reason)` 且工具不执行；⑤pi 的扩展加载器装进临时 agentDir 零错误；⑥干净会话零日志零追加（不引入噪音） |
 | `test/tui-editor.mjs` | 输入框扩展门禁（规模见 `test/gate-inventory.json`；0.9.2 起；0.9.4 补外观与入口，0.9.8 修「改了没变化」，0.9.9 补 footer 接管 + 项目切换 + 悬停反馈，0.9.10 修「底部那行信息没了」，0.9.11 修「settings/home 点不动」）：**用 jiti 加载真 `.ts` 扩展**（与 pi 的 `core/extensions/loader.js` 同一套 alias）+ **pi 真的 `CustomEditor`** + **真终端按键序列**（直接喂原始转义字节的按键序列），断言 Ctrl+A 全选、Shift+方向扩选、Ctrl+C 复制后内容不消失、Ctrl+X 剪切、Backspace/Delete 删选区、可打印字符与括号内粘贴替换选区、Esc 不吞键、空编辑器 Ctrl+C 放行、自动补全打开时不抢方向键、渲染反色开合成对；末组用 **pi 自己的扩展加载器**（`discoverAndLoadExtensions`）把装到临时 `agentDir` 的扩展真加载一遍断言无 error —— 这一步才证明「装完 pi 真的能认」。**不 mock 编辑器**：影子实现会让「测试绿、真机不灵」|
 | `extensions/superpi-editor.ts` | 命令行会话窗口的**输入框增强**：`class SuperPiEditor extends CustomEditor` + `ctx.ui.setEditorComponent()`（pi 官方扩展点），补上 TUI 缺的那套 Windows 输入框语义（全选 / 扩选 / 复制不清空 / 剪切 / 删选区）与「剪贴板里的文件 → 绝对路径」。**不改 pi 任何文件、不打补丁**，卸载就是删一个 `.ts`（`npm run pi:editor:remove`）|
 | `tools/install-pi-extension.mjs` | 把扩展装进 `<piAgentDir>/extensions/`（`--install` / `--remove` / 默认只读状态），`PI_CONFIG_DIR` 跟随；幂等、内容变了先留 `.bak`。**0.10.0 起一次装三个文件**（`superpi-editor.ts` + `superpi-rules.ts` + `superpi-rules.mjs`）—— 规则扩展 import 同目录的 `.mjs`，少装一个就是「装完 pi 报模块找不到、规则整个不生效」，所以 `status` 逐文件报告、`complete` 才算完整。`npm run pi:editor` / `pi:editor:status` / `pi:editor:remove` 三个别名|

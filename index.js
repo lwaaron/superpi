@@ -26,13 +26,13 @@ import { PiProcess, timeoutLimitMs } from './src/pi-rpc.mjs'
 import {
   BASH_SHORTCUTS,
   ASSISTANT_EVENT_TYPES,
-  MALFORMED_DETECTION,
-  MALFORMED_NOTICE,
   PI_VERSION as PI_CONTRACT_VERSION,
   RPC_COMMANDS,
   RPC_EVENTS,
   TUI_COMMANDS,
 } from './src/rpc-contract.mjs'
+import { decoratePiEvent } from './src/event-verdict.mjs'
+import { rpcExtensionArgs, runtimeAgentDir } from './src/runtime-extensions.mjs'
 import {
   expandUserPath,
   groupSessionsByProject,
@@ -80,7 +80,7 @@ const API_PREFIX = '/api/' + PLUGIN_ID
 const MAX_SESSIONS = 8
 const MAX_BODY_BYTES = 4 * 1024 * 1024
 /** GET /contract 里 version 字段的取值：本插件对外的契约版本，与 package.json 解耦。 */
-const CONTRACT_VERSION = '0.17.3'
+const CONTRACT_VERSION = '0.19.0'
 /** 历史会话列表的条数窗口（与 src/session-store.mjs 的 DEFAULT_LIMIT/MAX_LIMIT 一致）。 */
 const HISTORY_DEFAULT_LIMIT = 20
 const HISTORY_MAX_LIMIT = 200
@@ -171,6 +171,7 @@ const SELF_FILES = [
   { rel: 'client.js', runtime: true },
   { rel: 'src/pi-rpc.mjs', runtime: true },
   { rel: 'src/pi-runtime.mjs', runtime: true },
+  { rel: 'src/http-idle-guard.mjs', runtime: true },
   { rel: 'src/session-store.mjs', runtime: true },
   { rel: 'src/rpc-contract.mjs', runtime: true },
   // 面板偏好的落盘层。runtime:true 是因为它参与 /ui-prefs 三条路由的判断逻辑，
@@ -190,6 +191,17 @@ const SELF_FILES = [
   // 所以改完必须重启 DSH（否则面板算的规则和进程里那份对不上）。
   { rel: 'extensions/superpi-modalities.mjs', runtime: true },
   { rel: 'extensions/superpi-modalities.ts', runtime: false },
+  // 回合判据与文本卫生：host 在 `src/event-verdict.mjs` 里**同步 import** 这两个文件
+  // （每条 message_end 都要过一遍），所以改完必须重启 DSH —— 否则进程里跑的是旧判据，
+  // 而磁盘上已经变了：这正是 selfcheck 要回答的那个问题。
+  { rel: 'src/event-verdict.mjs', runtime: true },
+  { rel: 'src/runtime-extensions.mjs', runtime: true },
+  { rel: 'extensions/superpi-turn-verdict.mjs', runtime: true },
+  { rel: 'extensions/superpi-text-bytes.mjs', runtime: true },
+  // 写入闸只活在 pi 进程里（扩展加载），host 不 import 它。
+  { rel: 'extensions/superpi-text-integrity.ts', runtime: false },
+  { rel: 'extensions/superpi-turn-recovery.ts', runtime: false },
+  { rel: 'extensions/superpi-editor.ts', runtime: false },
   { rel: 'package.json', runtime: false },
   { rel: 'cordis.patch.yml', runtime: false },
 ]
@@ -677,23 +689,6 @@ export function apply(ctx, config = {}) {
       error.code = 'PI_RUNTIME_MISSING'
       throw error
     }
-    /**
-     * 把 pi 的 HTTP idle 超时抬到「长思考不会被误杀」的量级（0.15.0）。
-     *
-     * 为什么在这里做：`httpIdleTimeoutMs` 是 pi 的**全局设置**，在每个会话 spawn 前
-     * 确保一次即可（幂等，已达标不写盘）。放在 spawn 而非每个请求，是因为它会触发
-     * pi 的 settings 重载，绝不能每次 prompt 都写文件。
-     *
-     * 失败不阻断：这是优化项，不该成为起会话的前置条件（`ok:false` 只记日志）。
-     * 详见 docs/session-interruption.md §1.1。
-     */
-    try {
-      const idle = ensureHttpIdleTimeout({ agentDir: resolveAgentDir({ env: process.env, home: os.homedir() }) })
-      if (idle.action === 'write') deps.log('info', 'httpIdleTimeoutMs 已抬到 ' + String(idle.ms) + 'ms（' + idle.reason + '）')
-      else if (idle.ok !== true) deps.log('warn', 'httpIdleTimeoutMs 未调整：' + idle.reason)
-    } catch (error) {
-      deps.log('warn', 'httpIdleTimeoutMs 调整异常（不影响会话）：' + String(error?.message ?? error))
-    }
     if (sessions.size >= MAX_SESSIONS) {
       const error = new Error('会话数已达上限（' + String(MAX_SESSIONS) + '），先关掉一个')
       error.statusCode = 429
@@ -734,6 +729,16 @@ export function apply(ctx, config = {}) {
       home: os.homedir(),
       base: cwd,
     })
+    const agentDir = runtimeAgentDir({ packageDir: detected.packageDir, cwd })
+    // Explicitly load the shared extensions from the same directory Pi uses for TUI discovery.
+    if (!hasFlag(args, ['--no-extensions', '-ne'])) args.unshift(...rpcExtensionArgs(PLUGIN_ROOT, agentDir))
+    try {
+      const idle = ensureHttpIdleTimeout({ agentDir })
+      if (idle.action === 'write') log('info', 'httpIdleTimeoutMs 已抬到 ' + String(idle.ms) + 'ms（' + idle.reason + '）')
+      else if (!idle.ok) log('warn', 'httpIdleTimeoutMs 未调整：' + idle.reason)
+    } catch (error) {
+      log('warn', 'httpIdleTimeoutMs 调整异常（不影响会话）：' + String(error?.message ?? error))
+    }
     const proc = new PiProcess({
       cliPath: detected.cliPath,
       nodePath: detected.nodePath,
@@ -741,6 +746,8 @@ export function apply(ctx, config = {}) {
       args,
       env: envOverrides(),
       label: typeof options.label === 'string' && options.label !== '' ? options.label : path.basename(cwd),
+      // 每条事件入环前附上 host 的判读（目前只有 message_end 的「这一轮交付了吗」）。
+      decorateEvent: decoratePiEvent,
     })
     sessions.set(proc.id, proc)
     /**
@@ -1085,14 +1092,16 @@ export function createHandler(deps) {
           tuiCommands: TUI_COMMANDS,
           bashShortcuts: BASH_SHORTCUTS,
           /**
-           * 畸形输出的判定表与文案（0.16.2）。
+           * 这里**不再下发**畸形输出的判定表与文案（0.18.0）。
            *
-           * 面板只能 `require('react')`，拿不到 `extensions/superpi-malformed.mjs`，
-           * 而「这个故障长什么样」的知识必须只有一份。所以照 `classifyInput` 的范式：
-           * 表在契约、算法在面板，`test/parity.mjs` 用同一批真实样本双向对账。
+           * 0.16.2 把它放在这里，是因为面板只能 `require('react')`、拿不到仓库模块，
+           * 于是走「表在契约、算法在面板」的范式。代价是同一份知识有两个实现，
+           * 而且面板的判读**依赖** `/contract` 先到 —— 事件早到的那一轮提示会永久丢失
+           * （0.17.3 用启动顺序绕开，依赖仍在）。
+           *
+           * 0.18.0 改成 host 算、面板渲染：`message_end.verdict` 已经在事件里，
+           * 面板不需要表、也不需要契约。删掉这两项就是删掉那条依赖本身。
            */
-          malformed: MALFORMED_DETECTION,
-          malformedNotice: MALFORMED_NOTICE,
         })
       }
       /**

@@ -19,7 +19,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 const here = path.dirname(fileURLToPath(import.meta.url))
 const root = path.dirname(here)
 // 运行时文件清单的唯一来源（按目录自动发现，避免与 version.mjs 漂移）
-const { copyRuntimeFiles } = await import(pathToFileURL(path.join(root, 'src', 'runtime-files.mjs')).href)
+const { copyRuntimeFiles, listRuntimeFiles } = await import(pathToFileURL(path.join(root, 'src', 'runtime-files.mjs')).href)
 
 function assert(condition, message) {
   if (condition) return
@@ -104,7 +104,9 @@ try {
     assert(a.body.summary.stale === false, '未改动时应 stale=false')
     assert(a.body.summary.changedCount === 0, '未改动时 changedCount 应为 0')
     assert(a.body.ok === true, '未改动时 ok 应为 true')
-    assert(a.body.files.length === 15, 'files 长度应为 15（0.13.0 起多了模态两枚），实际 ' + String(a.body.files.length))
+    const expected = listRuntimeFiles(root).filter(rel => rel !== 'src/runtime-files.mjs').sort()
+    const actual = a.body.files.map(file => file.rel).sort()
+    assert(JSON.stringify(actual) === JSON.stringify(expected), '/selfcheck 覆盖每个运行时文件，实际 ' + actual.join(', '))
     const clientRow = () => a.body.files.find(file => file.rel === 'client.js')
     sha = clientRow().loadedSha256
     assert(typeof sha === 'string' && sha.length === 64, 'loadedSha256 应是 64 位十六进制')

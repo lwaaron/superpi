@@ -40,6 +40,7 @@ import {
   breakdownMessages,
   goalFromMessages,
   limitImagesForWrite,
+  foldCompletedWriteArgs,
   resetMeterMemo,
 } from './superpi-context-guard.mjs'
 import {
@@ -242,6 +243,18 @@ export default function contextGuard(pi) {
       // 与其它钩子同一原则：守护失效最多是"没限额"，绝不能让一轮对话因此失败。
       return undefined
     }
+  })
+
+  pi.on('turn_end', (event) => {
+    const { message, messageEntryId, entries, toolResults, outcome } = event
+    if (outcome !== 'completed' || !messageEntryId || toolResults.length === 0) return undefined
+    if (entries.some(entry => entry.type === 'context_edit' && entry.targetId === messageEntryId)) return undefined
+    if (!readGuardSettingsSync({ cache }).enabled) return undefined
+    const folded = foldCompletedWriteArgs(message, toolResults)
+    if (!folded) return undefined
+    return { entries: [...entries, {
+      type: 'context_edit', targetId: messageEntryId, replacement: { content: folded.content },
+    }] }
   })
 
   pi.on('before_agent_start', (event, _ctx) => {

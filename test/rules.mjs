@@ -704,7 +704,7 @@ try {
 section('H. 安装面与单一真相')
 
 const installer = await import(pathToFileURL(path.join(root, 'tools', 'install-pi-extension.mjs')).href)
-eq(installer.EXTENSION_FILES.length, 8, '安装面是八个文件（malformed + editor + rules/guard/modalities 各两枚）')
+eq(installer.EXTENSION_FILES.length, 11, '规则与恢复扩展都纳入安装清单')
 eq(installer.RULES_EXTENSION_FILE_NAME, 'superpi-rules.ts', '规则扩展文件名固定')
 eq(installer.RULES_MODULE_FILE_NAME, 'superpi-rules.mjs', '共享模块文件名固定')
 eq(installer.GUARD_EXTENSION_FILE_NAME, 'superpi-context-guard.ts', '上下文守卫扩展文件名固定')

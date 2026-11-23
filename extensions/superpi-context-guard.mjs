@@ -326,7 +326,7 @@ export function breakdownMessages(messages, settings = DEFAULT_GUARD_SETTINGS) {
   const list = Array.isArray(messages) ? messages : []
   const out = { text: 0, thinking: 0, toolResult: 0, toolCallArgs: 0, images: 0, total: 0 }
   for (const message of list) {
-    const content = message?.content
+    const content = contextContent(message)
     if (typeof content === 'string') {
       out.text += estimateTokensFromChars(content.length, normalized)
       continue
@@ -600,9 +600,6 @@ export function shouldAutoRetryOnMalformed(settings = DEFAULT_GUARD_SETTINGS, st
   return { retry: true, reason: 'ok' }
 }
 
-/** 自动重发时发出去的文本。刻意**不**复述用户的原话（可能很长且含敏感内容）。 */
-export const AUTO_RETRY_TEXT = '继续'
-
 export function thinkingPlaceholder() {
   return '[thinking omitted]'
 }
@@ -724,6 +721,14 @@ function textTokensOf(chars, settings) {
   return chars > 0 ? Math.ceil(chars / settings.charsPerToken) : 0
 }
 
+function contextContent(message) {
+  if (message?.role === 'compactionSummary' || message?.role === 'branchSummary') return message.summary
+  if (message?.role === 'bashExecution') {
+    return message.excludeFromContext ? '' : (message.command ?? '') + '\n' + (message.output ?? '')
+  }
+  return message?.content
+}
+
 function contentChars(content) {
   if (typeof content === 'string') return content.length
   if (!Array.isArray(content)) return 0
@@ -794,7 +799,7 @@ export function estimateMessageTokens(message, settings = DEFAULT_GUARD_SETTINGS
     return textTokensOf(chars, settings)
   }
   // user / toolResult / custom
-  let tokens = textTokensOf(contentChars(message.content), settings)
+  let tokens = textTokensOf(contentChars(contextContent(message)), settings)
   for (const block of Array.isArray(message.content) ? message.content : []) {
     if (block !== null && typeof block === 'object' && block.type === 'image') tokens += settings.imageTokens
   }
@@ -976,18 +981,20 @@ const ARG_FOLD_TOOLS = new Set(['write', 'edit', 'patch', 'apply_patch', 'multie
 /** 参数 JSON 短于这个长度就不折（折叠收益还不够占位文本本身）。 */
 const ARG_FOLD_MIN_CHARS = 1200
 
-function foldToolCallArgs(message, callIndex) {
+function foldToolCallArgs(message, completedWrites) {
   if (message?.role !== 'assistant' || !Array.isArray(message.content)) return null
   let changed = false
   const blocks = message.content.map(block => {
     if (block?.type !== 'toolCall') return block
     const name = typeof block.name === 'string' ? block.name.toLowerCase() : ''
     if (!ARG_FOLD_TOOLS.has(name)) return block
-    let size = 0
-    try { size = JSON.stringify(block.arguments ?? {}).length } catch { return block }
+    if (completedWrites && (!completedWrites.has(block.id) || !['write', 'edit'].includes(name))) return block
+    if (block.arguments?._omitted === true) return block
+    const size = safeJsonLength(block.arguments)
     if (size < ARG_FOLD_MIN_CHARS) return block
-    changed = true
     const filePath = filePathOfCall({ name: block.name, args: block.arguments })
+    if (completedWrites && filePath === '') return block
+    changed = true
     const where = filePath !== '' ? filePath : '(unknown path)'
     return {
       ...block,
@@ -995,12 +1002,20 @@ function foldToolCallArgs(message, callIndex) {
         _omitted: true,
         path: filePath,
         chars: size,
-        note: `[${String(block.name)} omitted: ${where}, ${String(size)} chars — 正文已落盘，需要时重新 read]`,
+        note: completedWrites
+          ? `[${name} completed: ${where}. Read the file for its current contents.]`
+          : `[${name} arguments omitted: ${where}. The original call remains in session history.]`,
       },
     }
   })
   if (!changed) return null
   return { ...message, content: blocks }
+}
+
+/** Project only confirmed writes. The original call stays in Pi's session tree. */
+export function foldCompletedWriteArgs(message, toolResults) {
+  const completed = new Set(toolResults.filter(result => result.isError === false).map(result => result.toolCallId))
+  return completed.size === 0 ? null : foldToolCallArgs(message, completed)
 }
 
 /**
@@ -1364,7 +1379,7 @@ export function planContextWindow(messages, options = {}) {
     progressApply('toolText', message => truncateToolText(message, settings.maxTextChars)) ||
     progressApply('toolFold', message => foldToolResult(message)) ||
     // 参数折叠必须完整执行（无条件规则类），见 progressApply 的 mustComplete 说明。
-    progressApply('toolCallArgs', message => foldToolCallArgs(message, callIndex)) ||
+    progressApply('toolCallArgs', message => foldToolCallArgs(message)) ||
     progressApply('replies', message => foldReply(message)) ||
     // thinking 放最后：信息损失最高的一类，只有前面都不够时才牺牲它。
     progressApply('thinking', message => dropThinking(message))

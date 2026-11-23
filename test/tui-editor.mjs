@@ -255,16 +255,9 @@ const formatRunDuration = extensionModule.formatRunDuration
 const workingLabel = extensionModule.workingLabel
 const HEARTBEAT_AFTER_MS = extensionModule.HEARTBEAT_AFTER_MS
 const markToolOutput = extensionModule.markToolOutput
-const isMalformedToolCall = extensionModule.isMalformedToolCall
-const markMalformedOutput = extensionModule.markMalformedOutput
-// 0.15.9 自动重发：默认开启，但安全边界（无 toolCall）不可配置
-const AUTO_RETRY_DEFAULTS = extensionModule.AUTO_RETRY_DEFAULTS
-const AUTO_RETRY_TEXT = extensionModule.AUTO_RETRY_TEXT
-const decideAutoRetry = extensionModule.decideAutoRetry
-const readAutoRetrySettings = extensionModule.readAutoRetrySettings
-const resetAutoRetryRunState = extensionModule.resetAutoRetryRunState
-const autoRetryState = extensionModule.autoRetryState
-
+const isUndeliveredTurn = extensionModule.isUndeliveredTurn
+const verdictKindOf = extensionModule.verdictKindOf
+const markUndelivered = extensionModule.markUndelivered
 // --- 上限提取：只认正有限数
 eq(toolLimitSeconds({ timeout: 960 }), 960, 'toolLimitSeconds 读出 timeout')
 eq(toolLimitSeconds({ timeout: 120000 }), 120000, 'toolLimitSeconds 支持超大上限（实测见过 120000s）')
@@ -509,21 +502,21 @@ ok(FRAME_INTERVAL_MS <= 250, '帧间隔 <= 250ms（再慢看起来是卡顿）')
 
   // 真实形态（取自会话记录）
   const REAL = '提交报警文案修正：\n\n<parameter name="bash">cd /d/x && git add -A</parameter>\n\n</｜｜DSML｜｜ invoke>\n</｜｜DSML｜｜ calls>'
-  eq(isMalformedToolCall(dsml(REAL)), true, '识别真实的 DSML 畸形输出')
+  eq(isUndeliveredTurn(dsml(REAL)), true, '识别真实的 DSML 畸形输出')
 
   // 正常工具调用（pi 已解析出结构化调用）→ 不是畸形
-  eq(isMalformedToolCall(dsml('执行中...', 'toolUse')), false, 'stopReason=toolUse 时不算畸形（pi 已解析成功）')
+  eq(isUndeliveredTurn(dsml('执行中...', 'toolUse')), false, 'stopReason=toolUse 时不算畸形（pi 已解析成功）')
 
   // 正常文本回复 → 不是畸形
-  eq(isMalformedToolCall(dsml('改好了，全量测试通过。')), false, '普通文本回复不算畸形')
+  eq(isUndeliveredTurn(dsml('改好了，全量测试通过。')), false, '普通文本回复不算畸形')
 
   // 正文里**讨论** DSML 但不能误判
-  eq(isMalformedToolCall(dsml('这个 bug 是因为出现了 <｜｜DSML｜｜ parameter> 这样的标记。')), false,
+  eq(isUndeliveredTurn(dsml('这个 bug 是因为出现了 <｜｜DSML｜｜ parameter> 这样的标记。')), false,
     '只提开标记、没有完整结构时不误判（否则讲这个 bug 的回复会被判畸形）')
 
   // 缺 role / 非 assistant
-  eq(isMalformedToolCall({ role: 'user', content: [{ type: 'text', text: REAL }] }), false, 'user 消息不检测')
-  eq(isMalformedToolCall(null), false, 'null 不崩')
+  eq(isUndeliveredTurn({ role: 'user', content: [{ type: 'text', text: REAL }] }), false, 'user 消息不检测')
+  eq(isUndeliveredTurn(null), false, 'null 不崩')
 
 
   /* ---- 0.15.6：真机抓到的两种「静默结束」形态 ---- */
@@ -545,7 +538,7 @@ ok(FRAME_INTERVAL_MS <= 250, '帧间隔 <= 250ms（再慢看起来是卡顿）')
       stopReason: 'stop',
       content: [{ type: 'thinking', thinking: 'Let me verify empirically.</thinking>\n</｜｜DSML｜｜ calls>' }],
     }
-    eq(isMalformedToolCall(thinkingOnly), true, 'thinking 通道里的 DSML 闭合标记也要识别')
+    eq(isUndeliveredTurn(thinkingOnly), true, 'thinking 通道里的 DSML 闭合标记也要识别')
 
     // 变体：thinking 里有完整三段（parameter/invoke/calls）
     const deep = {
@@ -553,7 +546,7 @@ ok(FRAME_INTERVAL_MS <= 250, '帧间隔 <= 250ms（再慢看起来是卡顿）')
       stopReason: 'stop',
       content: [{ type: 'thinking', thinking: 'x</｜｜DSML｜｜ parameter>\n</｜｜DSML｜｜ invoke>\n</｜｜DSML｜｜ calls>' }],
     }
-    eq(isMalformedToolCall(deep), true, 'thinking 里的完整 DSML 三段也要识别')
+    eq(isUndeliveredTurn(deep), true, 'thinking 里的完整 DSML 三段也要识别')
   }
 
   /**
@@ -565,18 +558,18 @@ ok(FRAME_INTERVAL_MS <= 250, '帧间隔 <= 250ms（再慢看起来是卡顿）')
    */
   {
     const emptyTurn = { role: 'assistant', stopReason: 'stop', content: [{ type: 'thinking', thinking: '纯思考，无正文' }] }
-    eq(isMalformedToolCall(emptyTurn), true, '只有 thinking、没有正文与工具调用 → 判定为空转故障')
+    eq(isUndeliveredTurn(emptyTurn), true, '只有 thinking、没有正文与工具调用 → 判定为空转故障')
 
     const emptyAll = { role: 'assistant', stopReason: 'stop', content: [] }
-    eq(isMalformedToolCall(emptyAll), true, '完全空的消息也是空转')
+    eq(isUndeliveredTurn(emptyAll), true, '完全空的消息也是空转')
 
     // 反例：有正文就正常（哪怕很短）
     const hasText = { role: 'assistant', stopReason: 'stop', content: [{ type: 'text', text: '好的' }] }
-    eq(isMalformedToolCall(hasText), false, '有正文的正常回复不判故障')
+    eq(isUndeliveredTurn(hasText), false, '有正文的正常回复不判故障')
 
     // 反例：有工具调用就正常
     const hasCall = { role: 'assistant', stopReason: 'toolUse', content: [{ type: 'toolCall', id: 'x', name: 'bash', arguments: {} }] }
-    eq(isMalformedToolCall(hasCall), false, '有工具调用（toolUse）不判故障')
+    eq(isUndeliveredTurn(hasCall), false, '有工具调用（toolUse）不判故障')
 
     // 反例：thinking + 正文 = 正常（这是最常见的形态）
     const thinkPlusText = {
@@ -584,191 +577,108 @@ ok(FRAME_INTERVAL_MS <= 250, '帧间隔 <= 250ms（再慢看起来是卡顿）')
       stopReason: 'stop',
       content: [{ type: 'thinking', thinking: '想了想' }, { type: 'text', text: '答案是这样' }],
     }
-    eq(isMalformedToolCall(thinkPlusText), false, 'thinking + 正文 是正常形态')
+    eq(isUndeliveredTurn(thinkPlusText), false, 'thinking + 正文 是正常形态')
+  }
+
+  /* ---- 0.18.0：坏字节与截断也属于「没交付」---- */
+
+  {
+    const BAD = String.fromCharCode(0xfffd)
+    const corrupt = { role: 'assistant', stopReason: 'stop', content: [{ type: 'text', text: '2. ' + BAD + '始规则内容' }] }
+    eq(isUndeliveredTurn(corrupt), true, '正文含坏字节 → 没交付')
+    eq(verdictKindOf(corrupt), 'corrupt', '形态是 corrupt')
+    eq(verdictKindOf({ role: 'assistant', stopReason: 'length', content: [{ type: 'text', text: '写到一半' }] }), 'truncated', 'stopReason=length → truncated')
+    eq(isUndeliveredTurn({ role: 'assistant', stopReason: 'aborted', content: [] }), false, 'aborted 归错误路径，不判没交付')
   }
 
   // 错误态：要让本轮变成红色且能解释
   resetRunState()
   markRunStart(Date.now())
-  markMalformedOutput()
-  eq(runState.failed, true, '畸形输出标记为失败（图标变红）')
-  eq(runState.malformed, true, '记下畸形标记')
+  markUndelivered(extensionModule.turnVerdictOf({
+    role: 'assistant',
+    stopReason: 'stop',
+    content: [{ type: 'text', text: '提交前跑门禁：</parameter>\n</｜｜DSML｜｜ calls>' }],
+  }))
+  eq(runState.failed, true, '没交付标记为失败（图标变红）')
+  eq(runState.verdict?.kind, 'dsml-residue', '记下整份判读（含 kind），不再是布尔')
   const label = workingLabel(Date.now(), true)
   ok(label.includes('DSML'), '文案点明原因（DSML 格式错乱），不是一句无信息量的"出错了"')
-  ok(label.includes('重发'), '给出可行动动作（直接重发即可）')
+  ok(label.includes('从已有进度继续'), '给出可行动动作（从已有进度继续）')
   ok(!label.includes('Working'), '失败态不再显示 Working（否则用户以为是还在跑）')
 
   // 新一轮必须清掉旧标记
   markRunStart(Date.now())
-  eq(runState.malformed, false, '新一轮开始时清掉畸形标记（否则会一直显示失败）')
+  eq(runState.verdict, null, '新一轮开始时清掉判读（否则会一直显示失败）')
   resetRunState()
-  eq(runState.malformed, false, 'resetRunState 也清掉')
+  eq(runState.verdict, null, 'resetRunState 也清掉')
 }
 
-/* ---- 0.15.9：畸形输出自动重发（默认开启，安全边界不可配置）---- */
-
-/**
- * 用户明确要求「加上，默认开启，设置中可修改」。
- *
- * 但**「默认开启」不等于「无条件重发」**，因为这里有一条真实危险：
- * 畸形输出发生时无法确定上一轮的工具调用执行了没有；若已有 toolCall，
- * 重发可能让 `write` / `git push` / `rm` **再执行一遍** —— 比中断危险得多。
- *
- * 所以设计是：开关只管"是否启用"，**安全判据（无 toolCall）是硬拦截**，
- * 用户改配置也打不开。下面每一条都在锁这个边界。
- */
+/* ---- 两端使用同一个 pi 恢复策略 ---- */
 {
-  // ① 默认必须开启（用户要求）
-  eq(AUTO_RETRY_DEFAULTS.autoRetryOnMalformed, true, '自动重发默认开启')
-  eq(AUTO_RETRY_DEFAULTS.autoRetryCooldownMs, 30000, '默认冷却 30 秒')
-
-  // ② 与守卫模块的默认值必须一致（两份实现不许漂移）
-  {
-    const guard = await import(pathToFileURL(path.join(root, 'extensions', 'superpi-context-guard.mjs')).href)
-    const gs = guard.normalizeGuardSettings({})
-    eq(gs.autoRetryOnMalformed, AUTO_RETRY_DEFAULTS.autoRetryOnMalformed,
-      'editor 与 guard 的 autoRetryOnMalformed 默认值必须一致')
-    eq(gs.autoRetryCooldownMs, AUTO_RETRY_DEFAULTS.autoRetryCooldownMs,
-      'editor 与 guard 的 autoRetryCooldownMs 默认值必须一致')
+  const { normalizeGuardSettings, readGuardSettingsSync, shouldAutoRetryOnMalformed } =
+    await import('../extensions/superpi-context-guard.mjs')
+  const settings = normalizeGuardSettings({})
+  eq(settings.autoRetryOnMalformed, true, '自动恢复默认开启')
+  eq(settings.autoRetryCooldownMs, 30000, '共享冷却默认 30 秒')
+  const cases = [
+    [{}, { hadToolCall: false, now: 100000 }, true, 'ok'],
+    [{}, { hadToolCall: true, now: 100000 }, false, 'had-tool-call'],
+    [{}, { lastAutoRetryAt: 90000, now: 100000 }, false, 'cooldown'],
+    [{}, { lastAutoRetryAt: 10000, now: 100000 }, true, 'ok'],
+    [{ autoRetryOnMalformed: false }, {}, false, 'disabled'],
+    [{ autoRetryOnMalformed: false, autoRetryCooldownMs: 0 }, { hadToolCall: true }, false, 'disabled'],
+    [{ autoRetryCooldownMs: 0 }, { hadToolCall: true }, false, 'had-tool-call'],
+    [{ autoRetryCooldownMs: 0 }, { lastAutoRetryAt: 100000, now: 100001 }, true, 'ok'],
+    [{}, { lastAutoRetryAt: 100000, now: 129999 }, false, 'cooldown'],
+    [{}, { lastAutoRetryAt: 100000, now: 130000 }, true, 'ok'],
+  ]
+  for (const [overrides, state, retry, reason] of cases) {
+    const result = shouldAutoRetryOnMalformed(normalizeGuardSettings(overrides), state)
+    eq(result.retry, retry, '共享恢复策略 · ' + reason)
+    eq(result.reason, reason, '共享恢复理由 · ' + reason)
   }
 
-  // ③ 语义必须与守卫模块一致（同用例同结论）—— 两份实现不能各说各话
-  {
-    const guard = await import(pathToFileURL(path.join(root, 'extensions', 'superpi-context-guard.mjs')).href)
-    const cases = [
-      { state: { hadToolCall: false, now: 100000 }, override: {} },
-      { state: { hadToolCall: true, now: 100000 }, override: {} },
-      { state: { hadToolCall: false, lastAutoRetryAt: 90000, now: 100000 }, override: {} },
-      { state: { hadToolCall: false, lastAutoRetryAt: 10000, now: 100000 }, override: {} },
-      { state: { hadToolCall: false, now: 100000 }, override: { autoRetryOnMalformed: false } },
-    ]
-    for (const [i, item] of cases.entries()) {
-      const mine = decideAutoRetry({ ...AUTO_RETRY_DEFAULTS, ...item.override }, item.state)
-      const theirs = guard.shouldAutoRetryOnMalformed(guard.normalizeGuardSettings(item.override), item.state)
-      eq(mine.retry, theirs.retry, '用例 ' + String(i) + ' retry 与守卫模块一致')
-      eq(mine.reason, theirs.reason, '用例 ' + String(i) + ' reason 与守卫模块一致')
-    }
-  }
-
-  // ④ **安全边界不可配置**：无论开关怎么设，有 toolCall 一律不重发
-  //
-  // 注意只断言 retry，不断言具体原因：开关关闭时会先命中 disabled、根本走不到安全判据，
-  // 那是合理的短路。**但「不重发」这个结论必须一致。**
-  for (const enabled of [true, false]) {
-    const d = decideAutoRetry({ autoRetryOnMalformed: enabled, autoRetryCooldownMs: 0 }, { hadToolCall: true, now: 1 })
-    eq(d.retry, false, '开关=' + String(enabled) + ' 时，有 toolCall 仍必须拒绝重发（安全边界不可配置）')
-  }
-  eq(decideAutoRetry({ autoRetryOnMalformed: true, autoRetryCooldownMs: 0 }, { hadToolCall: true, now: 1 }).reason,
-    'had-tool-call', '开启时拒绝原因必须是 had-tool-call（而不是被别的分支挡掉）')
-
-  // ⑤ 冷却：防止模型持续故障时快速循环烧钱
-  {
-    const s = { autoRetryOnMalformed: true, autoRetryCooldownMs: 30000 }
-    eq(decideAutoRetry(s, { hadToolCall: false, lastAutoRetryAt: 100000, now: 100001 }).reason, 'cooldown', '冷却内拒绝')
-    eq(decideAutoRetry(s, { hadToolCall: false, lastAutoRetryAt: 100000, now: 130000 }).retry, true, '冷却到点后放行')
-    eq(decideAutoRetry({ autoRetryOnMalformed: true, autoRetryCooldownMs: 0 }, { hadToolCall: false, lastAutoRetryAt: 100000, now: 100001 }).retry, true, '冷却为 0 时不限制')
-  }
-
-  // ⑥ 读配置：文件不存在 / 坏 JSON / 字段缺失，都必须退回默认（默认开启）
-  {
-    const tmpHome = path.join(root, '_scratch', 'ar-home')
-    fs.rmSync(tmpHome, { recursive: true, force: true })
-    fs.mkdirSync(path.join(tmpHome, '.superpi'), { recursive: true })
-    const cfg = path.join(tmpHome, '.superpi', 'context-guard.json')
-
-    eq(readAutoRetrySettings({ env: {}, home: tmpHome }).autoRetryOnMalformed, true, '文件不存在 → 默认开启')
-
-    fs.writeFileSync(cfg, '{ 坏 JSON', 'utf8')
-    eq(readAutoRetrySettings({ env: {}, home: tmpHome }).autoRetryOnMalformed, true, '坏 JSON → 默认开启（永不抛）')
-
+  const directory = path.join(root, '_scratch')
+  fs.mkdirSync(directory, { recursive: true })
+  const temp = fs.mkdtempSync(path.join(directory, 'recovery-settings-'))
+  const cfg = path.join(temp, 'custom-guard.json')
+  const env = { SUPERPI_CONTEXT_GUARD: cfg }
+  try {
+    eq(readGuardSettingsSync({ env }).autoRetryOnMalformed, true, '文件不存在时默认开启')
+    fs.writeFileSync(cfg, '{ invalid', 'utf8')
+    eq(readGuardSettingsSync({ env }).autoRetryOnMalformed, true, '坏 JSON 时默认开启')
     fs.writeFileSync(cfg, JSON.stringify({ enabled: true }), 'utf8')
-    eq(readAutoRetrySettings({ env: {}, home: tmpHome }).autoRetryOnMalformed, true, '字段缺失 → 默认开启')
-
-    fs.writeFileSync(cfg, JSON.stringify({ autoRetryOnMalformed: false }), 'utf8')
-    eq(readAutoRetrySettings({ env: {}, home: tmpHome }).autoRetryOnMalformed, false, '显式关闭 → 生效')
-
-    fs.writeFileSync(cfg, JSON.stringify({ autoRetryOnMalformed: true, autoRetryCooldownMs: 5000 }), 'utf8')
-    eq(readAutoRetrySettings({ env: {}, home: tmpHome }).autoRetryCooldownMs, 5000, '自定义冷却 → 生效')
-
+    eq(readGuardSettingsSync({ env }).autoRetryOnMalformed, true, '字段缺失时默认开启')
+    fs.writeFileSync(cfg, JSON.stringify({ autoRetryOnMalformed: false, autoRetryCooldownMs: 5000 }), 'utf8')
+    eq(readGuardSettingsSync({ env }).autoRetryOnMalformed, false, '共享策略读自定义文件名中的关闭开关')
+    eq(readGuardSettingsSync({ env }).autoRetryCooldownMs, 5000, '共享策略读自定义冷却')
     fs.writeFileSync(cfg, JSON.stringify({ autoRetryCooldownMs: -100 }), 'utf8')
-    eq(readAutoRetrySettings({ env: {}, home: tmpHome }).autoRetryCooldownMs, 0, '负数冷却 → 夹到 0')
-
-    fs.rmSync(tmpHome, { recursive: true, force: true })
+    eq(readGuardSettingsSync({ env }).autoRetryCooldownMs, 0, '负数冷却夹到 0')
+  } finally {
+    fs.rmSync(temp, { recursive: true, force: true })
   }
-}
 
-/* ---- 0.15.9：自动重发必须"真的发出去"（第三次静默失效的根治）---- */
-
-/**
- * 这个文件里已经出现过三次同一类事故：
- *   0.15.6 `markRunFailed()`（不存在）—— 被 try/catch 吞掉，提示从未显示
- *   0.15.7 `markMalformedOutput` 调错名 —— 同上
- *   0.15.9 `AUTO_RETRY_TEXT` 未定义 —— 判据通过、计数器加了，**消息一条没发出去**
- *
- * 共同点：**判据函数是对的，接线是错的，而 try/catch 把证据吞掉了。**
- * 所以从这一版起，凡是有"处理器 + 副作用"的地方，门禁都必须
- * **驱动处理器并断言副作用真的发生**，而不是只测纯函数。
- */
-{
   const handlers = new Map()
-  const sentMessages = []
-  const fakePi = {
-    on: (n, f) => { handlers.set(n, f); return () => {} },
-    registerCommand: () => {}, registerTool: () => {}, setStatus: () => {}, getContext: () => ({}),
-    sendUserMessage: (txt, opts) => { sentMessages.push({ txt, opts }); return Promise.resolve() },
-  }
-  const fakeCtx = {
-    ui: { setEditorComponent: () => {}, setWorkingVisible: () => {}, setFooter: () => {}, setStatus: () => {},
-      select: async () => undefined, editor: async () => undefined, confirm: async () => false, notify: () => {},
-      custom: () => ({}), theme: { fg: (_k, t) => t } },
-    cwd: process.cwd(), sessionId: 'gate',
-  }
-  const entry = extensionModule.default ?? extensionModule.activate ?? extensionModule
-  const activate = typeof entry === 'function' ? entry : extensionModule.activate
-  if (typeof activate === 'function') { try { activate(fakePi, fakeCtx) } catch { } }
-
-  const onAgentStart = handlers.get('agent_start')
-  const onMessageEnd = handlers.get('message_end')
-  ok(onMessageEnd !== undefined, 'message_end 已注册（自动重发依赖它）')
-
-  const malformed = { role: 'assistant', stopReason: 'stop',
-    content: [{ type: 'thinking', thinking: 'x</thinking>\n</｜｜DSML｜｜ calls>' }] }
-
-  if (onMessageEnd !== undefined) {
-    // ① 无 toolCall 的畸形输出 → **必须真的调用了 sendUserMessage**
-    resetAutoRetryRunState()
-    sentMessages.length = 0
-    const before = autoRetryState().count
-    onMessageEnd({ type: 'message_end', message: malformed })
-    eq(sentMessages.length, 1, '畸形输出（无 toolCall）必须真的发出重发消息（不是只加计数器）')
-    if (sentMessages.length > 0) {
-      eq(sentMessages[0].txt, AUTO_RETRY_TEXT, '重发文本用 AUTO_RETRY_TEXT（确认它真的定义过）')
-      eq(sentMessages[0].opts?.deliverAs, 'followUp', '用 followUp 排队，避免打断正在流式收尾的轮次')
-    }
-    eq(autoRetryState().count, before + 1, '计数必须同步增长')
-
-    // ② 有 toolCall 的畸形输出 → **一条都不许发**
-    resetAutoRetryRunState()
-    onMessageEnd({ type: 'message_end', message: { role: 'assistant', stopReason: 'toolUse',
-      content: [{ type: 'toolCall', id: 'x', name: 'bash', arguments: {} }] } })
-    sentMessages.length = 0
-    onMessageEnd({ type: 'message_end', message: malformed })
-    eq(sentMessages.length, 0, '本轮已有 toolCall 时绝不自动重发（重复执行风险不为零）')
-
-    // ③ 正常输出 → 不重发
-    resetAutoRetryRunState()
-    sentMessages.length = 0
-    onMessageEnd({ type: 'message_end', message: { role: 'assistant', stopReason: 'stop',
-      content: [{ type: 'text', text: '正常回复' }] } })
-    eq(sentMessages.length, 0, '正常输出不重发')
-
-    // ④ agent_start 必须清安全判据（否则上一轮的 toolCall 会污染下一轮判定）
-    onMessageEnd({ type: 'message_end', message: { role: 'assistant', stopReason: 'toolUse',
-      content: [{ type: 'toolCall', id: 'y', name: 'bash', arguments: {} }] } })
-    eq(autoRetryState().hadToolCall, true, '记录到 toolCall 后 hadToolCall 为真')
-    if (onAgentStart !== undefined) onAgentStart()
-    eq(autoRetryState().hadToolCall, false, 'agent_start 必须清零 hadToolCall（否则下一轮永远不重发）')
-  }
+  const attemptedFromEditor = []
+  extensionModule.default({
+    on: (name, handler) => handlers.set(name, handler),
+    sendUserMessage: (...args) => attemptedFromEditor.push(args),
+  })
+  const broken = { role: 'assistant', stopReason: 'stop', content: [{ type: 'thinking', thinking: '</｜｜DSML｜｜ calls>' }] }
+  const healthy = { role: 'assistant', stopReason: 'stop', content: [{ type: 'text', text: '完成。' }] }
+  resetRunState()
+  handlers.get('agent_start')({}, { mode: 'tui' })
+  handlers.get('message_end')({ message: broken }, { mode: 'tui' })
+  eq(runState.verdict?.kind, 'dsml-thinking', '终端显示共享的故障判据')
+  eq(attemptedFromEditor.length, 0, '终端渲染器不会绕开 pi 边界另发一条恢复消息')
+  handlers.get('message_end')({ message: healthy }, { mode: 'tui' })
+  eq(runState.verdict, null, '健康响应清除之前的故障')
+  handlers.get('message_end')({ message: broken }, { mode: 'rpc' })
+  eq(runState.verdict, null, 'RPC 进程无需驱动 TUI 的故障界面')
+  handlers.get('message_end')({ message: broken }, { mode: 'tui' })
+  handlers.get('agent_settled')({ aborted: true }, { mode: 'tui' })
+  eq(runState.verdict, null, '主动停止后终端没有残留继续提示')
+  eq(runState.phase, 'idle', '主动停止后恢复空闲')
 }
 
 /* ---- 0.15.7：识别到 ≠ 生效，事件处理器必须真的改动状态 ---- */
@@ -831,7 +741,7 @@ ok(FRAME_INTERVAL_MS <= 250, '帧间隔 <= 250ms（再慢看起来是卡顿）')
       stopReason: 'stop',
       content: [{ type: 'thinking', thinking: 'x</thinking>\n</｜｜DSML｜｜ calls>' }],
     } })
-    eq(runState.malformed, true, '处理器识别到畸形输出后 malformed 必须真的置位（防止调错函数名被 try/catch 吞掉）')
+    eq(runState.verdict?.kind, 'dsml-thinking', '处理器识别到没交付后 verdict 必须真的置位（防止调错函数名被 try/catch 吞掉）')
     eq(runState.failed, true, '同时 failed 必须为真（图标才会变红）')
     ok(workingLabel(Date.now(), true).includes('DSML'), '文案必须点明原因，而不是只显示 Working')
 
@@ -841,7 +751,7 @@ ok(FRAME_INTERVAL_MS <= 250, '帧间隔 <= 250ms（再慢看起来是卡顿）')
     onMessageEnd({ type: 'message_end', message: {
       role: 'assistant', stopReason: 'stop', content: [{ type: 'text', text: '正常回复' }],
     } })
-    eq(runState.malformed, false, '正常回复不应把本轮标记为畸形')
+    eq(runState.verdict, null, '正常回复不应把本轮标记为没交付')
     resetRunState()
   }
 }
@@ -1270,15 +1180,15 @@ const stripAnsi = text => text.replace(/\x1b\[[0-9;:?]*[A-Za-z]/g, '').replace(/
   const state = status({ dir, env: testEnv })
   ok(state.sourceExists, '扩展源文件可读')
   // 0.16.2 起安装面是八个文件（畸形判据模块 + 输入框 + 规则两枚 + 上下文守卫两枚 + 模态两枚）。
-  eq(EXTENSION_FILES.length, 8, '安装面八个文件')
-  eq(EXTENSION_FILES.map(file => file.name).sort().join(','), 'superpi-context-guard.mjs,superpi-context-guard.ts,superpi-editor.ts,superpi-malformed.mjs,superpi-modalities.mjs,superpi-modalities.ts,superpi-rules.mjs,superpi-rules.ts', '文件清单固定')
+  eq(EXTENSION_FILES.length, 11, '安装面十一个文件')
+  eq(EXTENSION_FILES.map(file => file.name).sort().join(','), 'superpi-context-guard.mjs,superpi-context-guard.ts,superpi-editor.ts,superpi-modalities.mjs,superpi-modalities.ts,superpi-rules.mjs,superpi-rules.ts,superpi-text-bytes.mjs,superpi-text-integrity.ts,superpi-turn-recovery.ts,superpi-turn-verdict.mjs', '文件清单固定（十一个文件）')
   const installed = install({ dir, env: testEnv })
   eq(installed.code, 0, 'install 成功')
   for (const file of EXTENSION_FILES) {
     ok(fs.existsSync(path.join(dir, file.name)), '安装后有 ' + file.name)
   }
   eq(status({ dir, env: testEnv }).identical, true, '安装后 editor 内容与源一致')
-  eq(status({ dir, env: testEnv }).complete, true, '八个文件全部一致 → complete')
+  eq(status({ dir, env: testEnv }).complete, true, '十一个文件全部一致 → complete')
   eq(install({ dir, env: testEnv }).code, 0, 'install 幂等')
 
   // 真机那一步：装到临时 agentDir 后，用 **pi 自己的扩展加载器**加载一遍。
@@ -1509,6 +1419,31 @@ const makeFooterData = () => ({
   getAvailableProviderCount: () => 1,
   onBranchChange: () => () => {},
 })
+
+{
+  const handlers = new Map()
+  const submitted = []
+  let footer
+  const ctx = {
+    ...makeExtCtx(), mode: 'tui', isIdle: () => true,
+    ui: { setFooter: factory => {
+      footer = factory({ requestRender() {} }, { fg: (_token, text) => text }, makeFooterData())
+    } },
+  }
+  extensionModule.default({ on: (name, fn) => handlers.set(name, fn), sendUserMessage: text => submitted.push(text) })
+  handlers.get('session_start')({}, ctx)
+  ok(footer !== undefined, '真实终端接线安装了 footer')
+  handlers.get('agent_start')({}, ctx)
+  handlers.get('message_end')({ message: { role: 'assistant', stopReason: 'stop', content: [] } }, ctx)
+  ok(!stripAnsi(footer.render(100)[0]).includes('继续'), '运行期间继续入口不可点击')
+  handlers.get('agent_settled')({ aborted: false }, ctx)
+  const column = tuiModule.visibleWidth(stripAnsi(footer.render(100)[0]).split('继续')[0])
+  ok(stripAnsi(footer.render(100)[0]).includes('继续'), '失败结束后终端也有继续入口')
+  footer.handleMouse({ type: 'press', x: column, y: 0, button: 0 })
+  footer.handleMouse({ type: 'press', x: column, y: 0, button: 0 })
+  eq(submitted.join(','), '继续', '点击从同一会话继续，重复点击不再提交')
+  resetRunState()
+}
 
 // ④c footer：`项目名 (分支)  ⇄` + 右对齐的 `settings  home`（用户 0.9.9 的第一条要求）
 {

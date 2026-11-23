@@ -1,6 +1,6 @@
 # superpi 两端能力对齐账本（parity）
 
-> 基线：pi `1.5.2` / superpi `0.15.6` · 唯一权威 = `packages/coding-agent/src/modes/rpc/rpc-types.ts`（303 行）、`src/modes/rpc/rpc-mode.ts`（846 行，`switch` 在 `:404-737`）、`src/core/agent-session.ts`（4714 行，`AgentSessionEvent` 在 `:220-261`）
+> 基线：pi `1.5.2` / superpi `0.19.0` · 唯一权威 = `packages/coding-agent/src/modes/rpc/rpc-types.ts`（303 行）、`src/modes/rpc/rpc-mode.ts`（846 行，`switch` 在 `:404-737`）、`src/core/agent-session.ts`（4714 行，`AgentSessionEvent` 在 `:220-261`）
 > 本文档是 `AGENTS.md` §3「100% 对齐」的账本。任何一行状态变化必须同步改这里，否则视为未完成。**本账本由 `test/parity.mjs` 与 `test/host-parity.mjs` 机器兜底**，人肉维护只是第一道。
 
 ## 0. 怎么读这张表
@@ -400,88 +400,20 @@ pi 只提供 `SYSTEM.md`（整份替换）、`APPEND_SYSTEM.md`（静态文件�
 
 ---
 
-## 5.5 畸形输出识别与一键继续（0.16.2 · 第七层：不是协议面，是**模型吐出来的东西本身**）
+## 5.5 输出完整性与任务恢复
 
-需求来源（用户 2026-11-20）：「workbuddy 客户端的这个会话窗口在运行的时候出现了中断的现象，请检查是什么原因」。
-
-**诊断结论（分层定位，逐层排除）**：
-
-| 层 | 是不是问题层 | 依据 |
-| --- | --- | --- |
-| ① 模型输出协议 | **是** | 两个平级前端（pi/SuperPi 与 WorkBuddy）**同时复现**，模型端同为 `odys-deepseek` / `Deepseek-V4.1-Flash`；残片形状证明是网关流式转换漏转 |
-| ② pi 的 RPC / agent loop | 否 | `stopReason: stop` 是**正确**行为：没有结构化 toolCall 就该收尾。`grep -rln DSML node_modules/@earendil-works` 为空，pi 本来就不认识 DSML |
-| ③ 扩展（editor / guard） | 否（但**只有一部分**是） | 守卫过滤正常（占用 23~27%，未触发裁剪）；判据正确（4/4 命中）；`hadToolCall` 硬拦截按设计生效 |
-| ④ host（index.js / pi-rpc） | 否 | 事件已通过 SSE 完整下发 |
-| ⑤ **面板渲染（client.js）** | **是** | `grep -c "DSML\|malformed\|畸形" client.js` = **0** —— 面板对畸形输出**零处理**：既不提示，也没有一键继续 |
-
-**能力矩阵**：
-
-| 维度 | 面板端 | 命令行 TUI | 门禁用例 |
+| 能力 | 面板端 | 命令行 TUI | 门禁 |
 | --- | --- | --- | --- |
-| 判据的来源 | `GET /contract` 的 `malformed` 表 + 面板内算法 | 直接 import `extensions/superpi-malformed.mjs` | `test/malformed.mjs` §1/§3/§4 |
-| A 正文型 | ✅ | ✅ | `test/malformed.mjs` · §3/§4 |
-| B thinking 型 | ✅ | ✅ | 同上 |
-| C 空转型 | ✅ | ✅ | 同上 |
-| **D 残片型**（0.16.2 新） | ✅ | ✅ | 同上 + 真机 4 条样本 |
-| 五类排除项不误报 | ✅ | ✅ | 同上（含「正文里讨论 DSML」） |
-| 用户可见提示 | ✅ `superpi-malformed-box` 告警条 | ✅ Working 行变红 | `test/malformed.mjs` §5 |
-| 一键继续 | ✅ 按钮 → `submit(t('malformedRetry'))` | ⚠️ 需手打「继续」（无按钮语义） | `test/malformed.mjs` §5 |
-| 文案单一真相 | ✅ 与契约逐字相同 | ✅ 与契约逐字相同 | `test/malformed.mjs` §1（含 i18n 兜底那份） |
-| 自动重发（0.16.0） | ⚠️ **仅扩展内**（rpc 模式也加载扩展，但面板拿不到 TUI 的 runState） | ✅ 默认开启，`hadToolCall` 硬拦截 | `test/tui-editor.mjs` |
+| 六类异常和健康短回复 | host 在 `message_end` 使用共享判据，视图消费结果 | Working 行使用同一判据和文案 | `test/turn-verdict.mjs`、`test/tui-editor.mjs` |
+| 手动继续 | 告警里的「继续」按钮 | 底栏的「继续」入口 | 告警 SSR、终端命中和发送、`test/reliability.mjs` |
+| 自动续跑 | Pi 的 `agent_before_settle` | 同一扩展、同一配置、同一条件 | `test/reliability.mjs`、Pi 扩展加载门禁 |
+| 写入保护和诊断 | 在 Pi 的 `tool_call` 执行，`/superpi-integrity` 查询 | 同一钩子和命令 | `test/text-integrity.mjs`、`test/reliability.mjs` |
+| 长任务上下文 | 对成功写入的长正文做会话投影，压缩摘要参与预算 | 同一投影和预算 | `test/context-guard.mjs`、`test/reliability.mjs` |
+| 取消和会话进度 | 主动停止后清理继续提示，重连时从快照恢复未解决的提示 | 主动停止后返回空闲，未解决的原因显示在 Working 行 | `test/turn-verdict.mjs`、`test/tui-editor.mjs`、`test/reliability.mjs` |
 
-### 5.5.1 为什么「自动重发」在这些场景全被拦住了（这是设计，不是缺陷）
+自动续跑在 Pi 原生重试和压缩之后判断。已有工具调用、用户队列或主动停止时保留相应的运行状态，连续异常最多补一次请求。干净的截断前缀参与续写，畸形响应只留在原始会话记录中。面板和终端都允许在同一会话换模型后继续。
 
-判据在 `shouldAutoRetryOnMalformed`：开关 → **无 toolCall（硬拦截）** → 冷却。
-真机 4 次畸形发生时，本轮**已经跑过 5 / 10 / 13 / 42 次工具调用** ——
-而畸形输出时无法确定工具到底执行了没有，重发可能让 `write` / `git push` / `rm` **再执行一遍**。
-在编码 agent 里那比中断危险得多，所以这条**不可配置**。
-能救的是「还没执行任何工具就畸形」的那一类（`hadToolCall === false`）。
-
-### 5.5.2 为什么面板不能在渲染时才判定
-
-提示属于**本轮**而不是某条消息：C 类空转那一轮可能**一条 assistant 消息都没有**。
-所以判据挂在 `message_end` 上、结果记进 `view.malformed`，
-由 `agent_start` 清空 —— 否则提示会永久钉在面板上。
-门禁 `test/malformed.mjs` §5 用**单调 cursor** 断言这条数据流（定义 → 判定 → 记录 → 渲染），
-顺序错了就红；这是 0.16.1「管道通了 ≠ 交付到了」那条教训的具体落地。
-
-### 5.5.4 验收清单（机器判定 vs 真机人工）
-
-**已由机器判定（全部通过）**：
-
-| 项 | 判据 |
-| - | - |
-| 判定表 模块 ≡ 契约 | `test/malformed.mjs` §1 |
-| 文案 模块 ≡ 契约 ≡ 面板 i18n 兜底（逐字） | `test/malformed.mjs` §1 |
-| 四类形态 + 五类排除项（模块） | `test/malformed.mjs` §3 |
-| 面板**真函数**与模块逐条一致 | `test/malformed.mjs` §4 |
-| 契约没下发时面板不判（不内置默认表） | `test/malformed.mjs` §4 |
-| 接线：message_end → view.malformed → 渲染（单调 cursor） | `test/malformed.mjs` §5 |
-| agent_start 清空（提示不永久钉住） | `test/malformed.mjs` §5 |
-| 安装面：模块排在 editor 之前 + editor 真 import | `test/malformed.mjs` §6 |
-| 真机 4 条畸形全部命中（1 text + 3 residue） | 端到端脚本，见 0.16.2 变更记录 |
-| 真 host `GET /contract` 真下发（起真 HTTP 服务） | 同上 |
-| pi **真加载器**装入后 0 错误 | 同上 |
-| 真 pi RPC 子进程事件流上 面板 ≡ 模块 | 同上（2/2 message_end） |
-
-**未验证 —— 必须真机人工确认（本账本不为它打勾）**：
-
-- ❌ **像素级渲染**：DSH 侧栏里，告警条是否真的出现在屏幕上、位置/配色是否与设计一致。
-  原因：`PiPanel` 自建 view 与十余个 state、大量异步副作用，node 里组装不出宿主等价的渲染环境；
-  硬渲染得到的 HTML **不含面板内容**，那种「断言通过」是假的（第一版就试着这样糊过去，已删）。
-- ❌ **点「继续」真的能发出**：按钮 → `submit(t('malformedRetry'))` → `prompt` 的整链。
-  机器只能断言「这个调用存在且与手打同路径」，无法断言宿主侧真的发出。
-- ❌ **busy 时按钮禁用**的视觉与行为。
-
-人工确认做法：DSH 侧栏打开一个会话 → 让模型吐 DSML（或临时把 `contract.malformed` 置空，验证**不**触发）→
-确认告警条出现、文案正确、点「继续」发出且按钮在 busy 时不可点。
-
-### 5.5.3 交给上游的部分
-
-WorkBuddy 是第三方客户端，本仓库改不了它：它的会话文件里**没有落 stopReason**
-（`finishReason` 为空），接入诊断需要它自己加。
-provider 侧（`https://api.odys.work/v1`）应当把 DSML 转成结构化 `tool_calls`，
-漏转的 4 段原文 + 时间戳已具备可提交的证据形态。
+`test/reliability.mjs` 使用真实 Pi RPC 子进程和回环 SSE 服务，覆盖字符跨包、真实坏字节、工具拦截、正常结束、连续故障和手动停止。第三方网关的偶发故障和实际任务是否完成需要独立证据。见 [输出完整性](output-integrity.md)。
 
 ## 5.4 模型模态开关（0.13.0 · 第六层：不是 RPC 面，是**每个模型允许收什么**）
 
@@ -527,6 +459,8 @@ provider 侧（`https://api.odys.work/v1`）应当把 DSML 转成结构化 `tool
 
 | 日期 | 版本 | 变更 |
 | --- | --- | --- |
+| 2026-11-23 | 0.19.0 | 面板和终端共享会话恢复与扩展安装，写入保护覆盖目标路径和新内容，成功写入的大段正文从后续请求去重。验收见 §5.5。 |
+| 2026-11-23 | 0.18.0 | **输出完整性：坏字节不许落盘，没交付必须可见**（起点是用户 11-19~11-23 的排查结论：请求全部成功，「中断感」来自回复提前结束；「代码错乱」来自自定义模型输出的坏字节被写进文件）。**一、取证（20 个真实会话 / 5450 条记录，探针在 `_scratch/`，结论写进 `docs/output-integrity.md`）**：2600 条 assistant 里 156 条 `stop`、147 条「无工具调用但有正文」、**70 条**后面紧跟用户手打「继续」；坏字节落在 text 19 / thinking 6 / toolCall 参数 26；其中 **`write.content` 7 次含 U+FFFD，7 次全部成功落盘**（`bash.command` 15 次含坏字节、13 次执行成功）。**二、写盘闸（`extensions/superpi-text-integrity.ts`）**：`pi.on('tool_call')` 在写盘前拦 —— `write.content` / `edit.edits[].newText` 含坏字节 → `{block:true, reason}`（文件不写、理由带行号码位总数 + 「文件未写入」+ 「不要原样重发」+ 转义写法）；**`edit.oldText` 放行**（修已坏文件时匹配串必然含 U+FFFD，拦它等于禁止修复）；**`bash`/`powershell` 只提醒不拦**（同一串字节可能是修复脚本），改在 `tool_result` 末尾追加警告；观测落 `~/.superpi/integrity.log.jsonl` + `/superpi-integrity`。**三、判据扩到六类并改成单点判定**：`superpi-malformed.mjs` → `superpi-turn-verdict.mjs`，新增 `corrupt`（无 toolCall 的收尾消息含坏字节）与 `truncated`（`stopReason: 'length'`）。**面板不再有判据实现、也不再依赖 `/contract`**：host 在 `PiProcess.pushEvent`（入环之前，回放与实时同一份）给 `message_end` 附 `verdict`，面板只渲染 —— 0.17.3 那个「契约晚到 → 提示永久丢失」的竞态**随依赖一起消失**，而不是靠启动顺序绕开；`src/rpc-contract.mjs` 里的 `MALFORMED_DETECTION` / `MALFORMED_NOTICE` 两份副本同时删除（判据知识只剩一处）。**四、刻意不做的**：不判「短回复但声称做完了」—— 147 条里只有 6 条有结构信号（以 `：` 收尾），其余读起来都是完整句子，语义判断只会制造假警报（§5.0）。**五、门禁**：`malformed`(80) → `turn-verdict`(125) + 新增 `text-integrity`(68)；`parity` 103→104、`host-parity` 428→432、`rules` 209→213、`tui-editor` 523→531；`selfcheck` 文件数 15→19。新门禁按**真实 import 语句**做拓扑排序，当场抓到一个既有缺陷：`context-guard.ts` import `modalities.mjs`，而清单把 modalities 模块排在它后面（0.15.3 那类「装到一半加载即抛」的同类），已重排。**六、未验证**：真机（内置 0.18.0 的 DSH + 自定义模型）尚未跑过 —— 需要重启 DSH 并让用户在实际会话里观察；本行不冒充已验证。 |
 | 2026-11-12 | 0.2.5 | 建立本账本。实测基线：RPC 33 条 / 已实现 5 / 部分 1 / 缺口 27；扩展 UI 9 请求 3 应答全部缺口（host 已就绪）；事件 25 种 / 已实现 12 / 部分 3 / 显式忽略 2 / 缺口 8；TUI 27 条 / 缺口 14 / 部分 3 / 仅命令行 10。登记 `D-01`..`D-06`。（行号为 0.2.5 落地当时的坐标，非当前坐标） |
 | 2026-11-20 | 0.16.2 | **面板端从来没有认过畸形输出 —— 命令行会亮红字，面板完全静默**（`grep -c DSML client.js` = **0**）。这是同一故障的**第四次**记录，前三次（0.15.1 / 0.15.6 / 0.16.0）的修法都是**在需要它的那个文件里再抄一份判据**，于是「三处分叉」是必然结果：`superpi-editor.ts` 有、面板没有。**真机现场**（WorkBuddy 会话 `~/.workbuddy/projects/.../73864e66-*.jsonl` 4 次 + pi 会话 37 次，同一模型 `odys-deepseek` / `Deepseek-V4.1-Flash`）：模型把工具调用写成 DSML → pi 当普通文本收尾（`stopReason: stop`）→ agent loop 结束 →**屏幕上一句话说完就停住，没有任何提示**。用户只能自己补一句「继续」——4 次中断后紧跟 4 条 `<user_query>继续</user_query>`，间隔 7.5 / 4.3 / 10 分钟。**量化排除了两条旧猜测**：4 次发生时的窗口占用只有 **26.0% / 26.6% / 27.2% / 23.0%**（远离 1M 上限）；且 WorkBuddy 里 `grep -rl superpi` = **0 命中**（没装本项目扩展），上下文**根本没被裁剪过** —— 再次印证 0.15.4/0.15.6 的结论：与上下文规模、裁剪**无关**。真正的共同点是「一轮里已经连跑 5~42 次工具调用之后，输出只有 21~67 token」。**新增第四类形态 D（残片型）**：网关把**开标记整段吞掉**，只剩 `</parameter>` + `</｜｜DSML｜｜ calls>` 结尾 ——旧判据要求「开闭齐全」（`hasOpen && hasClose`），于是这一类**整条漏掉**（4 条真机样本里 3 条属此类）。**两处判据缺陷**：① 只用全文 `includes('parameter')` 判开标记，而 D 类的 `</parameter>` 本身就含 `parameter` →残片被误归成正文型，D 类永远分不出来；现改为「跳过 `DSML` 后的分隔符，看紧跟的 token」；② 残片必须落在**消息末尾**（`residueTailChars=40`）才算数 —— 本仓库文档里到处在**讨论** DSML，只看「全文出现」会把任何一次解释性回复判成故障，那比漏判更糟。**结构性修法（不是再抄一份）**：判据收进新文件 `extensions/superpi-malformed.mjs`（四类形态 + 五类排除项 + 中英文案，唯一真相源）；editor 改成 `isMalformedToolCall` 转发；**面板按「表在契约、算法在面板」的既成范式**（同 `classifyInput`）从 `GET /contract` 的 `malformed` / `malformedNotice` 取表，`client.js` 实现 `detectMalformedOutput` 并在 `message_end` 记 `view.malformed`、渲染 `superpi-malformed-box` 告警条 + **可点的「继续」按钮**（走 `submit(t('malformedRetry'))`，与手打完全同一条路径，**不开第二条发送通道**）。**门禁**：新增 `test/malformed.mjs` **69 checks**（数据层 模块≡契约 / 行为层A 模块逐条 /行为层B **面板真函数**逐条 / 接线层 10 条 / 安装面顺序与内容），并已进 `npm test`；**门禁自验**两次：复原 `message_end` 不判定 → 立即红（2 条接线失败）；删掉 D 类残片判据 → 立即红（`D 残片型` got `none`）。**真机验收 17 项**：真 host `GET /contract` 真下发（起真 HTTP 服务实测）、4 条真机畸形全部命中（1 条 `text` + 3 条 `residue`）、面板真函数与模块 **4/4 结论一致**、pi **真加载器**装入后 `superpi-editor` 0 错误（证明 `./superpi-malformed.mjs` 解析正常）。安装面 7 → **8 文件**（模块必须排在 editor 之前，否则重演 0.15.3 的 `resetMeterMemo is not a function`）。  |
 | 2026-11-21 | 0.17.3 | **验证「DSML 是否已解决」时又挖出两个问题：一个真竞态，一条假门禁。****一、竞态：契约未到时收到的畸形提示会永久丢失。**面板启动原本是两行并行：`loadContract()` 与 `startSession()` 同时发起。而 `contractRef.current` 是畸形判据的**唯一输入** —— `message_end` 一旦早于 `/contract` 到达，判据只能返回 `none`，**而 `message_end` 只处理一次、不会重算**，那一轮的提示就永久消失。真实触发场景：从侧栏切到一个「之前中断过」的会话 —— `attach()` 拉的 snapshot 里带着历史的 `message_end`，它们在一瞬内被回放完而 `/contract` 还在路上；用户看到的是那个会话「好好地」接着跑，完全不知道上一轮什么都没执行。**修法在依赖顺序这一层**（不是在判据里内置一份默认表 —— 那会制造第二个真相源）：契约必须先就位再启动会话，并带 `cancelled` 守卫防止卸载后写状态；契约失败时**不许静默**：记下原因并在界面明说「畸形输出提示不可用」。**二、一条假门禁（自己刚写下就踩到）。**第一版顺序断言写的是 `/\.then\(function \(\) \{[^}]*return startSession\(\)/`，实测**把代码改回「并行发起」后它仍返回 true** —— `[^}]*` 跨过了 `.catch()` 收尾的 `}`，一路匹配到后面任意位置。这是永远为真的空断言：bug 回来时它保持绿色，比没有门禁更糟。改成两条**能区分两种形状的结构判据**：① `startSession()` 不得以语句起始形式出现（行首 + 恰好 8 空格缩进）；② `loadContract()` 之后必须紧跟 `.catch(`。**门禁自验**：改回并行 → 立即红 4 条（含上面两条结构判据）；恢复后全绿。**三、根因范围从三种可能缩到两种（用代码事实，不靠推断）。**新增门禁 `test/dsml-pi-loss.mjs`，四条全部由 pi 源码事实给出：① pi 全库（210 个 .js）**不含 `DSML`** → 不存在针对该标记的分支，谈不上「丢弃」；② 正文通道是**纯追加**（`block.text += choice.delta.content`，附近无 slice/replace/trim）；③ `toolCall` 块**只由 `delta.tool_calls` 创建**（`ensureToolCallBlock` 唯一调用点在该分支内）；④ `stopReason` 由 pi **事后推导**：`content` 里没有 toolCall 块 → `stop`。⇒ 畸形消息里的 DSML 是以 `delta.content`（正文）身份到达 pi 的⇒ **「pi 丢弃 DSML 头部」被排除**，剩余可能只有「provider 流式重组」与「模型自身输出」。门禁自验：把正文通道改成截断式（模拟 pi 丢头部）→ 立即红；恢复后全绿。**四、门禁规模**：`malformed` 69 → **80**（新增 §7 依赖顺序 9 条 + 结构判据），`client-render` 1067 → **1069**。**五、仍未验证的两项**（不冒充通过）：像素级渲染、点「继续」真的能发出 —— 需要把 0.17.3 真正装进正在运行的 DSH 实例并重启后才可能验证；实测当前运行实例仍是 `0.15.3`（`grep -c DSML client.js` = 0，`extensions/superpi-malformed.mjs` 不存在），所以线上根本没有这套代码。 |

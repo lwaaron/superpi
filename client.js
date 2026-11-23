@@ -70,15 +70,28 @@ window.__ModuleLoader__.load({
       reconnect: '重新连接',
       failed: '失败',
       /**
-       * 畸形输出（0.16.2）。文案本体由契约下发（`malformedNotice`），
-       * 这里只放两条**兜底**与那个按钮的字：
-       *  - 契约没下发时用兜底（绝不让用户看到空白或英文乱入）
-       *  - 但兜底文本必须与契约里那份**逐字同文**，否则渠道一变就两边不一致
+       * 「这一轮没交付」（0.18.0）。
+       *
+       * 文案本体**不在这里**：host 把判读结果（含中英文案）随 `message_end` 下发，
+       * 面板只是渲染者。这里只留那个按钮的字 —— 六类形态共用同一个动作「继续」。
+       *
+       * 为什么去掉了 0.16.2 的三条兜底文案：兜底存在的前提是"面板自己判"，
+       * 而现在面板不判。留着它们就等于留着一份"看起来还在用"的死文案，
+       * 下一个人会以为面板还认得 `malformedNotice`（`/contract` 已经不下发它了）。
        */
-      malformedTitle: '本轮未执行：模型输出格式错乱（DSML），工具调用没被识别 · 直接重发即可',
-      malformedRetry: '继续',
-      malformedDetail: '这是模型侧的偶发输出异常（不是网络、超时或上下文超限），重发通常就好。',
-      contractFailed: '契约加载失败，畸形输出提示不可用',
+      verdictRetry: '继续',
+      verdictDetail: '继续会使用当前会话的进度和已完成的工具结果。',
+      /**
+       * 语言码本身作为一个词条（0.18.0）。
+       *
+       * 用途：`verdict.notice` 由 host 同时下发中英两份，面板要按当前语言选一份。
+       * 而 `t()` 是**已绑定语言**的，不暴露语言码 —— 这里不猜它的内部实现、
+       * 也不用比较某个词条的文本，直接把语言码做成词条：中文环境返回 `zh`，
+       * 英文环境返回 `en`。语言换了，取值自己跟着换。
+       */
+      verdictLang: 'zh',
+      /** 契约仍承载斜杠命令分派（`classifyInput`），拉不到时要说清缺的是什么。 */
+      contractFailed: '契约加载失败，斜杠命令分派将退化为「未知斜杠照发」',
       procThink: '思考',
       procBash: '运行命令',
       procRead: '读取',
@@ -349,10 +362,10 @@ window.__ModuleLoader__.load({
       error: 'Something went wrong',
       reconnect: 'Reconnect',
       failed: 'failed',
-      malformedTitle: 'Nothing ran: the model emitted malformed tool-call syntax (DSML), so no tool was called · just send it again',
-      malformedRetry: 'Continue',
-      malformedDetail: 'This is an intermittent output glitch on the model side (not network, timeout or context overflow). Resending usually clears it.',
-      contractFailed: 'Contract load failed — malformed-output notice unavailable',
+      verdictRetry: 'Continue',
+      verdictDetail: 'Continue using the current session and completed tool results.',
+      verdictLang: 'en',
+      contractFailed: 'Contract load failed — slash dispatch falls back to "send unknown slashes as text"',
       procThink: 'Thinking',
       procBash: 'Run command',
       procRead: 'Read',
@@ -848,11 +861,11 @@ window.__ModuleLoader__.load({
        * 用户在 error 红条下会以为程序坏了，然后去查网络（实测已两次误归因）。
        * 布局用 column + gap，让文字、按钮、说明各占一行；窄面板下不换行错位。
        */
-      '.superpi-malformed-box{display:flex;flex-direction:column;gap:6px;padding:10px 12px;border-radius:var(--dsw-radius-sm);background:color-mix(in srgb,var(--dsw-alias-state-warn-primary) 12%,transparent);color:var(--dsw-alias-state-warn-primary);font-size:var(--dsw-font-xxs-12-font-size);line-height:var(--dsw-font-xxs-12-line-height)}',
-      '.superpi-malformed-text{word-break:break-word}',
-      '.superpi-malformed-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}',
-      '.superpi-malformed-retry{flex:0 0 auto}',
-      '.superpi-malformed-detail{flex:1 1 auto;min-width:0;color:var(--dsw-alias-label-caption);font-size:var(--dsw-font-xxxs-11-font-size);line-height:var(--dsw-font-xxxs-11-line-height)}',
+      '.superpi-verdict-box{display:flex;flex-direction:column;gap:6px;padding:10px 12px;border-radius:var(--dsw-radius-sm);background:color-mix(in srgb,var(--dsw-alias-state-warn-primary) 12%,transparent);color:var(--dsw-alias-state-warn-primary);font-size:var(--dsw-font-xxs-12-font-size);line-height:var(--dsw-font-xxs-12-line-height)}',
+      '.superpi-verdict-text{word-break:break-word}',
+      '.superpi-verdict-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}',
+      '.superpi-verdict-retry{flex:0 0 auto}',
+      '.superpi-verdict-detail{flex:1 1 auto;min-width:0;color:var(--dsw-alias-label-caption);font-size:var(--dsw-font-xxxs-11-font-size);line-height:var(--dsw-font-xxxs-11-line-height)}',
       '.superpi-notice{padding:8px 12px;border:0;border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-secondary);font-size:var(--dsw-font-xxs-12-font-size);line-height:var(--dsw-font-xxs-12-line-height)}',
       '.superpi-notice[data-tone="err"]{background:color-mix(in srgb,var(--dsw-alias-state-error-primary) 10%,transparent);color:var(--dsw-alias-state-error-primary)}',
       '.superpi-notice[data-tone="warn"]{background:color-mix(in srgb,var(--dsw-alias-state-warn-primary) 12%,transparent);color:var(--dsw-alias-state-warn-primary)}',
@@ -1734,14 +1747,19 @@ window.__ModuleLoader__.load({
         thinkingLevel: '',
         lastError: null,
         /**
-         * 本轮是否发生了畸形输出，以及是四类中的哪一类
-         * （`text` / `thinking` / `residue` / `idle`，`null` = 正常）。
+         * 本轮「没交付」的判读（0.18.0；前身是 `malformed` 字符串）。
          *
-         * 它只描述**当前这一轮**：`agent_start` 清空，`message_end` 重新判定。
-         * 不挂在 message 上是刻意的 —— 提示属于「本轮没有执行」，
-         * 而那一轮可能一条 assistant 消息都没有（空转就是这种）。
+         * **面板不判，只渲染**：host 在 `message_end` 事件上算好 `record.verdict`
+         * （含六类 `kind` 与中英文案），这里原样存下来。
+         *
+         * 为什么不在面板判：0.16.2~0.17.3 是「表在契约、算法在面板」，
+         * 于是同一份知识有两个实现，而且面板的判读**依赖 `/contract` 先到** ——
+         * 事件早到的那一轮提示会永久丢失（0.17.3 只好把启动顺序改成契约先行来绕开）。
+         * 现在判在 host、面板只存结果，依赖与竞态一起消失。
+         *
+         * 只描述**当前这一轮**：`agent_start` 清空，`message_end` 覆盖。
          */
-        malformed: null,
+        verdict: null,
         // 0.14.0 分页状态：总条数 / 还有更早的 / 下一次翻页的游标 / 是否正在翻。
         // 这几个字段只用于「加载更早」入口与「共 N 条」提示，不影响消息渲染本身。
         messageTotal: 0,
@@ -1943,7 +1961,7 @@ window.__ModuleLoader__.load({
       var current = null
       var entry = null
 
-      if (type === 'agent_start') { markBusy(view); view.lastError = null; view.malformed = null; return }
+      if (type === 'agent_start') { markBusy(view); view.lastError = null; view.verdict = null; return }
       if (type === 'turn_start') { markBusy(view); return }
       if (type === 'turn_end') {
         // 一轮结束：关掉流式指针，但 busy 不归零（agent 可能还有后续轮次）。
@@ -1959,6 +1977,7 @@ window.__ModuleLoader__.load({
         return
       }
       if (type === 'agent_settled') {
+        if (record.aborted === true) view.verdict = null
         markIdle(view)
         view.retrying = false
         view.openIndex = -1
@@ -2002,18 +2021,21 @@ window.__ModuleLoader__.load({
         view.openIndex = -1
         view.streamingIndex = -1
         /**
-         * 畸形输出的**唯一接缝**（0.16.2）。
+         * 「这一轮交付了吗」的**唯一接缝**（0.16.2 建，0.18.0 改成纯渲染）。
          *
-         * 此前这里什么也没做（`grep -c DSML client.js` = 0）：模型吐 DSML → pi 把它当
-         * 普通文本收尾 → agent loop 结束 → **面板一句话不说就停了**。
-         * 而命令行窗口同一时刻会让 Working 行变红并写「本轮未执行，直接重发即可」。
-         * 同一个故障，两个前端一个解释、一个静默 —— 这就是本次事故要修的东西。
+         * 0.16.2 这里调面板自己的判据（`detectMalformedOutput`），为此需要契约先到 ——
+         * 于是有了 0.17.3 那个"契约晚到、提示永久丢失"的竞态。
+         * 0.18.0 起判读在 host（`src/event-verdict.mjs`），`record.verdict` 随事件到达，
+         * 这里只做一件事：把 `delivered === false` 的那份存进 view。
          *
-         * 记在 view 上（而不是 message 上）：提示属于「本轮」而不是「那条消息」，
-         * 下一轮 agent_start 要能干净地把上一次清掉（见那一条分支）。
+         * 存整份（不是只存 kind）：文案在 verdict.notice 里，面板不复制任何一句 ——
+         * 命令行 Working 行读的是同一份文案，两端必须逐字相同。
          */
-        var malformed = detectMalformedOutput(record.message, contractRef.current)
-        view.malformed = malformed.malformed ? malformed.kind : null
+        if (record.message.role === 'assistant') {
+          view.verdict = record.verdict !== null && record.verdict !== undefined && record.verdict.delivered === false
+            ? record.verdict
+            : null
+        }
         return
       }
       if (type === 'tool_execution_start') {
@@ -2191,6 +2213,7 @@ window.__ModuleLoader__.load({
       applyBatch(view, Array.isArray(snap.events) ? snap.events : [])
       // ③ 再补水位（只前进，所以上一步应用过的位置不会被回退）。
       advanceSeq(view, snap.eventSeq)
+      if (snap.lastVerdict !== undefined) view.verdict = snap.lastVerdict
       /**
        * ④ 补挂「已挂起但还没被应答」的扩展弹窗（0.16.1 修的 P1）。
        *
@@ -3628,6 +3651,38 @@ window.__ModuleLoader__.load({
     }
 
     /** 顶栏「更多」的下拉：锚在按钮右下，向下展开，项 = 图标 + 文案。 */
+    /**
+     * 「这一轮没交付」告警条（0.18.0 从 renderGate 里抽成组件）。
+     *
+     * 为什么抽出来：0.16.2 起这段逻辑内联在 `renderGate` 里，于是**没有任何门禁
+     * 能渲染它** —— 只能靠 `indexOf` 断言字符串存在。那正是 0.16.1 D-05 那个
+     * 「协议字段发了出去、但没人断言面板会渲染」的形状：管道通了 ≠ 交付到了。
+     * 抽成纯展示组件后，`test/turn-verdict.mjs` 可以用 react-dom/server 真的把它
+     * 渲成 HTML，断言文案、按钮、禁用态 —— 用户能不能看见，从此是机器事实。
+     *
+     * 组件**不含任何判据**：`verdict` 由 host 算好（`message_end.verdict`），
+     * 连同中英文案一起下发。这里只做两件事：按语言选一段文案、给一个「继续」按钮。
+     */
+    function VerdictNotice(props) {
+      var verdict = props.verdict
+      if (verdict === null || verdict === undefined) return null
+      var notice = verdict.notice !== null && typeof verdict.notice === 'object' ? verdict.notice : {}
+      var text = String(props.lang) === 'en'
+        ? String(notice.en === undefined ? '' : notice.en)
+        : String(notice.zh === undefined ? '' : notice.zh)
+      return h('div', { className: 'superpi-verdict-box', role: 'status', 'aria-live': 'polite' },
+        h('div', { className: 'superpi-verdict-text' }, text),
+        h('div', { className: 'superpi-verdict-actions' },
+          h('button', {
+            type: 'button',
+            className: 'superpi-btn superpi-btn-primary superpi-verdict-retry',
+            // 按钮与用户手打「继续」走**同一条** submit 路径：没有第二条发送通道。
+            onClick: function () { if (props.busy !== true && typeof props.onRetry === 'function') props.onRetry() },
+            disabled: props.busy === true,
+          }, String(props.retryLabel === undefined ? '' : props.retryLabel)),
+          h('span', { className: 'superpi-verdict-detail' }, String(props.detail === undefined ? '' : props.detail))))
+    }
+
     function MoreMenu(props) {
       var t = props.t
       // 点外部关闭（用户 35984）：0.8.0 及之前只有自身 keydown 的 Escape 能收起，点面板别处它赖着不走。
@@ -5101,119 +5156,13 @@ window.__ModuleLoader__.load({
         events: Array.isArray(source.events) ? source.events : [],
         rpcCommands: Array.isArray(source.rpcCommands) ? source.rpcCommands : [],
         assistantEvents: Array.isArray(source.assistantEvents) ? source.assistantEvents : [],
-        /** 畸形输出判定表（0.16.2）：host 下发，面板**不许**再拄一份。 */
-        malformed: source.malformed !== null && typeof source.malformed === 'object' ? source.malformed : null,
-        malformedNotice: source.malformedNotice !== null && typeof source.malformedNotice === 'object' ? source.malformedNotice : null,
+        /**
+         * 这里**不再有** `malformed` / `malformedNotice`（0.18.0）。
+         *
+         * 判读在 host 做，结果随 `message_end.verdict` 到达（含中英文案），
+         * 面板只是渲染者。契约只承载 pi 侧的事实（命令 / 事件 / 斜杠 / 输入分类）。
+         */
       }
-    }
-
-    /**
-     * 判断一条 assistant 消息是否为「畸形输出」——**算法在面板、表在契约**。
-     *
-     * 与 `extensions/superpi-malformed.mjs` 的 `detectMalformedOutput` **逐条同构**：
-     * 同一个故障在命令行窗口与面板必须得出同一结论，否则「100% 对齐」就是空话。
-     * 一致住由 `test/parity.mjs` 拿同一批真实样本（四类形态 + 五类排除项）双向对账，
-     * 不是靠人工比对。
-     *
-     * ---------------------------------------------------------------------------
-     * 四类形态（缺一类就漏掉一类真实故障）
-     *
-     *   `text`     正文型：text 块含 DSML 完整结构
-     *   `thinking` thinking 型：只有 thinking 块，闭合标记在 thinking 里
-     *   `residue`  残片型：**只剩闭侧残片**（开标记被网关吞掉）—— 本次事故的直接成因
-     *   `idle`     空转型：`stop` 收尾但既无正文也无 toolCall
-     *
-     * 排除项与模块里完全一致：`toolUse` / 正常回复 / 正文里讨论 DSML / `error` 态。
-     * 特别注意最后一条：**正文里讨论**这个 bug 是合法行为，而讨论时引用
-     * `</parameter>` 是再自然不过的写法。所以残片必须落在**消息末尾**才算数
-     * （`residueTailChars`），否则任何一次「我在解释 DSML 是什么」的正常回复
-     * 都会被判成故障 —— 那比漏判更糟，会让用户对本提示彻底失去信任。
-     */
-    function detectMalformedOutput(message, contract) {
-      var none = { malformed: false, kind: 'none' }
-      if (message === null || typeof message !== 'object') return none
-      if (message.role !== 'assistant') return none
-      var table = contract !== null && contract !== undefined && contract.malformed !== null && contract.malformed !== undefined
-        ? contract.malformed
-        : null
-      // 契约未下发时**不判**：绝不内置一份默认表（那就是又一次分叉）。
-      if (table === null) return none
-
-      var stopReason = typeof message.stopReason === 'string' ? message.stopReason : ''
-      if (stopReason === 'toolUse') return none
-      var terminals = Array.isArray(table.terminalStopReasons) ? table.terminalStopReasons : []
-      if (terminals.indexOf(stopReason) < 0) return none
-
-      var content = Array.isArray(message.content) ? message.content : []
-      var text = ''
-      var thinking = ''
-      for (var i = 0; i < content.length; i += 1) {
-        var block = content[i]
-        if (block === null || typeof block !== 'object') continue
-        if (block.type === 'text' && typeof block.text === 'string') text += block.text
-        if (block.type === 'thinking' && typeof block.thinking === 'string') thinking += block.thinking
-      }
-      var hasToolCall = false
-      for (var j = 0; j < content.length; j += 1) {
-        var probe = content[j]
-        if (probe !== null && typeof probe === 'object' && probe.type === 'toolCall') { hasToolCall = true; break }
-      }
-
-      var marker = typeof table.marker === 'string' ? table.marker : ''
-      var openTokens = Array.isArray(table.openTokens) ? table.openTokens : []
-      var closeTokens = Array.isArray(table.closeTokens) ? table.closeTokens : []
-      var residueTokens = Array.isArray(table.residueTokens) ? table.residueTokens : []
-      var tailChars = typeof table.residueTailChars === 'number' && table.residueTailChars > 0 ? table.residueTailChars : 40
-
-      /**
-       * 标记 token 必须是**紧跟**在 `DSML` 之后的那个，不能全文 indexOf。
-       * 与模块同一条理由：D 类残片 `</parameter>` 里本身就含 `parameter`，
-       * 用 includes 判会把残片误归成「开闭齐全的正文型」。
-       */
-      function tokenAfter(source, at) {
-        var p = at + marker.length
-        while (p < source.length) {
-          var ch = source.charAt(p)
-          if (ch === '｜' || ch === '|' || ch === '<' || ch === '>' || ch === '/' || ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r') p += 1
-          else break
-        }
-        return source.slice(p, p + 16)
-      }
-      function hasMarkerFollowedBy(source, keywords) {
-        if (source === '' || marker === '' || keywords.length === 0) return false
-        if (source.indexOf(marker) < 0) return false
-        var from = 0
-        while (from < source.length) {
-          var at = source.indexOf(marker, from)
-          if (at < 0) return false
-          var token = tokenAfter(source, at)
-          for (var k = 0; k < keywords.length; k += 1) {
-            if (token.slice(0, keywords[k].length) === keywords[k]) return true
-          }
-          from = at + marker.length
-        }
-        return false
-      }
-      function hasFullStructure(source) {
-        return hasMarkerFollowedBy(source, openTokens) && hasMarkerFollowedBy(source, closeTokens)
-      }
-      function hasResidue(source) {
-        if (source === '' || residueTokens.length === 0) return false
-        var tail = source.replace(/\s+$/, '')
-        tail = tail.slice(-tailChars)
-        for (var m = 0; m < residueTokens.length; m += 1) {
-          if (tail.indexOf(residueTokens[m]) >= 0) return true
-        }
-        return false
-      }
-
-      if (hasFullStructure(text)) return { malformed: true, kind: 'text' }
-      if (hasFullStructure(thinking)) return { malformed: true, kind: 'thinking' }
-      if (hasMarkerFollowedBy(thinking, closeTokens)) return { malformed: true, kind: 'thinking' }
-      if (hasToolCall !== true && hasResidue(text)) return { malformed: true, kind: 'residue' }
-      if (hasToolCall !== true && hasResidue(thinking)) return { malformed: true, kind: 'residue' }
-      if (text.trim() === '' && hasToolCall !== true) return { malformed: true, kind: 'idle' }
-      return none
     }
 
     /**
@@ -5727,6 +5676,9 @@ window.__ModuleLoader__.load({
           var record = entry === null || entry === undefined ? null : entry.record
           if (record === null || record === undefined) continue
           if (record.type === 'bash_execution_update') bashRef.current = true
+          if (record.type === 'entry_appended' && record.entry && record.entry.type === 'context_edit') {
+            hydratePendingRef.current = true
+          }
         }
         applyBatch(viewRef.current, batch)
         repaint()
@@ -5987,34 +5939,26 @@ window.__ModuleLoader__.load({
       }
 
       /**
-       * 面板启动：**契约必须先于事件流就位**（0.17.3 修一个真实竞态）。
+       * 面板启动：**契约仍然先于事件流就位**，但理由已经变了（0.18.0）。
        *
        * ---------------------------------------------------------------------------
-       * 原来的形状是两行并行：
+       * 0.17.3 的理由（已失效，保留作历史）
        *
-       *     loadContract()
-       *     startSession()
-       *
-       * 看着对（各管各的），实际留了一个**永久丢失提示**的窗口：
-       * `message_end` 一旦早于 `/contract` 到达，`contractRef.current` 还是 null，
-       * 判据只能返回 `none`；而 `message_end` **只处理一次、不会重算**，
-       * 于是那一轮的畸形提示永远不出现。
-       *
-       * 真实影响场景：用户从侧栏切到一个「之前中断过」的会话 ——
-       * `attach()` 拉的 snapshot 里带着历史的 message_end 事件，
-       * 它们会在一瞬内被回放完，而 `/contract` 还在路上。
-       * 后果是：用户看到的就是那个会话“好好地”接着往下跑，
-       * 完全不知道上一轮其实什么都没执行。
+       * 那时 `message_end` 的判读要读 `contractRef.current.malformed` —— 契约晚到，
+       * 判据只能返回 `none`，而 `message_end` 只处理一次、不会重算，
+       * 于是那一轮的畸形提示永久丢失。当时的修法是把启动改成链式（契约先行）。
        *
        * ---------------------------------------------------------------------------
-       * 为什么不是在 detectMalformedOutput 里内置一份默认表
+       * 现在的理由：**斜杠命令分派**，与判读无关
        *
-       * 那是“让依赖缺失也能跑”的补丁，而且会**制造第二个真相源** ——
-       * 默认表哪天改了，契约与面板就各说一套，而两边都有值、门禁反而绿。
-       * 正确的层次是**依赖顺序**：契约是判据的输入，那就必须先到。
+       * 判读已经搬到 host（`record.verdict` 随事件到达），面板不需要契约。
+       * 但 `classifyInput` 仍要靠契约里的 `tuiCommands` 决定一条斜杠输入怎么走：
+       * 拿不到契约时 `/compact` 会被当成普通文本发给模型 —— 那是明确的禁止项
+       * （AGENTS.md §5：「禁止把斜杠命令当普通文本发给模型」）。
+       * 所以顺序保留，依赖的理由换成了这一条。
        *
-       * 契约失败时也不能静默：明确记下原因，面板仍可正常对话，
-       * 只是畸形提示不可用 —— 而这件事本身要能被看见（见 renderGate）。
+       * 契约失败时也不能静默：明确记下原因；面板仍可对话，
+       * 丢掉的只是斜杠分派（提示文案已改成这个意思，见 `contractFailed`）。
        */
       useEffect(function () {
         var cancelled = false
@@ -6087,6 +6031,20 @@ window.__ModuleLoader__.load({
         }, function (failure) {
           notice(String(failure !== null && failure !== undefined && failure.message !== undefined ? failure.message : failure), 'err')
           return null
+        })
+      }
+
+      var continueTurn = function () {
+        var current = viewRef.current
+        if (current.busy === true || current.verdict === null) return
+        var previous = current.verdict
+        current.verdict = null
+        repaint()
+        return sendBody({ type: 'prompt', message: t('verdictRetry') }).then(function (result) {
+          if (result === null && viewRef.current === current && current.busy === false && current.verdict === null) {
+            current.verdict = previous
+            repaint()
+          }
         })
       }
 
@@ -7109,43 +7067,17 @@ window.__ModuleLoader__.load({
         notices.push(h('div', { key: 'contract', className: 'superpi-notice', 'data-tone': 'warn', role: 'status' },
           t('contractFailed') + '：' + String(contractError)))
       }
-      /**
-       * 畸形输出告警（0.16.2）—— 本次事故的直接修复点。
-       *
-       * 起手前的真实情形：模型吐 DSML → pi 当普通文本收尾 → agent loop 结束 →
-       * **面板一句话不说就停了**（`grep -c DSML client.js` 当时 = 0）。
-       * 命令行窗口同一时刻会亮红字写「本轮未执行，直接重发即可」。
-       *
-       * 三条要求在实现上都是必须有而不是“体验优化”：
-       *  ① 文案取**契约**下发的 `malformedNotice` —— 与命令行那份逐字同文；
-       *     只有契约没下发时才用 i18n 兜底（那一份也逐字同文，门禁对账）。
-       *  ② 必须带**可点的方式**：只提示不解决，用户仍得自己敲「继续」。
-       *     那个按钮走 `submit('继续')` —— 与用户手打完全同一条路径，
-       *     没有第二条发送通道（多一条通道就是下一次静默失效）。
-       *  ③ 说明**不是**网络/超时/超限：用户第一反应总是去查那些，
-       *     实测这件事已经被误归因过两次（0.15.1 的「77.8% 退化线」、
-       *     0.15.4 的「裁剪掏空」）。把排除项写在用户看得到的地方。
-       */
-      if (view.malformed !== null && view.malformed !== undefined) {
-        /**
-         * 文案取 `t()`，而 `t()` 的那两份在 ZH / EN 里 —— 那两份与本契约里那份**逐字相同**，
-         * 由 `test/parity.mjs` 断言（拿 MALFORMED_NOTICE 直接对照 ZH / EN）。
-         *
-         * 为什么不在这里判 `locale === 'en'`：面板拿到的只是一个已将语言绑定的 `t(key)`，
-         * 它不暴露语言码（见 `translate`，`client.js:7314`）。为了一个字符串去猜语言，
-         * 下一个人把语言默认值改了就默默显示错语言 —— 那是为了省一步而引入的隐性耦合。
-         * 用 i18n 自己的机制选语言，是唯一不需要我知道它内部实现的做法。
-         */
-        notices.push(h('div', { key: 'malformed', className: 'superpi-malformed-box', role: 'status', 'aria-live': 'polite' },
-          h('div', { className: 'superpi-malformed-text' }, t('malformedTitle')),
-          h('div', { className: 'superpi-malformed-actions' },
-            h('button', {
-              type: 'button',
-              className: 'superpi-btn superpi-btn-primary superpi-malformed-retry',
-              onClick: function () { if (view.busy !== true) submit(t('malformedRetry')) },
-              disabled: view.busy === true,
-            }, t('malformedRetry')),
-            h('span', { className: 'superpi-malformed-detail' }, t('malformedDetail')))))
+      // Both live and replayed notices use the verdict produced by the host.
+      if (view.verdict !== null && view.verdict !== undefined) {
+        notices.push(h(VerdictNotice, {
+          key: 'verdict',
+          verdict: view.verdict,
+          lang: t('verdictLang'),
+          retryLabel: t('verdictRetry'),
+          detail: t('verdictDetail'),
+          busy: view.busy,
+          onRetry: continueTurn,
+        }))
       }
       for (var n = 0; n < view.notices.length; n += 1) {
         var item = view.notices[n]
@@ -7525,14 +7457,6 @@ window.__ModuleLoader__.load({
       RenameDialog: RenameDialog,
       pathCrumbs: pathCrumbs,
       buildContract: buildContract,
-      /**
-       * 畸形输出判据（0.16.2 起导出）。
-       *
-       * 为什么必须导出给门禁：判据分叉是本次事故的根因，而「表与文案一致」
-       * 不能证明「面板真的按同一批样本得出同一结论」。只有拿真函数跑同一批样本，
-       * 才能把「两边实现逐条同构」变成机器可判的事实（见 `test/parity.mjs` §10）。
-       */
-      detectMalformedOutput: detectMalformedOutput,
       messagesFromHistory: messagesFromHistory,
       classifyInput: classifyInput,
       slashItems: slashItems,
@@ -7564,6 +7488,7 @@ window.__ModuleLoader__.load({
       maskHandler: maskHandler,
       isOutsideMenu: isOutsideMenu,
       ModelPicker: ModelPicker,
+      VerdictNotice: VerdictNotice,
       fmtCount: fmtCount,
       numOr0: numOr0,
       strings: { zh: ZH, en: EN },

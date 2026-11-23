@@ -25,60 +25,18 @@ import path from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { resolvePiRuntime } from '../src/pi-runtime.mjs'
+import { EXTENSION_FILES, extensionFilesAt, runtimeAgentDir, syncExtensionFiles } from '../src/runtime-extensions.mjs'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const pluginRoot = path.dirname(here)
 const source = path.join(pluginRoot, 'extensions', 'superpi-editor.ts')
-/** 装进 pi 的扩展目录后用的文件名（前缀 superpi- 便于识别归属）。 */
-export const EXTENSION_FILE_NAME = 'superpi-editor.ts'
+export { EXTENSION_FILES }
 
-/**
- * 共享的「畸形输出判据」模块（0.16.2）。
- *
- * 为什么值得单独一个文件：同一份判据曾散在 1 处、另 1 处压根没有（面板），
- * 于是同一个故障在命令行亮红字、在面板完全静默。
- * 判据不是文案，它必须只有一份 —— 见 `extensions/superpi-malformed.mjs` 头部注释。
- */
-export const MALFORMED_MODULE_FILE_NAME = 'superpi-malformed.mjs'
-
-/**
- * 一并安装的「用户自定义规则」扩展与它的共享模块（0.10.0）。
- *
- * 三者的关系：`superpi-rules.ts` 用 pi 的 `pi.on('before_agent_start')` 把规则追加进
- * 系统提示、并注册 `/superpi-rules`；它 `import` 同目录的 `superpi-rules.mjs`（pi 的 jiti
- * alias 不包含这个包名，走原生 ESM 相对路径）。而 `superpi-rules.mjs` 同时被 host 的
- * `/rules` 三条路由引用 —— **它就是面板与命令行共用的那唯一一份模型**。
- *
- * 所以三个文件必须一起装、一起卸：少装 .mjs 会让 .ts 在 pi 启动时报模块找不到
- * （pi 会把它当成一条 extension error，规则整个不生效，而且用户看不到原因）。
- */
-export const RULES_EXTENSION_FILE_NAME = 'superpi-rules.ts'
-export const RULES_MODULE_FILE_NAME = 'superpi-rules.mjs'
-
-/**
- * 一并安装的「上下文守卫」扩展与它的共享模块（0.12.0）。
- *
- * 它治的是「上下文超限后会话彻底报废」：`superpi-context-guard.ts` 订阅 pi 的
- * `context` 事件（每次 LLM 调用前），把历史里的大块内容（图片、思考、旧工具结果）
- * 非破坏性地折叠掉，保证请求不会超过模型窗口；`superpi-context-guard.mjs` 是它的
- * 纯函数模型层（估算 / 保护区 / 分级裁剪），可在 `test/context-guard.mjs` 里单测。
- *
- * 与 rules 同样的约束：`.ts` 在 pi 启动时 `import './superpi-context-guard.mjs'`，
- * 少装 .mjs 会让扩展加载失败（pi 只报一条 extension error，用户看不到原因）。
- */
-export const GUARD_EXTENSION_FILE_NAME = 'superpi-context-guard.ts'
-export const GUARD_MODULE_FILE_NAME = 'superpi-context-guard.mjs'
-
-/**
- * 「模型模态开关」的扩展与共享模块（0.13.0）。
- *
- * `superpi-modalities.mjs` 是**三处共用**的唯一模型层：host 的 `/modalities` 两条路由、
- * 上下文守卫的请求前过滤、以及本扩展的 `/superpi-modalities` 菜单。放在 extensions/
- * 而不是 src/，理由与 rules 相同：`.ts` 被复制到 `<piAgentDir>/extensions/` 后，
- * `./superpi-modalities.mjs` 这条相对引用在仓库里与安装后指向同一份内容（零分叉）。
- */
-export const MODALITIES_EXTENSION_FILE_NAME = 'superpi-modalities.ts'
-export const MODALITIES_MODULE_FILE_NAME = 'superpi-modalities.mjs'
+export const EXTENSION_FILE_NAME = EXTENSION_FILES.find(file => file.label === 'editor').name
+export const RULES_EXTENSION_FILE_NAME = EXTENSION_FILES.find(file => file.label === 'rules').name
+export const RULES_MODULE_FILE_NAME = EXTENSION_FILES.find(file => file.label === 'rules-module').name
+export const GUARD_EXTENSION_FILE_NAME = EXTENSION_FILES.find(file => file.label === 'context-guard').name
+export const GUARD_MODULE_FILE_NAME = EXTENSION_FILES.find(file => file.label === 'context-guard-module').name
 
 /**
  * 需要同步的 skill 清单（0.10.0 起）。
@@ -104,68 +62,23 @@ export function resolveUserSkillsDir(env = process.env) {
   return path.join(home, '.agents', 'skills')
 }
 
-/**
- * 需要同步的文件清单：`[源相对路径（相对仓库根）, 安装后的文件名]`。
- *
- * ---------------------------------------------------------------------------
- * **顺序不能随便改：被依赖的 `.mjs` 必须排在依赖它的 `.ts` 之前**（0.15.3）。
- *
- * 真机踩到的坑：用户 `/reload` 之后报 `resetMeterMemo is not a function`。
- * 原因是清单里 `context-guard.ts`（扩展入口）排在 `context-guard.mjs`（它 import 的模块）**前面**：
- * 装到一半时磁盘上是「新 .ts + 旧 .mjs」，而 `.ts` 里已经 `import { resetMeterMemo }` ——
- * 于是扩展加载即抛错，整个上下文守卫失效。
- *
- * 这类错误特别难查：报错信息只说"不是函数"，看起来像代码写错了，
- * 实际是**安装过程的一个瞬时中间状态**。所以顺序是契约的一部分，不是排版。
- *
- * 门禁 `test/host-parity.mjs` 会断言「每个 .ts 的 .mjs 依赖排在它前面」。
- */
-export const EXTENSION_FILES = [
-  // 判据模块：**必须排在最前** —— editor 静态 import 它（0.16.2）。
-  // 顺序反了就是 0.15.3 那个坑的重演：装到一半是「新 .ts + 旧/缺 .mjs」，
-  // 扩展加载即抛，且 pi 会直接 exit(1)（main.js:804）。
-  { label: 'malformed-module', source: 'extensions/superpi-malformed.mjs', name: MALFORMED_MODULE_FILE_NAME },
-  { label: 'editor', source: 'extensions/superpi-editor.ts', name: EXTENSION_FILE_NAME },
-  // 规则：模块先于扩展
-  { label: 'rules-module', source: 'extensions/superpi-rules.mjs', name: RULES_MODULE_FILE_NAME },
-  { label: 'rules', source: 'extensions/superpi-rules.ts', name: RULES_EXTENSION_FILE_NAME },
-  // 守卫：模块先于扩展（就是这里曾颠倒过）
-  { label: 'context-guard-module', source: 'extensions/superpi-context-guard.mjs', name: GUARD_MODULE_FILE_NAME },
-  { label: 'context-guard', source: 'extensions/superpi-context-guard.ts', name: GUARD_EXTENSION_FILE_NAME },
-  // 模态：模块先于扩展
-  { label: 'modalities-module', source: 'extensions/superpi-modalities.mjs', name: MODALITIES_MODULE_FILE_NAME },
-  { label: 'modalities', source: 'extensions/superpi-modalities.ts', name: MODALITIES_EXTENSION_FILE_NAME },
-]
-
-/**
- * 解析 pi 的 agent 目录：`PI_CONFIG_DIR` 优先（pi 的环境变量），否则 `~/.pi/agent`。
- * 只读环境与 home，不依赖任何本机绝对路径。
- */
-export function resolveExtensionDir(env = process.env) {
-  const configDir = typeof env.PI_CONFIG_DIR === 'string' && env.PI_CONFIG_DIR !== '' ? env.PI_CONFIG_DIR : '.pi'
-  const base = path.isAbsolute(configDir) ? configDir : path.join(os.homedir(), configDir)
-  return path.join(base, 'agent', 'extensions')
+export function resolveExtensionDir(env = process.env, packageDir = resolvePiRuntime({ pluginRoot }).packageDir) {
+  const agentDir = runtimeAgentDir({ packageDir, env })
+  if (!env.PI_CODING_AGENT_DIR && !env.SUPERPI_CODING_AGENT_DIR && env.PI_CONFIG_DIR) {
+    const base = path.isAbsolute(env.PI_CONFIG_DIR) ? env.PI_CONFIG_DIR : path.join(os.homedir(), env.PI_CONFIG_DIR)
+    return path.join(base, 'agent', 'extensions')
+  }
+  return path.join(agentDir, 'extensions')
 }
 
 export function status(options = {}) {
-  const dir = options.dir ?? resolveExtensionDir(options.env ?? process.env)
-  const target = path.join(dir, EXTENSION_FILE_NAME)
   const pi = resolvePiRuntime({ pluginRoot })
+  const dir = options.dir ?? resolveExtensionDir(options.env ?? process.env, pi.packageDir)
+  const target = path.join(dir, EXTENSION_FILE_NAME)
   const sourceExists = fs.existsSync(source)
   const targetExists = fs.existsSync(target)
   const identical = sourceExists && targetExists && fs.readFileSync(source, 'utf8') === fs.readFileSync(target, 'utf8')
-  /**
-   * 逐个文件的实际状态。`files` 是**安装面的真相**：以前只报 editor 一个，
-   * 0.10.0 加了规则扩展后，只报一个会让「.mjs 没装上」这种情况彻底静默。
-   */
-  const files = EXTENSION_FILES.map(entry => {
-    const from = path.join(pluginRoot, entry.source)
-    const to = path.join(dir, entry.name)
-    const fromExists = fs.existsSync(from)
-    const toExists = fs.existsSync(to)
-    const same = fromExists && toExists && fs.readFileSync(from, 'utf8') === fs.readFileSync(to, 'utf8')
-    return { label: entry.label, source: from, target: to, sourceExists: fromExists, targetExists: toExists, identical: same }
-  })
+  const files = extensionFilesAt(pluginRoot, dir)
   /**
    * skills 目录的解析：**必须与 `dir` 联动**（0.16.0，修一个长期未定位的数据丢失事故）。
    *
@@ -239,13 +152,7 @@ export function install(options = {}) {
   const state = status(options)
   const missing = state.files.filter(file => file.sourceExists !== true)
   if (missing.length > 0) return { code: 1, message: `源文件不存在：${missing.map(file => file.source).join(', ')}` }
-  fs.mkdirSync(state.dir, { recursive: true })
-  for (const file of state.files) {
-    if (file.targetExists && file.identical !== true) {
-      try { fs.copyFileSync(file.target, file.target + '.bak') } catch { /* 备份失败不阻断安装 */ }
-    }
-    fs.copyFileSync(file.source, file.target)
-  }
+  syncExtensionFiles(pluginRoot, state.dir)
   // skill 是纯文档（SKILL.md）：只复制内容，失败不阻断扩展安装 —— 扩展坏了比少一个 skill 严重。
   const skillErrors = []
   for (const skill of state.skills) {
@@ -260,10 +167,10 @@ export function install(options = {}) {
   // 顺手把 pi 的品牌名改成 SuperPi（官方 piConfig 机制，幂等）。
   // 扩展只负责 TUI 输入框；TUI 里的「Welcome to pi」等文案归 piConfig 管，
   // 两件事都在“让命令行窗口看起来是 SuperPi”，所以装扩展时一起做。
-  const brand = brandRuntime()
+  const brand = options.dir === undefined && options.env === undefined ? brandRuntime() : null
   return {
     code: 0,
-    message: state.complete ? '已是最新（内容一致，重新写入一次）' : '已安装',
+    message: state.complete ? '已是最新' : '已安装',
     target: state.target,
     brand,
     files: state.files.map(file => ({ label: file.label, target: file.target })),

@@ -31,8 +31,13 @@ DSH（DeepSeek Runtime）插件：把 pi 编码 agent 装进 DSH 的侧栏面板
 | `extensions/superpi-rules.mjs` | **用户自定义规则**（0.10.0）的唯一模型层：`DEFAULT_RULES_TEXT`（用户手写的 21 条）、`OVERRIDE_PREFIX`（「优先级最高、覆盖上文、冲突以本段为准」的开场声明）、`normalizeRulesText()`（去 BOM / 统一换行 / 去行尾空白 / 压缩空行 / trim，**必须幂等**否则每次保存都改 checksum）、`isRulesEmptyText()`（`#` 注释行算空）、`checksumOf()`（sha256，写入时自己算不收客户端）、`renderRulesBlock()`（**不自带 `<user_defined_rules>` 标签** —— pi 组装 section 时会包，自己再包就是同名嵌套两次，实测抓到过）、`createRulesStore()`（串行写队列 + tmp/rename 原子落盘 + 读盘容错永不抛 + 幂等写不刷 `updatedAt`）与 `readRulesTextSync()`（扩展每轮读盘用，mtime+size 缓存）。落盘 `<home>/.superpi/rules.json`（`SUPERPI_RULES` 可覆盖），与 ui-prefs 同目录。**它同时被 `index.js`（`/rules` 三条路由）与 pi 扩展引用，所以放在 `extensions/` 而不是 `src/`** —— 扩展被原样复制到 `<piAgentDir>/extensions/` 后，`./superpi-rules.mjs` 这条相对引用在仓库里与安装后指向同一份内容，零复制、零分叉。只管 node 内建依赖（jiti 的 alias 表里没有第三方包）。 |
 | `extensions/superpi-rules.ts` | 把规则送进 pi 的**系统提示**（0.10.0）：`pi.on('before_agent_start')` 每轮读盘 → 写进 `systemPromptOptions.sections.user_defined_rules`（**不返回 `systemPrompt`**：那会走 `forceSystemPrompt` 整份重放 = 每轮一次缓存 miss，而 section 只发一次补丁）；位置由 pi 的组装顺序保证 —— 自定义 section 排在 `cwd` 之后，即整份提示末尾。另注册 `/superpi-rules`（看级别与字数 / 编辑 / 恢复默认 / 只显示全文），读写的是**面板那一份文件**。按 `ctx.ui.select/editor/confirm` 分级退化：没有交互 UI 就明确告知文件路径，**任何异常都不外抛**（规则读不出来不能让 pi 起不来或一轮对话失败）。不 import `@earendil-works/*`（只依赖 `pi.on` / `pi.registerCommand` / `ctx.ui.*` 三个运行时参数），所以多份 pi 副本都能加载、也能在 `test/rules.mjs` 里用假 pi 单测。 |
 | `extensions/superpi-context-guard.mjs` | **上下文窗口化**（0.12.0）的模型层：`planContextWindow(messages, {windowTokens, settings})` 在请求前按「信息价值/成本」分级折叠 —— ①旧图片→一行占位（带路径，可重读）②旧 thinking→丢弃 ③超长工具结果→头尾保留 ④旧工具结果→折成首行 ⑤旧回复→折叠；保护区由**三条约束取最严**（最近 `keepRecentTurns` 轮 / `keepRecentMessages` 条 / `protectedTokenRatio` 窗口），本轮（最后一条 user 之后）的图片一张不动。估算口径刻意与 pi 不同：图片按 `imageTokens=12000`（pi 记 4800 chars≈1200，实测低估十几倍）、文本 `charsPerToken=3`。设 `targetRatio=0.72`，**保证请求不超预算**。纯函数、幂等、单调（前缀只后退，prompt cache 不击穿）；`hygiene` 段落 `DEFAULT_HYGIENE_TEXT` 写死边界「只清理本次任务自己生成的中间产物」。落盘 `<home>/.superpi/context-guard.json`（`SUPERPI_CONTEXT_GUARD` 可覆盖）+ 观测日志 `context-guard.log.jsonl`（滚 240 行）。 |
-| `extensions/superpi-context-guard.ts` | 接线层：`pi.on('context')` 返回裁剪后的 messages（**不写 session、不调模型、不联网** —— 所以超限那一刻它必然能成功，而压缩/重试都要再用一次已被超限的资源）；无需裁剪时返回 `undefined`（不触发 pi 重放提示）；`pi.on('before_agent_start')` 把「图片用完即弃」准则写进 `sections.superpi_context_hygiene`（与用户规则并列、不抢 key）；`/superpi-context` 看真实占用与释放量。异常一律吞掉。门禁 `test/context-guard.mjs`（规模见 `test/gate-inventory.json`；0.14.0 起含 C2 本轮图片限额 / C3 参数折叠 / C4 兜底三段）。**0.12.2 起**：TUI footer 第 2 行的上下文百分比也取这份日志（`readGuardUsageSync`，2 秒节流、按 sessionId 过滤、拿不到就退回 pi 原值），显示成 `~60.0%/1.0M` —— `~` 表示守卫估算，不是 provider 的 usage。 |
-| `extensions/superpi-malformed.mjs` | **畸形输出的唯一判据**（0.16.2）：四类形态 —— A 正文型（text 块含完整 DSML）、B thinking 型（闭合标记在 thinking 里）、C 空转型（`stopReason==='stop'` 但既无正文也无 toolCall）、**D 残片型**（开标记被网关吞掉，只剩 `</parameter>` + `</｜｜DSML｜｜ calls>` 收尾 —— 2026-11-20 真机新形态，前三条全部漏掉）；五类排除项（`toolUse` / 正常回复 / **正文里讨论 DSML** / `error` 态 / 有 toolCall）。**为什么单独成一个文件**：同一判据曾被抄三处（editor 有、面板**一条也没有**），于是同一故障在命令行亮红字、在面板完全静默 —— 判据不是文案，它必须只有一份。导出 `detectMalformedOutput()`（带 kind）、`isMalformedOutput()`（布尔兼容）、`MALFORMED_DETECTION`（判定表）、`MALFORMED_NOTICE`（中英文案）。**面板拿不到它**（只许 `require('react')`），所以同一份表也登记进 `src/rpc-contract.mjs` 并由 `GET /contract` 下发 ——「表在契约、算法在面板」，与 `classifyInput` 同一范式。**两条判据细节不可退化**：① 开标记必须绑定在 `DSML` 标记**之后**（全文字符串 `includes` 会把 D 类的 `</parameter>` 误认成开标记）；② 残片必须落在**消息末尾**（`residueTailChars=40`），否则「正文里讨论 DSML」会被误判成故障。门禁 `test/malformed.mjs`（规模见 `test/gate-inventory.json`）。 |
+| `extensions/superpi-context-guard.ts` | 接线层：`turn_end` 为成功的长 `write` / `edit` 追加 `context_edit` 投影，保留原始调用与工具结果。`pi.on('context')` 返回裁剪后的 messages（**不写 session、不调模型、不联网** —— 所以超限那一刻它必然能成功，而压缩/重试都要再用一次已被超限的资源）；无需裁剪时返回 `undefined`（不触发 pi 重放提示）；`pi.on('before_agent_start')` 把「图片用完即弃」准则写进 `sections.superpi_context_hygiene`（与用户规则并列、不抢 key）；`/superpi-context` 看真实占用与释放量。异常一律吞掉。门禁 `test/context-guard.mjs`（规模见 `test/gate-inventory.json`；0.14.0 起含 C2 本轮图片限额 / C3 参数折叠 / C4 兜底三段）。**0.12.2 起**：TUI footer 第 2 行的上下文百分比也取这份日志（`readGuardUsageSync`，2 秒节流、按 sessionId 过滤、拿不到就退回 pi 原值），显示成 `~60.0%/1.0M` —— `~` 表示守卫估算，不是 provider 的 usage。 |
+| `extensions/superpi-turn-verdict.mjs` | **「这一轮交付了吗」的唯一判据**（0.16.2 建为 `superpi-malformed.mjs`，0.18.0 扩到六类并改名）。六类：`dsml-text` / `dsml-thinking` / `dsml-residue`（DSML 三形态，判据细节见 §5.0.1）/ `idle`（`stop` 但无正文无工具调用）/ `corrupt`（正文含坏字节且无 toolCall）/ `truncated`（`stopReason: 'length'`）。导出 `detectTurnVerdict()`（带 `kind` / `bytes` / **中英文案**）、`VERDICT_KINDS`、`TURN_VERDICT_NOTICE`。**只判可机械判定的形态**：156 条 `stop` 无工具调用的回合里只有 6 条有结构信号（以 `：` 收尾），其余 150 条读起来都是完整句子 —— 语义判断必然变成假警报，所以不做。**判据只有一份**：host 对每条 `message_end` 算一次（`src/event-verdict.mjs`），面板只渲染；命令行窗口同进程 import。门禁 `test/turn-verdict.mjs`（规模见 `test/gate-inventory.json`）。 |
+| `extensions/superpi-turn-recovery.ts` | Pi 原生恢复。`turn_end` 将不可用的无工具响应移出请求投影，原始记录仍留在会话树。`agent_before_settle` 在用户未停止、本次未产生工具调用且无待处理输入时最多续跑一次。TUI 和 RPC 共用。 |
+| `src/runtime-extensions.mjs` | 共享扩展清单及幂等同步。面板启动和 TUI 安装器同步同一套文件，Pi 按官方路径加载。 |
+| `src/event-verdict.mjs` | 把上面那份判读**挂到 pi 的 `message_end` 上**（0.18.0）：`decoratePiEvent(record)` 只加一个 `verdict` 字段，不改 pi 的任何字段，**永不抛**。它解决了两个结构问题：① 面板不再需要一份孪生判据（0.16.2~0.17.3 的「表在契约、算法在面板」，共同盲区测不出）；② 面板不再依赖 `/contract` 先到（0.17.3 那个「契约晚到 → 提示永久丢失」的竞态随依赖一起消失，而不是靠启动顺序绕开）。装饰发生在 `PiProcess.pushEvent` 里 —— 那是**唯一**同时喂 SSE 与环形缓冲回放的地方。 |
+| `extensions/superpi-text-bytes.mjs` | **「什么是坏字节」的唯一判据**（0.18.0）：`scanTextBytes()` 三类 —— `replacement`（U+FFFD，字符的字节已经丢了、不可逆）、`control`（C0 除 `\t\n\r`，外加 DEL）、`surrogate`（孤立代理项：JSON 合法、落盘必坏）。计数全量、位置截断（前 20 处，带行列号）。四个消费者共用：回合判据、写入闸、`test/parity.mjs` §9、`test/host-parity.mjs` 3.98。**为什么必须收成一处**：这三处原本各写一份，而运行时**一份也没有** —— 实测 7 次 `write` 的 content 含 U+FFFD、7 次全部落盘。 |
+| `extensions/superpi-text-integrity.ts` | **写入闸**（0.18.0）：`pi.on('tool_call')` 在写盘前拦坏字节 —— `write` / `edit` 的目标路径、`write.content` 或 `edit.edits[].newText` 含坏字节 → `{block:true, reason}`（文件不写）；**`edit.oldText` 放行**（修已坏文件时匹配串必然含 U+FFFD，拦它等于禁止修复）；**`bash`/`powershell` 只提醒不拦**（同一串字节可能是修复脚本），改为在 `tool_result` 末尾追加一行警告。拦截理由带行号/码位/总数 + 「文件未写入」+ 「不要原样重发」+ 转义写法。观测落 `~/.superpi/integrity.log.jsonl`（滚动 240 行），`/superpi-integrity` 看汇总与路径。门禁 `test/text-integrity.mjs`（含 **pi 真 `ExtensionRunner`** 跑一遍 block 链路）。取证见 `docs/output-integrity.md`。 |
 
 | `extensions/superpi-modalities.mjs` | **模型模态开关**（0.13.0）的唯一模型层：`RUNTIME_MODALITIES=['text','image']`（pi 运行时**实际能发**的，与 `ContentBlock` 联合类型对账，`test/modalities.mjs` F 段防过期）、`resolveModelModalities(model, overrides)`（可用模态 = `model.input` ∩ 运行时；`unsupported` 显式列出「协议声明但发不出去」的，**不画假开关**）、`allowedModalities()`、`filterMessagesByModalities()`（关掉的模态块→占位文本，非破坏性、text 永不过滤）、`normalizeModalitiesState()`（幂等 + 稀疏：只存非默认项，默认规则将来变了没动过的模型自动跟随）、`createModalitiesStore()`（串行队列 + 原子落盘 + 400 语义）、`readModalitiesStateSync()`（扩展每轮用，mtime+size 缓存）。落盘 `<home>/.superpi/modalities.json`（`SUPERPI_MODALITIES` 可覆盖）。**host 与两个扩展共用它**，所以放 `extensions/`（复制后相对引用仍指向同一份）。 |
 | `extensions/superpi-modalities.ts` | 命令行窗口的 `/superpi-modalities`：列模型（scoped 优先，否则全量）→ 选模型 → 逐个切模态（文本锁定、`unsupported` 只读、`恢复这个模型的默认`）。读写与面板**同一份** JSON。**不 hook `context`** —— 过滤只在守卫里执行一次（单一执行点）。异常不外抛。 |
@@ -153,6 +158,28 @@ DSH（DeepSeek Runtime）插件：把 pi 编码 agent 装进 DSH 的侧栏面板
   实测：2026-11-20 一次会话里同类畸形出现 5 次以上，而每次都继续往下做了 ——
   触发点从来不是「不知道规则」，而是「没发现自己已经写了」。
   面板侧的对应能力见 0.16.2（`a4eab7b`：「命令行亮红字、面板完全静默」已修）。
+
+- **坏字节不许落盘：清理必须发生在它成为文件内容的那一刻。**（0.18.0）
+  取证见 `docs/output-integrity.md`：2026-11-19~11-23 的 20 个真实会话里，
+  **7 次 `write` 的 content 含 U+FFFD，7 次全部成功落盘**；另有 15 次 `bash` 命令
+  含坏字节、13 次执行成功。落盘之后不可逆（U+FFFD 里没有原字符的信息），
+  只能靠人读回来或用 git 回滚 —— 这正是用户报的「代码错乱」。
+  **判据**：任何"模型字节 → 文件内容"的通道都必须过写入闸
+  （`extensions/superpi-text-integrity.ts` 的 `pi.on('tool_call')`）。
+  **三条边界是刻意的，改之前先读完**：① `edit.oldText` 必须放行（修复入口）；
+  ② `bash`/`powershell` 只提醒不拦截（同一串字节可能是修复脚本，拦它 = 禁止修复）；
+  ③ 拦截**不减少任何能力** —— 坏字符永远可以用转义表达，被拦下的是一次不可逆的损坏动作。
+  同理：**拦截理由必须让模型当场能改**（行号 / 码位 / 总数 + 「文件未写入」+
+  「不要原样重发」+ 转义写法），否则它会重发同一串坏字节，而那是徒劳的 ——
+  成因在 provider 的流式重组，不在它这一次手滑。
+
+- **「看起来结束了」有六种形态，判据必须覆盖全，且只在能判的地方判。**（0.18.0）
+  六类见 `extensions/superpi-turn-verdict.mjs`。其中 `truncated`（`stopReason: 'length'`）
+  与 `corrupt` 是 0.18.0 补的 —— 它们和 DSML 一样满足「agent loop 看不到工具调用 →
+  这一轮结束 → 屏幕上没有任何错误提示」。
+  **但不要顺手去判「短回复但声称做完了」**：实测 156 条 `stop` 无工具调用的回合里，
+  只有 6 条有可判定形态（以 `：` 收尾），其余 150 条读起来都是完整句子。
+  语义判断必然产生假警报，而假警报会让人**不再相信真正的提示**（见 §5.0 第一条）。
 
 ### 5.0.1 DSML 畸形工具调用的真因：**结构性头部丢失**（0.17.0 定论，务必记住）
 
@@ -416,12 +443,13 @@ return sections ? { role: "system", content: "", sections } : undefined
 ## 7. 验证命令
 
 ```powershell
-npm test                                        # 20 项离线门禁（顺序即依赖顺序）：
+npm test                                        # 离线门禁（顺序即依赖顺序）：
                                                 # preflight（依赖前置断言，缺 pi/react 直接红）
                                                 # → check-carriers → selfcheck → client-render
                                                 # → css-tokens → runtime-resolve → config-hot
                                                 # → host-parity → session-projects → session-lifecycle
                                                 # → timeout → rules → context-guard → modalities
+                                                # → turn-verdict → text-integrity → reliability
                                                 # → parity → tui-editor → brand-pi-runtime
                                                 # → restart-lib → github-sync → version
                                                 # → gate-inventory（各套规模对账，收口）
@@ -432,11 +460,14 @@ npm test                                        # 20 项离线门禁（顺序即
                                                 # 耗时大头：github-sync（真 git 跑完整同步）、
                                                 # restart-lib（起 pwsh 7 + 5.1 各跑一遍）、
                                                 # gate-inventory（把所有门禁再跑一遍做对账，约 40 s）
-npm run test:all                                # 上面 20 项 + 真起 pi 子进程跑一轮 LLM
+npm run test:all                                # 全量离线门禁，加真实模型冒烟和图片写入验证
 npm run test:preflight                          # 只做依赖探测（缺什么、怎么装）
 npm run test:inventory                          # 只做门禁规模对账（--print 打印实测值）
 npm run test:lifecycle                          # 只跑会话池生命周期门禁
 npm run test:rules                              # 只跑用户自定义规则门禁（含真 .ts 扩展层）
+npm run test:verdict                            # 只跑回合判据门禁（六类形态 + 真渲染）
+npm run test:reliability                        # 真 Pi RPC + 本地流式故障场景
+npm run test:integrity                          # 只跑写入闸门禁（含 pi 真 ExtensionRunner 跑 block 链路）
 npm run test:tui                                # 只跑输入框扩展门禁（jiti 加载真 .ts + pi 真 CustomEditor + 真按键序列）
 npm run pi:editor                               # 把 extensions/superpi-editor.ts 装进 pi（<piAgentDir>/extensions/）
 npm run pi:editor:status                        # 只读：源/目标/内容是否一致/pi 版本

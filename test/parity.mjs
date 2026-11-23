@@ -528,7 +528,17 @@ if (fs.existsSync(path.join(root, '.workbuddy', 'memory'))) {
 
 let hygieneFffd = 0
 let hygieneCtrl = 0
+let hygieneSurrogate = 0
 const hygieneOffenders = []
+/**
+ * 判据取**共享模块**（0.18.0）。
+ *
+ * 0.15.3~0.17.3 这里有一段手写的字符循环，`test/host-parity.mjs` 3.98 又有一段，
+ * 而运行时**一份也没有** —— 同一件事三处实现，其中一处（运行时）缺位，
+ * 于是坏字节真的写进了文件（`docs/output-integrity.md` 的 7/7）。
+ * 现在定义只有一处：`extensions/superpi-text-bytes.mjs` 的 `scanTextBytes`。
+ */
+const { scanTextBytes } = await import(pathToFileURL(path.join(root, 'extensions', 'superpi-text-bytes.mjs')).href)
 for (const rel of hygieneFiles) {
   let raw = ''
   try { raw = fs.readFileSync(path.join(root, rel), 'utf8') } catch { continue }
@@ -544,27 +554,30 @@ for (const rel of hygieneFiles) {
    * ② 业务代码（src/extensions/client.js）里 ESC 也一律不许 —— 那里出现 ESC
    *    通常意味着把转义序列当普通字符串拼，是真 bug；
    * ③ 例外范围越窄，越不容易被后来者当成"反正 test 目录不管"来滥用。
+   *
+   * 实现上刻意在**门禁侧**过滤，而不是往共享判据里加"忽略某些码位"的开关：
+   * 「什么算坏字节」是定义（一处），「哪些文件允许出现」是策略（每道门禁自己定）。
    */
   const allowEsc = rel.startsWith('test' + path.sep) || rel.startsWith('test/')
-  raw.split('\n').forEach((line, index) => {
-    for (let column = 0; column < line.length; column += 1) {
-      const code = line.codePointAt(column)
-      if (code === 0xfffd) {
-        hygieneFffd += 1
-        // 只留前几处，报错信息别把终端刷屏
-        if (hygieneOffenders.length < 12) hygieneOffenders.push(rel + ':' + (index + 1) + ' U+FFFD')
-      } else if (allowEsc && code === 0x1b) {
-        // 见上面的说明：测试要构造终端转义序列，ESC 是被测对象而非脏数据。
-        continue
-      } else if (code < 0x20 && code !== 0x09 && code !== 0x0d) {
-        hygieneCtrl += 1
-        if (hygieneOffenders.length < 12) hygieneOffenders.push(rel + ':' + (index + 1) + ' U+' + code.toString(16).toUpperCase().padStart(4, '0'))
-      }
+  const scan = scanTextBytes(raw, { maxSpans: Number.MAX_SAFE_INTEGER })
+  for (const span of scan.spans) {
+    if (allowEsc === true && span.code === 0x1b) continue
+    if (span.kind === 'replacement') {
+      hygieneFffd += 1
+      // 只留前几处，报错信息别把终端刷屏
+      if (hygieneOffenders.length < 12) hygieneOffenders.push(rel + ':' + span.line + ' U+FFFD')
+    } else if (span.kind === 'surrogate') {
+      hygieneSurrogate += 1
+      if (hygieneOffenders.length < 12) hygieneOffenders.push(rel + ':' + span.line + ' 孤立代理项')
+    } else {
+      hygieneCtrl += 1
+      if (hygieneOffenders.length < 12) hygieneOffenders.push(rel + ':' + span.line + ' U+' + span.code.toString(16).toUpperCase().padStart(4, '0'))
     }
-  })
+  }
 }
 check('文本卫生：全仓无 U+FFFD（汉字被写坏的替换符）', hygieneFffd === 0, 'count=' + String(hygieneFffd) + ' 见 ' + hygieneOffenders.join(', '))
-check('文本卫生：全仓无 C0 控制字符（U+0007 就是它让请求体变成 invalid JSON）', hygieneCtrl === 0, 'count=' + String(hygieneCtrl) + ' 见 ' + hygieneOffenders.join(', '))
+check('文本卫生：全仓无控制字符（U+0007 就是它让请求体变成 invalid JSON）', hygieneCtrl === 0, 'count=' + String(hygieneCtrl) + ' 见 ' + hygieneOffenders.join(', '))
+check('文本卫生：全仓无孤立代理项（JSON 里非法、落盘必坏）', hygieneSurrogate === 0, 'count=' + String(hygieneSurrogate) + ' 见 ' + hygieneOffenders.join(', '))
 
 // ── 汇总 ──────────────────────────────────────────────────────────────────
 console.log('')

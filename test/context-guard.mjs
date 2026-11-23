@@ -270,6 +270,16 @@ ok(heavyAgain.stats.after <= heavy.stats.after + 1, '幂等：再跑不会变大
 
 section('C3. 参数折叠：write/edit 的正文不该在上下文里留副本')
 
+{
+  const text = '摘要与验证进度。'.repeat(200)
+  for (const role of ['compactionSummary', 'branchSummary']) {
+    const message = { role, summary: text, timestamp: 1 }
+    const estimate = estimateMessagesTokens([message], settings)
+    ok(estimate > 0, role + ' 要计入真实发送的摘要')
+    eq(breakdownMessages([message], settings).total, estimate, role + ' 在摘要拆解和总量使用同一口径')
+  }
+}
+
 /**
  * 判据 G。病根：五个阶段没有一个处理 `toolCall.arguments`，实测裁剪后前缀里
  * assistant 的参数仍有 1,377,032 字符 ≈ 459k tokens，其中 177 条 >2000 字符 ——

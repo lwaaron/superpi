@@ -65,18 +65,22 @@ import { execFile } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { detectTurnVerdict } from './superpi-turn-verdict.mjs'
+
 /**
- * 畸形输出的判据移到共用模块（0.16.2）。
+ * verdict 的形状（与 `superpi-turn-verdict.mjs` 的 `detectTurnVerdict` 逐字段一致）。
  *
- * 这个 import 与 `superpi-rules.ts` / `superpi-context-guard.ts` 同一个范式：
- * 扩展与模块**成对安装**（`tools/install-pi-extension.mjs` 的 `EXTENSION_FILES`
- * 里每对相邻登记，`status.complete` 要求全部逐字节同步）。
- *
- * 为什么这一次不能像 `AUTO_RETRY_TEXT` 那样内联一份：标题判断本身（四类形态 +
- * 收尾位置约束）在本仓库已经因为「每个需要它的文件各拄一份」分叉过 ——
- * 命令行有、面板完全没有。判据不是文案，它必须只有一份。
+ * 在本文件里再声明一次类型，而不是从 `.mjs` `import type`：那个模块是纯 JS，
+ * 没有 `.d.ts`，jiti 能跑但类型解析拿不到东西。**只声明类型、不复制判据** ——
+ * 判据永远在模块里，这里连一个标记字符串都没有。
  */
-import { detectMalformedOutput, isMalformedOutput } from './superpi-malformed.mjs'
+export type TurnVerdict = {
+  delivered: boolean
+  kind: string
+  bytes: number
+  notice: { zh: string; en: string }
+  detail: string
+}
 
 /* ------------------------------------------------------------------ 外观 */
 
@@ -148,39 +152,21 @@ export type ActiveTool = { id: string; name: string; startedAt: number; limitSec
 export const runState: {
   phase: RunPhase
   failed: boolean
-  /** 本轮是否是「模型输出畸形工具调用」失败（0.15.1）—— 与工具跑挂要分开解释。 */
-  malformed: boolean
+  /**
+   * 本轮「没交付」的判读（0.15.1 起是布尔 `malformed`，0.18.0 起是整份 verdict）。
+   *
+   * 从布尔改成整份的原因：六类形态要给六句不同的话，布尔装不下。
+   * `null` = 本轮正常（或还没收到 assistant 消息）。
+   */
+  verdict: TurnVerdict | null
   startedAt: number
   tool: ActiveTool
 } = {
   phase: 'idle',
   failed: false,
-  malformed: false,
+  verdict: null,
   startedAt: 0,
   tool: null,
-}
-
-/**
- * 自动重发的运行时状态（0.15.9，模块级）。
- *
- * `currentRunHadToolCall` 是**安全判据的唯一依据**：畸形输出时若本轮已产生过 toolCall，
- * 说明可能已经有副作用落地，绝不能自动重发（否则 `write` / `git push` 会再来一次）。
- * 它在 `agent_start`（新一轮开始）时清零，在每条 assistant 消息里累加。
- *
- * `lastAutoRetryAt` 用于冷却，`autoRetryCount` 仅供观测（日志/门禁可断言"只重发一次"）。
- */
-let currentRunHadToolCall = false
-let lastAutoRetryAt = 0
-let autoRetryCount = 0
-
-/** 只读快照，供门禁断言。 */
-export function autoRetryState(): { hadToolCall: boolean; lastAutoRetryAt: number; count: number } {
-  return { hadToolCall: currentRunHadToolCall, lastAutoRetryAt, count: autoRetryCount }
-}
-
-/** 新一轮开始时清安全判据（冷却与计数保留，它们是跨轮的）。 */
-export function resetAutoRetryRunState(): void {
-  currentRunHadToolCall = false
 }
 
 /**
@@ -200,7 +186,7 @@ export function toolLimitSeconds(args: unknown): number {
 export function markRunStart(now = Date.now()): void {
   runState.phase = 'running'
   runState.failed = false
-  runState.malformed = false
+  runState.verdict = null
   runState.startedAt = now
   runState.tool = null
   // 开始干活就要转起来（幂等：重复调用不会叠加定时器）。
@@ -251,41 +237,37 @@ export function markToolError(): void {
 }
 
 /**
- * 模型输出了畸形工具调用（0.15.1）。
+ * 模型这一轮没交付（0.18.0；前身 `markMalformedOutput` 0.15.1）。
  *
- * 与 `markToolError` 的区别在**责任归属**：工具失败是"命令跑挂了"，畸形输出是
- * "模型没按协议说话"。两者都该让状态变红，但后者还需要在文案里说清原因 ——
- * 否则用户看到红色 ✖ 却不知道"为什么这轮没执行任何工具就结束了"。
+ * 与 `markToolError` 的区别在**责任归属**：工具失败是"命令跑挂了"，没交付是
+ * "模型没按协议说话 / 吐了坏字节 / 被截断"。两者都该让状态变红，但后者还需要
+ * 在文案里说清原因 —— 否则用户看到红色 ✖ 却不知道"为什么这轮没执行任何工具就结束了"。
  *
- * 记一个标记，让 `workingLabel` 能给出可行动的说明（见 `workingLabel` 的 malformed 分支）。
+ * 存整份 verdict 而不是布尔：Working 行要按 `kind` 说六类不同的话，
+ * 文案本体取自模块（与面板逐字相同），这里不复制任何一个字。
  */
-export function markMalformedOutput(): void {
+export function markUndelivered(verdict: TurnVerdict): void {
   runState.failed = true
-  runState.malformed = true
+  runState.verdict = verdict
 }
 
 /**
- * 判断一条 assistant 消息是否是「畸形工具调用」。
+ * 判读一条 assistant 消息（唯一实现在 `extensions/superpi-turn-verdict.mjs`）。
  *
- * **实现已搬到 `extensions/superpi-malformed.mjs`（0.16.2）。**
- * 这里保留这个导出名只为一件事：`test/tui-editor.mjs` 与面板门禁都用它，
- * 改名会让一百多条既有断言同时失效 —— 那是「为了整洁而降低门禁强度」。
- *
- * 真正的价值在于：从现在起，命令行窗口、面板、host **共用同一份判据**。
- * 此前的形状是「每个需要它的文件各拄一份」，实测结果是：
- *   - 命令行有两条（正文型 / thinking 型）
- *   - 面板**一条也没有**（`grep -c DSML client.js` = 0）
- * 同一个故障在两个前端一个亮红字、一个完全静默。
- *
- * 四类形态与排除项的定义见 `superpi-malformed.mjs` 头部注释（那里是唯一真相源）。
+ * 0.16.2 起这个函数只做转发，不再自己实现判据 —— 形状的分叉史见模块头部注释。
  */
-export function isMalformedToolCall(message: any): boolean {
-  return isMalformedOutput(message)
+export function turnVerdictOf(message: any): TurnVerdict {
+  return detectTurnVerdict(message)
 }
 
-/** 带上形态（`text` / `thinking` / `residue` / `idle`），供 Working 行说清是哪一类。 */
-export function malformedKindOf(message: any): string {
-  return detectMalformedOutput(message).kind
+/** 只要布尔值的调用方（既有门禁与自动重发判据）走这里。 */
+export function isUndeliveredTurn(message: any): boolean {
+  return detectTurnVerdict(message).delivered !== true
+}
+
+/** 带上形态（`dsml-text` / `corrupt` / `truncated` …），供日志与门禁断言是哪一类。 */
+export function verdictKindOf(message: any): string {
+  return detectTurnVerdict(message).kind
 }
 
 export function markRunSettled(): void {
@@ -299,7 +281,7 @@ export function markRunSettled(): void {
 export function resetRunState(): void {
   runState.phase = 'idle'
   runState.failed = false
-  runState.malformed = false
+  runState.verdict = null
   runState.startedAt = 0
   runState.tool = null
   stopAnimation()
@@ -346,18 +328,19 @@ export function workingLabel(now = Date.now(), includeTool = true): string {
   const phase = runState.phase
   const startedAt = runState.startedAt
   /**
-   * 畸形输出的解释（0.15.1）。
+   * 没交付的解释（0.15.1 起，0.18.0 扩到六类）。
    *
-   * 这条路必须**先于** phase 判断：畸形输出发生时本轮已经 settled（phase 变 error 或 idle），
+   * 这条路必须**先于** phase 判断：没交付时本轮已经 settled（phase 变 error 或 idle），
    * 而用户最需要的恰恰是那一刻的解释 —— 否则他只会看到红色 ✖ 或图标消失，
    * 完全不知道"为什么这轮什么都没做就结束了"。
    *
-   * 文案刻意把**原因**与**可行动动作**分开写：
-   *  - 原因：模型这次吐了它自己的工具调用语法（不是 pi 的格式），所以没执行；
-   *  - 动作：直接重发即可（上下文已被守卫压到安全区，重发通常就好）。
+   * 文案直接取模块的 `notice.zh`，**不在本文件里写第二份**：
+   * 面板读的是同一份 notice（host 随事件下发），两端必须逐字相同 ——
+   * 同一个故障给出两种解释，用户会以为是两个不同的问题（D1 类失真）。
    */
-  if (runState.malformed === true) {
-    return '本轮未执行：模型输出格式错乱（DSML），工具调用没被识别 · 直接重发即可'
+  const verdict = runState.verdict
+  if (verdict !== null && typeof verdict.notice?.zh === 'string' && verdict.notice.zh !== '') {
+    return verdict.notice.zh
   }
   if (phase !== 'running' || startedAt <= 0) return 'Working'
   let text = 'Working · ' + formatRunDuration(now - startedAt)
@@ -1892,7 +1875,7 @@ function writeViaPowerShell(text: string): Promise<boolean> {
  *   - `• max` 那一段 → `/thinking`（pi 自己的推理档位选择器）
  * 鼠标移入时同样变亮 + 下划线（与输入框右下角的入口同一套反馈）。
  */
-export type FooterHitKind = 'project' | 'settings' | 'home' | 'model' | 'thinking'
+export type FooterHitKind = 'project' | 'settings' | 'home' | 'model' | 'thinking' | 'continue'
 export type FooterHit = { kind: FooterHitKind; x: number; y: number; width: number }
 
 /**
@@ -2016,100 +1999,6 @@ export function formatTokens(count: number): string {
 const GUARD_DIR_NAME = '.superpi'
 const GUARD_LOG_FILE_NAME = 'context-guard.log.jsonl'
 const GUARD_LOG_TAIL_BYTES = 128 * 1024
-const GUARD_FILE_NAME = 'context-guard.json'
-
-/**
- * 自动重发相关的**内联配置读取**（0.15.9）。
- *
- * ---------------------------------------------------------------------------
- * 为什么不 import `./superpi-context-guard.mjs`：
- * 与 footer 那个理由完全一样 —— 静态 import 会让「守卫模块缺失或语法坏」
- * 直接拖垮**整个编辑器扩展**，用户丢掉的是 Ctrl+A / 粘贴路径 / footer 全部能力，
- * 只为了一个"畸形输出后自动重试"的可选行为。**代价与收益完全不成比例。**
- *
- * 所以这里只做一件事：读一个 JSON 文件的两个布尔/数字字段，读不到就用默认值。
- * 配置语义的**唯一真相**仍在守卫模块（`autoRetryOnMalformed` / `autoRetryCooldownMs`），
- * 门禁 `test/tui-editor.mjs` 会断言两边的默认值一致，防止这里悄悄漂移。
- */
-export const AUTO_RETRY_DEFAULTS = {
-  /** 默认开启（用户明确要求）。 */
-  autoRetryOnMalformed: true,
-  autoRetryCooldownMs: 30000,
-}
-
-
-/**
- * 自动重发时发出去的文本。
- *
- * **必须在 editor 里定义一份**，不能引用守卫模块的 `AUTO_RETRY_TEXT`：
- * 不 import 守卫模块是本文件既有的架构约束（见上）。0.15.9 第一版就踩了 ——
- * 代码里写了 `AUTO_RETRY_TEXT` 却没定义，`ReferenceError` 被 `try/catch` 静默吞掉，
- * 于是"判据通过了、计数器也加了，但消息一条都没发出去"。
- * **这是同一类静默失效在本文件的第三次复发**（前两次：`markRunFailed`、
- * `markMalformedOutput` 调错名），所以这次连门禁一起补（见 test 的接线段）。
- *
- * 刻意**不**复述用户的原话：原话可能很长、且可能含敏感内容，
- * 自动重发只需要一个"继续"的指令。
- */
-export const AUTO_RETRY_TEXT = '继续'
-
-export function resolveGuardConfigPath({ env = process.env, home = os.homedir() }: { env?: any; home?: string } = {}): string {
-  const override = typeof env?.SUPERPI_CONTEXT_GUARD === 'string' ? env.SUPERPI_CONTEXT_GUARD.trim() : ''
-  const dir = override !== '' ? path.dirname(path.resolve(override)) : path.join(home, GUARD_DIR_NAME)
-  return path.join(dir, GUARD_FILE_NAME)
-}
-
-/**
- * 读自动重发开关。**永不抛**：任何异常都退回默认值。
- *
- * 刻意不缓存：这个文件只在「发生了畸形输出」那一刻读一次，
- * 频率极低（实测一个长会话几十次），缓存反而会因为保存后不生效而让人困惑。
- */
-export function readAutoRetrySettings({ env = process.env, home = os.homedir() }: { env?: any; home?: string } = {}): {
-  autoRetryOnMalformed: boolean
-  autoRetryCooldownMs: number
-} {
-  const fallback = { ...AUTO_RETRY_DEFAULTS }
-  try {
-    const file = resolveGuardConfigPath({ env, home })
-    if (!fs.existsSync(file)) return fallback
-    const raw = JSON.parse(fs.readFileSync(file, 'utf8'))
-    if (raw === null || typeof raw !== 'object') return fallback
-    const enabled = raw.autoRetryOnMalformed === undefined
-      ? fallback.autoRetryOnMalformed
-      : raw.autoRetryOnMalformed === true
-    const rawCooldown = Number(raw.autoRetryCooldownMs)
-    const cooldown = Number.isFinite(rawCooldown)
-      ? Math.min(600000, Math.max(0, Math.round(rawCooldown)))
-      : fallback.autoRetryCooldownMs
-    return { autoRetryOnMalformed: enabled, autoRetryCooldownMs: cooldown }
-  } catch {
-    return fallback
-  }
-}
-
-/**
- * 畸形输出后该不该自动重发 —— 与守卫模块 `shouldAutoRetryOnMalformed` **同语义**。
- *
- * 这里重写一份而不是 import，理由见 `AUTO_RETRY_DEFAULTS`。
- * 两份实现的一致性由门禁断言（对同一组用例必须给出相同结论）。
- *
- * **安全边界是不可配置的**：`hadToolCall === true` 一律不重发。
- * 用户能改的只有"要不要启用"和"冷却多久"，**不能**把这条安全边界打开。
- */
-export function decideAutoRetry(
-  settings: { autoRetryOnMalformed: boolean; autoRetryCooldownMs: number },
-  state: { hadToolCall?: boolean; lastAutoRetryAt?: number; now?: number } = {},
-): { retry: boolean; reason: string } {
-  if (settings.autoRetryOnMalformed !== true) return { retry: false, reason: 'disabled' }
-  if (state.hadToolCall === true) return { retry: false, reason: 'had-tool-call' }
-  const now = Number.isFinite(state.now) ? (state.now as number) : Date.now()
-  const last = Number.isFinite(state.lastAutoRetryAt) ? (state.lastAutoRetryAt as number) : 0
-  const cooldown = settings.autoRetryCooldownMs
-  if (cooldown > 0 && last > 0 && now - last < cooldown) return { retry: false, reason: 'cooldown' }
-  return { retry: true, reason: 'ok' }
-}
-
 export function resolveGuardLogPath({ env = process.env, home = os.homedir() }: { env?: any; home?: string } = {}): string {
   const override = typeof env?.SUPERPI_CONTEXT_GUARD === 'string' ? env.SUPERPI_CONTEXT_GUARD.trim() : ''
   const dir = override !== '' ? path.dirname(path.resolve(override)) : path.join(home, GUARD_DIR_NAME)
@@ -2398,7 +2287,10 @@ export class SuperPiFooter {
 
   /** 第 1 行：`<cwd (branch)>  ⇄` + 右对齐的 `settings  home`。 */
   private projectRow(width: number, y: number): string {
-    const actionsPlain = EDITOR_ACTIONS.map(action => action.label).join('  ')
+    const actions = runState.phase === 'error' && runState.verdict !== null
+      ? [{ id: 'continue', label: '继续' } as const, ...EDITOR_ACTIONS]
+      : EDITOR_ACTIONS
+    const actionsPlain = actions.map(action => action.label).join('  ')
     const actionsWidth = widthOf(actionsPlain)
     const iconWidth = widthOf(SWITCH_ICON)
     let label = this.projectLabel()
@@ -2425,12 +2317,12 @@ export class SuperPiFooter {
     row += ' '.repeat(gap)
     cursor += gap
     const pieces: string[] = []
-    for (const action of EDITOR_ACTIONS) {
+    for (const action of actions) {
       const text = action.label
       const actionWidth = widthOf(text)
       // **必须登记命中区**，否则这两个入口只有悬停、没有点击
       // （0.9.9 把这一行从编辑器搬到 footer 时漏了这一句 —— 用户实测点不动）。
-      this.hits.push({ kind: action.id as 'settings' | 'home', x: cursor, y, width: actionWidth })
+      this.hits.push({ kind: action.id, x: cursor, y, width: actionWidth })
       pieces.push(hoverState.id === action.id ? hoverStyle(text, (t, v) => this.fg(t, v)) : this.dim(text))
       cursor += actionWidth + 2
     }
@@ -2693,6 +2585,18 @@ export default function superpiEditor(pi: any): void {
   }
 
   const onFooterAction = (ctx: any, kind: string) => {
+    if (kind === 'continue') {
+      if (runState.verdict === null || runState.phase !== 'error' || !ctx.isIdle()) return
+      const previous = runState.verdict
+      runState.verdict = null
+      try {
+        pi.sendUserMessage('继续')
+      } catch (error) {
+        runState.verdict = previous
+        ctx.ui.notify(String(error), 'error')
+      }
+      return
+    }
     if (kind === 'project' || kind === 'switch') {
       runProjectSwitch(ctx)
       return
@@ -2775,6 +2679,7 @@ export default function superpiEditor(pi: any): void {
   }
 
   const install = (ctx: any) => {
+    if (ctx?.mode !== undefined && ctx.mode !== 'tui') return
     try {
       ctx?.ui?.setWorkingVisible?.(false)
       ctx?.ui?.setEditorComponent?.(
@@ -2815,90 +2720,16 @@ export default function superpiEditor(pi: any): void {
     applyWindowTitle(ctx)
   }
   if (typeof pi?.on !== 'function') return
-  pi.on('agent_start', () => {
-    markRunStart()
-    // 新一轮开始 → 清安全判据（冷却时间与重发计数是跨轮的，保留）。
-    resetAutoRetryRunState()
+  pi.on('agent_start', (_event: any, ctx: any) => {
+    if (ctx?.mode === undefined || ctx.mode === 'tui') markRunStart()
   })
-  /**
-   * **识别模型的畸形工具调用**（0.15.1）—— 这是「会话莫名中断」的真正原因之一。
-   *
-   * ---------------------------------------------------------------------------
-   * 现象与根因（实测，n=1993 次调用）
-   *
-   * 上下文占用到 **77.8~77.9%** 时，模型开始不再输出 pi 要求的 JSON 工具调用，
-   * 而是吐出 DeepSeek 的原生 DSML 语法：
-   *
-   *     <｜｜DSML｜｜ parameter name="bash">cd /d/...  <｜｜DSML｜｜ invoke>
-   *
-   * pi 的运行时不认识这种格式（`grep -rln DSML node_modules/@earendil-works` 为空），
-   * 于是把它当成**普通文本回复**收尾（`stopReason: "stop"`）。
-   * agent loop 看不到任何工具调用 → 这一轮就结束了 → **用户看到的就是「中断」**。
-   *
-   * 分布极干净：
-   *   0%~68%   → 1574 次调用，DSML **0 次**
-   *   74%~76%  → 40 次，0 次
-   *   76%~78%  → 264 次，**34 次（12.9%）** ← 全部落在 77.8~77.9%
-   *
-   * 所以：**这不是网络问题、不是超时问题、也不是上限撞墙**，
-   * 而是**远早于上限的能力退化**。上游修不了（那是 provider 的推理行为），
-   * 我们能做两件事：
-   *   ① 治因：把上下文压到退化线以下（`targetRatio` 0.72 → 0.62，见守卫）；
-   *   ② 治症：**让它可见**。以前它静默地结束，用户只知道"又断了"，
-   *      现在明确告知「模型输出格式错乱，本轮未能执行工具，请重试」。
-   *
-   * 为什么只提示、不尝试修复文本：把 DSML 文本还原成工具调用需要猜参数边界，
-   * 猜错就会执行一条错误的命令 —— 在编码 agent 里那比中止危险得多。
-   */
-  pi.on('message_end', (event: any) => {
-    try {
-      const message = event?.message
-      if (message?.role !== 'assistant') return undefined
-      /**
-       * 记录「本轮到目前为止是否产生过 toolCall」。
-       *
-       * 这是自动重发**安全判据的唯一依据**，必须来自真实消息内容，不能靠猜。
-       * 放在 isMalformedToolCall 之前：哪怕这一条不是畸形，也要记（畸形可能出现在后续条）。
-       */
-      if ((message.content || []).some((block: any) => block?.type === 'toolCall')) {
-        currentRunHadToolCall = true
-      }
-      if (!isMalformedToolCall(message)) return undefined
-      /**
-       * 调 `markMalformedOutput`，不是 `markRunFailed`（后者不存在）。
-       *
-       * 0.15.6 这里写错了名字，而它被 `try/catch` 包着 —— `ReferenceError` 被静默吞掉，
-       * 于是"识别到了却没做任何事"：用户看到 `✖ Working` 变红，但文案仍是 `Working`，
-       * 完全不知道发生了什么。**这正是本节要消除的"静默失效"本人。**
-       *
-       * 教训：`try/catch` 里不要调用未定义的函数；更稳的是让门禁断言
-       * 「`isMalformedToolCall` 为真时 `runState.malformed` 必须为真」，
-       * 那样名字写错会直接红，而不是靠人眼看。
-       */
-      markMalformedOutput()
-      /**
-       * 自动重发一次（0.15.9，默认开启，可在设置里关）。
-       *
-       * 判据全在 `shouldAutoRetryOnMalformed` 里，其中**「本轮无 toolCall」是硬拦截**：
-       * 畸形输出时无法确定工具执行了没有，若已有 toolCall，重发可能让它再执行一遍
-       * （`write` / `git push` / `rm` 都可能重复生效）。那种情况宁可停下让人决定。
-       *
-       * 用 `deliverAs: 'followUp'`：此刻 agent 可能还在流式收尾，直接 send 会打断它；
-       * followUp 会排在本轮结束之后 —— 这才是"接着往下跑"的语义。
-       */
-      const decision = decideAutoRetry(readAutoRetrySettings(), {
-        hadToolCall: currentRunHadToolCall,
-        lastAutoRetryAt: lastAutoRetryAt,
-      })
-      if (decision.retry === true) {
-        lastAutoRetryAt = Date.now()
-        autoRetryCount += 1
-        void Promise.resolve(pi.sendUserMessage(AUTO_RETRY_TEXT, { deliverAs: 'followUp' })).catch(() => {})
-      }
-      return undefined
-    } catch {
-      return undefined
-    }
+  pi.on('message_end', (event: any, ctx: any) => {
+    if (ctx?.mode !== undefined && ctx.mode !== 'tui') return
+    const message = event?.message
+    if (message?.role !== 'assistant') return
+    const verdict = detectTurnVerdict(message)
+    if (verdict.delivered) runState.verdict = null
+    else markUndelivered(verdict)
   })
   /**
    * 工具开始/结束（0.14.1）。
@@ -2932,8 +2763,12 @@ export default function superpiEditor(pi: any): void {
     if (event?.isError) markToolError()
     markToolEnd()
   })
-  pi.on('agent_settled', () => markRunSettled())
+  pi.on('agent_settled', (event: any) => {
+    if (event?.aborted) resetRunState()
+    else markRunSettled()
+  })
   pi.on('session_start', (_event: any, ctx: any) => {
+    if (ctx?.mode !== undefined && ctx.mode !== 'tui') return
     resetRunState()
     install(ctx)
     // pi 在 init() 末尾与「检查包更新」之后各重设一次标题（后者是 win32 的异步
