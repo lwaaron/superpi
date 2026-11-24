@@ -330,12 +330,14 @@ export default function delivery(pi: ExtensionAPI) {
       if ((goal !== undefined && !validText(goal)) || paths?.some(path => !validText(path)) || (base && !validText(base))) {
         return taskResult(task, 'Use valid review scope and goal text.', true)
       }
+      const retry = pi.getSettings().retry
       const review = await reviewChanges(ctx, {
         goal: task && item ? task.goal + '\n' + item.description : goal ?? task?.goal ?? 'Review the changed behavior.',
-        paths, base, timeout, taskCheck: check !== undefined,
-      }, signal, (count, requests) => update?.({
-        content: [{ type: 'text', text: 'Independent reviewers returned ' + count + '/2' }],
-        details: { reviewProgress: { completed: count, requests } },
+        paths, base, timeout, taskCheck: check !== undefined, retryStreams: retry?.enabled !== false && retry?.maxRetries !== 0,
+      }, signal, (count, requests, recovering) => update?.({
+        content: [{ type: 'text', text: 'Independent reviewers returned ' + count + '/2' +
+          (recovering ? ' · Resuming ' + recovering + ' from captured source' : '') }],
+        details: { reviewProgress: { completed: count, requests, recovering } },
       }))
       let recorded = false
       let savedNewEvidence = false
@@ -367,6 +369,7 @@ export default function delivery(pi: ExtensionAPI) {
       for (const reviewer of review.reviewers) {
         lines.push(reviewer.focus + ' · ' + reviewer.status + (reviewer.summary ? ' · ' + reviewer.summary : ''))
         if (reviewer.fallback) lines.push('File discovery resumed · ' + reviewer.fallback)
+        if (reviewer.recovery) lines.push('Review resumed from captured source · request ' + reviewer.recovery.request)
         if (reviewer.failure) lines.push('Model result · ' + reviewer.failure)
         if (reviewer.limitation) lines.push('Coverage limitation · ' + reviewer.limitation)
         if (reviewer.notes) lines.push('Notes · ' + reviewer.notes)

@@ -610,6 +610,84 @@ try {
     const content = payload.messages.find(message => message.role === 'user').content
     return JSON.parse(typeof content === 'string' ? content : content.find(block => block.type === 'text').text)
   }
+  const resumeSource = useTool('read_review_file', { path: 'origin.txt', start: 1, count: 1 }, 'resume_source')
+  const readLine = (await fs.readFile(path.join(workspace, 'origin.txt'), 'utf8')).split('\n')[0]
+  const abandonedReport = 'An unfinished report that must never be submitted'
+  const lostReport = { delta: { tool_calls: [{ index: 0, id: 'lost_report', type: 'function', function: {
+    name: 'submit_review', arguments: '{"summary":"' + abandonedReport,
+  } }] }, streamError: gatewayClosed }
+  reviewReplies = { correctness: [resumeSource, lostReport, publish('Completed from the captured source.', [{
+    severity: 'blocking', path: 'origin.txt', line: 1, problem: 'The line conflicts with the fixture contract.',
+  }], 'resumed_report')], tests: [clean('tests')] }
+  const recoveredReview = await run('continue an interrupted review using its finished source read', [
+    requestReview({ paths: ['origin.txt'] }, 'review_transport_resume'), { delta: 'The interrupted report recovered.' },
+  ])
+  const recoveredProof = toolResult(recoveredReview, 'review_transport_resume')?.details?.review
+  const recoveredCalls = reviewRequests(recoveredReview)
+  const recoveredLane = recoveredCalls.filter(payload => laneOf(payload) === 'correctness')
+  const recoveredPacket = recoveredLane[2] && packetOf(recoveredLane[2])
+  check(recoveredProof?.status === 'findings' && recoveredProof.newRequests === 4 &&
+    recoveredProof.pendingReviewers.includes('correctness') &&
+    recoveredProof.reviewers.some(reviewer => reviewer.focus === 'correctness' && reviewer.recovery?.request === 3 &&
+      reviewer.recovery.kind === 'stream-interrupted' && reviewer.status === 'incomplete' &&
+      reviewer.findings?.some(finding => finding.path === 'origin.txt' && finding.line === 1)),
+  'a disconnected reviewer returns its anchored finding while full static coverage remains pending')
+  check(recoveredLane.length === 3 && recoveredCalls.filter(payload => laneOf(payload) === 'tests').length === 1 &&
+    recoveredLane[2].messages.every(message => ['system', 'user'].includes(message.role)) &&
+    recoveredPacket?.sourceReads?.length === 1 && recoveredPacket.sourceReads[0].path === 'origin.txt' &&
+    recoveredPacket.sourceReads[0].start === 1 && recoveredPacket.sourceReads[0].end === 1 &&
+    recoveredPacket.sourceReads[0].text === '1\t' + readLine && Object.keys(recoveredPacket).sort().join(',') === 'goal,sourceReads' &&
+    recoveredLane[2].tools.map(tool => tool.function.name).join(',') === 'submit_review' &&
+    !requestText(recoveredLane[2]).includes(abandonedReport),
+  'a report request receives the exact source excerpt and review goal without the interrupted draft or old tool dialogue')
+  check(recoveredReview.records.some(record => record.type === 'tool_execution_update' &&
+    record.toolCallId === 'review_transport_resume' && record.partialResult?.details?.reviewProgress?.recovering === 'correctness' &&
+    record.partialResult.details.reviewProgress.requests === 4 &&
+    record.partialResult.content.some(block => block.text?.includes('Resuming correctness from captured source'))) &&
+    toolResult(recoveredReview, 'review_transport_resume')?.content.some(block => block.text?.includes('Review resumed from captured source')),
+  'the displayed progress and report name the reviewer resuming from captured evidence')
+
+  reviewReplies = { correctness: [resumeSource, lostReport, lostReport], tests: [clean('tests')] }
+  const repeatedLoss = await run('bound repeated disconnects during review', [
+    requestReview({ paths: ['origin.txt'] }, 'review_transport_bound'), { delta: 'There is still an incomplete review.' },
+  ])
+  const lostProof = toolResult(repeatedLoss, 'review_transport_bound')?.details?.review
+  check(lostProof?.status === 'partial' && lostProof.newRequests === 4 && lostProof.reviewers.some(reviewer =>
+    reviewer.focus === 'correctness' && reviewer.requests === 3 && reviewer.failure === 'stream-interrupted' &&
+    reviewer.recovery?.request === 3 && !reviewer.summary), 'a second disconnect keeps the report partial and dispatches no third attempt')
+
+  reviewReplies = { correctness: [resumeSource, lostReport, useTool('read_review_file', {
+    path: 'origin.txt', start: 1, count: 2,
+  }, 'unavailable_read'), clean('correctness')], tests: [clean('tests')] }
+  const delayedDiscovery = await run('bound the recovery phase to a single report attempt', [
+    requestReview({ paths: ['origin.txt'] }, 'review_report_only'), { delta: 'The report still needs coverage.' },
+  ])
+  const reportOnlyProof = toolResult(delayedDiscovery, 'review_report_only')?.details?.review
+  check(reportOnlyProof?.status === 'partial' && reportOnlyProof.newRequests === 4 && reportOnlyProof.reviewers.some(reviewer =>
+    reviewer.focus === 'correctness' && reviewer.recovery?.request === 3 && !reviewer.summary),
+  'an attempted discovery call on the report request leaves a genuine partial review without another provider request')
+
+  reviewReplies = { correctness: [...manyReads, lostReport], tests: [clean('tests')] }
+  const lastRequestLoss = await run('stop review recovery at the lane request limit', [
+    requestReview({ paths: ['origin.txt'] }, 'review_transport_limit'), { delta: 'The final review request was interrupted.' },
+  ])
+  const limitProof = toolResult(lastRequestLoss, 'review_transport_limit')?.details?.review
+  check(limitProof?.status === 'partial' && limitProof.newRequests === 13 && limitProof.reviewers.some(reviewer =>
+    reviewer.focus === 'correctness' && reviewer.requests === 12 && reviewer.failure === 'stream-interrupted' && !reviewer.recovery),
+  'recovery spends the same lane budget and cannot dispatch beyond the last report request')
+
+  const firstResumeRequest = requests.length
+  reviewReplies = { correctness: [resumeSource, lostReport, { hold: true }], tests: [clean('tests')] }
+  const stoppedReview = await run('stop an independent reviewer during recovery', [
+    requestReview({ paths: ['origin.txt'] }, 'review_transport_stop'),
+  ], { interact: async () => {
+    await until(() => requests.slice(firstResumeRequest).filter(laneOf), calls =>
+      calls.filter(payload => laneOf(payload) === 'correctness').length === 3, 'the reviewer recovery request')
+    await command({ type: 'abort' })
+  } })
+  check(reviewRequests(stoppedReview).length === 4 && stoppedReview.records.some(record =>
+    record.type === 'agent_settled' && record.aborted), 'explicit stop cancels the recovery request within the parent activity')
+
   reviewReplies = { correctness: [{ delta: 'No structured report yet.' }], tests: [clean('tests')] }
   const firstAttempt = await run('start a review that will need to resume', [
     beginReview('Keep completed evidence across a session reload', 'repeat_plan'),
@@ -693,6 +771,14 @@ try {
   const retryOff = await run('report the interruption with native retry disabled', [{ delta: 'Incomplete', streamError: earlyClose }])
   check(retryOff.requests.length === 1 && lastAssistant(retryOff)?.verdict?.kind === 'stream-interrupted',
     'the recovery respects the native retry switch and still reports the interruption')
+  reviewReplies = { correctness: [resumeSource, lostReport], tests: [clean('tests')] }
+  const reviewRetryOff = await run('leave reviewer stream recovery off when native retry is disabled', [
+    requestReview({ paths: ['origin.txt'] }, 'review_transport_off'), { delta: 'Independent review is still partial.' },
+  ])
+  const offProof = toolResult(reviewRetryOff, 'review_transport_off')?.details?.review
+  check(offProof?.status === 'partial' && offProof.newRequests === 3 && offProof.reviewers.some(reviewer =>
+    reviewer.focus === 'correctness' && reviewer.failure === 'stream-interrupted' && !reviewer.recovery),
+    'the independent reviewer respects the session retry setting even after acquiring source evidence')
 
   await request(session(), undefined, 'DELETE')
   sessionId = undefined

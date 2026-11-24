@@ -229,10 +229,10 @@ New-Item -ItemType Junction `
 ### 方式三：手工 pnpm add（不想跑脚本时）
 
 ```powershell
-npm pack                                        # 得到 superpi-0.25.0.tgz
+npm pack                                        # 得到 superpi-0.26.0.tgz
 cd "$env:USERPROFILE\.dsh\profiles\desktop"
 node "$env:USERPROFILE\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\pnpm\bin\pnpm.cjs" `
-  add "file:C:\path\to\superpi-0.25.0.tgz" --ignore-scripts
+  add "file:C:\path\to\superpi-0.26.0.tgz" --ignore-scripts
 ```
 
 不要在 profile 里用 `npm install`：npm 会另写一份 `package-lock.json`，而宿主插件管理器用的是 pnpm，两套锁文件互相看不见，下次插件安装就会把 node_modules 重建成 pnpm 理解的样子。
@@ -450,6 +450,7 @@ npm install --prefix <插件>/.runtime --save-exact --no-audit --no-fund --logle
 - 0.23.1 在发起审查请求时记录计数，支持回看超时或强制停止前的请求量。`metrics` 对复用报告去重，并标出旧日志中缺失计数的审查。评审自身的断流与其他模型错误可在报告中查阅。
 - 0.25.0 对最多 12 个常规源文件和项目清单、完整证据包不超过 12 KB 且符合模型预算的快照，首轮提供当前完整源码和 Git 差异。差异重复的正文超预算时，可提供改动文件的 Git 基准内容和当前完整源码。首轮使用剩余时限的三分之一，最长 15 秒。超时或可恢复的输出失败时，该路评审在同一时限内按需查阅。显式路径、删文件、混合仓库和超预算快照从 Git 差异开始。按需查阅会引用已经提供过的大段源码，短范围仍返回精确的带行号原文。静态缺口、阻塞发现和独立测试结果分别进入验收。
 - 第三方网关报告 `upstream aborted (gateway closed stream)` 时，面板和命令行会显示断流。开启重试时主回合从已完成的工具结果继续，未完成的模型草稿保留在会话记录中供排查。
+- 0.26.0 独立评审成功读取源码后遇到网关断流，可以用一次请求提交已有证据支持的报告。该请求使用任务目标及带行号的源码摘录，最多 12 KB 且遵循模型预算。恢复遵循原时限、请求预算和会话重试设置。已有发现进入报告，全量评审仍待验收，另一份报告照常保留。
 
 ## 测试
 
