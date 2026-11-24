@@ -2,7 +2,7 @@ import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-a
 import { Type } from 'typebox'
 import { scanTextBytes } from './superpi-text-bytes.mjs'
 import { applyVerificationMutations, verificationCommand, waitForVerification, withVerificationSnapshot, workspaceFingerprint } from './superpi-verification.mjs'
-import { reviewChanges } from './superpi-review.mjs'
+import { REVIEW_CHECKPOINT, reviewChanges } from './superpi-review.mjs'
 
 const TASK = 'superpi-task'
 const shells = Type.Union([Type.Literal('bash'), Type.Literal('powershell')])
@@ -331,6 +331,8 @@ export default function delivery(pi: ExtensionAPI) {
         return taskResult(task, 'Use valid review scope and goal text.', true)
       }
       const retry = pi.getSettings().retry
+      const appendCheckpoint = ctx.sessionManager.getSessionFile() ?
+        (checkpoint: unknown) => pi.appendEntry(REVIEW_CHECKPOINT, checkpoint) : undefined
       const review = await reviewChanges(ctx, {
         goal: task && item ? task.goal + '\n' + item.description : goal ?? task?.goal ?? 'Review the changed behavior.',
         paths, base, timeout, taskCheck: check !== undefined, retryStreams: retry?.enabled !== false && retry?.maxRetries !== 0,
@@ -338,7 +340,7 @@ export default function delivery(pi: ExtensionAPI) {
         content: [{ type: 'text', text: 'Independent reviewers returned ' + count + '/2' +
           (recovering ? ' · Resuming ' + recovering + ' from captured source' : '') }],
         details: { reviewProgress: { completed: count, requests, recovering } },
-      }))
+      }), appendCheckpoint)
       let recorded = false
       let savedNewEvidence = false
       if (task && item && review.status !== 'aborted') {
@@ -361,7 +363,7 @@ export default function delivery(pi: ExtensionAPI) {
       else if (review.omitted.length) remaining = 'Independent review still needs evidence for the files outside text coverage.'
       else if (review.pendingReviewers.length) remaining = 'Independent review still needs complete reports from ' + review.pendingReviewers.join(' and ') + '.'
       const repeated = review.repeated && review.status !== 'stale' && !savedNewEvidence
-      const lines = ['Independent review ' + review.status, review.message,
+      const lines = ['Independent review ' + review.status, review.message, review.checkpointWarning,
         blocking && review.pendingReviewers.length ? 'Pending static coverage · ' + review.pendingReviewers.join(', ') : '',
         review.reused.length ? 'Reports carried forward: ' + review.reused.join(', ') : '',
         review.omitted.length ? 'Outside text coverage: ' + review.omitted.join(', ') : '',

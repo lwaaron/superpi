@@ -769,6 +769,57 @@ try {
     reviewRequests(checkpointAfterEdit).length === 2 && reviewRequests(checkpointAfterEdit).every(payload => !packetOf(payload).sourceReads),
   'a changed worktree invalidates the earlier source coordinates even for the same review goal')
 
+  const crashFile = path.join(workspace, 'origin.txt')
+  const beforeCrashSource = await fs.readFile(crashFile, 'utf8')
+  const crashSource = beforeCrashSource + '\n' + path.basename(temp) + '\n'
+  await fs.writeFile(crashFile, crashSource)
+  const liveSession = await snapshot()
+  const liveSessionFile = (await command({ type: 'get_state' })).data.sessionFile
+  const beforeCrash = requests.length
+  reviewReplies = { correctness: [savedRead, { hold: true }], tests: [clean('tests')] }
+  replies = [beginReview('Resume after the review process exits', 'live_checkpoint_plan'),
+    requestReview({ check: 1, timeout: 30 }, 'crashed_review')]
+  assert.equal((await command({ type: 'prompt', message: 'Begin a review that will be interrupted while running' })).ok, true)
+  await until(snapshot, state => state.events.some(entry => entry.seq > liveSession.eventSeq &&
+    entry.record.toolCallId === 'crashed_review' && entry.record.partialResult?.details?.reviewProgress?.completed === 1) &&
+    requests.slice(beforeCrash).filter(payload => laneOf(payload) === 'correctness').length === 2,
+  'one returned reviewer and an in-flight request after the other reviewer read the source')
+  const liveEntries = (await fs.readFile(liveSessionFile, 'utf8')).trim().split(/\r?\n/).map(line => JSON.parse(line))
+  const liveCheckpoints = liveEntries.filter(entry => entry.type === 'custom' && entry.customType === 'superpi-review-checkpoint')
+  check(liveCheckpoints.some(entry => entry.data.focus === 'correctness' && entry.data.range?.path === savedPath &&
+    entry.data.range.start === 1 && entry.data.range.end === 1) &&
+    liveCheckpoints.some(entry => entry.data.focus === 'tests' && entry.data.report?.status === 'complete') &&
+    !JSON.stringify(liveCheckpoints).includes(savedLine) && !liveEntries.some(entry =>
+      entry.type === 'message' && entry.message.role === 'toolResult' && entry.message.toolCallId === 'crashed_review'),
+  'the session file holds completed source coordinates and the other report while review_changes is still running')
+
+  assert(Number.isInteger(liveSession.pid) && liveSession.pid > 0 && liveSession.pid !== process.pid, 'terminate only the spawned fixture subprocess')
+  process.kill(liveSession.pid, 'SIGKILL')
+  await until(() => request('/state'), state => !state.sessions.some(item => item.id === liveSession.id), 'the fixture subprocess to exit')
+  const snapshotParent = await fs.realpath(os.tmpdir())
+  for (const entry of await fs.readdir(snapshotParent, { withFileTypes: true })) {
+    if (!entry.isDirectory() || !entry.name.startsWith('superpi-verify-')) continue
+    const target = path.join(snapshotParent, entry.name)
+    if (await fs.readFile(path.join(target, 'origin.txt'), 'utf8').catch(() => '') !== crashSource) continue
+    assert.equal(await fs.realpath(target), target, 'the owned fixture snapshot is inside the temporary directory')
+    await fs.rm(target, { recursive: true })
+  }
+  sessionId = (await request('/sessions', {})).session.id
+  assert.equal((await command({ type: 'switch_session', sessionPath: liveSessionFile })).ok, true)
+  reviewReplies = { correctness: [payload => exactRestoredRead(payload) ? resumedReport : savedRead, resumedReport], tests: [clean('tests')] }
+  const afterCrash = await run('continue the review stopped by a process exit', [
+    requestReview({ check: 1 }, 'review_after_crash'), useTool('task_progress', { action: 'finish' }, 'finish_after_crash'),
+    { delta: 'The continued review completed.' },
+  ])
+  const crashCalls = reviewRequests(afterCrash)
+  const crashProof = toolResult(afterCrash, 'review_after_crash')?.details?.review
+  await fs.writeFile(crashFile, beforeCrashSource)
+  check(crashCalls.length === 1 && laneOf(crashCalls[0]) === 'correctness' && exactRestoredRead(crashCalls[0]) &&
+    crashProof?.execution === 'resumed' && crashProof.reused.join(',') === 'tests' &&
+    toolResult(afterCrash, 'review_after_crash')?.content.some(block => block.text.includes('Source excerpts restored · 1')) &&
+    toolResult(afterCrash, 'finish_after_crash')?.details?.task?.status === 'complete',
+  'a new subprocess restores evidence before its first model request and reuses the report from the exited reviewer')
+
   reviewReplies = Object.fromEntries(['correctness', 'tests'].map(focus => [focus, [
     { delta: 'First ' + focus + ' attempt without a report.' }, { delta: 'Second ' + focus + ' attempt without a report.' },
   ]]))

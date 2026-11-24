@@ -229,10 +229,10 @@ New-Item -ItemType Junction `
 ### 方式三：手工 pnpm add（不想跑脚本时）
 
 ```powershell
-npm pack                                        # 得到 superpi-0.27.0.tgz
+npm pack                                        # 得到 superpi-0.28.0.tgz
 cd "$env:USERPROFILE\.dsh\profiles\desktop"
 node "$env:USERPROFILE\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\pnpm\bin\pnpm.cjs" `
-  add "file:C:\path\to\superpi-0.27.0.tgz" --ignore-scripts
+  add "file:C:\path\to\superpi-0.28.0.tgz" --ignore-scripts
 ```
 
 不要在 profile 里用 `npm install`：npm 会另写一份 `package-lock.json`，而宿主插件管理器用的是 pnpm，两套锁文件互相看不见，下次插件安装就会把 node_modules 重建成 pnpm 理解的样子。
@@ -452,6 +452,7 @@ npm install --prefix <插件>/.runtime --save-exact --no-audit --no-fund --logle
 - 第三方网关报告 `upstream aborted (gateway closed stream)` 时，面板和命令行会显示断流。开启重试时主回合从已完成的工具结果继续，未完成的模型草稿保留在会话记录中供排查。
 - 0.26.0 独立评审成功读取源码后遇到网关断流，可以用一次请求提交已有证据支持的报告。该请求使用任务目标及带行号的源码摘录，最多 12 KB 且遵循模型预算。恢复遵循原时限、请求预算和会话重试设置。已有发现进入报告，全量评审仍待验收，另一份报告照常保留。
 - 0.27.0 未完成的评审会在会话里保存最近读取成功的文件路径和行号，最多 64 段。重新打开会话后，续审从同一指纹的 Git 快照重建带行号的摘录，按原输入预算送给待补审的一路。评审结果显示保存和恢复的数量。源码变化会启动新评审，完整报告仍是验收条件。
+- 0.28.0 会在每次有新源码读取结果、一路评审提交有效报告时写入 Pi 会话。若进程在 `review_changes` 回传前退出，重新打开会话后发起同一项评审即可恢复已读范围和已提交的报告。源码指纹仍须匹配。记录只保存路径、行号和已验证的报告，续审时从快照恢复源码。
 
 ## 测试
 

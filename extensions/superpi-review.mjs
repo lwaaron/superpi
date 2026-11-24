@@ -5,6 +5,7 @@ import { scanTextBytes } from './superpi-text-bytes.mjs'
 import { detectTurnVerdict } from './superpi-turn-verdict.mjs'
 import { waitForVerification, withReviewSnapshot, workspaceFingerprint } from './superpi-verification.mjs'
 
+export const REVIEW_CHECKPOINT = 'superpi-review-checkpoint'
 const REQUEST_LIMIT = 12
 const REVIEW_ATTEMPTS = 2
 const SNAPSHOT_INLINE_FILES = 12
@@ -45,9 +46,20 @@ function reviewHistory(ctx, key, taskCheck) {
   let latest
   let attempts = 0
   let currentActivity = true
+  const closed = new Set()
+  const interruptedAttempts = new Set()
+  const checkpoints = []
   const branch = ctx.sessionManager.getBranch()
   for (let i = branch.length - 1; i >= 0; i -= 1) {
     const entry = branch[i]
+    if (entry.type === 'custom' && entry.customType === REVIEW_CHECKPOINT) {
+      const checkpoint = entry.data
+      if (checkpoint?.key !== key || typeof checkpoint.attemptId !== 'string' || closed.has(checkpoint.attemptId) ||
+        !Object.hasOwn(focuses, checkpoint.focus)) continue
+      if (currentActivity) interruptedAttempts.add(checkpoint.attemptId)
+      if (!previous) checkpoints.push(checkpoint)
+      continue
+    }
     if (entry.type !== 'message') continue
     const message = entry.message
     if (message.role === 'user') {
@@ -57,6 +69,7 @@ function reviewHistory(ctx, key, taskCheck) {
     if (message.role !== 'toolResult' || message.toolName !== 'review_changes') continue
     const review = message.details?.review
     if (review?.key !== key || !Array.isArray(review.reviewers)) continue
+    if (review.attemptId) closed.add(review.attemptId)
     if (currentActivity) {
       latest ??= review
       if (review.execution === 'new' || review.execution === 'resumed') attempts += 1
@@ -64,26 +77,53 @@ function reviewHistory(ctx, key, taskCheck) {
     if (!['aborted', 'stale', 'unavailable'].includes(review.status)) previous ??= review
     if (!currentActivity && previous) break
   }
-  return { previous, latest, attempts }
+  return { previous: restoreCheckpoints(previous, checkpoints), latest, attempts: attempts + interruptedAttempts.size }
 }
 
 function saveSourceRange(ranges, { path, start, end }) {
   const key = JSON.stringify([path, start, end])
-  ranges.delete(key)
+  const alreadySaved = ranges.delete(key)
   ranges.set(key, { path, start, end })
   if (ranges.size > SAVED_READS) ranges.delete(ranges.keys().next().value)
+  return !alreadySaved
+}
+
+function validSourceRange(range) {
+  const { path, start, end } = range ?? {}
+  return typeof path === 'string' && path.length > 0 && path.length <= 1024 && Number.isSafeInteger(start) &&
+    Number.isSafeInteger(end) && start > 0 && end >= start && end - start < READ_LINES
 }
 
 function savedSourceRanges(receipt) {
   const ranges = new Map()
   if (!Array.isArray(receipt?.sourceRanges)) return ranges
   for (const range of receipt.sourceRanges.slice(-SAVED_READS)) {
-    const { path, start, end } = range ?? {}
-    if (typeof path !== 'string' || !path.length || path.length > 1024 || !Number.isSafeInteger(start) ||
-      !Number.isSafeInteger(end) || start < 1 || end < start || end - start >= READ_LINES) continue
-    saveSourceRange(ranges, { path, start, end })
+    if (validSourceRange(range)) saveSourceRange(ranges, range)
   }
   return ranges
+}
+
+function restoreCheckpoints(previous, checkpoints) {
+  if (!checkpoints.length) return previous
+  const chronological = checkpoints.toReversed()
+  const reviewers = Object.keys(focuses).map(focus => {
+    let report = previous?.reviewers.find(reviewer => reviewer.focus === focus)
+    let ranges = savedSourceRanges(report)
+    for (const checkpoint of chronological) {
+      if (checkpoint.focus !== focus) continue
+      if (checkpoint.report?.focus === focus && ['complete', 'incomplete'].includes(checkpoint.report.status) &&
+        typeof checkpoint.report.summary === 'string' && Array.isArray(checkpoint.report.findings)) {
+        report = checkpoint.report
+        ranges = savedSourceRanges(report)
+      } else if (report?.status !== 'complete' && validSourceRange(checkpoint.range)) {
+        saveSourceRange(ranges, checkpoint.range)
+      }
+    }
+    if (report?.status === 'complete') return report
+    return { focus, status: 'incomplete', limitation: 'The process exited before the review finished.', ...report,
+      sourceRanges: [...ranges.values()] }
+  })
+  return { status: 'partial', fromCheckpoint: true, inputMode: checkpoints[0].inputMode ?? previous?.inputMode, reviewers }
 }
 
 function laneReceipt(meter, saveReads = true) {
@@ -178,7 +218,7 @@ function recoveryInput(goal, messages, restored, limit) {
 }
 
 async function reviewPass({ focus, goal, input, inputLimit, model, registry, snapshot, signal, readAllowance, resuming, suppliedSources, retryStreams,
-  inline = false, meter, onRequest }) {
+  inline = false, meter, onRequest, onCheckpoint }) {
   let report
   let resumingStream = false
   let bytesLeft = readAllowance
@@ -323,7 +363,9 @@ async function reviewPass({ focus, goal, input, inputLimit, model, registry, sna
   const unlisten = agent.subscribe(event => {
     if (event.type !== 'message_end') return
     const { message } = event
-    if (!signal.aborted && completedRead(message)) saveSourceRange(meter.sourceRanges, message.details)
+    if (!signal.aborted && completedRead(message) && saveSourceRange(meter.sourceRanges, message.details)) {
+      onCheckpoint({ focus, range: message.details })
+    }
     if (message.role !== 'assistant') return
     meter.usage.inputTokens += message.usage?.input ?? 0
     meter.usage.outputTokens += message.usage?.output ?? 0
@@ -386,7 +428,7 @@ async function reviewLane(options, bundle, deadlineAt) {
   return reviewPass(options)
 }
 
-export async function reviewChanges(ctx, params, signal, onProgress) {
+export async function reviewChanges(ctx, params, signal, onProgress, appendCheckpoint) {
   const deadlineAt = performance.now() + params.timeout * 1000
   const deadline = AbortSignal.timeout(params.timeout * 1000)
   const active = signal ? AbortSignal.any([deadline, signal]) : deadline
@@ -397,6 +439,14 @@ export async function reviewChanges(ctx, params, signal, onProgress) {
   const result = { status: 'unavailable', reviewers, omitted: [], scope: params.paths ?? [],
     uncovered: [], uncoveredCount: 0, revision: '', fingerprint: '', key: '',
     inputMode: 'diff', execution: 'not_started', attempts: 0, newRequests: 0, reused: [], repeated: false, pendingReviewers: Object.keys(focuses) }
+  const saveCheckpoint = checkpoint => {
+    if (!appendCheckpoint || active.aborted || result.checkpointWarning) return
+    try {
+      appendCheckpoint({ key: result.key, attemptId: result.attemptId, inputMode: result.inputMode, ...checkpoint })
+    } catch {
+      result.checkpointWarning = 'Live review checkpoints could not be written to the session.'
+    }
+  }
   const model = ctx.model
   if (!model) return { ...result, message: 'Select a model before requesting independent review.' }
   publishProgress()
@@ -459,6 +509,7 @@ export async function reviewChanges(ctx, params, signal, onProgress) {
       result.inputMode = bundle ? 'snapshot' : 'diff'
       result.execution = previous ? 'resumed' : 'new'
       result.attempts += 1
+      result.attemptId = randomUUID()
       for (const [focus, report] of known) {
         if (report.status !== 'complete') continue
         reviewers.push(report)
@@ -475,8 +526,9 @@ export async function reviewChanges(ctx, params, signal, onProgress) {
         meters.set(focus, meter)
         let outcome = await reviewLane({ focus, goal: params.goal, input: reviewInput, inputLimit, model, registry: ctx.modelRegistry, snapshot,
           signal: active, readAllowance, resuming: Boolean(previous), suppliedSources, retryStreams: params.retryStreams,
-          meter, onRequest: publishProgress }, bundle, deadlineAt)
+          meter, onRequest: publishProgress, onCheckpoint: saveCheckpoint }, bundle, deadlineAt)
           .catch(() => ({ focus, status: active.aborted ? 'cancelled' : 'incomplete', ...laneReceipt(meter) }))
+        if (outcome.summary) saveCheckpoint({ focus, report: outcome })
         if (outcome.status !== 'complete' && !outcome.findings?.length && prior?.findings?.length) {
           outcome = { ...outcome, summary: prior.summary, findings: prior.findings, notes: outcome.notes ?? prior.notes,
             limitation: outcome.limitation ?? prior.limitation }
@@ -487,7 +539,7 @@ export async function reviewChanges(ctx, params, signal, onProgress) {
     }
     active.throwIfAborted()
     if (await workspaceFingerprint(ctx.cwd, active) !== snapshot.fingerprint) result.status = 'stale'
-    else if (result.execution === 'reused') result.status = previous.status
+    else if (result.execution === 'reused' && !previous.fromCheckpoint) result.status = previous.status
     else if (reviewers.some(reviewer => reviewer.findings?.some(finding => finding.severity === 'blocking'))) result.status = 'findings'
     else if (result.omitted.length > 0 || reviewers.some(reviewer => reviewer.status !== 'complete')) result.status = 'partial'
     else result.status = 'clear'
