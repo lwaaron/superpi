@@ -688,7 +688,12 @@ try {
   check(reviewRequests(stoppedReview).length === 4 && stoppedReview.records.some(record =>
     record.type === 'agent_settled' && record.aborted), 'explicit stop cancels the recovery request within the parent activity')
 
-  reviewReplies = { correctness: [{ delta: 'No structured report yet.' }], tests: [clean('tests')] }
+  const savedPath = 'existing-check.spec.mjs'
+  const savedFile = await fs.readFile(path.join(workspace, savedPath), 'utf8')
+  const savedLine = savedFile.split('\n')[0]
+  const savedRead = useTool('read_review_file', { path: savedPath, start: 1, count: 1 }, 'durable_source')
+  const deniedRead = useTool('read_review_file', { path: '../private.txt', start: 1, count: 1 }, 'denied_checkpoint')
+  reviewReplies = { correctness: [savedRead, deniedRead, lostReport, lostReport], tests: [clean('tests')] }
   const firstAttempt = await run('start a review that will need to resume', [
     beginReview('Keep completed evidence across a session reload', 'repeat_plan'),
     requestReview({ check: 1 }, 'partial_review'),
@@ -697,14 +702,29 @@ try {
   ])
   const firstProof = toolResult(firstAttempt, 'partial_review')?.details?.review
   const reviewSessionFile = (await command({ type: 'get_state' })).data.sessionFile
-  await command({ type: 'new_session' })
+  const closedReviewSession = sessionId
+  await request(session(), undefined, 'DELETE')
+  sessionId = undefined
+  const persisted = (await fs.readFile(reviewSessionFile, 'utf8')).trim().split(/\r?\n/).map(line => JSON.parse(line))
+    .find(record => record.type === 'message' && record.message.toolCallId === 'partial_review')?.message.details.review
+  const savedReviewer = persisted?.reviewers.find(reviewer => reviewer.focus === 'correctness')
+  check(savedReviewer?.failure === 'stream-interrupted' && savedReviewer.recovery?.request === 4 &&
+    JSON.stringify(savedReviewer.sourceRanges) === JSON.stringify([{ path: savedPath, start: 1, end: 1 }]) &&
+    !JSON.stringify(persisted).includes(savedLine),
+  'the session file records only the successful source coordinates after both review streams disconnect')
+
+  sessionId = (await request('/sessions', {})).session.id
+  assert.notEqual(sessionId, closedReviewSession, 'restart the review subprocess before loading the session file')
   const reopened = await command({ type: 'switch_session', sessionPath: reviewSessionFile })
   assert.equal(reopened.ok, true, 'reopen the persisted review evidence')
   execFileSync('git', ['-c', 'core.autocrlf=false', 'add', 'review-new.txt'], { cwd: workspace })
-  reviewReplies = { correctness: [useTool('submit_review', {
+  const resumedReport = useTool('submit_review', {
     summary: 'Checked the captured code and callers.', findings: [],
     notes: 'This is a static review. Test execution is separate verification.',
-  }, 'correctness_with_static_scope_note')] }
+  }, 'correctness_with_static_scope_note')
+  const exactRestoredRead = payload => packetOf(payload).sourceReads?.some(read =>
+    read.path === savedPath && read.start === 1 && read.end === 1 && read.text === '1\t' + savedLine)
+  reviewReplies = { correctness: [payload => exactRestoredRead(payload) ? resumedReport : savedRead, resumedReport] }
   const resumedReview = await run('resume only the missing reviewer', [
     useTool('task_progress', { action: 'resume' }, 'resume_review'),
     requestReview({ check: 1, paths: ['review-new.txt', 'origin.txt'], base: 'HEAD', timeout: 7,
@@ -721,6 +741,33 @@ try {
   check(combined?.reviewers.some(reviewer => reviewer.focus === 'correctness' && reviewer.status === 'complete' &&
     reviewer.notes === 'This is a static review. Test execution is separate verification.'),
   'a static-scope note is preserved without being treated as missing review evidence')
+  const resumedCalls = reviewRequests(resumedReview)
+  check(resumedCalls.length === 1 && exactRestoredRead(resumedCalls[0]) &&
+    combined?.reviewers.some(reviewer => reviewer.focus === 'correctness' && reviewer.restoredReads === 1) &&
+    toolResult(resumedReview, 'resumed_review')?.content.some(block => block.text?.includes('Source excerpts restored · 1')),
+  'after a process restart the first missing-reviewer request already contains the verified numbered excerpt')
+
+  reviewReplies = { correctness: [savedRead, { delta: 'The independent report is still pending.' }], tests: [clean('tests')] }
+  const checkpointBeforeEdit = await run('leave source coordinates under the old fingerprint', [
+    beginReview('Restore excerpts only for the same source', 'changed_checkpoint_plan'),
+    requestReview({ check: 1 }, 'changed_checkpoint_old'),
+    useTool('task_progress', { action: 'block', reason: 'The independent report is still pending.' }, 'changed_checkpoint_block'),
+    { delta: 'The review is pending.' },
+  ])
+  await fs.writeFile(path.join(workspace, savedPath), '// The verification source changed on disk.\n')
+  reviewReplies = { correctness: [clean('correctness')], tests: [clean('tests')] }
+  const checkpointAfterEdit = await run('review from a clean slate after the captured bytes change', [
+    useTool('task_progress', { action: 'resume' }, 'changed_checkpoint_resume'),
+    requestReview({ check: 1 }, 'changed_checkpoint_new'), useTool('task_progress', { action: 'finish' }, 'changed_checkpoint_finish'),
+    { delta: 'Both fresh reports were recorded.' },
+  ])
+  await fs.writeFile(path.join(workspace, savedPath), savedFile)
+  const beforeCheckpoint = toolResult(checkpointBeforeEdit, 'changed_checkpoint_old')?.details?.review
+  const afterCheckpoint = toolResult(checkpointAfterEdit, 'changed_checkpoint_new')?.details?.review
+  check(beforeCheckpoint?.reviewers.some(reviewer => reviewer.focus === 'correctness' && reviewer.sourceRanges?.[0].path === savedPath) &&
+    afterCheckpoint?.execution === 'new' && beforeCheckpoint.fingerprint !== afterCheckpoint.fingerprint &&
+    reviewRequests(checkpointAfterEdit).length === 2 && reviewRequests(checkpointAfterEdit).every(payload => !packetOf(payload).sourceReads),
+  'a changed worktree invalidates the earlier source coordinates even for the same review goal')
 
   reviewReplies = Object.fromEntries(['correctness', 'tests'].map(focus => [focus, [
     { delta: 'First ' + focus + ' attempt without a report.' }, { delta: 'Second ' + focus + ' attempt without a report.' },

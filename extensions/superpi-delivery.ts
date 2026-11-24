@@ -370,6 +370,8 @@ export default function delivery(pi: ExtensionAPI) {
         lines.push(reviewer.focus + ' · ' + reviewer.status + (reviewer.summary ? ' · ' + reviewer.summary : ''))
         if (reviewer.fallback) lines.push('File discovery resumed · ' + reviewer.fallback)
         if (reviewer.recovery) lines.push('Review resumed from captured source · request ' + reviewer.recovery.request)
+        if (reviewer.restoredReads) lines.push('Source excerpts restored · ' + reviewer.restoredReads)
+        if (reviewer.sourceRanges?.length) lines.push('Source ranges saved · ' + reviewer.sourceRanges.length)
         if (reviewer.failure) lines.push('Model result · ' + reviewer.failure)
         if (reviewer.limitation) lines.push('Coverage limitation · ' + reviewer.limitation)
         if (reviewer.notes) lines.push('Notes · ' + reviewer.notes)
