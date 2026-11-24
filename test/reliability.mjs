@@ -442,6 +442,84 @@ try {
   check(changed.requests.length === 6 && toolResult(changed, 'new_block')?.details?.task?.status === 'blocked',
     'an explicit blocker persists and prevents automatic continuation')
 
+  assert.equal((await command({ type: 'new_session' })).ok, true)
+  const verificationControl = path.join(workspace, 'private.txt')
+  const repeatCommand = `node -e "if (require('node:fs').readFileSync('private.txt', 'utf8') === 'hold') { console.log('acceptance rerun executing'); setTimeout(() => process.exit(7), 5000) }"`
+  const rerunVerification = id => useTool('verify', { command: repeatCommand, check: 1, timeout: 20 }, id)
+  const waitForRerun = (id, since) => until(snapshot, state => state.events.some(entry => entry.seq > since &&
+    entry.record.type === 'tool_execution_update' && entry.record.toolCallId === id &&
+    entry.record.partialResult?.content?.some(block => block.text?.includes('acceptance rerun executing'))),
+  'real shell output while the rerun is in progress')
+  const verificationBeforeStop = await run('record command and observation evidence before a repeat run', [
+    useTool('task_progress', { action: 'start', goal: 'Deliver with the latest accepted verification', checks: [
+      { description: 'Run the acceptance command again when needed', command: repeatCommand },
+      { description: 'Inspect the existing artifact' },
+    ] }, 'rerun_task'),
+    useTool('task_progress', { action: 'observe', check: 2, observation: 'Confirmed origin.txt is readable.' }, 'rerun_observation'),
+    rerunVerification('original_verification'),
+    { delta: 'The initial evidence was recorded.' }, { delta: 'I will repeat the command before delivery.' },
+  ])
+  check(toolResult(verificationBeforeStop, 'original_verification')?.details?.verification?.recorded &&
+    (await snapshot()).taskWidget?.widgetLines?.some(line => line.includes('2/2')),
+  'the task has genuine successful command evidence before the new attempt')
+
+  await fs.writeFile(verificationControl, 'hold')
+  const stoppedVerification = await run('stop the repeated verification while its command is running', [
+    rerunVerification('cancelled_verification'),
+  ], { interact: async since => {
+    await waitForRerun('cancelled_verification', since)
+    assert.equal((await command({ type: 'abort' })).ok, true)
+  } })
+  check(stoppedVerification.records.at(-1)?.aborted && stoppedVerification.requests.length === 1 &&
+    (await snapshot()).taskWidget?.widgetLines?.some(line => line.includes('1/2')),
+  'a user stop leaves only the rechecked command pending and makes no new model request')
+
+  await fs.writeFile(verificationControl, 'ignored fixture')
+  const verifiedAgain = await run('earn fresh evidence before simulating a process exit', [
+    rerunVerification('verification_before_exit'),
+    { delta: 'This verification completed.' }, { delta: 'The task can still be checked again.' },
+  ])
+  const proofBeforeExit = toolResult(verifiedAgain, 'verification_before_exit')
+  check(proofBeforeExit?.details?.verification?.recorded, 'a successful retry restores command evidence after a stop')
+
+  const verificationProcess = await snapshot()
+  const verificationSession = (await command({ type: 'get_state' })).data.sessionFile
+  await fs.writeFile(verificationControl, 'hold')
+  replies = [rerunVerification('verification_interrupted_by_exit')]
+  assert.equal((await command({ type: 'prompt', message: 'Repeat the command before the verification process exits' })).ok, true)
+  const verificationRunning = await waitForRerun('verification_interrupted_by_exit', verificationProcess.eventSeq)
+  const verificationEntries = (await fs.readFile(verificationSession, 'utf8')).trim().split(/\r?\n/).map(line => JSON.parse(line))
+  const pendingVerification = verificationEntries.findLast(entry => entry.type === 'custom' && entry.customType === 'superpi-task')?.data
+  check(verificationRunning.taskWidget?.widgetLines?.some(line => line.includes('1/2')) &&
+    !pendingVerification?.checks[0].evidence && pendingVerification?.checks[1].evidence?.observation &&
+    !verificationEntries.some(entry => entry.type === 'message' && entry.message.role === 'toolResult' &&
+      entry.message.toolCallId === 'verification_interrupted_by_exit'),
+  'the pending command is visible and saved while the real shell runs, before a tool result exists')
+  assert(Number.isInteger(verificationProcess.pid) && verificationProcess.pid > 0 && verificationProcess.pid !== process.pid,
+    'terminate only the spawned verification fixture subprocess')
+  process.kill(verificationProcess.pid, 'SIGKILL')
+  await until(() => request('/state'), state => !state.sessions.some(item => item.id === verificationProcess.id),
+    'the verification fixture subprocess to exit')
+  sessionId = (await request('/sessions', {})).session.id
+  assert.equal((await command({ type: 'switch_session', sessionPath: verificationSession })).ok, true)
+  check((await snapshot()).taskWidget?.widgetLines?.some(line => line.includes('1/2')),
+    'the same session opened in a new subprocess shows the command is still pending')
+
+  await fs.writeFile(verificationControl, 'ignored fixture')
+  const afterVerificationExit = await run('finish only after a successful new verification', [
+    useTool('task_progress', { action: 'finish' }, 'finish_with_old_verification'),
+    rerunVerification('verification_after_exit'),
+    useTool('task_progress', { action: 'finish' }, 'finish_with_new_verification'),
+    { delta: 'The latest verification completed and was recorded.' },
+  ])
+  const finishAfterExit = toolResult(afterVerificationExit, 'finish_with_new_verification')
+  check(toolResult(afterVerificationExit, 'finish_with_old_verification')?.isError &&
+    toolResult(afterVerificationExit, 'finish_with_old_verification')?.content[0].text.includes('pending'),
+  'reopening the task cannot finish with the pass superseded by an interrupted rerun')
+  check(finishAfterExit?.details?.task?.status === 'complete' &&
+    finishAfterExit.details.task.checks[0].evidence.toolCallId === 'verification_after_exit',
+  'only a newly completed run supplies the final command evidence')
+
   await fs.writeFile(path.join(workspace, 'existing-check.spec.mjs'), '// Verification from the unchanged base.\n')
   execFileSync('git', ['-c', 'core.autocrlf=false', 'add', '-A'], { cwd: workspace })
   execFileSync('git', ['-c', 'user.name=Fixture', '-c', 'user.email=test@example.invalid', '-c', 'commit.gpgsign=false',

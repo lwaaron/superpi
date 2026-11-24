@@ -478,6 +478,7 @@ pi 只提供 `SYSTEM.md`（整份替换）、`APPEND_SYSTEM.md`（静态文件�
 | 有截止时间的验证 | `verify` 调用 Pi 启用的 Shell，展示退出码、已收到的输出和停止状态 | 同一工具定义、Shell 执行和停止信号 | `test/delivery.mjs`、`test/reliability.mjs` |
 | 隔离变异 | 在临时副本应用唯一匹配的替换，命令完结后回收副本 | 同一工作区复制和精确替换 | `test/delivery.mjs`、`test/reliability.mjs` |
 | 任务与验收 | 输入区显示已验证项和状态，`/superpi-task` 查看详情，环形缓冲淘汰后从快照恢复 | 原生 widget 与同一斜杠命令，会话分支保存记录 | `test/delivery.mjs`、`test/client-render.mjs` |
+| 验收命令重跑（0.29.0） | 命令启动前该项恢复为待验收，主动停止或进程退出后重开会话仍显示待验收 | 同一 Pi 会话分支。新命令成功且源码指纹一致才记入证据 | `test/reliability.mjs` |
 | 到达收尾边界 | 活动中的任务在无待处理输入时可续跑一次。命令证据与实际退出码和文件指纹关联 | 同一 Pi 会话分支与收尾钩子 | `test/delivery.mjs`、`test/reliability.mjs` |
 | 最新截图可见 | 历史配额内保留位图，配额外写入路径引用。短期缓存向模型提供最新工具图片 | 同一工具结果和上下文投影 | `test/context-guard.mjs`、`test/delivery.mjs`、`test/reliability.mjs` |
 | 正文标记异常 | host 挂载同一 `reasoning-markup` 判决并显示警告 | 基于同一判定器提示。恢复遵守原有副作用边界 | `test/turn-verdict.mjs`、`test/delivery.mjs`、`test/reliability.mjs` |
@@ -515,6 +516,7 @@ pi 只提供 `SYSTEM.md`（整份替换）、`APPEND_SYSTEM.md`（静态文件�
 
 | 日期 | 版本 | 变更 |
 | --- | --- | --- |
+| 2026-11-24 | 0.29.0 | 重跑编号验收命令前持久化待验收状态。实测主动停止与强制退出后，必须取得新命令的通过证据才能完成任务。 |
 | 2026-11-24 | 0.28.0 | 在独立评审运行中保存已读范围和有效报告。强制退出测试确认同一会话可恢复证据并补审。 |
 | 2026-11-24 | 0.27.0 | 未完成的独立评审保存已读源码的路径与行号，重开会话后可以重建同一份证据。 |
 | 2026-11-24 | 0.26.0 | 独立评审在原有预算内从完成的源码读取恢复网关断流，双端展示恢复进度并继续验证报告位置。 |

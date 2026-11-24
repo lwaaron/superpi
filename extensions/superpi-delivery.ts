@@ -241,6 +241,10 @@ export default function delivery(pi: ExtensionAPI) {
       let proof: Check['evidence']
       let mutationsApplied = 0
       let terminationConfirmed = true
+      const recordEvidence = (evidence: Check['evidence']) => {
+        if (!task || !check) return
+        save(ctx, { ...task, checks: task.checks.map((item, i) => i === index ? { ...item, evidence } : item) })
+      }
       const run = async () => {
         const before = check ? await workspaceFingerprint(ctx.cwd, executionSignal) : undefined
         const execute = async (snapshotCwd?: string) => {
@@ -276,6 +280,9 @@ export default function delivery(pi: ExtensionAPI) {
         }
       }
       try {
+        executionSignal.throwIfAborted()
+        // Persist the pending check before the new attempt can be interrupted.
+        if (check?.evidence) recordEvidence(undefined)
         terminationConfirmed = await waitForVerification(run(), executionSignal)
         executionSignal.throwIfAborted()
       } catch (error) {
@@ -291,9 +298,7 @@ export default function delivery(pi: ExtensionAPI) {
         proof = undefined
       }
       const resultStatus = status as VerificationStatus
-      if (task && check && resultStatus !== 'aborted') {
-        save(ctx, { ...task, checks: task.checks.map((item, i) => i === index ? { ...item, evidence: proof } : item) })
-      }
+      if (proof) recordEvidence(proof)
       const summary = 'Verification ' + resultStatus + ' (' + scope + ')' +
         (exitCode !== null ? ' · exit ' + exitCode : '') +
         (resultStatus === 'timed_out' ? ' · deadline ' + timeout + 's' : '') + (note ? '\n' + note : '')
