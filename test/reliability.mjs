@@ -482,6 +482,19 @@ try {
   check(toolResult(partial, 'review_timeout')?.details?.review?.status === 'timed_out' &&
     toolResult(partial, 'review_timeout')?.details?.review?.reviewers.some(reviewer => reviewer.focus === 'tests' && reviewer.status === 'complete'),
   'deadline returns the completed reviewer evidence without treating a stalled reviewer as clean')
+  const timeoutReview = toolResult(partial, 'review_timeout')?.details?.review
+  check(timeoutReview?.newRequests === 2 && timeoutReview.reviewers.some(reviewer =>
+    reviewer.focus === 'correctness' && reviewer.status === 'cancelled' && reviewer.requests === 1),
+  'a cancelled reviewer still records its dispatched model request')
+  check(partial.records.some(record => record.type === 'tool_execution_update' && record.toolCallId === 'review_timeout' &&
+    record.partialResult?.details?.reviewProgress?.requests === 2 && record.partialResult.details.reviewProgress.completed === 0),
+  'published progress counts dispatched requests before a reviewer returns')
+
+  reviewReplies = { correctness: [{ delta: 'Partial reviewer response.', streamError: earlyClose }], tests: [clean('tests')] }
+  const droppedReview = await run('surface a reviewer gateway disconnect', [requestReview({}, 'review_disconnect'), { delta: 'A reviewer lost its stream.' }])
+  check(toolResult(droppedReview, 'review_disconnect')?.details?.review?.reviewers.some(reviewer =>
+    reviewer.focus === 'correctness' && reviewer.failure === 'stream-interrupted' && reviewer.requests === 1),
+  'reviewer transport errors retain their cause and request count')
 
   await fs.writeFile(path.join(workspace, 'review-new.txt'), 'Untracked source included in review.\n')
   reviewReplies = {

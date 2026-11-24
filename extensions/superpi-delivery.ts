@@ -333,8 +333,9 @@ export default function delivery(pi: ExtensionAPI) {
       const review = await reviewChanges(ctx, {
         goal: task && item ? task.goal + '\n' + item.description : goal ?? task?.goal ?? 'Review the changed behavior.',
         paths, base, timeout, taskCheck: check !== undefined,
-      }, signal, count => update?.({
-        content: [{ type: 'text', text: 'Independent reviewers returned ' + count + '/2' }], details: undefined,
+      }, signal, (count, requests) => update?.({
+        content: [{ type: 'text', text: 'Independent reviewers returned ' + count + '/2' }],
+        details: { reviewProgress: { completed: count, requests } },
       }))
       let recorded = false
       let savedNewEvidence = false
@@ -364,6 +365,7 @@ export default function delivery(pi: ExtensionAPI) {
         review.uncoveredCount ? 'Scope excludes ' + review.uncoveredCount + ' changed file(s): ' + review.uncovered.join(', ') : '']
       for (const reviewer of review.reviewers) {
         lines.push(reviewer.focus + ' · ' + reviewer.status + (reviewer.summary ? ' · ' + reviewer.summary : ''))
+        if (reviewer.failure) lines.push('Model result · ' + reviewer.failure)
         if (reviewer.limitation) lines.push('Coverage limitation · ' + reviewer.limitation)
         if (reviewer.notes) lines.push('Notes · ' + reviewer.notes)
         for (const finding of reviewer.findings ?? []) lines.push(

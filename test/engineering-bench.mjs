@@ -93,6 +93,16 @@ async function runMetrics(events, receipt) {
   assert.ok(observed.exit === null || Number.isInteger(observed.exit), 'Expected the observed process exit status.')
   assert.ok(Number.isFinite(observed.seconds) && observed.seconds >= 0, 'Expected elapsed seconds from the process runner.')
   const trace = { settlements: 0, assistantResponses: 0, toolResults: 0, reviewerRequests: 0, reviewReplays: 0, malformedLines: 0 }
+  const requestCounts = new Map()
+  const reviewCalls = new Set()
+  const knownCounts = new Set()
+  const validCount = n => Number.isSafeInteger(n) && n >= 0
+  const countReview = (id, requests, complete) => {
+    if (!validCount(requests)) return
+    if (typeof id !== 'string' || !id) { trace.reviewerRequests += requests; return }
+    requestCounts.set(id, Math.max(requestCounts.get(id) ?? 0, requests))
+    if (complete) knownCounts.add(id)
+  }
   let assistant
   let task
   let settlement
@@ -101,6 +111,10 @@ async function runMetrics(events, receipt) {
     if (line.trim() === '') continue
     let record
     try { record = JSON.parse(line) } catch { trace.malformedLines += 1; continue }
+    if (record?.toolName === 'review_changes' && record.toolCallId) {
+      if (record.type === 'tool_execution_start') reviewCalls.add(record.toolCallId)
+      if (record.type === 'tool_execution_update') countReview(record.toolCallId, record.partialResult?.details?.reviewProgress?.requests, true)
+    }
     if (record?.type === 'entry_appended' && record.entry?.customType === 'superpi-task') task = record.entry.data
     if (record?.type === 'agent_settled') { settlement = record; trace.settlements += 1 }
     if (record?.type !== 'message_end') continue
@@ -112,12 +126,16 @@ async function runMetrics(events, receipt) {
     if (!review) continue
     if (review.execution === 'reused') trace.reviewReplays += 1
     const reused = new Set(review.reused ?? [])
-    for (const lane of review.reviewers ?? []) {
-      if (!reused.has(lane.focus) && Number.isSafeInteger(lane.requests) && lane.requests >= 0) trace.reviewerRequests += lane.requests
-    }
+    const lanes = review.reviewers ?? []
+    const reportedRequests = lanes.reduce((sum, lane) => !reused.has(lane.focus) && validCount(lane.requests) ? sum + lane.requests : sum, 0)
+    const complete = validCount(review.newRequests) || ['no_changes', 'too_large'].includes(review.status) ||
+      (lanes.length === 2 && lanes.every(lane => reused.has(lane.focus) || validCount(lane.requests)))
+    countReview(message.toolCallId, review.newRequests ?? reportedRequests, complete)
   }
+  for (const count of requestCounts.values()) trace.reviewerRequests += count
+  const unmeteredReviews = [...reviewCalls].filter(id => !knownCounts.has(id)).length
   return { outcome: runOutcome(observed, trace, task, assistant, settlement), seconds: observed.seconds,
-    task: task?.status ?? null, model: assistant?.model ?? null, ...trace }
+    task: task?.status ?? null, model: assistant?.model ?? null, ...trace, unmeteredReviews }
 }
 
 async function selfTest() {
@@ -140,7 +158,7 @@ async function selfTest() {
     const receiptFile = path.join(temp, 'process.json')
     const trace = [
       { type: 'message_end', message: { role: 'assistant', stopReason: 'toolUse' } },
-      { type: 'message_end', message: { role: 'toolResult', toolName: 'review_changes', details: { review: {
+      { type: 'message_end', message: { role: 'toolResult', toolName: 'review_changes', toolCallId: 'review', details: { review: {
         reviewers: [{ focus: 'tests', requests: 17 }, { focus: 'correctness', requests: 2 }], reused: ['tests'],
       } } } },
       { type: 'entry_appended', entry: { type: 'custom', customType: 'superpi-task', data: { status: 'complete' } } },
@@ -159,6 +177,17 @@ async function selfTest() {
     assert.deepEqual([finished.assistantResponses, finished.reviewerRequests, finished.seconds], [2, 2, 24],
       'carried-forward reports do not count as new requests')
     assert.equal((await metrics(null, true)).outcome, 'deadline', 'an externally stopped run cannot finish')
+    await writeTrace([trace[0], trace[1], {
+      type: 'tool_execution_update', toolName: 'review_changes', toolCallId: 'review', partialResult: { details: { reviewProgress: { requests: 2 } } },
+    }, {
+      type: 'tool_execution_update', toolName: 'review_changes', toolCallId: 'unfinished', partialResult: { details: { reviewProgress: { requests: 3 } } },
+    }])
+    assert.equal((await metrics(null, true)).reviewerRequests, 5, 'live requests before external termination are counted once')
+    await writeTrace([{ type: 'tool_execution_start', toolName: 'review_changes', toolCallId: 'legacy-timeout' },
+      { type: 'message_end', message: { role: 'toolResult', toolName: 'review_changes', toolCallId: 'legacy-timeout', details: {
+        review: { status: 'timed_out', reviewers: [{ focus: 'tests', status: 'cancelled' }] },
+      } } }])
+    assert.equal((await metrics(null, true)).unmeteredReviews, 1, 'an uncounted legacy timeout is identified separately')
     await writeTrace(trace.slice(0, -1))
     assert.equal((await metrics(0)).outcome, 'no_settlement', 'process exit alone cannot finish a run')
     trace[2].entry.data.status = 'blocked'
@@ -170,7 +199,7 @@ async function selfTest() {
     trace[3].message.stopReason = 'error'
     await writeTrace(trace)
     assert.equal((await metrics(0)).outcome, 'model_error', 'native settlement preserves provider failure')
-    count += 7
+    count += 9
     console.log('PASS (' + count + ' checks)')
   } finally {
     await fs.rm(temp, { recursive: true, force: true, maxRetries: 3 })

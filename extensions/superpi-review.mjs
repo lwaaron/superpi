@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { Agent } from '@earendil-works/pi-agent-core'
 import { Type } from 'typebox'
 import { scanTextBytes } from './superpi-text-bytes.mjs'
+import { detectTurnVerdict } from './superpi-turn-verdict.mjs'
 import { waitForVerification, withReviewSnapshot, workspaceFingerprint } from './superpi-verification.mjs'
 
 const REQUEST_LIMIT = 12
@@ -53,13 +54,12 @@ function reviewHistory(ctx, key, taskCheck) {
   return { previous, latest, attempts }
 }
 
-async function reviewLane(focus, input, model, registry, snapshot, signal, readAllowance, resuming) {
+function laneReceipt(meter) {
+  return { requests: meter.requests, usage: { ...meter.usage }, failure: meter.failure }
+}
+
+async function reviewLane(focus, input, model, registry, snapshot, signal, readAllowance, resuming, meter, onRequest) {
   let report
-  let requests = 0
-  let inputTokens = 0
-  let outputTokens = 0
-  let cacheReadTokens = 0
-  let cacheWriteTokens = 0
   let bytesLeft = readAllowance
   const maxTokens = Math.min(model.maxTokens || 4096, 8192)
   const agent = new Agent({
@@ -87,7 +87,7 @@ async function reviewLane(focus, input, model, registry, snapshot, signal, readA
         }, { additionalProperties: false }),
         async execute(_id, { query = '', offset = 0, limit = 30 }) {
           signal.throwIfAborted()
-          if (requests >= REQUEST_LIMIT) return textResult('File discovery has ended. Submit the report now.', true)
+          if (meter.requests >= REQUEST_LIMIT) return textResult('File discovery has ended. Submit the report now.', true)
           const filter = query.toLowerCase()
           const matches = filter ? snapshot.files.filter(file => file.toLowerCase().includes(filter)) : snapshot.files
           const files = matches.slice(offset, offset + limit)
@@ -110,7 +110,7 @@ async function reviewLane(focus, input, model, registry, snapshot, signal, readA
         async execute(_id, { path, start = 1, count = 100 }) {
           try {
             signal.throwIfAborted()
-            if (requests >= REQUEST_LIMIT) return textResult('Reading has ended. Submit the review report now.', true)
+            if (meter.requests >= REQUEST_LIMIT) return textResult('Reading has ended. Submit the review report now.', true)
             const lines = (await snapshot.read(path)).split(/\r?\n/)
             const excerpt = lines.slice(start - 1, start - 1 + count)
               .map((line, index) => (start + index) + '\t' + line).join('\n')
@@ -151,23 +151,28 @@ async function reviewLane(focus, input, model, registry, snapshot, signal, readA
       }],
     },
     streamFn: (selected, context, options) => {
-      if (requests >= REQUEST_LIMIT) throw new Error('Review reached its request budget.')
-      requests += 1
-      if (requests === REQUEST_LIMIT) {
+      if (meter.requests >= REQUEST_LIMIT) throw new Error('Review reached its request budget.')
+      meter.requests += 1
+      if (meter.requests === REQUEST_LIMIT) {
         context = { messages: [...context.messages, {
           role: 'system', timestamp: Date.now(), toolsRemoved: [{ name: 'list_review_files' }, { name: 'read_review_file' }],
           content: 'Submit the report now. Include limitation only if material evidence within the requested static review is missing.',
         }] }
       }
+      onRequest()
       return registry.streamSimple(selected, context, { ...options, maxTokens })
     },
   })
   const unlisten = agent.subscribe(event => {
     if (event.type !== 'message_end' || event.message.role !== 'assistant') return
-    inputTokens += event.message.usage?.input ?? 0
-    outputTokens += event.message.usage?.output ?? 0
-    cacheReadTokens += event.message.usage?.cacheRead ?? 0
-    cacheWriteTokens += event.message.usage?.cacheWrite ?? 0
+    const { message } = event
+    meter.usage.inputTokens += message.usage?.input ?? 0
+    meter.usage.outputTokens += message.usage?.output ?? 0
+    meter.usage.cacheReadTokens += message.usage?.cacheRead ?? 0
+    meter.usage.cacheWriteTokens += message.usage?.cacheWrite ?? 0
+    const verdict = detectTurnVerdict(message)
+    if (!verdict.delivered) meter.failure = verdict.kind
+    else if (message.stopReason === 'error') meter.failure = 'model-error'
   })
   const stop = () => agent.abort()
   signal.addEventListener('abort', stop, { once: true })
@@ -175,10 +180,10 @@ async function reviewLane(focus, input, model, registry, snapshot, signal, readA
     signal.throwIfAborted()
     await agent.prompt(input)
     signal.throwIfAborted()
-    const usage = { inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens }
-    if (!report) return { focus, status: 'incomplete', requests, usage,
-      limitation: requests === REQUEST_LIMIT ? 'Request budget ended without a report.' : 'No structured report was submitted.' }
-    return { focus, status: report.limitation ? 'incomplete' : 'complete', requests, usage, ...report }
+    const receipt = laneReceipt(meter)
+    if (!report) return { focus, status: 'incomplete', ...receipt,
+      limitation: meter.requests === REQUEST_LIMIT ? 'Request budget ended without a report.' : 'No structured report was submitted.' }
+    return { focus, status: report.limitation ? 'incomplete' : 'complete', ...receipt, ...report }
   } finally {
     unlisten()
     signal.removeEventListener('abort', stop)
@@ -189,11 +194,15 @@ export async function reviewChanges(ctx, params, signal, onProgress) {
   const deadline = AbortSignal.timeout(params.timeout * 1000)
   const active = signal ? AbortSignal.any([deadline, signal]) : deadline
   const reviewers = []
+  const meters = new Map()
+  const totalRequests = () => [...meters.values()].reduce((sum, meter) => sum + meter.requests, 0)
+  const publishProgress = () => { if (!active.aborted) onProgress(reviewers.length, totalRequests()) }
   const result = { status: 'unavailable', reviewers, omitted: [], scope: params.paths ?? [],
     uncovered: [], uncoveredCount: 0, revision: '', fingerprint: '', key: '',
-    execution: 'not_started', attempts: 0, reused: [], repeated: false, pendingReviewers: Object.keys(focuses) }
+    execution: 'not_started', attempts: 0, newRequests: 0, reused: [], repeated: false, pendingReviewers: Object.keys(focuses) }
   const model = ctx.model
   if (!model) return { ...result, message: 'Select a model before requesting independent review.' }
+  publishProgress()
   const work = async () => withReviewSnapshot(ctx.cwd, params.base ?? 'HEAD', result.scope, active, async snapshot => {
     result.revision = snapshot.revision
     result.fingerprint = snapshot.fingerprint
@@ -254,18 +263,21 @@ export async function reviewChanges(ctx, params, signal, onProgress) {
         reviewers.push(report)
         result.reused.push(focus)
       }
-      if (reviewers.length) onProgress(reviewers.length)
+      if (reviewers.length) publishProgress()
       const readAllowance = Math.min(24_000, Math.floor(model.contextWindow / 5))
       await Promise.all(missing.map(async focus => {
-        let outcome = await reviewLane(focus, reviewInput, model, ctx.modelRegistry, snapshot, active, readAllowance, Boolean(previous))
-          .catch(() => ({ focus, status: active.aborted ? 'cancelled' : 'incomplete' }))
+        const meter = { requests: 0, usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 } }
+        meters.set(focus, meter)
+        let outcome = await reviewLane(focus, reviewInput, model, ctx.modelRegistry, snapshot, active, readAllowance,
+          Boolean(previous), meter, publishProgress)
+          .catch(() => ({ focus, status: active.aborted ? 'cancelled' : 'incomplete', ...laneReceipt(meter) }))
         const prior = known.get(focus)
         if (outcome.status !== 'complete' && !outcome.findings?.length && prior?.findings?.length) {
           outcome = { ...outcome, summary: prior.summary, findings: prior.findings, notes: outcome.notes ?? prior.notes,
             limitation: outcome.limitation ?? prior.limitation }
         }
         reviewers.push(outcome)
-        if (!active.aborted) onProgress(reviewers.length)
+        publishProgress()
       }))
     }
     active.throwIfAborted()
@@ -282,6 +294,11 @@ export async function reviewChanges(ctx, params, signal, onProgress) {
     result.status = signal?.aborted ? 'aborted' : deadline.aborted ? 'timed_out' : 'unavailable'
     if (!active.aborted) result.message = String(error?.message ?? error)
   }
-  result.pendingReviewers = result.pendingReviewers.filter(focus => !reviewers.some(reviewer => reviewer.focus === focus && reviewer.status === 'complete'))
-  return { ...result, reviewers: [...reviewers].sort((a, b) => a.focus.localeCompare(b.focus)) }
+  const reports = new Map(reviewers.map(reviewer => [reviewer.focus, reviewer]))
+  for (const [focus, meter] of meters) {
+    if (!reports.has(focus)) reports.set(focus, { focus, status: 'cancelled', ...laneReceipt(meter) })
+  }
+  result.newRequests = totalRequests()
+  result.pendingReviewers = result.pendingReviewers.filter(focus => reports.get(focus)?.status !== 'complete')
+  return { ...result, reviewers: [...reports.values()].sort((a, b) => a.focus.localeCompare(b.focus)) }
 }

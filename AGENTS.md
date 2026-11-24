@@ -37,7 +37,7 @@ DSH（DeepSeek Runtime）插件：把 pi 编码 agent 装进 DSH 的侧栏面板
 | `extensions/superpi-ask-user.ts` | Agent 需要关键信息或决定时，通过原生 `ask_user` 工具等待用户。`select` 和 `input` 在 TUI 与 RPC 共用，可选项和自由输入都回原回合。关闭、超时、停止和非交互模式都有明确结果。 |
 | `extensions/superpi-delivery.ts` | `verify`、`review_changes` 和 `task_progress` 共用 Pi 的工具链与会话分支。记录真实命令结果与独立审查，完成时重新核对源码指纹。`/superpi-task` 查看当前分支的验收记录。 |
 | `extensions/superpi-verification.mjs` | Git 普通文件快照、源码指纹、精确变异和 Shell 截止时间。故意改变实现的验证在临时副本执行，失败或超时归还明确的验证结果。 |
-| `extensions/superpi-review.mjs` | 正确性和测试覆盖使用同一 Git 快照，在独立的 Pi 上下文中并行审查。两路能检索快照文件、读取证据并提交带位置的报告。基准、源码、有效范围、验收目标与模型相同才复用报告。通过原生工具记录在会话分支恢复，当前用户请求最多发起两轮。只有完整且无阻塞项的结果可用于交付验收。 |
+| `extensions/superpi-review.mjs` | 正确性和测试覆盖使用同一 Git 快照，在独立的 Pi 上下文中并行审查。两路能检索快照文件、读取证据并提交带位置的报告。基准、源码、有效范围、验收目标与模型相同才复用报告。通过原生工具记录在会话分支恢复，当前用户请求对同一份证据最多发起两轮。只有完整且无阻塞项的结果可用于交付验收。审查在模型请求边界就记录计数，超时仍保留已发请求和可判定的失败类型。 |
 | `src/runtime-extensions.mjs` | 共享扩展清单及幂等同步。面板启动和 TUI 安装器同步同一套文件，Pi 按官方路径加载。 |
 | `src/event-verdict.mjs` | 把上面那份判读**挂到 pi 的 `message_end` 上**（0.18.0）：`decoratePiEvent(record)` 只加一个 `verdict` 字段，不改 pi 的任何字段，**永不抛**。它解决了两个结构问题：① 面板不再需要一份孪生判据（0.16.2~0.17.3 的「表在契约、算法在面板」，共同盲区测不出）；② 面板不再依赖 `/contract` 先到（0.17.3 那个「契约晚到 → 提示永久丢失」的竞态随依赖一起消失，而不是靠启动顺序绕开）。装饰发生在 `PiProcess.pushEvent` 里 —— 那是**唯一**同时喂 SSE 与环形缓冲回放的地方。 |
 | `extensions/superpi-text-bytes.mjs` | **「什么是坏字节」的唯一判据**（0.18.0）：`scanTextBytes()` 三类 —— `replacement`（U+FFFD，字符的字节已经丢了、不可逆）、`control`（C0 除 `\t\n\r`，外加 DEL）、`surrogate`（孤立代理项：JSON 合法、落盘必坏）。计数全量、位置截断（前 20 处，带行列号）。四个消费者共用：回合判据、写入闸、`test/parity.mjs` §9、`test/host-parity.mjs` 3.98。**为什么必须收成一处**：这三处原本各写一份，而运行时**一份也没有** —— 实测 7 次 `write` 的 content 含 U+FFFD、7 次全部落盘。 |
