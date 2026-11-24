@@ -219,6 +219,11 @@ export async function withVerificationSnapshot(cwd, signal, run) {
     throw new Error('The session working directory is outside the discovered Git repository.')
   }
   const files = await sourceFiles(root, signal)
+  return withSnapshotFiles(root, files, workdir, signal, (snapshotCwd, snapshot) =>
+    run(snapshotCwd, { ...snapshot, source: { root, cwd: sourceCwd } }))
+}
+
+async function withSnapshotFiles(root, files, workdir, signal, run) {
   signal.throwIfAborted()
   const tempParent = await fs.realpath(os.tmpdir())
   const snapshot = await fs.mkdtemp(path.join(tempParent, 'superpi-verify-'))
@@ -236,7 +241,7 @@ export async function withVerificationSnapshot(cwd, signal, run) {
     const snapshotCwd = path.join(snapshot, workdir)
     await fs.mkdir(snapshotCwd, { recursive: true })
     signal.throwIfAborted()
-    return await run(snapshotCwd, { root: snapshot, files: captured, source: { root, cwd: sourceCwd } })
+    return await run(snapshotCwd, { root: snapshot, files: captured })
   } finally {
     const info = await fs.lstat(snapshot).catch(error => {
       if (error.code !== 'ENOENT') throw error
@@ -248,6 +253,32 @@ export async function withVerificationSnapshot(cwd, signal, run) {
       }
       await fs.rm(snapshot, { recursive: true, force: true, maxRetries: 3 })
     }
+  }
+}
+
+/** Create both independent test directories before allowing either command to run. */
+export async function withVerificationPair(cwd, signal, compare) {
+  return withVerificationSnapshot(cwd, signal, (baselineCwd, snapshot) =>
+    withSnapshotFiles(snapshot.root, snapshot.files, path.relative(snapshot.root, baselineCwd), signal,
+      mutationCwd => compare(baselineCwd, mutationCwd)))
+}
+
+/** Use the shell transcript, including its spool if needed, to match a literal test diagnostic. */
+export async function verificationOutputContains(transcript, expected, signal) {
+  if (typeof transcript?.output !== 'string') return undefined
+  if (transcript.truncated === false) return transcript.output.includes(expected)
+  if (typeof transcript.full_output_path !== 'string') return undefined
+  try {
+    let tail = ''
+    for await (const chunk of createReadStream(transcript.full_output_path, { encoding: 'utf8', signal })) {
+      const text = tail + chunk
+      if (text.includes(expected)) return true
+      tail = text.slice(Math.max(0, text.length - expected.length + 1))
+    }
+    return false
+  } catch {
+    signal.throwIfAborted()
+    return undefined
   }
 }
 

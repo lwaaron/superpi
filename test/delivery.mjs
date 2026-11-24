@@ -145,6 +145,65 @@ try {
     'a mutation cannot edit parent directories')
   check(negative.result('live-mutation')?.isError, 'deliberately changing code requires a snapshot')
 
+  const expectedFailure = 'source invariant rejected'
+  const mutationTest = 'node -e "' + [
+    "const fs = require('node:fs'); const value = fs.readFileSync('source.txt', 'utf8');",
+    "if (fs.existsSync('run-artifact') || fs.readFileSync('new.txt', 'utf8') !== 'draft') process.exit(23);",
+    "if (value === 'current') { fs.writeFileSync('run-artifact', 'baseline only'); console.log('baseline at ' + process.cwd()); }",
+    "else if (value === 'broken') { console.log('mutation at ' + process.cwd()); console.error('source invariant rejected'); process.exitCode = 7; }",
+    'else process.exitCode = 9;',
+  ].join(' ') + '"'
+  const compare = (id, args = {}) => verification(id, { command: mutationTest, scope: 'snapshot',
+    mutations: [mutation], expectedFailure, ...args })
+  const longMutationOutput = 'node -e "' + [
+    "if (require('node:fs').readFileSync('source.txt', 'utf8') === 'broken') {",
+    "  const lines = ('a'.repeat(79) + String.fromCharCode(10)).repeat(7000);",
+    "  process.stdout.write(lines); console.log('source invariant rejected'); process.stdout.write(lines);",
+    '  process.exitCode = 7;',
+    '}',
+  ].join(' ') + '"'
+  const experiments = await run('Verify whether the existing test detects the source regression',
+    compare('caught'),
+    compare('broken-baseline', { command: 'node -e "console.error(\'source invariant rejected\'); process.exit(7)"' }),
+    compare('baseline-diagnostic', { command: 'node -e "console.log(\'source invariant rejected\')"' }),
+    compare('survived', { command: 'node -e "console.log(\'Test passed.\')"' }),
+    compare('shell-footer', { expectedFailure: 'Command exited with code 7' }),
+    compare('long-transcript', { command: longMutationOutput }),
+    compare('synthetic-gap', { command: longMutationOutput, expectedFailure: 'bytes omitted ...]' }),
+    compare('no-mutation', { mutations: undefined }),
+    'Completed the controlled test experiments.')
+  const caught = experiments.result('caught')
+  const comparison = id => experiments.result(id)?.details?.verification?.comparison
+  check(caught && !caught.isError && caught.details.verification.recorded === false &&
+    comparison('caught')?.outcome === 'detected' && comparison('caught').baselineExitCode === 0 &&
+    comparison('caught').mutationExitCode === 7, 'a passing control and the exact assertion failure prove that the mutation was detected')
+  const reportedCwd = (blocks, prefix) => blocks.flatMap(block => block.text?.split(/\r?\n/) ?? []).find(line =>
+    line.startsWith(prefix))?.slice(prefix.length)
+  const baselineCwd = reportedCwd(caught.content, 'baseline at ')
+  const mutationCwd = reportedCwd(caught.content, 'mutation at ')
+  check(baselineCwd && mutationCwd && baselineCwd !== mutationCwd &&
+    await fs.stat(baselineCwd).catch(error => error.code) === 'ENOENT' &&
+    await fs.stat(mutationCwd).catch(error => error.code) === 'ENOENT' &&
+    await fs.readFile(path.join(workspace, 'source.txt'), 'utf8') === 'current',
+  'the two commands use independent snapshots of the current source, leave the workspace byte intact, and clean up both copies')
+  check(experiments.result('broken-baseline')?.isError && comparison('broken-baseline')?.outcome === 'baseline_failed' &&
+    comparison('broken-baseline').baselineExitCode === 7 && comparison('broken-baseline').mutationExitCode === null,
+  'a broken baseline cannot prove a regression even with the expected text')
+  check(experiments.result('baseline-diagnostic')?.isError && comparison('baseline-diagnostic')?.outcome === 'baseline_failed' &&
+    comparison('baseline-diagnostic').baselineExitCode === 0 && comparison('baseline-diagnostic').mutationExitCode === null,
+  'an assertion printed by the passing baseline is ambiguous evidence')
+  check(experiments.result('survived')?.isError && comparison('survived')?.outcome === 'survived' &&
+    comparison('survived').mutationExitCode === 0, 'the outcome identifies a test that passed with the mutation applied')
+  check(experiments.result('shell-footer')?.isError && comparison('shell-footer')?.outcome === 'unexpected_failure' &&
+    comparison('shell-footer').mutationExitCode === 7, 'the shell wrapper cannot satisfy the expected test assertion text')
+  check(!experiments.result('long-transcript')?.isError && comparison('long-transcript')?.outcome === 'detected' &&
+    !experiments.result('long-transcript').content.slice(1).some(block => block.text.includes(expectedFailure)),
+  'the complete shell transcript can prove a diagnostic outside the visible output')
+  check(experiments.result('synthetic-gap')?.isError && comparison('synthetic-gap')?.outcome === 'unexpected_failure',
+    'the generated truncation marker cannot satisfy a test diagnostic')
+  check(experiments.result('no-mutation')?.isError && experiments.result('no-mutation').content[0].text.includes('at least one mutation'),
+    'a comparison requires a deliberate mutation')
+
   const command = 'node -e "process.exit(require(\'node:fs\').readFileSync(\'source.txt\',\'utf8\')===\'current\' ? 0 : 2)"'
   const plan = { goal: 'Have evidence for the source content', checks: [{ description: 'Test the cache input', command, shell }] }
   const delivery = await run('Check then deliver the change',

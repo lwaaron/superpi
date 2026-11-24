@@ -229,10 +229,10 @@ New-Item -ItemType Junction `
 ### 方式三：手工 pnpm add（不想跑脚本时）
 
 ```powershell
-npm pack                                        # 得到 superpi-0.31.0.tgz
+npm pack                                        # 得到 superpi-0.32.0.tgz
 cd "$env:USERPROFILE\.dsh\profiles\desktop"
 node "$env:USERPROFILE\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\pnpm\bin\pnpm.cjs" `
-  add "file:C:\path\to\superpi-0.31.0.tgz" --ignore-scripts
+  add "file:C:\path\to\superpi-0.32.0.tgz" --ignore-scripts
 ```
 
 不要在 profile 里用 `npm install`：npm 会另写一份 `package-lock.json`，而宿主插件管理器用的是 pnpm，两套锁文件互相看不见，下次插件安装就会把 node_modules 重建成 pnpm 理解的样子。
@@ -433,6 +433,7 @@ npm install --prefix <插件>/.runtime --save-exact --no-audit --no-fund --logle
 
 - 多步任务可用 `task_progress` 记录目标与验收项。命令验收通过 `verify` 关联实际退出结果与 Git 工作区文件内容。后续源码变化会让对应证据回到待验证。人工或 Agent 的现场观察独立标记为已观察。两端输入 `/superpi-task` 可看当前会话分支的记录。
 - `verify` 为每次运行要求秒级截止时间，并保留失败退出码与已读到的输出。需要故意改错代码来验证测试时，使用 `scope: "snapshot"` 和 `mutations` 提交精确替换。副本包含当前跟踪文件和未忽略的未跟踪文件。依赖安装按项目要求在副本内完成。执行进程仍使用当前系统账户的权限。
+- 指定 `expectedFailure` 可做带对照的变异验证。SuperPi 从同一次源码采集建立两个独立副本，在总截止时间内运行同一条命令。原始副本须通过，指定的字面诊断须只在变异后的失败输出中出现。工具保留两个实际退出码与各自输出，从完整 Shell 记录核对长日志中的诊断。
 - 重跑编号验收命令时，SuperPi 会在同一会话中先将这一项恢复为待验收。即使主动停止或进程退出，重新打开会话仍会显示待验收。新命令成功退出且源码指纹一致后才记录新的通过证据。
 - 编号验收命令同时核对命令前后的源码内容和文件版本。可观测的改写会标记为证据失效，该项保持待验收，即使后来恢复了文件内容。工具保留实际退出码，并在能定位时指出变化的文件。文件版本核对覆盖前后扫描发现的 Git 普通文件，实际时间精度由文件系统决定。
 - 编号验收也接收 Git 工作区的路径增删通知。收到未忽略的路径变化后，即使路径在命令结束前消失，该项仍保持待验收。忽略范围由 Git 判定。通知不可用或缺少路径时，工具保留实际退出码，并报告为何无法记录验收证据。消失路径的类型无法确认时，目录专属忽略规则可能需要一次稳定重跑。

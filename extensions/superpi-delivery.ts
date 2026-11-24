@@ -1,8 +1,9 @@
 import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent'
 import { Type } from 'typebox'
 import { scanTextBytes } from './superpi-text-bytes.mjs'
-import { applyVerificationMutations, firstChangedSource, verificationCommand, waitForVerification,
-  watchWorkspaceEntries, withVerificationSnapshot, workspaceFingerprint, workspaceSourceState } from './superpi-verification.mjs'
+import { applyVerificationMutations, firstChangedSource, verificationCommand, verificationOutputContains,
+  waitForVerification, watchWorkspaceEntries, withVerificationPair, withVerificationSnapshot,
+  workspaceFingerprint, workspaceSourceState } from './superpi-verification.mjs'
 import { REVIEW_CHECKPOINT, reviewChanges } from './superpi-review.mjs'
 
 const TASK = 'superpi-task'
@@ -31,6 +32,14 @@ type Task = {
 }
 
 type VerificationStatus = 'passed' | 'failed' | 'timed_out' | 'aborted' | 'unavailable' | 'stale'
+
+type MutationComparison = {
+  expectedFailure: string
+  stage: 'preparing' | 'baseline' | 'mutation'
+  outcome: 'incomplete' | 'baseline_failed' | 'survived' | 'unexpected_failure' | 'detected'
+  baselineExitCode: number | null
+  mutationExitCode: number | null
+}
 
 function currentTask(ctx: ExtensionContext): Task | undefined {
   const branch = ctx.sessionManager.getBranch()
@@ -199,20 +208,22 @@ export default function delivery(pi: ExtensionAPI) {
   pi.registerTool({
     name: 'verify',
     label: 'Verify',
-    description: 'Run a real verification command with a deadline and preserved exit status. Use workspace for normal checks. For mutation experiments use snapshot and specify exact text replacements before running the check. The snapshot copies tracked and non-ignored files. Include any dependency setup in the command.',
+    description: 'Run a real verification command with a deadline and preserved exit status. Use workspace for normal checks. For mutation experiments use snapshot and exact text replacements. Supply expectedFailure to compare a passing baseline and a mutated copy using the same command. Snapshots copy tracked and non-ignored files. Include any dependency setup in the command.',
     promptSnippet: 'Run bounded checks and use disposable snapshots for mutation experiments.',
     promptGuidelines: [
       'Use verify for builds and tests, with a deadline appropriate to the command. Declare deliberate mutations as exact replacements in a snapshot and invoke tests there using relative paths.',
+      'To confirm a test catches a specific regression, use expectedFailure with stable, literal output from the failing assertion. The comparison confirms a passing baseline and that exact diagnostic from the mutated run.',
       'After changes, use the exact command declared on a task check and pass its number to record evidence. A timeout or a snapshot experiment cannot complete a command check.',
     ],
     reachesTools: ['bash', 'powershell'],
     executionMode: 'sequential',
     parameters: Type.Object({
       command: commandText,
-      timeout: Type.Integer({ minimum: 1, maximum: 2_147_483, description: 'Total deadline in seconds, including snapshot preparation.' }),
+      timeout: Type.Integer({ minimum: 1, maximum: 2_147_483, description: 'Total deadline in seconds for snapshot preparation and all command runs.' }),
       scope: Type.Optional(Type.Union([Type.Literal('workspace'), Type.Literal('snapshot')])),
       shell: Type.Optional(shells),
       check: Type.Optional(Type.Integer({ minimum: 1, maximum: 12 })),
+      expectedFailure: Type.Optional(Type.String({ minLength: 1, maxLength: 400, description: 'Literal test diagnostic expected only after applying the snapshot mutations.' })),
       mutations: Type.Optional(Type.Array(Type.Object({
         path: Type.String({ minLength: 1, maxLength: 4096 }),
         oldText: commandText,
@@ -220,12 +231,15 @@ export default function delivery(pi: ExtensionAPI) {
       }, { additionalProperties: false }), { minItems: 1, maxItems: 12 })),
     }, { additionalProperties: false }),
     async execute(toolCallId, params, signal, onUpdate, ctx) {
-      const { command, timeout, scope = 'workspace', shell = 'bash' } = params
+      const { command, timeout, scope = 'workspace', shell = 'bash', mutations, expectedFailure } = params
       const task = currentTask(ctx)
       const index = (params.check ?? 0) - 1
       const check = task?.checks[index]
       if (!validText(command)) return taskResult(task, 'Provide a non-empty verification command with valid text.', true)
-      if (params.mutations && scope !== 'snapshot') return taskResult(task, 'Mutations require a disposable verification snapshot.', true)
+      if (mutations && scope !== 'snapshot') return taskResult(task, 'Mutations require a disposable verification snapshot.', true)
+      if (expectedFailure !== undefined && (scope !== 'snapshot' || !mutations?.length || !validText(expectedFailure))) {
+        return taskResult(task, 'A comparison requires a snapshot, at least one mutation, and a literal failure diagnostic.', true)
+      }
       if (params.check !== undefined && (scope !== 'workspace' || task?.status !== 'active' ||
         check?.command !== command || (check.shell ?? 'bash') !== shell)) {
         return taskResult(task, 'Use the exact command and shell of a recorded check in the active task workspace.', true)
@@ -238,10 +252,14 @@ export default function delivery(pi: ExtensionAPI) {
       let status: VerificationStatus = 'unavailable'
       let exitCode: number | null = null
       let output: { type: 'text'; text: string }[] = []
+      let baselineOutput: typeof output = []
       let note = ''
       let proof: Check['evidence']
       let mutationsApplied = 0
       let terminationConfirmed = true
+      const comparison: MutationComparison | undefined = expectedFailure === undefined ? undefined : {
+        expectedFailure, stage: 'preparing', outcome: 'incomplete', baselineExitCode: null, mutationExitCode: null,
+      }
       const recordEvidence = (evidence: Check['evidence']) => {
         if (!task || !check) return
         save(ctx, { ...task, checks: task.checks.map((item, i) => i === index ? { ...item, evidence } : item) })
@@ -251,18 +269,26 @@ export default function delivery(pi: ExtensionAPI) {
         const entryChanges = before ? await watchWorkspaceEntries(before, executionSignal) : undefined
         const execute = async (snapshotCwd?: string) => {
           executionSignal.throwIfAborted()
+          const phase = comparison?.stage === 'baseline' ? 'Baseline command' : comparison ? 'Mutation command' : undefined
+          const heading = phase ? { type: 'text' as const, text: phase } : undefined
+          if (heading) onUpdate?.({ content: [heading], details: {} })
           const outcome = await ctx.executeTool(shell, {
             command: verificationCommand(command, shell, snapshotCwd),
           }, { signal: executionSignal, onUpdate: update => {
             output = update.content.filter(block => block.type === 'text')
-            onUpdate?.(update)
+            onUpdate?.(heading ? { ...update, content: [heading, ...update.content] } : update)
           } })
-          const code = (outcome.result.structuredContent as { exit_code?: number } | undefined)?.exit_code
+          const transcript = outcome.result.structuredContent as
+            { exit_code?: number; output?: string; truncated?: boolean; full_output_path?: string } | undefined
+          const code = transcript?.exit_code
           exitCode = Number.isInteger(code) ? code! : null
           output = outcome.result.content.filter(block => block.type === 'text')
-          status = outcome.isError || exitCode !== 0 ? 'failed' : 'passed'
+          const passed = !outcome.isError && exitCode === 0
+          status = passed ? 'passed' : 'failed'
+          if (comparison?.stage === 'baseline') comparison.baselineExitCode = exitCode
+          if (comparison?.stage === 'mutation') comparison.mutationExitCode = exitCode
           executionSignal.throwIfAborted()
-          if (before && status === 'passed') {
+          if (before && passed) {
             const after = await workspaceSourceState(ctx.cwd, executionSignal)
             executionSignal.throwIfAborted()
             const sameBytes = after.fingerprint === before.fingerprint
@@ -275,13 +301,62 @@ export default function delivery(pi: ExtensionAPI) {
                 '. Rerun the check with stable sources to record acceptance evidence.'
             }
           }
+          return { passed, exitCode, transcript }
         }
         try {
-          if (scope === 'snapshot') {
+          if (comparison && mutations) {
+            await withVerificationPair(ctx.cwd, executionSignal, async (baselineCwd, mutationCwd) => {
+              await applyVerificationMutations(mutationCwd, mutations, executionSignal)
+              mutationsApplied = mutations.length
+              comparison.stage = 'baseline'
+              const baseline = await execute(baselineCwd)
+              const baselineDiagnostic = baseline.passed ?
+                await verificationOutputContains(baseline.transcript, comparison.expectedFailure, executionSignal) : undefined
+              if (!baseline.passed || baselineDiagnostic === true) {
+                comparison.outcome = 'baseline_failed'
+                status = 'failed'
+                note = baselineDiagnostic ? 'The baseline printed the expected failure diagnostic.' : 'The baseline command failed.'
+                return
+              }
+              if (baselineDiagnostic === undefined) {
+                status = 'unavailable'
+                note = 'The shell output for the baseline could not be verified.'
+                return
+              }
+              baselineOutput = [{ type: 'text', text: 'Baseline output' }, ...output]
+              output = []
+              exitCode = null
+              comparison.stage = 'mutation'
+              const mutation = await execute(mutationCwd)
+              if (mutation.passed) {
+                comparison.outcome = 'survived'
+                status = 'failed'
+                note = 'The mutated command still passed.'
+                return
+              }
+              const diagnostic = await verificationOutputContains(mutation.transcript, comparison.expectedFailure, executionSignal)
+              if (diagnostic === undefined) {
+                status = 'unavailable'
+                note = 'The shell output for the mutated copy could not be verified.'
+                return
+              }
+              // Shell launch errors and signal exits are outside the regular test failure range.
+              const testFailure = mutation.exitCode !== null && mutation.exitCode > 0 && mutation.exitCode < 126
+              if (diagnostic && testFailure) {
+                comparison.outcome = 'detected'
+                status = 'passed'
+                note = 'The baseline passed. The mutated run reported ' + JSON.stringify(comparison.expectedFailure) + '.'
+              } else {
+                comparison.outcome = 'unexpected_failure'
+                status = 'failed'
+                note = 'The mutated run failed without verified evidence of the expected assertion.'
+              }
+            })
+          } else if (scope === 'snapshot') {
             await withVerificationSnapshot(ctx.cwd, executionSignal, async snapshotCwd => {
-              if (params.mutations) {
-                await applyVerificationMutations(snapshotCwd, params.mutations, executionSignal)
-                mutationsApplied = params.mutations.length
+              if (mutations) {
+                await applyVerificationMutations(snapshotCwd, mutations, executionSignal)
+                mutationsApplied = mutations.length
               }
               await execute(snapshotCwd)
             })
@@ -300,6 +375,7 @@ export default function delivery(pi: ExtensionAPI) {
         executionSignal.throwIfAborted()
       } catch (error) {
         status = signal?.aborted ? 'aborted' : deadline.aborted ? 'timed_out' : 'unavailable'
+        if (comparison?.outcome === 'detected') comparison.outcome = 'incomplete'
         if (!terminationConfirmed) {
           if (scope === 'workspace') shellStillRunning = true
           note = scope === 'snapshot'
@@ -312,13 +388,18 @@ export default function delivery(pi: ExtensionAPI) {
       }
       const resultStatus = status as VerificationStatus
       if (proof) recordEvidence(proof)
-      const summary = 'Verification ' + resultStatus + ' (' + scope + ')' +
-        (exitCode !== null ? ' · exit ' + exitCode : '') +
+      const headings = comparison ? 'Mutation verification ' + resultStatus +
+        (comparison.baselineExitCode !== null ? ' · baseline exit ' + comparison.baselineExitCode : '') +
+        (comparison.mutationExitCode !== null ? ' · mutation exit ' + comparison.mutationExitCode : '') :
+        'Verification ' + resultStatus + ' (' + scope + ')' + (exitCode !== null ? ' · exit ' + exitCode : '')
+      const summary = headings +
         (resultStatus === 'timed_out' ? ' · deadline ' + timeout + 's' : '') + (note ? '\n' + note : '')
+      const outputHeading = comparison && output.length > 0 && comparison.stage !== 'preparing' ?
+        [{ type: 'text' as const, text: comparison.stage === 'baseline' ? 'Baseline output' : 'Mutation output' }] : []
       return {
-        content: [{ type: 'text' as const, text: summary }, ...output],
+        content: [{ type: 'text' as const, text: summary }, ...baselineOutput, ...outputHeading, ...output],
         details: { verification: { status: resultStatus, scope, exitCode, timeout, mutationsApplied, terminationConfirmed,
-          recorded: proof !== undefined } },
+          recorded: proof !== undefined, ...(comparison ? { comparison } : {}) } },
         isError: resultStatus !== 'passed',
       }
     },

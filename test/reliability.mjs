@@ -394,6 +394,39 @@ try {
   check(toolResult(pipeline, 'verify_exit')?.details?.verification?.exitCode === 7 &&
     toolResult(pipeline, 'verify_exit')?.isError === true, 'the pipeline cannot turn exit 7 into a verification pass')
 
+  const comparisonTimeout = 'node -e "' + [
+    "const value = require('node:fs').readFileSync('origin.txt', 'utf8');",
+    "if (value === 'dirty working copy') console.log('control completed at ' + process.cwd());",
+    "else if (value === 'experiment') { console.log('mutated check waiting at ' + process.cwd()); setInterval(() => {}, 1000); }",
+    'else process.exitCode = 7;',
+  ].join(' ') + '"'
+  const boundedComparison = await run('preserve the control when the mutated check reaches the shared deadline', [
+    useTool('verify', {
+      command: `node -e "if (require('node:fs').readFileSync('origin.txt', 'utf8') === 'experiment') { console.error('assertion failed'); process.exitCode = 7; }"`,
+      timeout: 5, scope: 'snapshot', expectedFailure: 'assertion failed',
+      mutations: [{ path: 'origin.txt', oldText: 'dirty working copy', newText: 'experiment' }],
+    }, 'comparison_detected'),
+    useTool('verify', { command: comparisonTimeout, timeout: 4, scope: 'snapshot', expectedFailure: 'assertion failed',
+      mutations: [{ path: 'origin.txt', oldText: 'dirty working copy', newText: 'experiment' }] }, 'comparison_timeout'),
+    { delta: 'The mutated check timed out.' },
+  ])
+  const detected = toolResult(boundedComparison, 'comparison_detected')
+  check(detected && !detected.isError && detected.details?.verification?.comparison?.outcome === 'detected' &&
+    detected.details.verification.comparison.mutationExitCode === 7 && detected.content[0].text.includes('baseline exit 0'),
+  'the real panel run displays the passing control and the expected failure together')
+  const bounded = toolResult(boundedComparison, 'comparison_timeout')
+  check(bounded?.isError && bounded.details?.verification?.status === 'timed_out' &&
+    bounded.details.verification.comparison?.outcome === 'incomplete' &&
+    bounded.details.verification.comparison?.baselineExitCode === 0 &&
+    bounded.details.verification.comparison?.mutationExitCode === null,
+  'a shared deadline preserves the completed baseline without counting the timed out mutation as caught')
+  const phasePaths = bounded?.content.flatMap(block => block.text?.split(/\r?\n/) ?? [])
+    .flatMap(line => /^(?:control completed|mutated check waiting) at (.+)$/.exec(line)?.slice(1) ?? []) ?? []
+  check(phasePaths.length === 2 && phasePaths[0] !== phasePaths[1] &&
+    (await Promise.all(phasePaths.map(folder => fs.stat(folder).catch(error => error.code)))).every(code => code === 'ENOENT') &&
+    await fs.readFile(path.join(workspace, 'origin.txt'), 'utf8') === 'dirty working copy',
+  'the panel receives both labeled shell output streams and the completed comparison cleans up both snapshots')
+
   const acceptanceCommand = 'node -e "console.log(123)"'
   const tracked = await run('deliver with an explicit acceptance check', [
     useTool('task_progress', { action: 'start', goal: 'Deliver a tested change',
