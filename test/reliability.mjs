@@ -562,6 +562,33 @@ try {
     (await snapshot()).taskWidget?.widgetLines?.some(line => line.includes('0/1')),
   'the panel shows the command still pending after the concurrent edit of an untracked source file')
 
+  assert.equal((await command({ type: 'new_session' })).ok, true)
+  const transientDirectoryCheck = 'node -e "' + [
+    "const fs = require('node:fs'); const dir = 'temporary inputs'; const source = dir + '/fixture.js';",
+    'fs.mkdirSync(dir);',
+    "try { fs.writeFileSync(source, 'input');",
+    "  if (fs.readFileSync(source, 'utf8') === 'input') console.log('read transient directory');",
+    '  else process.exitCode = 7;',
+    '} finally { fs.unlinkSync(source); fs.rmdirSync(dir); }',
+  ].join(' ') + '"'
+  const transientDirectory = await run('detect input read from a new directory that is removed before exit', [
+    useTool('task_progress', { action: 'start', goal: 'Verify the actual source set',
+      checks: [{ description: 'Verify inputs from the worktree', command: transientDirectoryCheck }] }, 'transient_directory_task'),
+    useTool('verify', { command: transientDirectoryCheck, timeout: 10, check: 1 }, 'transient_directory_verify'),
+    useTool('task_progress', { action: 'finish' }, 'transient_directory_finish'),
+    useTool('task_progress', { action: 'block', reason: 'The verification used transient sources.' }, 'transient_directory_block'),
+    { delta: 'A stable run is still needed.' },
+  ])
+  const checkedTransient = toolResult(transientDirectory, 'transient_directory_verify')
+  check(checkedTransient?.details?.verification?.exitCode === 0 && checkedTransient.content.some(block => block.text?.includes('read transient directory')) &&
+    await fs.stat(path.join(workspace, 'temporary inputs')).catch(error => error.code) === 'ENOENT',
+  'the real shell read a temporary path and removed the new directory before it reported success')
+  check(checkedTransient?.isError && checkedTransient.details?.verification?.status === 'stale' &&
+    checkedTransient.content[0].text.includes('temporary inputs') &&
+    toolResult(transientDirectory, 'transient_directory_finish')?.isError &&
+    (await snapshot()).taskWidget?.widgetLines?.some(line => line.includes('0/1')),
+  'the panel keeps the task pending and names the directory that came and went during verification')
+
   await fs.writeFile(path.join(workspace, 'existing-check.spec.mjs'), '// Verification from the unchanged base.\n')
   execFileSync('git', ['-c', 'core.autocrlf=false', 'add', '-A'], { cwd: workspace })
   execFileSync('git', ['-c', 'user.name=Fixture', '-c', 'user.email=test@example.invalid', '-c', 'commit.gpgsign=false',

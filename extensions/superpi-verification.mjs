@@ -1,19 +1,28 @@
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { createReadStream } from 'node:fs'
+import { createReadStream, watch } from 'node:fs'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
+import { setImmediate as nextTurn } from 'node:timers/promises'
 import { promisify } from 'node:util'
 import { scanTextBytes } from './superpi-text-bytes.mjs'
 
 const exec = promisify(execFile)
 const utf8 = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true })
+const MAX_OBSERVED_PATH_BYTES = 8 * 1024 * 1024
 
-async function git(cwd, args, signal, maxBuffer = 32 * 1024 * 1024) {
-  const { stdout } = await exec('git', ['--no-optional-locks', '-c', 'core.fsmonitor=false', ...args], {
+async function git(cwd, args, signal, maxBuffer = 32 * 1024 * 1024, input) {
+  const operation = exec('git', ['--no-optional-locks', '-c', 'core.fsmonitor=false', ...args], {
     cwd, signal, windowsHide: true, maxBuffer, encoding: 'buffer',
   })
+  if (input !== undefined) {
+    const stdin = operation.child.stdin
+    // An early Git exit or cancellation is reported by the command promise.
+    stdin.on('error', () => {})
+    stdin.end(input)
+  }
+  const { stdout } = await operation
   return stdout
 }
 
@@ -65,7 +74,9 @@ export async function workspaceFingerprint(cwd, signal) {
 export async function workspaceSourceState(cwd, signal, includeFileVersions = true) {
   const root = await repositoryRoot(cwd, signal)
   const identity = { root, cwd: await fs.realpath(cwd) }
-  return fingerprintFiles(root, await sourceFiles(root, signal), identity, signal, includeFileVersions)
+  const files = await sourceFiles(root, signal)
+  const state = await fingerprintFiles(root, files, identity, signal, includeFileVersions)
+  return { ...state, root, files }
 }
 
 async function fingerprintFiles(root, files, identity, signal, includeFileVersions = false) {
@@ -95,6 +106,107 @@ export function firstChangedSource(before, after) {
     for (const name of after.fileVersions.keys()) {
       if (!before.fileVersions.has(name)) return name
     }
+  }
+}
+
+async function ignoredPaths(root, names, signal, disregardIndex = false) {
+  if (names.length === 0) return new Set()
+  const args = ['check-ignore', ...(disregardIndex ? ['--no-index'] : []), '-z', '--stdin']
+  // The relative prefix keeps unusual names (including leading colons) literal to Git.
+  const input = names.map(name => './' + name).join('\0') + '\0'
+  try {
+    const output = await git(root, args, signal, undefined, input)
+    return new Set(records(output).map(name => name.slice(2)))
+  } catch (error) {
+    if (error.code === 1) return new Set()
+    throw error
+  }
+}
+
+function sourceParentDirectories(names) {
+  const parents = new Set()
+  for (const name of names) {
+    let dir = name.endsWith('/') ? name.slice(0, -1) : path.posix.dirname(name)
+    for (; dir !== '.' && !parents.has(dir); dir = path.posix.dirname(dir)) parents.add(dir)
+  }
+  return parents
+}
+
+/** Observe entry changes that can disappear between the two source scans. */
+export async function watchWorkspaceEntries(before, signal) {
+  const { root, files } = before
+  const watchers = []
+  const entries = new Set()
+  let observedBytes = 0
+  let failure
+  const close = () => {
+    for (const watcher of watchers.splice(0)) watcher.close()
+  }
+  const fail = error => {
+    failure ??= error
+    close()
+  }
+  const record = (dir, event, rawName) => {
+    if (!rawName?.length) {
+      fail(new Error('A filesystem notification did not identify the changed path.'))
+      return
+    }
+    if (event !== 'rename' || failure || signal.aborted) return
+    try {
+      const name = utf8.decode(rawName)
+      if (name.toLowerCase() === '.git') return
+      if (!name || name === '.' || name === '..' || name.includes('/') || (path.sep === '\\' && name.includes('\\'))) {
+        throw new Error('A filesystem notification reported an invalid entry name.')
+      }
+      const relative = dir ? dir + '/' + name : name
+      if (entries.has(relative)) return
+      observedBytes += Buffer.byteLength(relative) + 1
+      if (observedBytes > MAX_OBSERVED_PATH_BYTES) throw new Error('Too many distinct file changes were reported during the command.')
+      entries.add(relative)
+    } catch (error) {
+      fail(error)
+    }
+  }
+  try {
+    const candidates = records(await git(root, ['ls-files', '-z', '--others', '--ignored', '--directory', '--exclude-standard'], signal))
+    const ignored = await ignoredPaths(root, [...sourceParentDirectories(candidates)].map(dir => dir + '/'), signal, true)
+    const sourceParents = sourceParentDirectories(files)
+    const dirs = ['']
+    for (const dir of dirs) {
+      signal.throwIfAborted()
+      if (failure) break
+      const absolute = path.join(root, dir)
+      if (path.relative(absolute, await fs.realpath(absolute)) !== '') {
+        throw new Error('A workspace directory changed into a link during verification: ' + JSON.stringify(dir))
+      }
+      // Watch the parent before discovering children so new directories are seen there.
+      const watcher = watch(absolute, { encoding: 'buffer', persistent: false, signal }, (event, name) => record(dir, event, name))
+      watcher.on('error', fail)
+      watchers.push(watcher)
+      for (const entry of await fs.readdir(absolute, { withFileTypes: true })) {
+        if (!entry.isDirectory() || entry.name.toLowerCase() === '.git') continue
+        const child = dir ? dir + '/' + entry.name : entry.name
+        if (!ignored.has(child + '/') || sourceParents.has(child)) dirs.push(child)
+      }
+    }
+  } catch (error) {
+    fail(error)
+  }
+  return {
+    close,
+    async firstChangedEntry() {
+      await nextTurn()
+      close()
+      signal.throwIfAborted()
+      if (failure) throw new Error('Could not monitor workspace entries during verification. ' + failure.message, { cause: failure })
+      const changed = [...entries]
+      if (changed.length === 0) return undefined
+      const originalSources = new Set(files)
+      const known = changed.find(name => originalSources.has(name))
+      if (known) return known
+      const ignored = await ignoredPaths(root, changed, signal)
+      return changed.find(name => !ignored.has(name))
+    },
   }
 }
 

@@ -2,7 +2,7 @@ import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-a
 import { Type } from 'typebox'
 import { scanTextBytes } from './superpi-text-bytes.mjs'
 import { applyVerificationMutations, firstChangedSource, verificationCommand, waitForVerification,
-  withVerificationSnapshot, workspaceFingerprint, workspaceSourceState } from './superpi-verification.mjs'
+  watchWorkspaceEntries, withVerificationSnapshot, workspaceFingerprint, workspaceSourceState } from './superpi-verification.mjs'
 import { REVIEW_CHECKPOINT, reviewChanges } from './superpi-review.mjs'
 
 const TASK = 'superpi-task'
@@ -248,6 +248,7 @@ export default function delivery(pi: ExtensionAPI) {
       }
       const run = async () => {
         const before = check ? await workspaceSourceState(ctx.cwd, executionSignal) : undefined
+        const entryChanges = before ? await watchWorkspaceEntries(before, executionSignal) : undefined
         const execute = async (snapshotCwd?: string) => {
           executionSignal.throwIfAborted()
           const outcome = await ctx.executeTool(shell, {
@@ -264,8 +265,9 @@ export default function delivery(pi: ExtensionAPI) {
           if (before && status === 'passed') {
             const after = await workspaceSourceState(ctx.cwd, executionSignal)
             executionSignal.throwIfAborted()
-            const changedFile = firstChangedSource(before, after)
-            if (!changedFile && after.fingerprint === before.fingerprint) {
+            const sameBytes = after.fingerprint === before.fingerprint
+            const changedFile = firstChangedSource(before, after) ?? (sameBytes ? await entryChanges?.firstChangedEntry() : undefined)
+            if (!changedFile && sameBytes) {
               proof = { fingerprint: after.fingerprint, toolCallId, at: new Date().toISOString() }
             } else {
               status = 'stale'
@@ -274,16 +276,20 @@ export default function delivery(pi: ExtensionAPI) {
             }
           }
         }
-        if (scope === 'snapshot') {
-          await withVerificationSnapshot(ctx.cwd, executionSignal, async snapshotCwd => {
-            if (params.mutations) {
-              await applyVerificationMutations(snapshotCwd, params.mutations, executionSignal)
-              mutationsApplied = params.mutations.length
-            }
-            await execute(snapshotCwd)
-          })
-        } else {
-          await execute()
+        try {
+          if (scope === 'snapshot') {
+            await withVerificationSnapshot(ctx.cwd, executionSignal, async snapshotCwd => {
+              if (params.mutations) {
+                await applyVerificationMutations(snapshotCwd, params.mutations, executionSignal)
+                mutationsApplied = params.mutations.length
+              }
+              await execute(snapshotCwd)
+            })
+          } else {
+            await execute()
+          }
+        } finally {
+          entryChanges?.close()
         }
       }
       try {

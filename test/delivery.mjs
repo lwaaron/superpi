@@ -103,7 +103,7 @@ try {
   process.env.SUPERPI_MODALITIES = path.join(temp, 'modalities.json')
   await fs.writeFile(guardPath, JSON.stringify({ autoRetryCooldownMs: 0 }))
   git('init', '--quiet')
-  await fs.writeFile(path.join(workspace, '.gitignore'), 'ignored.txt\n')
+  await fs.writeFile(path.join(workspace, '.gitignore'), 'ignored.txt\n*.tmp\n!/empty/deep/source.tmp\nbuild-output/\n')
   await fs.writeFile(path.join(workspace, 'source.txt'), 'base')
   git('add', '.gitignore', 'source.txt')
   await fs.writeFile(path.join(workspace, 'source.txt'), 'current')
@@ -209,6 +209,37 @@ try {
     concurrentEdit.result('finish-stable')?.details.task.status === 'complete' &&
     await fs.readFile(path.join(workspace, 'ignored.txt'), 'utf8') === 'build output',
   'the stable rerun records evidence even when the command stages source and writes ignored build output')
+
+  await fs.mkdir(path.join(workspace, 'empty', 'deep'), { recursive: true })
+  await fs.writeFile(path.join(workspace, 'ignored.txt'), 'exercise transient source')
+  const useTransientFile = 'node -e "' + [
+    "const fs = require('node:fs');",
+    "const exercise = fs.readFileSync('ignored.txt', 'utf8') === 'exercise transient source';",
+    "const file = exercise ? 'empty/deep/source.tmp' : 'empty/deep/ignored.tmp';",
+    "fs.writeFileSync(file, 'temporary source');",
+    "try { if (fs.readFileSync(file, 'utf8') !== 'temporary source') process.exitCode = 7;",
+    "  else console.log('the command read ' + file); } finally { fs.unlinkSync(file); }",
+    "if (!exercise) { fs.mkdirSync('build-output'); fs.writeFileSync('build-output/result.js', 'emitted'); }",
+  ].join(' ') + '"'
+  const transientCheck = await run('Verify a check that reads a file created after the initial scan',
+    task('transient-task', 'start', { ...plan, checks: [{ description: 'Verify the actual input files', command: useTransientFile, shell }] }),
+    verification('transient-source', { command: useTransientFile, check: 1 }),
+    task('finish-transient', 'finish'),
+    tool('select-build', 'write', { path: 'ignored.txt', content: 'normal build' }),
+    verification('ignored-build', { command: useTransientFile, check: 1 }),
+    task('finish-build', 'finish'), 'The build passed with stable sources.')
+  const transient = transientCheck.result('transient-source')
+  check(transient?.details.verification.exitCode === 0 && transient.content.some(block => block.text.includes('the command read empty/deep/source.tmp')) &&
+    await fs.stat(path.join(workspace, 'empty', 'deep', 'source.tmp')).catch(error => error.code) === 'ENOENT',
+  'the command used a new source file that is gone when verification ends')
+  check(transient?.isError && transient.details.verification.status === 'stale' &&
+    !transient.details.verification.recorded && transient.content[0].text.includes('empty/deep/source.tmp'),
+  'a transient non-ignored source in a previously empty nested directory invalidates the check')
+  check(transientCheck.result('finish-transient')?.isError &&
+    transientCheck.result('finish-build')?.details.task.status === 'complete' &&
+    transientCheck.result('ignored-build')?.details.verification.recorded &&
+    await fs.readFile(path.join(workspace, 'build-output', 'result.js'), 'utf8') === 'emitted',
+  'an ignored transient file and a newly created ignored build directory still permit delivery')
 
   const stale = await run('Validate changed source',
     task('new', 'start', plan), verification('pass', { command, check: 1 }),

@@ -229,10 +229,10 @@ New-Item -ItemType Junction `
 ### 方式三：手工 pnpm add（不想跑脚本时）
 
 ```powershell
-npm pack                                        # 得到 superpi-0.30.0.tgz
+npm pack                                        # 得到 superpi-0.31.0.tgz
 cd "$env:USERPROFILE\.dsh\profiles\desktop"
 node "$env:USERPROFILE\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\pnpm\bin\pnpm.cjs" `
-  add "file:C:\path\to\superpi-0.30.0.tgz" --ignore-scripts
+  add "file:C:\path\to\superpi-0.31.0.tgz" --ignore-scripts
 ```
 
 不要在 profile 里用 `npm install`：npm 会另写一份 `package-lock.json`，而宿主插件管理器用的是 pnpm，两套锁文件互相看不见，下次插件安装就会把 node_modules 重建成 pnpm 理解的样子。
@@ -435,6 +435,7 @@ npm install --prefix <插件>/.runtime --save-exact --no-audit --no-fund --logle
 - `verify` 为每次运行要求秒级截止时间，并保留失败退出码与已读到的输出。需要故意改错代码来验证测试时，使用 `scope: "snapshot"` 和 `mutations` 提交精确替换。副本包含当前跟踪文件和未忽略的未跟踪文件。依赖安装按项目要求在副本内完成。执行进程仍使用当前系统账户的权限。
 - 重跑编号验收命令时，SuperPi 会在同一会话中先将这一项恢复为待验收。即使主动停止或进程退出，重新打开会话仍会显示待验收。新命令成功退出且源码指纹一致后才记录新的通过证据。
 - 编号验收命令同时核对命令前后的源码内容和文件版本。可观测的改写会标记为证据失效，该项保持待验收，即使后来恢复了文件内容。工具保留实际退出码，并在能定位时指出变化的文件。文件版本核对覆盖前后扫描发现的 Git 普通文件，实际时间精度由文件系统决定。
+- 编号验收也接收 Git 工作区的路径增删通知。收到未忽略的路径变化后，即使路径在命令结束前消失，该项仍保持待验收。忽略范围由 Git 判定。通知不可用或缺少路径时，工具保留实际退出码，并报告为何无法记录验收证据。消失路径的类型无法确认时，目录专属忽略规则可能需要一次稳定重跑。
 - 跟踪中的任务提前自然收尾时，Pi 可以带着待验收项继续一次。主动停止、等待用户答复或记录了阻塞原因时会把进度留给下一轮。
 - 新读取的图片仍能进入下一次模型请求，即使会话历史已经达到图片限额。超过历史限额的图片以路径占位，最新图片从短期缓存提供。正文开头未闭合的推理标记会作为输出异常显示。
 
