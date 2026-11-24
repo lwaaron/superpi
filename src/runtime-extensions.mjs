@@ -23,6 +23,8 @@ export const EXTENSION_FILES = [
   ['modalities', 'superpi-modalities.ts'],
   ['turn-recovery', 'superpi-turn-recovery.ts'],
   ['ask-user', 'superpi-ask-user.ts'],
+  ['verification', 'superpi-verification.mjs'],
+  ['delivery', 'superpi-delivery.ts'],
 ].map(([label, name]) => ({ label, name, source: 'extensions/' + name }))
 
 /** Resolve SuperPi's paths and project them onto the variable names the selected CLI reads. */

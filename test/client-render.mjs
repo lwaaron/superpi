@@ -1548,6 +1548,14 @@ assert(panelHtml.includes(zh('loading')), 'SuperPiPanel 首帧应是 loading 文
     } catch (failure) { threw = true }
     assert(threw === false, '畸形快照不得让 hydrateFromSnapshot 抛异常')
   }
+  {
+    const v = internals.createView()
+    const taskWidget = { method: 'setWidget', widgetKey: 'superpi-task', widgetLines: ['任务 · 2/3'] }
+    hydrateFromSnapshot(v, { eventSeq: 42, events: [], taskWidget })
+    assert(v.widgets['superpi-task']?.lines[0] === '任务 · 2/3', '恢复快照时回显任务进度')
+    hydrateFromSnapshot(v, { eventSeq: 0, events: [], taskWidget: { ...taskWidget, widgetLines: undefined } })
+    assert(v.widgets['superpi-task'] === undefined, '切换到空任务会话时清除旧进度')
+  }
 }
 
 /* ═══════════════════════════════════════════ 13. 扩展弹窗的补挂（0.16.1） */

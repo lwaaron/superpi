@@ -471,6 +471,19 @@ pi 只提供 `SYSTEM.md`（整份替换）、`APPEND_SYSTEM.md`（静态文件�
 | 返回答案 | 通过 `/respond` 提交，宿主确认后收起，发送失败可重试 | 选择或输入完成时返回原始答案 | `test/client-render.mjs`、`test/reliability.mjs`、`test/tui-editor.mjs` |
 | 取消和停止 | 关闭或超时返回未回答，停止会同时关闭询问 | 使用同一个 `ask_user` 工具和停止信号，每个弹窗最多等待 5 分钟 | `test/reliability.mjs`、`test/tui-editor.mjs` |
 
+## 5.8 任务验收和故障恢复（0.21.0）
+
+| 行为 | 面板 | 命令行 | 验证 |
+| --- | --- | --- | --- |
+| 有截止时间的验证 | `verify` 调用 Pi 启用的 Shell，展示退出码、已收到的输出和停止状态 | 同一工具定义、Shell 执行和停止信号 | `test/delivery.mjs`、`test/reliability.mjs` |
+| 隔离变异 | 在临时副本应用唯一匹配的替换，命令完结后回收副本 | 同一工作区复制和精确替换 | `test/delivery.mjs`、`test/reliability.mjs` |
+| 任务与验收 | 输入区显示已验证项和状态，`/superpi-task` 查看详情，环形缓冲淘汰后从快照恢复 | 原生 widget 与同一斜杠命令，会话分支保存记录 | `test/delivery.mjs`、`test/client-render.mjs` |
+| 到达收尾边界 | 活动中的任务在无待处理输入时可续跑一次。命令证据与实际退出码和文件指纹关联 | 同一 Pi 会话分支与收尾钩子 | `test/delivery.mjs`、`test/reliability.mjs` |
+| 最新截图可见 | 历史配额内保留位图，配额外写入路径引用。短期缓存向模型提供最新工具图片 | 同一工具结果和上下文投影 | `test/context-guard.mjs`、`test/delivery.mjs`、`test/reliability.mjs` |
+| 正文标记异常 | host 挂载同一 `reasoning-markup` 判决并显示警告 | 基于同一判定器提示。恢复遵守原有副作用边界 | `test/turn-verdict.mjs`、`test/delivery.mjs`、`test/reliability.mjs` |
+
+命令证据绑定当时的 Git 工作区普通文件，忽略的依赖和外部服务由项目验收命令负责。Shell 无法确认终止时，工具仍在有界等待后返回状态。临时副本留给执行器在结束时清理。测试应以快照或隔离的工作区运行故意失败的实验。
+
 ## 6. 变更记录
 
 | 日期 | 版本 | 变更 |

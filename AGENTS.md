@@ -35,6 +35,8 @@ DSH（DeepSeek Runtime）插件：把 pi 编码 agent 装进 DSH 的侧栏面板
 | `extensions/superpi-turn-verdict.mjs` | **「这一轮交付了吗」的唯一判据**（0.16.2 建为 `superpi-malformed.mjs`，0.18.0 扩到六类并改名）。六类：`dsml-text` / `dsml-thinking` / `dsml-residue`（DSML 三形态，判据细节见 §5.0.1）/ `idle`（`stop` 但无正文无工具调用）/ `corrupt`（正文含坏字节且无 toolCall）/ `truncated`（`stopReason: 'length'`）。导出 `detectTurnVerdict()`（带 `kind` / `bytes` / **中英文案**）、`VERDICT_KINDS`、`TURN_VERDICT_NOTICE`。**只判可机械判定的形态**：156 条 `stop` 无工具调用的回合里只有 6 条有结构信号（以 `：` 收尾），其余 150 条读起来都是完整句子 —— 语义判断必然变成假警报，所以不做。**判据只有一份**：host 对每条 `message_end` 算一次（`src/event-verdict.mjs`），面板只渲染；命令行窗口同进程 import。门禁 `test/turn-verdict.mjs`（规模见 `test/gate-inventory.json`）。 |
 | `extensions/superpi-turn-recovery.ts` | Pi 原生恢复。`turn_end` 将不可用的无工具响应移出请求投影，原始记录仍留在会话树。`agent_before_settle` 在用户未停止、本次未产生工具调用且无待处理输入时最多续跑一次。TUI 和 RPC 共用。 |
 | `extensions/superpi-ask-user.ts` | Agent 需要关键信息或决定时，通过原生 `ask_user` 工具等待用户。`select` 和 `input` 在 TUI 与 RPC 共用，可选项和自由输入都回原回合。关闭、超时、停止和非交互模式都有明确结果。 |
+| `extensions/superpi-delivery.ts` | `verify` 和 `task_progress` 共用 Pi 的工具链与会话分支。验收绑定实际退出状态和源码指纹。`/superpi-task` 查看当前分支的验收记录。 |
+| `extensions/superpi-verification.mjs` | Git 普通文件快照、源码指纹、精确变异和 Shell 截止时间。故意改变实现的验证在临时副本执行，失败或超时归还明确的验证结果。 |
 | `src/runtime-extensions.mjs` | 共享扩展清单及幂等同步。面板启动和 TUI 安装器同步同一套文件，Pi 按官方路径加载。 |
 | `src/event-verdict.mjs` | 把上面那份判读**挂到 pi 的 `message_end` 上**（0.18.0）：`decoratePiEvent(record)` 只加一个 `verdict` 字段，不改 pi 的任何字段，**永不抛**。它解决了两个结构问题：① 面板不再需要一份孪生判据（0.16.2~0.17.3 的「表在契约、算法在面板」，共同盲区测不出）；② 面板不再依赖 `/contract` 先到（0.17.3 那个「契约晚到 → 提示永久丢失」的竞态随依赖一起消失，而不是靠启动顺序绕开）。装饰发生在 `PiProcess.pushEvent` 里 —— 那是**唯一**同时喂 SSE 与环形缓冲回放的地方。 |
 | `extensions/superpi-text-bytes.mjs` | **「什么是坏字节」的唯一判据**（0.18.0）：`scanTextBytes()` 三类 —— `replacement`（U+FFFD，字符的字节已经丢了、不可逆）、`control`（C0 除 `\t\n\r`，外加 DEL）、`surrogate`（孤立代理项：JSON 合法、落盘必坏）。计数全量、位置截断（前 20 处，带行列号）。四个消费者共用：回合判据、写入闸、`test/parity.mjs` §9、`test/host-parity.mjs` 3.98。**为什么必须收成一处**：这三处原本各写一份，而运行时**一份也没有** —— 实测 7 次 `write` 的 content 含 U+FFFD、7 次全部落盘。 |
@@ -174,8 +176,8 @@ DSH（DeepSeek Runtime）插件：把 pi 编码 agent 装进 DSH 的侧栏面板
   「不要原样重发」+ 转义写法），否则它会重发同一串坏字节，而那是徒劳的 ——
   成因在 provider 的流式重组，不在它这一次手滑。
 
-- **「看起来结束了」有六种形态，判据必须覆盖全，且只在能判的地方判。**（0.18.0）
-  六类见 `extensions/superpi-turn-verdict.mjs`。其中 `truncated`（`stopReason: 'length'`）
+- **「看起来结束了」的协议异常只按可观察的结构判断。**
+  判据见 `extensions/superpi-turn-verdict.mjs`。其中 `truncated`（`stopReason: 'length'`）
   与 `corrupt` 是 0.18.0 补的 —— 它们和 DSML 一样满足「agent loop 看不到工具调用 →
   这一轮结束 → 屏幕上没有任何错误提示」。
   **但不要顺手去判「短回复但声称做完了」**：实测 156 条 `stop` 无工具调用的回合里，
@@ -444,6 +446,8 @@ return sections ? { role: "system", content: "", sections } : undefined
 
 ## 7. 验证命令
 
+故意制造错误来验证测试时，把变异和验收命令交给 `verify` 的 `snapshot` 模式。测试退出码和截止时间都要保留。任务收尾使用 `task_progress` 核对目标及验收证据。
+
 ```powershell
 npm test                                        # 离线门禁（顺序即依赖顺序）：
                                                 # preflight（依赖前置断言，缺 pi/react 直接红）
@@ -467,7 +471,8 @@ npm run test:preflight                          # 只做依赖探测（缺什么
 npm run test:inventory                          # 只做门禁规模对账（--print 打印实测值）
 npm run test:lifecycle                          # 只跑会话池生命周期门禁
 npm run test:rules                              # 只跑用户自定义规则门禁（含真 .ts 扩展层）
-npm run test:verdict                            # 只跑回合判据门禁（六类形态 + 真渲染）
+npm run test:verdict                            # 只跑回合判据门禁（异常形态 + 真渲染）
+npm run test:delivery                           # 真 Pi SDK：隔离验证、证据、恢复与模型输入
 npm run test:reliability                        # 真 Pi RPC + 本地流式故障场景
 npm run test:integrity                          # 只跑写入闸门禁（含 pi 真 ExtensionRunner 跑 block 链路）
 npm run test:tui                                # 只跑输入框扩展门禁（jiti 加载真 .ts + pi 真 CustomEditor + 真按键序列）

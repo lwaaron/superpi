@@ -13,7 +13,7 @@
  * ---------------------------------------------------------------------------
  * 判据只认「可机械判定」的形态（不做语义猜测）
  *
- * 六类，全部由消息结构本身决定：
+ * 下列判据全部由消息结构本身决定：
  *
  *   A. `dsml-text`     `stop`，正文含裸露的 DSML 开闭标记或有名调用开头
  *   B. `dsml-thinking` `stop`，标记在 thinking（含只有闭标记的形态 B）
@@ -21,6 +21,7 @@
  *   D. `idle`          `stop`，既无正文也无 toolCall
  *   E. `corrupt`       `stop`，text/thinking 含坏字节（U+FFFD / C0 / 孤立代理项），且无 toolCall
  *   F. `truncated`     `length`，输出撞到单次上限
+ *   G. `reasoning-markup` `stop`，正文以未闭合的推理标记开头
  *
  * **刻意不判**：「短回复但声称做完了」。实测 147 条 `stop` 无工具调用的回合里，
  * 只有 6 条有可判定形态（以 `：` 收尾），其余 141 条读起来都是完整句子 ——
@@ -32,7 +33,7 @@
  *   · `index.js`（host）：每条 `message_end` 算一次，作为 `verdict` 挂到事件上 → 面板只渲染
  *   · `extensions/superpi-editor.ts`（命令行 TUI）：同进程直接 import，算 Working 行文案
  *   · `extensions/superpi-turn-recovery.ts`：在 Pi 的运行边界用判据选出可恢复的响应
- *   · `test/turn-verdict.mjs`：验证六类形态和合法输入
+ *   · `test/turn-verdict.mjs`：验证异常形态和合法输入
  *
  * 0.16.2~0.17.3 的形状是「表在契约、算法在面板」，为此付出了两个代价：
  * ① 面板里有一份 80 行的孪生实现；② 契约晚到时提示会永久丢失（0.17.3 用启动顺序绕开）。
@@ -41,8 +42,8 @@
 
 import { describeBytes, scanTextBytes, summarizeCounts } from './superpi-text-bytes.mjs'
 
-/** 非 `none` 的六类。顺序即判定顺序，日志与门禁按这个顺序对账。 */
-export const VERDICT_KINDS = ['truncated', 'dsml-text', 'dsml-thinking', 'dsml-residue', 'corrupt', 'idle']
+/** 非 `none` 的判据，按判定顺序排列。 */
+export const VERDICT_KINDS = ['truncated', 'dsml-text', 'dsml-thinking', 'dsml-residue', 'corrupt', 'reasoning-markup', 'idle']
 
 /**
  * 判定表 —— **判据的知识只有这一份**。
@@ -124,6 +125,10 @@ export const TURN_VERDICT_NOTICE = {
   corrupt: {
     zh: '这次模型响应含 {{n}} 处损坏字节。可以从已有进度继续。',
     en: 'The model response contained {{n}} corrupted character(s). You can continue from the current progress.',
+  },
+  'reasoning-markup': {
+    zh: '模型把未闭合的推理标记写进了回复正文。可以从已有进度继续生成干净的答复。',
+    en: 'The model wrote an unclosed reasoning marker into the reply. You can continue from the current progress.',
   },
   truncated: {
     zh: '这次模型响应达到输出上限，可以接着完成剩余内容。',
@@ -221,6 +226,12 @@ export function detectTurnVerdict(message) {
       .map(([channel, scan]) => channel + ' · ' + summarizeCounts(scan.counts) + ' · ' + describeBytes(scan))
       .join(' / ')
     return verdict('corrupt', detail, badBytes)
+  }
+
+  // A leading unclosed envelope gives no reliable boundary between reasoning and the answer.
+  // Fenced and inline examples do not start with an exposed marker.
+  if (text.trimStart().startsWith('<thinking>') && !text.includes('</thinking>')) {
+    return verdict('reasoning-markup', 'unclosed reasoning marker at the start of the text block')
   }
 
   /**

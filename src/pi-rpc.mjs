@@ -18,6 +18,7 @@ import { spawn } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import { randomUUID } from 'node:crypto'
 import { BRAND_NAME } from '../extensions/superpi-brand.mjs'
+import { TASK_WIDGET_KEY } from './rpc-contract.mjs'
 
 /**
  * 命令等待上限的默认值。
@@ -209,6 +210,7 @@ export class PiProcess extends EventEmitter {
     this.sessionCwd = null
     /** 待应答的扩展 UI 请求：id -> { id, method, title?, message?, options?, placeholder?, prefill?, seq, receivedAt } */
     this.pendingUi = new Map()
+    this.taskWidget = null
     this.proc = null
     this.splitter = null
     this.closePromise = null
@@ -334,6 +336,9 @@ export class PiProcess extends EventEmitter {
       this.lastVerdict = null
     } else if (decorated.type === 'message_end' && decorated.message?.role === 'assistant') {
       this.lastVerdict = decorated.verdict?.delivered === false ? decorated.verdict : null
+    }
+    if (decorated.type === 'extension_ui_request' && decorated.method === 'setWidget' && decorated.widgetKey === TASK_WIDGET_KEY) {
+      this.taskWidget = decorated
     }
     const size = typeof sizeHint === 'number' && sizeHint > 0 ? sizeHint : Buffer.byteLength(JSON.stringify(decorated))
     this.events.push(entry)
@@ -638,6 +643,8 @@ export class PiProcess extends EventEmitter {
       sessionName: this.lastState?.sessionName ?? null,
       sessionFile: this.lastState?.sessionFile ?? null,
       pendingUi: [...this.pendingUi.values()],
+      // The extension publishes the selected branch during session replacement, before the ring is reset.
+      taskWidget: this.taskWidget,
       lastVerdict: this.lastVerdict,
       exit: this.exitInfo,
       stderr: this.stderrLines.slice(-20),

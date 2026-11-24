@@ -1180,16 +1180,15 @@ const stripAnsi = text => text.replace(/\x1b\[[0-9;:?]*[A-Za-z]/g, '').replace(/
   })()
   const state = status({ dir, env: testEnv })
   ok(state.sourceExists, '扩展源文件可读')
-  // 0.16.2 起安装面是八个文件（畸形判据模块 + 输入框 + 规则两枚 + 上下文守卫两枚 + 模态两枚）。
-  eq(EXTENSION_FILES.length, 13, '安装面十三个文件')
-  eq(EXTENSION_FILES.map(file => file.name).sort().join(','), 'superpi-ask-user.ts,superpi-brand.mjs,superpi-context-guard.mjs,superpi-context-guard.ts,superpi-editor.ts,superpi-modalities.mjs,superpi-modalities.ts,superpi-rules.mjs,superpi-rules.ts,superpi-text-bytes.mjs,superpi-text-integrity.ts,superpi-turn-recovery.ts,superpi-turn-verdict.mjs', '文件清单固定（十三个文件）')
+  eq(EXTENSION_FILES.length, 15, '安装面十五个文件')
+  eq(EXTENSION_FILES.map(file => file.name).sort().join(','), 'superpi-ask-user.ts,superpi-brand.mjs,superpi-context-guard.mjs,superpi-context-guard.ts,superpi-delivery.ts,superpi-editor.ts,superpi-modalities.mjs,superpi-modalities.ts,superpi-rules.mjs,superpi-rules.ts,superpi-text-bytes.mjs,superpi-text-integrity.ts,superpi-turn-recovery.ts,superpi-turn-verdict.mjs,superpi-verification.mjs', '文件清单固定（十五个文件）')
   const installed = install({ dir, env: testEnv })
   eq(installed.code, 0, 'install 成功')
   for (const file of EXTENSION_FILES) {
     ok(fs.existsSync(path.join(dir, file.name)), '安装后有 ' + file.name)
   }
   eq(status({ dir, env: testEnv }).identical, true, '安装后 editor 内容与源一致')
-  eq(status({ dir, env: testEnv }).complete, true, '十三个文件全部一致 → complete')
+  eq(status({ dir, env: testEnv }).complete, true, '十五个文件全部一致 → complete')
   eq(install({ dir, env: testEnv }).code, 0, 'install 幂等')
 
   // 真机那一步：装到临时 agentDir 后，用 **pi 自己的扩展加载器**加载一遍。

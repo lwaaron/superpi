@@ -256,6 +256,7 @@ export function classifyInput(raw) {
  *   editor   {id, method, title, prefill?}              → 应答 {id, value} 或 {id, cancelled:true}
  *   notify / setStatus / setWidget / setTitle / set_editor_text —— 单向，不需要应答
  *   SuperPi 的 ask_user 工具复用 select 与 input，应答回到原生工具调用。
+ *   SuperPi 的任务进度复用 setWidget，/superpi-task 由 get_commands 发现并通过 editor 查看。
  *
  * 阻塞语义（rpc-mode.ts:95-135 createDialogPromise）：只有扩展自己传了 timeout 或
  * 中途 abort，pi 才会自己收尾；**没有默认超时**。客户端不应答 ⇒ Promise 永久 pending、
@@ -273,6 +274,9 @@ export const EXTENSION_UI_METHODS = [
   { method: 'setTitle', kind: 'oneway', response: [], fields: ['title'] },
   { method: 'set_editor_text', kind: 'oneway', response: [], fields: ['text'] },
 ];
+
+/** Pi 的任务进度需要在事件环淘汰旧记录后仍可回显。 */
+export const TASK_WIDGET_KEY = 'superpi-task';
 
 /** 面板兜底超时（毫秒）。pi 不给默认值，客户端必须自己兜。 */
 export const DIALOG_FALLBACK_MS = 5 * 60 * 1000;

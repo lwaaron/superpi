@@ -1,6 +1,6 @@
 {
   "name": "superpi",
-  "version": "0.20.0",
+  "version": "0.21.0",
   "type": "module",
   "description": "SuperPi 编码助手，支持 DSH 聊天面板与命令行，复用 Pi 的运行时和 JSONL RPC 协议。",
   "icon": "./assets/icon.svg",
@@ -26,7 +26,7 @@
     "LICENSE"
   ],
   "scripts": {
-    "test": "node test/preflight.mjs && node tools/check-carriers.mjs && node test/selfcheck.mjs && node test/client-render.mjs && node test/css-tokens.mjs && node test/runtime-resolve.mjs && node test/config-hot.mjs && node test/host-parity.mjs && node test/session-projects.mjs && node test/session-lifecycle.mjs && node test/timeout.mjs && node test/rules.mjs && node test/context-guard.mjs && node test/modalities.mjs && node test/turn-verdict.mjs && node test/text-integrity.mjs && node test/reliability.mjs && node test/parity.mjs && node test/tui-editor.mjs && node test/brand-pi-runtime.mjs && node test/restart-lib.mjs && node test/github-sync.mjs && node test/version.mjs && node test/gate-inventory.mjs",
+    "test": "node test/preflight.mjs && node tools/check-carriers.mjs && node test/selfcheck.mjs && node test/client-render.mjs && node test/css-tokens.mjs && node test/runtime-resolve.mjs && node test/config-hot.mjs && node test/host-parity.mjs && node test/session-projects.mjs && node test/session-lifecycle.mjs && node test/timeout.mjs && node test/rules.mjs && node test/context-guard.mjs && node test/modalities.mjs && node test/turn-verdict.mjs && node test/text-integrity.mjs && node test/delivery.mjs && node test/reliability.mjs && node test/parity.mjs && node test/tui-editor.mjs && node test/brand-pi-runtime.mjs && node test/restart-lib.mjs && node test/github-sync.mjs && node test/version.mjs && node test/gate-inventory.mjs",
     "test:preflight": "node test/preflight.mjs",
     "test:inventory": "node test/gate-inventory.mjs",
     "test:lifecycle": "node test/session-lifecycle.mjs",
@@ -69,7 +69,8 @@
     "check:carriers:fix": "node tools/check-carriers.mjs --fix",
     "test:verdict": "node test/turn-verdict.mjs",
     "test:integrity": "node test/text-integrity.mjs",
-    "test:reliability": "node test/reliability.mjs"
+    "test:reliability": "node test/reliability.mjs",
+    "test:delivery": "node test/delivery.mjs"
   },
   "engines": {
     "node": ">=22.5"

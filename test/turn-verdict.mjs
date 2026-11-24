@@ -95,8 +95,8 @@ const bytesModule = await import(pathToFileURL(path.join(root, 'extensions', 'su
 const decorator = await import(pathToFileURL(path.join(root, 'src', 'event-verdict.mjs')).href)
 const contract = await import(pathToFileURL(path.join(root, 'src', 'rpc-contract.mjs')).href)
 
-section('1. 判据表：六类齐全、每类都有中英文案')
-eq('六类枚举', verdictModule.VERDICT_KINDS, ['truncated', 'dsml-text', 'dsml-thinking', 'dsml-residue', 'corrupt', 'idle'])
+section('1. 判据表：异常类型齐全、每类都有中英文案')
+eq('异常类型枚举', verdictModule.VERDICT_KINDS, ['truncated', 'dsml-text', 'dsml-thinking', 'dsml-residue', 'corrupt', 'reasoning-markup', 'idle'])
 for (const kind of verdictModule.VERDICT_KINDS) {
   const notice = verdictModule.TURN_VERDICT_NOTICE[kind]
   check(kind + ' 有文案', notice !== null && typeof notice === 'object')
@@ -141,6 +141,8 @@ export const SAMPLES = [
     message: { role: 'assistant', stopReason: 'stop', content: [{ type: 'text', text: '2. ' + BAD + BAD + BAD + '始规则内容由用户给定，用户可以在设置里修改。' }] } },
   { name: 'F 截断型：stopReason=length', kind: 'truncated',
     message: { role: 'assistant', stopReason: 'length', content: [{ type: 'text', text: '第一段写完，第二段只写了一半' }] } },
+  { name: 'G 推理标记未闭合：出现在正文开头', kind: 'reasoning-markup',
+    message: { role: 'assistant', stopReason: 'stop', content: [{ type: 'text', text: '<thinking>Review done.\n已验证，并发测试通过。' }] } },
 
   // ── 排除项（误报面必须为零：本仓库自己的文档里到处在讨论 DSML）
   { name: '排除：toolUse 已解析出结构化调用', kind: 'none',
@@ -163,6 +165,8 @@ section('2. 行为层：判据模块本身（host / 命令行共用这一份）'
 const assistantText = (text, stopReason = 'stop', tools = []) => ({
   role: 'assistant', stopReason, content: [{ type: 'text', text }, ...tools],
 })
+eq('行内引用推理标记是正常说明', verdictModule.detectTurnVerdict(assistantText('`<thinking>` 是标签示例。')).kind, 'none')
+eq('代码块里的推理标记是合法样例', verdictModule.detectTurnVerdict(assistantText('```xml\n<thinking>\n```')).kind, 'none')
 eq('讨论 DSML 的日常文字不触发重试', verdictModule.detectTurnVerdict(assistantText('DSML invokes tools. DSML calls are examples.')).kind, 'none')
 eq('用 Markdown 引用完整工具标记不触发重试', verdictModule.detectTurnVerdict(assistantText('示例：\n```xml\n' + OPEN + '\n' + CLOSE + '\n```')).kind, 'none')
 eq('结尾行内代码含闭合标签不触发重试', verdictModule.detectTurnVerdict(assistantText('例如 `' + RESIDUE + '`')).kind, 'none')
@@ -348,7 +352,7 @@ section('7. 安装面：模块先于扩展，清单不漏文件')
   const installer = await import(pathToFileURL(path.join(root, 'tools', 'install-pi-extension.mjs')).href)
   const files = installer.EXTENSION_FILES
   const position = new Map(files.map((file, index) => [file.name, index]))
-  eq('安装清单含全部十三个文件', files.length, 13)
+  eq('安装清单含全部十五个文件', files.length, 15)
   const expected = [
     'superpi-brand.mjs',
     'superpi-text-bytes.mjs',
@@ -364,6 +368,8 @@ section('7. 安装面：模块先于扩展，清单不漏文件')
     'superpi-modalities.ts',
     'superpi-turn-recovery.ts',
     'superpi-ask-user.ts',
+    'superpi-verification.mjs',
+    'superpi-delivery.ts',
   ]
   eq('清单内容与顺序', files.map(file => file.name), expected)
   /**

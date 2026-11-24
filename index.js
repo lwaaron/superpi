@@ -81,7 +81,7 @@ const API_PREFIX = '/api/' + PLUGIN_ID
 const MAX_SESSIONS = 8
 const MAX_BODY_BYTES = 4 * 1024 * 1024
 /** GET /contract 里 version 字段的取值：本插件对外的契约版本，与 package.json 解耦。 */
-const CONTRACT_VERSION = '0.20.0'
+const CONTRACT_VERSION = '0.21.0'
 /** 历史会话列表的条数窗口（与 src/session-store.mjs 的 DEFAULT_LIMIT/MAX_LIMIT 一致）。 */
 const HISTORY_DEFAULT_LIMIT = 20
 const HISTORY_MAX_LIMIT = 200
@@ -205,6 +205,8 @@ const SELF_FILES = [
   { rel: 'extensions/superpi-text-integrity.ts', runtime: false },
   { rel: 'extensions/superpi-turn-recovery.ts', runtime: false },
   { rel: 'extensions/superpi-ask-user.ts', runtime: false },
+  { rel: 'extensions/superpi-verification.mjs', runtime: false },
+  { rel: 'extensions/superpi-delivery.ts', runtime: false },
   { rel: 'extensions/superpi-editor.ts', runtime: false },
   { rel: 'package.json', runtime: false },
   { rel: 'cordis.patch.yml', runtime: false },

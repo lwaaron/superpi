@@ -704,7 +704,9 @@ try {
 section('H. 安装面与单一真相')
 
 const installer = await import(pathToFileURL(path.join(root, 'tools', 'install-pi-extension.mjs')).href)
-eq(installer.EXTENSION_FILES.length, 13, '共享扩展都纳入安装清单')
+const { listRuntimeFiles } = await import('../src/runtime-files.mjs')
+eq(installer.EXTENSION_FILES.map(file => file.source).sort(),
+  listRuntimeFiles(root).filter(file => file.startsWith('extensions/')), '共享扩展都纳入安装清单')
 eq(installer.RULES_EXTENSION_FILE_NAME, 'superpi-rules.ts', '规则扩展文件名固定')
 eq(installer.RULES_MODULE_FILE_NAME, 'superpi-rules.mjs', '共享模块文件名固定')
 eq(installer.GUARD_EXTENSION_FILE_NAME, 'superpi-context-guard.ts', '上下文守卫扩展文件名固定')
@@ -721,7 +723,7 @@ eq(
   fs.readFileSync(path.join(root, 'extensions', 'superpi-rules.mjs'), 'utf8'),
   '装出来的共享模块与仓库逐字节一致',
 )
-eq(installer.status({ dir: installDir }).complete, true, 'status.complete 反映八个文件全部一致')
+eq(installer.status({ dir: installDir }).complete, true, 'status.complete 反映所有共享文件一致')
 eq(installer.install({ dir: installDir }).code, 0, 'install 幂等')
 eq(installer.remove({ dir: installDir }).code, 0, 'remove 成功')
 for (const file of installer.EXTENSION_FILES) {

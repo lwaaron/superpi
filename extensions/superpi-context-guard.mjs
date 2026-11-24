@@ -162,7 +162,8 @@ export const DEFAULT_GUARD_SETTINGS = {
 export function imagePlaceholder({ filePath = '', kilobytes = 0 } = {}) {
   const size = kilobytes > 0 ? ` (${kilobytes}KB)` : ''
   const where = filePath !== '' ? `: ${filePath}` : ''
-  return `[image omitted${where}${size} — released from context to stay under the model window; re-read the file if you need it again]`
+  const reopen = filePath !== '' ? '; re-read the file if you need it again' : ''
+  return `[image omitted${where}${size} — released from context to stay under the model window${reopen}]`
 }
 
 /**
@@ -201,7 +202,7 @@ export function imagePlaceholder({ filePath = '', kilobytes = 0 } = {}) {
  * @param {object} counter     累计状态 `{ kept: number }`；**会被就地更新**
  * @returns {Array|null}       需要替换时返回新 content，否则 null
  */
-export function limitImagesForWrite(content, filePath = '', settings = DEFAULT_GUARD_SETTINGS, counter = { kept: 0 }) {
+export function limitImagesForWrite(content, filePath = '', settings = DEFAULT_GUARD_SETTINGS, counter = { kept: 0 }, reference = imagePlaceholder) {
   if (Array.isArray(content) === false) return null
   const normalized = normalizeGuardSettings(settings)
   const limit = Math.max(0, normalized.keepRecentImagesPerTurn)
@@ -243,7 +244,7 @@ export function limitImagesForWrite(content, filePath = '', settings = DEFAULT_G
     dropped += 1
     // 写入时拿不到可靠的体积（data 已是 base64，长度换算会误导），
     // 所以只带路径 —— 报一个错数比不报更糟。
-    out.push({ type: 'text', text: imagePlaceholder({ filePath: String(filePath ?? '') }) })
+    out.push({ type: 'text', text: reference({ filePath: String(filePath ?? '') }, block) })
   }
   counter.kept = (Number(counter.kept) || 0) + keep.size
   if (dropped > 0) counter.dropped = (Number(counter.dropped) || 0) + dropped
@@ -902,20 +903,30 @@ function filePathOfCall(call) {
   return ''
 }
 
-function replaceImages(message, callIndex) {
+function replaceImages(message, callIndex, keepNewest = 0) {
   const content = Array.isArray(message.content) ? message.content : null
   if (content === null) return null
+  let toReplace = countImages(message) - keepNewest
+  if (toReplace <= 0) return null
   const call = typeof message.toolCallId === 'string' ? callIndex.get(message.toolCallId) : undefined
   const filePath = filePathOfCall(call)
   const kilobytes = Math.round(imageBytes(message) / 1024)
-  let changed = false
   const blocks = content.map(block => {
-    if (block === null || typeof block !== 'object' || block.type !== 'image') return block
-    changed = true
+    if (block?.type !== 'image' || toReplace <= 0) return block
+    toReplace -= 1
     return { type: 'text', text: imagePlaceholder({ filePath, kilobytes }) }
   })
-  if (!changed) return null
   return { ...message, content: blocks }
+}
+
+function recentImageAllowance(messages, start, end, remaining) {
+  const allowed = new Map()
+  for (let index = end - 1; index >= start && remaining > 0; index -= 1) {
+    const kept = Math.min(remaining, countImages(messages[index]))
+    if (kept > 0) allowed.set(index, kept)
+    remaining -= kept
+  }
+  return allowed
 }
 
 function dropThinking(message) {
@@ -1217,12 +1228,9 @@ export function planContextWindow(messages, options = {}) {
    * 于是「没超预算」时图片限额整段被跳过，门禁 C2 立刻红（10 张 / 限额 4）。
    * 所以判断要看「是否真的无事可做」，而不是只看 token。
    */
+  const lastUser = list.findLastIndex(message => message?.role === 'user')
+  const lastUserIndex = lastUser < 0 ? list.length : lastUser
   const hasTurnImageOverflow = (() => {
-    let lastUserIndex = -1
-    for (let i = list.length - 1; i >= 0; i -= 1) {
-      if (list[i]?.role === 'user') { lastUserIndex = i; break }
-    }
-    if (lastUserIndex < 0) return false
     let seen = 0
     for (let i = list.length - 1; i >= lastUserIndex; i -= 1) {
       seen += countImages(list[i])
@@ -1236,16 +1244,6 @@ export function planContextWindow(messages, options = {}) {
   const protectedFrom = protectionStartIndex(list, settings, windowTokens, budget)
   const callIndex = indexToolCalls(list)
 
-  // 最近 N 张图片所在消息豁免（无论轮次），保证"当前正在看的那张"不会被换掉。
-  const imageProtected = new Set()
-  let imagesSeen = 0
-  for (let i = list.length - 1; i >= 0 && imagesSeen < settings.keepRecentImages; i -= 1) {
-    if (countImages(list[i]) > 0) {
-      imageProtected.add(i)
-      imagesSeen += 1
-    }
-  }
-
   let current = list.slice()
   const stats = { ...emptyStats, stages: { images: 0, thinking: 0, toolText: 0, toolFold: 0, replies: 0, toolCallArgs: 0 } }
 
@@ -1255,22 +1253,9 @@ export function planContextWindow(messages, options = {}) {
   // 同一轮里连续产图（渲染→截图→比对），一个真实会话的本轮就堆了 48 张 = 576k tokens，
   // 永久免疫裁剪 → 守卫裁到最狠仍超预算 71%。模型真正在看的是**最新**那几张，
   // 更早的它已经写成结论了；占位带路径可重读，所以按最近 N 张保留即可。
-  let lastUserIndex = list.length
-  for (let i = list.length - 1; i >= 0; i -= 1) {
-    if (list[i]?.role === 'user') {
-      lastUserIndex = i
-      break
-    }
-  }
-  // 本轮图片豁免：从末尾往前数 keepRecentImagesPerTurn 张。
-  const turnImageProtected = new Set()
-  let turnImagesSeen = 0
-  for (let i = list.length - 1; i >= lastUserIndex && turnImagesSeen < settings.keepRecentImagesPerTurn; i -= 1) {
-    if (countImages(list[i]) > 0) {
-      turnImageProtected.add(i)
-      turnImagesSeen += 1
-    }
-  }
+  // Count image blocks. A single tool result can carry several screenshots.
+  const historicalImages = recentImageAllowance(list, 0, lastUserIndex, settings.keepRecentImages)
+  const turnImages = recentImageAllowance(list, lastUserIndex, list.length, settings.keepRecentImagesPerTurn)
 
   /**
    * 分批渐进折叠（0.15.4 核心修正）。
@@ -1329,10 +1314,6 @@ export function planContextWindow(messages, options = {}) {
       const stop = Math.min(start + CHUNK, end)
       let touched = 0
       for (let i = start; i < stop; i += 1) {
-        if (stage === 'images') {
-          if (i < lastUserIndex && imageProtected.has(i)) continue
-          if (i >= lastUserIndex && turnImageProtected.has(i)) continue
-        }
         const next = transform(current[i], i)
         if (next !== null) {
           current[i] = next
@@ -1375,7 +1356,8 @@ export function planContextWindow(messages, options = {}) {
    *   6. thinking     （最后才动；一旦删就是彻底消失，信息损失最高）
    */
   const done = () =>
-    progressApply('images', message => replaceImages(message, callIndex), true) ||
+    progressApply('images', (message, index) => replaceImages(message, callIndex,
+      historicalImages.get(index) ?? turnImages.get(index) ?? 0), true) ||
     progressApply('toolText', message => truncateToolText(message, settings.maxTextChars)) ||
     progressApply('toolFold', message => foldToolResult(message)) ||
     // 参数折叠必须完整执行（无条件规则类），见 progressApply 的 mustComplete 说明。

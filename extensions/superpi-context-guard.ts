@@ -24,6 +24,7 @@
  *    系统提示重放行为，避免无谓的 prompt cache 变更。
  */
 
+import { randomUUID } from 'node:crypto'
 import {
   DEFAULT_GUARD_SETTINGS,
   GUARD_VERSION,
@@ -40,6 +41,7 @@ import {
   breakdownMessages,
   goalFromMessages,
   limitImagesForWrite,
+  imagePlaceholder,
   foldCompletedWriteArgs,
   resetMeterMemo,
 } from './superpi-context-guard.mjs'
@@ -127,6 +129,25 @@ export default function contextGuard(pi) {
    * 那是比不限额更糟的静默失效。
    */
   const writeImageCounter = { kept: 0, dropped: 0 }
+  // The transcript can keep a bounded set of bitmaps. Later images still reach the active model
+  // through short-lived references to exact tool results. Re-reading a path obtains fresh bytes.
+  const liveImages = new Map<string, { toolCallId: string; image: { type: 'image'; mimeType: string; data: string } }>()
+
+  const restoreLiveImages = (messages, limit) => {
+    while (liveImages.size > limit) liveImages.delete(liveImages.keys().next().value!)
+    if (liveImages.size === 0) return messages
+    const calls = new Set(Array.from(liveImages.values(), item => item.toolCallId))
+    let restored = messages
+    for (let index = 0; index < messages.length; index += 1) {
+      const message = messages[index]
+      if (message?.role !== 'toolResult' || !calls.has(message.toolCallId) || !Array.isArray(message.content)) continue
+      const content = message.content.map(block => block?.type === 'text' ? liveImages.get(block.text)?.image ?? block : block)
+      if (content.every((block, i) => block === message.content[i])) continue
+      if (restored === messages) restored = messages.slice()
+      restored[index] = { ...message, content }
+    }
+    return restored
+  }
 
   pi.on('context', (event, ctx) => {
     try {
@@ -139,11 +160,11 @@ export default function contextGuard(pi) {
       const modalityState = readModalitiesStateSync({ cache: modalityCache })
       const model = ctx?.model
       const allowed = allowedModalities(model, overridesFor(modalityState, model))
-      const filtered = filterMessagesByModalities(messages, allowed)
-      const modalityChanged = filtered !== messages
+      const settings = readGuardSettingsSync({ cache })
+      const input = settings.enabled && allowed.has('image') ? restoreLiveImages(messages, settings.keepRecentImagesPerTurn) : messages
+      const filtered = filterMessagesByModalities(input, allowed)
 
       // ② 窗口化（可独立停用）
-      const settings = readGuardSettingsSync({ cache })
       let next = filtered
       if (settings.enabled === true) {
         const windowTokens = resolveWindowTokens(ctx, settings)
@@ -184,8 +205,8 @@ export default function contextGuard(pi) {
         }
       }
 
-      // 两边都没动 → 返回 undefined，让 pi 保持原有的提示重放行为（不做无谓的 cache 变更）。
-      if (modalityChanged !== true && next === filtered) return undefined
+      // 未修改内容时保留 Pi 的提示增量和缓存。
+      if (next === messages) return undefined
       return { messages: next }
     } catch {
       // 守护是"止损"，不是"必经"：任何异常都退回 pi 的原始行为。
@@ -224,10 +245,8 @@ export default function contextGuard(pi) {
    * 且明确 "Can modify result"（docs/extensions.md:1040）。在这里处置，
    * 图片根本不会以位图形式进入历史。
    *
-   * ── 只返回 content 补丁 ───────────────────────────────
-   *
-   * 按 pi 的链式契约，省略的字段保留原值。所以这里**不返回** details / isError /
-   * structuredContent —— 返回它们反而会覆盖掉其它扩展（或 pi 自己）写好的值。
+   * 更新图片块时显式传回已有的 structuredContent。Pi 在 content 被替换时会丢弃
+   * 未随变更提供的结构化值。details 和 isError 沿用原工具的结果。
    * 无需改动时返回 `undefined`（不是 `{ content }`），避免无谓补丁。
    */
   pi.on('tool_result', (event, _ctx) => {
@@ -236,9 +255,18 @@ export default function contextGuard(pi) {
       if (settings.enabled !== true) return undefined
       const input = event?.input
       const filePath = input !== undefined && input !== null && typeof input.path === 'string' ? input.path : ''
-      const next = limitImagesForWrite(event?.content, filePath, settings, writeImageCounter)
+      const next = limitImagesForWrite(event?.content, filePath, settings, writeImageCounter, (location, image) => {
+        const placeholder = imagePlaceholder(location)
+        if (settings.keepRecentImagesPerTurn === 0) return placeholder
+        const reference = placeholder + ' (image ' + randomUUID() + ')'
+        liveImages.set(reference, { toolCallId: event.toolCallId, image })
+        if (liveImages.size > settings.keepRecentImagesPerTurn) liveImages.delete(liveImages.keys().next().value!)
+        return reference
+      })
       if (next === null) return undefined
-      return { content: next }
+      // Replacing content otherwise drops Pi's structured result, even when it has no image data.
+      const structuredContent = event?.structuredContent
+      return structuredContent === undefined ? { content: next } : { content: next, structuredContent }
     } catch {
       // 与其它钩子同一原则：守护失效最多是"没限额"，绝不能让一轮对话因此失败。
       return undefined
@@ -324,6 +352,7 @@ export default function contextGuard(pi) {
      */
     writeImageCounter.kept = 0
     writeImageCounter.dropped = 0
+    liveImages.clear()
   }
   pi.on('session_start', resetSessionCaches)
   pi.on('session_switch', resetSessionCaches)

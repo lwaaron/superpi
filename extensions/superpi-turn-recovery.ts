@@ -6,6 +6,7 @@ const CONTINUE_TRUNCATED = 'The previous response reached its output limit. Cont
 const DELIVERY_GUIDANCE = [
   'For multi-step coding tasks, keep working until the requested deliverables have been checked, or explain the concrete blocker.',
   'After tests or tool calls, use their results to decide what remains. Report completion only for work actually done and verified.',
+  'When verify is available, use a disposable snapshot for intentional mutations or experiments that must not change the working copy.',
   'When resuming, start from the current workspace and completed tool results. Verify uncertain changes before doing them again.',
 ].join('\n')
 

@@ -104,6 +104,8 @@ window.__ModuleLoader__.load({
       procList: '浏览目录',
       procGeneric: '工具调用',
       procAsk: '询问用户',
+      procVerify: '执行验证',
+      procTaskProgress: '任务进度',
       procResult: '结果',
       deepDiving: '深度求索中',
       working: '深度求索中，用时 {duration} ···',
@@ -380,6 +382,8 @@ window.__ModuleLoader__.load({
       procList: 'List folder',
       procGeneric: 'Tool call',
       procAsk: 'Ask user',
+      procVerify: 'Run verification',
+      procTaskProgress: 'Task progress',
       procResult: 'Result',
       deepDiving: 'Deep diving',
       working: 'Deep diving, {duration} ···',
@@ -2219,6 +2223,7 @@ window.__ModuleLoader__.load({
       // ③ 再补水位（只前进，所以上一步应用过的位置不会被回退）。
       advanceSeq(view, snap.eventSeq)
       if (snap.lastVerdict !== undefined) view.verdict = snap.lastVerdict
+      if (snap.taskWidget) applyExtensionUi(view, snap.taskWidget)
       /**
        * ④ 补挂「已挂起但还没被应答」的扩展弹窗（0.16.1 修的 P1）。
        *
@@ -2665,6 +2670,8 @@ window.__ModuleLoader__.load({
       find: { label: 'procGlob', Icon: SearchIcon },
       ls: { label: 'procList', Icon: ListIcon },
       ask_user: { label: 'procAsk', Icon: SparkIcon },
+      verify: { label: 'procVerify', Icon: TerminalIcon },
+      task_progress: { label: 'procTaskProgress', Icon: ListIcon },
     }
 
     function toolViewOf(name, args) {

@@ -266,6 +266,15 @@ const heavyAgain = planContextWindow(heavy.messages, { windowTokens: heavyWindow
 eq(heavyAgain.stats.imagesDropped, 0, '幂等：已裁过的图片不会被重复计数')
 ok(heavyAgain.stats.after <= heavy.stats.after + 1, '幂等：再跑不会变大（' + String(heavyAgain.stats.after) + ' <= ' + String(heavy.stats.after) + '）')
 
+{
+  const images = ['a', 'b', 'c', 'd', 'e', 'f'].map(data => ({ type: 'image', data, mimeType: 'image/png' }))
+  const [user, assistant, result] = turnWithImages(1)
+  const batch = [user, assistant, { ...result, content: images }]
+  const planned = planContextWindow(batch, { windowTokens: heavyWindow, settings: heavySettings })
+  eq(planned.messages[2].content.filter(block => block.type === 'image').map(block => block.data),
+    ['c', 'd', 'e', 'f'], '一条工具结果包含多张图时也保留最新四个图片块')
+}
+
 /* -------------------- C3. toolCallArgs 折叠（0.14.0） */
 
 section('C3. 参数折叠：write/edit 的正文不该在上下文里留副本')
@@ -1155,7 +1164,7 @@ if (extensionModule !== null) {
     eq((firstPatch?.content ?? []).filter(b => b?.type === 'image').length, 0, 'G4 被置换的那条不再留位图')
   }
 
-  // G5. 只返回 content 补丁，不碰 details / isError / structuredContent
+  // G5. Preserve unrelated structured data when replacing content. Pi drops it if omitted.
   {
     fs.writeFileSync(guardFile, JSON.stringify({ enabled: true, keepRecentImagesPerTurn: 0 }), 'utf8')
     const h = freshHandlers()
@@ -1169,7 +1178,7 @@ if (extensionModule !== null) {
     }, {})
     eq(out?.details, undefined, 'G5 不得覆盖 details（省略即保留原值）')
     eq(out?.isError, undefined, 'G5 不得覆盖 isError')
-    eq(out?.structuredContent, undefined, 'G5 不得覆盖 structuredContent')
+    eq(out?.structuredContent, { also: 'keep' }, 'G5 替换图片时仍保留 Pi 的结构化结果')
   }
 
   // G6. 非图片结果一字不动
