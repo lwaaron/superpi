@@ -106,6 +106,7 @@ window.__ModuleLoader__.load({
       procAsk: '询问用户',
       procVerify: '执行验证',
       procTaskProgress: '任务进度',
+      procReview: '独立审查',
       procResult: '结果',
       deepDiving: '深度求索中',
       working: '深度求索中，用时 {duration} ···',
@@ -384,6 +385,7 @@ window.__ModuleLoader__.load({
       procAsk: 'Ask user',
       procVerify: 'Run verification',
       procTaskProgress: 'Task progress',
+      procReview: 'Independent review',
       procResult: 'Result',
       deepDiving: 'Deep diving',
       working: 'Deep diving, {duration} ···',
@@ -2672,6 +2674,7 @@ window.__ModuleLoader__.load({
       ask_user: { label: 'procAsk', Icon: SparkIcon },
       verify: { label: 'procVerify', Icon: TerminalIcon },
       task_progress: { label: 'procTaskProgress', Icon: ListIcon },
+      review_changes: { label: 'procReview', Icon: SearchIcon },
     }
 
     function toolViewOf(name, args) {

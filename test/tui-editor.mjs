@@ -19,6 +19,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import { listRuntimeFiles } from '../src/runtime-files.mjs'
 import { resolveExtensionDir, EXTENSION_FILE_NAME } from '../tools/install-pi-extension.mjs'
 import { requireRuntime, requireTypeBox } from './preflight.mjs'
 
@@ -610,6 +611,10 @@ ok(FRAME_INTERVAL_MS <= 250, '帧间隔 <= 250ms（再慢看起来是卡顿）')
   // 新一轮必须清掉旧标记
   markRunStart(Date.now())
   eq(runState.verdict, null, '新一轮开始时清掉判读（否则会一直显示失败）')
+  markUndelivered(extensionModule.turnVerdictOf({
+    role: 'assistant', stopReason: 'error', errorMessage: 'Upstream response stream ended before completion', content: [],
+  }))
+  ok(workingLabel(Date.now(), true).includes('上游在模型响应完成前断开了连接'), '终端 Working 行显示实际断流原因')
   resetRunState()
   eq(runState.verdict, null, 'resetRunState 也清掉')
 }
@@ -1180,15 +1185,17 @@ const stripAnsi = text => text.replace(/\x1b\[[0-9;:?]*[A-Za-z]/g, '').replace(/
   })()
   const state = status({ dir, env: testEnv })
   ok(state.sourceExists, '扩展源文件可读')
-  eq(EXTENSION_FILES.length, 15, '安装面十五个文件')
-  eq(EXTENSION_FILES.map(file => file.name).sort().join(','), 'superpi-ask-user.ts,superpi-brand.mjs,superpi-context-guard.mjs,superpi-context-guard.ts,superpi-delivery.ts,superpi-editor.ts,superpi-modalities.mjs,superpi-modalities.ts,superpi-rules.mjs,superpi-rules.ts,superpi-text-bytes.mjs,superpi-text-integrity.ts,superpi-turn-recovery.ts,superpi-turn-verdict.mjs,superpi-verification.mjs', '文件清单固定（十五个文件）')
+  const sources = listRuntimeFiles(root).filter(file => file.startsWith('extensions/'))
+  eq(EXTENSION_FILES.length, sources.length, '安装清单数量与扩展源码一致')
+  eq(EXTENSION_FILES.map(file => file.name).sort().join(','), sources.map(file => path.basename(file)).join(','),
+    '安装目标名称与扩展源码一致')
   const installed = install({ dir, env: testEnv })
   eq(installed.code, 0, 'install 成功')
   for (const file of EXTENSION_FILES) {
     ok(fs.existsSync(path.join(dir, file.name)), '安装后有 ' + file.name)
   }
   eq(status({ dir, env: testEnv }).identical, true, '安装后 editor 内容与源一致')
-  eq(status({ dir, env: testEnv }).complete, true, '十五个文件全部一致 → complete')
+  eq(status({ dir, env: testEnv }).complete, true, '全部扩展文件一致 → complete')
   eq(install({ dir, env: testEnv }).code, 0, 'install 幂等')
 
   // 真机那一步：装到临时 agentDir 后，用 **pi 自己的扩展加载器**加载一遍。

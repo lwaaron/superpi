@@ -13,6 +13,7 @@ import http from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import { listRuntimeFiles } from '../src/runtime-files.mjs'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const root = path.dirname(here)
@@ -1101,7 +1102,6 @@ try {
      * `superpi-modalities.mjs`，而 modalities 模块排在它后面。
      */
     for (const [i, entry] of files.entries()) {
-      if (!entry.source.endsWith('.ts')) continue
       const abs = path.join(root, entry.source)
       if (!fs.existsSync(abs)) { problems.push(entry.label + ' 源文件不存在'); continue }
       const source = fs.readFileSync(abs, 'utf8')
@@ -1111,9 +1111,10 @@ try {
         if (position.get(dep.name) > i) problems.push(entry.label + ' 排在它的依赖 ' + dep.label + ' 之前')
       }
     }
-    eq('每个 .ts 的 .mjs 依赖都排在它前面', problems, [])
+    eq('同目录依赖都排在导入者前面', problems, [])
     // 完整清单不能漏文件（漏了就是"装了但没生效"）
-    eq('安装清单包含全部十五个文件', files.length, 15)
+    eq('安装清单包含全部扩展源码', files.map(file => file.source).sort(),
+      listRuntimeFiles(root).filter(file => file.startsWith('extensions/')))
   }
 
   // ── 3.98 发布文本文档里不得有控制字符（0.15.3，这是 400 的真因）
@@ -1180,8 +1181,7 @@ try {
    *   ③ 清单里每个文件都真实存在（防止收进幽灵路径）。
    */
   {
-    const rf = await import(pathToFileURL(path.join(root, 'src', 'runtime-files.mjs')).href)
-    const files = rf.listRuntimeFiles(root)
+    const files = listRuntimeFiles(root)
     check('清单包含 index.js', files.includes('index.js'))
     check('清单包含 client.js', files.includes('client.js'))
     check('清单包含新模块 http-idle-guard.mjs', files.includes('src/http-idle-guard.mjs'),

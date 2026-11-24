@@ -2,6 +2,7 @@ import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-a
 import { Type } from 'typebox'
 import { scanTextBytes } from './superpi-text-bytes.mjs'
 import { applyVerificationMutations, verificationCommand, waitForVerification, withVerificationSnapshot, workspaceFingerprint } from './superpi-verification.mjs'
+import { reviewChanges } from './superpi-review.mjs'
 
 const TASK = 'superpi-task'
 const shells = Type.Union([Type.Literal('bash'), Type.Literal('powershell')])
@@ -16,6 +17,7 @@ type Check = {
   description: string
   command?: string
   shell?: 'bash' | 'powershell'
+  review?: boolean
   evidence?: { at: string; observation: string } | { at: string; fingerprint: string; toolCallId: string }
 }
 
@@ -43,7 +45,7 @@ function taskSummary(task: Task | undefined) {
   if (!task) return 'No task has been recorded on this session branch.'
   const heading = task.status === 'blocked' ? 'Blocked: ' + task.blocker : 'Task ' + task.status
   return [heading, task.goal, ...task.checks.map((check, index) => {
-    const label = !check.evidence ? 'pending' : 'fingerprint' in check.evidence ? 'command passed' : 'observed'
+    const label = !check.evidence ? 'pending' : check.review ? 'review complete' : 'fingerprint' in check.evidence ? 'command passed' : 'observed'
     const proof = !check.evidence ? '' : ' · ' + check.evidence.at +
       ('observation' in check.evidence ? ' · ' + check.evidence.observation : ' · tool ' + check.evidence.toolCallId)
     return (index + 1) + '. [' + label + '] ' + check.description + (check.command ? '\n   $ ' + check.command : '') + proof
@@ -67,11 +69,28 @@ function validText(value: string | undefined) {
   return typeof value === 'string' && value.trim() !== '' && scanTextBytes(value).clean
 }
 
+async function refreshSourceEvidence(task: Task, cwd: string, signal?: AbortSignal) {
+  const bound = task.checks.some(check => check.evidence && 'fingerprint' in check.evidence)
+  if (!bound) return task
+  const deadline = AbortSignal.timeout(30_000)
+  const active = signal ? AbortSignal.any([signal, deadline]) : deadline
+  let fingerprint: string | undefined
+  try {
+    await waitForVerification(workspaceFingerprint(cwd, active).then(value => { fingerprint = value }), active)
+  } catch { /* Missing evidence leaves the check open. */ }
+  signal?.throwIfAborted()
+  if (active.aborted) fingerprint = undefined
+  const checks = task.checks.map(check => check.evidence && 'fingerprint' in check.evidence &&
+    check.evidence.fingerprint !== fingerprint ? { ...check, evidence: undefined } : check)
+  return checks.some((check, i) => check !== task.checks[i]) ? { ...task, status: 'active' as const, checks } : task
+}
+
 export default function delivery(pi: ExtensionAPI) {
   let engaged = false
   let nudged = false
   let waitingForUser = false
   let shellStillRunning = false
+  let completedHere = false
 
   const save = (ctx: ExtensionContext, task: Task) => {
     pi.appendEntry(TASK, task)
@@ -82,6 +101,7 @@ export default function delivery(pi: ExtensionAPI) {
     nudged = false
     waitingForUser = false
     shellStillRunning = false
+    completedHere = false
   }
   const restore = (_event: unknown, ctx: ExtensionContext) => {
     resetActivity()
@@ -105,11 +125,12 @@ export default function delivery(pi: ExtensionAPI) {
   pi.registerTool({
     name: 'task_progress',
     label: 'Task progress',
-    description: 'Manage a branch-local delivery checklist. Start with the user goal and executable or directly observable acceptance checks. Use verify for command checks. Use observe for inspected artifacts, block for a real dependency, resume to continue, and finish after evidence is recorded.',
+    description: 'Manage a branch-local delivery checklist. Use verify for command checks, review_changes for independent review checks, and observe for inspected artifacts. Block on a real dependency, resume to continue, and finish after evidence is recorded.',
     promptSnippet: 'Track acceptance checks and actual evidence for multi-step work.',
     promptGuidelines: [
       'Use task_progress for multi-step coding work and read its status when resuming. Keep the list tied to the user request. Include regression and compatibility checks when relevant.',
       'Record actual observations with file, test, or artifact references. Use verify with the numbered check for command evidence. Call finish before reporting a tracked task complete.',
+      'For changes where independent review is part of acceptance, mark a check review:true. Use review_changes with its check number, resolve concrete findings, and rerun after edits.',
     ],
     executionMode: 'sequential',
     parameters: Type.Object({
@@ -119,6 +140,7 @@ export default function delivery(pi: ExtensionAPI) {
         description: checklistText,
         command: Type.Optional(commandText),
         shell: Type.Optional(shells),
+        review: Type.Optional(Type.Boolean()),
       }, { additionalProperties: false }), { minItems: 1, maxItems: 12 })),
       check: Type.Optional(Type.Integer({ minimum: 1, maximum: 12 })),
       observation: Type.Optional(checklistText),
@@ -131,7 +153,7 @@ export default function delivery(pi: ExtensionAPI) {
       if (params.action === 'start') {
         if (task && task.status !== 'complete' && !params.replace) return taskResult(task, 'A task already exists. Resume it or explicitly replace it when the user changes scope.', true)
         if (!validText(params.goal) || !params.checks?.length || params.checks.some(check =>
-          !validText(check.description) || (check.command !== undefined && !validText(check.command)))) {
+          !validText(check.description) || (check.command !== undefined && (!validText(check.command) || check.review)))) {
           return taskResult(task, 'Provide a goal and at least one specific acceptance check with valid text.', true)
         }
         task = { version: 1, status: 'active', goal: params.goal!.trim(), checks: params.checks }
@@ -150,26 +172,20 @@ export default function delivery(pi: ExtensionAPI) {
           if (params.action === 'observe') {
             const index = (params.check ?? 0) - 1
             const check = task.checks[index]
-            if (!check || check.command || !validText(params.observation)) {
-              return taskResult(task, 'Select an observation check and describe what you inspected. Run command checks with verify.', true)
+            if (!check || check.command || check.review || !validText(params.observation)) {
+              return taskResult(task, 'Select an observation check. Use verify for command checks and review_changes for independent reviews.', true)
             }
             const evidence = { observation: params.observation!.trim(), at: new Date().toISOString() }
             task = { ...task, checks: task.checks.map((item, i) => i === index ? { ...item, evidence } : item) }
           } else {
             if (task.checks.some(check => !check.evidence)) return taskResult(task, 'Acceptance checks are still pending.', true)
-            if (task.checks.some(check => check.command)) {
-              const inspectSignal = signal ?? AbortSignal.timeout(30_000)
-              const fingerprint = await workspaceFingerprint(ctx.cwd, inspectSignal)
-              inspectSignal.throwIfAborted()
-              const checks = task.checks.map(check => check.evidence && 'fingerprint' in check.evidence &&
-                check.evidence.fingerprint !== fingerprint ? { ...check, evidence: undefined } : check)
-              if (checks.some(check => !check.evidence)) {
-                task = { ...task, checks }
-                save(ctx, task)
-                return taskResult(task, 'Workspace sources changed after verification. Rerun the pending command checks.', true)
-              }
+            const checked = await refreshSourceEvidence(task, ctx.cwd, signal)
+            if (checked !== task) {
+              save(ctx, checked)
+              return taskResult(checked, 'Workspace sources changed or could not be confirmed. Rerun the pending evidence checks.', true)
             }
             task = { ...task, status: 'complete' }
+            completedHere = true
           }
         }
       }
@@ -290,16 +306,83 @@ export default function delivery(pi: ExtensionAPI) {
     },
   })
 
-  pi.on('agent_before_settle', (event, ctx) => {
-    if (!engaged || nudged || waitingForUser || shellStillRunning || event.outcome !== 'completed' || event.continue ||
-      ctx.signal?.aborted || ctx.hasPendingMessages() || event.context.pendingMessages.length) return
-    const task = currentTask(ctx)
-    if (!task || task.status !== 'active') return
+  pi.registerTool({
+    name: 'review_changes',
+    label: 'Review changes',
+    description: 'Review Git changes independently with two read-only Pi reviewers. Both inspect the same captured source. Optional paths narrow the review. A numbered task check requires coverage of all changes against HEAD and no blocking findings.',
+    promptSnippet: 'Review significant code changes independently for correctness and test gaps.',
+    executionMode: 'sequential',
+    parameters: Type.Object({
+      goal: Type.Optional(checklistText),
+      timeout: Type.Integer({ minimum: 1, maximum: 2_147_483, description: 'Total seconds for capture and both review requests.' }),
+      check: Type.Optional(Type.Integer({ minimum: 1, maximum: 12 })),
+      paths: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 1024 }), { minItems: 1, maxItems: 30 })),
+      base: Type.Optional(Type.String({ minLength: 1, maxLength: 200, description: 'Git revision to compare with. Defaults to HEAD.' })),
+    }, { additionalProperties: false }),
+    async execute(id, { goal, check, paths, base, timeout }, signal, update, ctx) {
+      const task = currentTask(ctx)
+      const index = (check ?? 0) - 1
+      const item = task?.checks[index]
+      if (check !== undefined && (task?.status !== 'active' || !item?.review || (base !== undefined && base !== 'HEAD'))) {
+        return taskResult(task, 'Use a numbered independent review check on the active task with HEAD as the base.', true)
+      }
+      if (check !== undefined) engaged = true
+      if ((goal !== undefined && !validText(goal)) || paths?.some(path => !validText(path)) || (base && !validText(base))) {
+        return taskResult(task, 'Use valid review scope and goal text.', true)
+      }
+      const review = await reviewChanges(ctx, {
+        goal: task && item ? task.goal + '\n' + item.description : goal ?? task?.goal ?? 'Review the changed behavior.',
+        paths, base, timeout,
+      }, signal, count => update?.({
+        content: [{ type: 'text', text: 'Independent reviewers returned ' + count + '/2' }], details: undefined,
+      }))
+      let recorded = false
+      if (task && item && review.status !== 'aborted') {
+        const evidence = review.status === 'clear' && review.uncoveredCount === 0
+          ? { fingerprint: review.fingerprint, at: new Date().toISOString(), toolCallId: id }
+          : undefined
+        save(ctx, { ...task, checks: task.checks.map((current, i) => i === index ? { ...current, evidence } : current) })
+        recorded = evidence !== undefined
+      }
+      const lines = ['Independent review ' + review.status, review.message,
+        review.omitted.length ? 'Outside text coverage: ' + review.omitted.join(', ') : '',
+        review.uncoveredCount ? 'Scope excludes ' + review.uncoveredCount + ' changed file(s): ' + review.uncovered.join(', ') : '']
+      for (const reviewer of review.reviewers) {
+        lines.push(reviewer.focus + ' · ' + reviewer.status + (reviewer.summary ? ' · ' + reviewer.summary : ''))
+        if (reviewer.limitation) lines.push('Coverage limitation · ' + reviewer.limitation)
+        for (const finding of reviewer.findings ?? []) lines.push(
+          finding.severity + ' · ' + finding.path + ':' + finding.line + ' · ' + finding.problem)
+      }
+      return {
+        content: [{ type: 'text', text: lines.filter(Boolean).join('\n') }],
+        details: { review: { ...review, recorded } },
+        isError: !['clear', 'findings', 'no_changes'].includes(review.status) ||
+          (check !== undefined && review.uncoveredCount > 0),
+      }
+    },
+  })
+
+  pi.on('agent_before_settle', async (event, ctx) => {
+    if (!engaged || event.outcome !== 'completed' || ctx.signal?.aborted) return
+    let task = currentTask(ctx)
+    let entries = event.entries
+    if (task?.status === 'complete' && completedHere) {
+      const checked = await refreshSourceEvidence(task, ctx.cwd, ctx.signal)
+      if (checked !== task) {
+        task = checked
+        entries = [...entries, { type: 'custom', customType: TASK, data: task }]
+        showTask(ctx, task)
+      }
+    }
+    const settlement = entries === event.entries ? undefined : { entries }
+    if (nudged || waitingForUser || shellStillRunning || event.continue ||
+      ctx.hasPendingMessages() || event.context.pendingMessages.length) return settlement
+    if (!task || task.status !== 'active') return settlement
     nudged = true
     const content = 'This task still needs an explicit delivery decision. Continue from the current workspace. ' +
       'Complete the pending checks, inspect recorded evidence and finish, or record the concrete blocker.\n\n' + taskSummary(task)
     return {
-      entries: [...event.entries, { type: 'custom_message', customType: TASK, content, display: false }],
+      entries: [...entries, { type: 'custom_message', customType: TASK, content, display: false }],
       continue: true,
     }
   })

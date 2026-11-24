@@ -24,6 +24,7 @@ export const EXTENSION_FILES = [
   ['turn-recovery', 'superpi-turn-recovery.ts'],
   ['ask-user', 'superpi-ask-user.ts'],
   ['verification', 'superpi-verification.mjs'],
+  ['review', 'superpi-review.mjs'],
   ['delivery', 'superpi-delivery.ts'],
 ].map(([label, name]) => ({ label, name, source: 'extensions/' + name }))
 

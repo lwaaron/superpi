@@ -662,6 +662,15 @@ const doneHtml = renderToStaticMarkup(React.createElement(ToolBlock, { t: zh, na
 assert(runningHtml.includes('── live ──'), '运行中该显示 live 段（工具边跑边出进度），实际 ' + runningHtml.slice(0, 400))
 assert(doneHtml.includes('── live ──') === false, '跑完后不该再显示 live 段（会与 output 重复），实际 ' + doneHtml.slice(0, 400))
 assert(doneHtml.includes('── output ──') && doneHtml.includes('FINAL-OUT'), '跑完后该显示 output 段，实际 ' + doneHtml.slice(0, 400))
+const reviewLive = renderToStaticMarkup(React.createElement(ToolBlock, {
+  t: zh, name: 'review_changes', argsText: '{"timeout":60}', status: 'running', partial: 'Independent reviewers returned 1/2',
+}))
+assert(reviewLive.includes(zh('procReview')) && reviewLive.includes('Independent reviewers returned 1/2'), '独立审查运行时显示工具名和已返回路数')
+const reviewDone = renderToStaticMarkup(React.createElement(ToolBlock, {
+  t: zh, name: 'review_changes', argsText: '{"timeout":60}', status: 'done',
+  resultText: 'blocking · catalog.mjs:4 · Lookup stopped loading values.',
+}))
+assert(reviewDone.includes('catalog.mjs:4') && reviewDone.includes('Lookup stopped loading values.'), '面板显示独立审查的具体文件位置与发现')
 
 // ── 9.11e 工作状态行：brand 蓝 + 鲸鱼尾 + 「···」（对齐 DSH RunningStatus） ──
 // 目标图（DSH 会话过程流截图）里这一行文字与图标同为 rgb(52,94,186) = #345EBA =

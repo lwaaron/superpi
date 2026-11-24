@@ -22,6 +22,7 @@
  *   E. `corrupt`       `stop`，text/thinking 含坏字节（U+FFFD / C0 / 孤立代理项），且无 toolCall
  *   F. `truncated`     `length`，输出撞到单次上限
  *   G. `reasoning-markup` `stop`，正文以未闭合的推理标记开头
+ *   H. `stream-interrupted` `error`，上游明确报告响应流在结束前断开
  *
  * **刻意不判**：「短回复但声称做完了」。实测 147 条 `stop` 无工具调用的回合里，
  * 只有 6 条有可判定形态（以 `：` 收尾），其余 141 条读起来都是完整句子 ——
@@ -43,7 +44,7 @@
 import { describeBytes, scanTextBytes, summarizeCounts } from './superpi-text-bytes.mjs'
 
 /** 非 `none` 的判据，按判定顺序排列。 */
-export const VERDICT_KINDS = ['truncated', 'dsml-text', 'dsml-thinking', 'dsml-residue', 'corrupt', 'reasoning-markup', 'idle']
+export const VERDICT_KINDS = ['truncated', 'stream-interrupted', 'dsml-text', 'dsml-thinking', 'dsml-residue', 'corrupt', 'reasoning-markup', 'idle']
 
 /**
  * 判定表 —— **判据的知识只有这一份**。
@@ -134,6 +135,10 @@ export const TURN_VERDICT_NOTICE = {
     zh: '这次模型响应达到输出上限，可以接着完成剩余内容。',
     en: 'The model response hit its output limit. You can continue with the remaining work.',
   },
+  'stream-interrupted': {
+    zh: '上游在模型响应完成前断开了连接。可以从已完成的步骤继续。',
+    en: 'The upstream connection closed before the model finished. You can continue from the completed steps.',
+  },
 }
 
 /**
@@ -167,15 +172,6 @@ export function detectTurnVerdict(message) {
   if (message.role !== 'assistant') return ok
 
   const stopReason = typeof message.stopReason === 'string' ? message.stopReason : ''
-  // 已解析出结构化工具调用 → 这一轮还会继续（不是收尾态）。
-  if (stopReason === 'toolUse') return ok
-  // 其它收尾态（error / aborted / pending / deferred）归错误路径，不在此列。
-  if (TURN_VERDICT_DETECTION.terminalStopReasons.includes(stopReason) !== true) return ok
-
-  const { text, thinking } = textChannels(message)
-  const blocks = Array.isArray(message.content) ? message.content : []
-  const hasToolCall = blocks.some(block => block !== null && typeof block === 'object' && block.type === 'toolCall')
-
   const verdict = (kind, detail, bytes = 0) => ({
     delivered: false,
     kind,
@@ -186,6 +182,15 @@ export function detectTurnVerdict(message) {
     },
     detail,
   })
+  if (stopReason === 'error' && typeof message.errorMessage === 'string' &&
+      message.errorMessage.trim().toLowerCase() === 'upstream response stream ended before completion') {
+    return verdict('stream-interrupted', 'upstream response ended before completion')
+  }
+  if (!TURN_VERDICT_DETECTION.terminalStopReasons.includes(stopReason)) return ok
+
+  const { text, thinking } = textChannels(message)
+  const blocks = Array.isArray(message.content) ? message.content : []
+  const hasToolCall = blocks.some(block => block !== null && typeof block === 'object' && block.type === 'toolCall')
 
   /**
    * F 类优先：`length` 是 provider 给出的**原因**，比"输出里有什么"更接近真相。

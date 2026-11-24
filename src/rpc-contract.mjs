@@ -257,6 +257,7 @@ export function classifyInput(raw) {
  *   notify / setStatus / setWidget / setTitle / set_editor_text —— 单向，不需要应答
  *   SuperPi 的 ask_user 工具复用 select 与 input，应答回到原生工具调用。
  *   SuperPi 的任务进度复用 setWidget，/superpi-task 由 get_commands 发现并通过 editor 查看。
+ *   review_changes 使用原生工具进度和结果事件回传独立审查。
  *
  * 阻塞语义（rpc-mode.ts:95-135 createDialogPromise）：只有扩展自己传了 timeout 或
  * 中途 abort，pi 才会自己收尾；**没有默认超时**。客户端不应答 ⇒ Promise 永久 pending、

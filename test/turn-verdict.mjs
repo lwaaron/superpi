@@ -40,6 +40,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { createRequire } from 'node:module'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import { listRuntimeFiles } from '../src/runtime-files.mjs'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const root = path.dirname(here)
@@ -96,7 +97,7 @@ const decorator = await import(pathToFileURL(path.join(root, 'src', 'event-verdi
 const contract = await import(pathToFileURL(path.join(root, 'src', 'rpc-contract.mjs')).href)
 
 section('1. 判据表：异常类型齐全、每类都有中英文案')
-eq('异常类型枚举', verdictModule.VERDICT_KINDS, ['truncated', 'dsml-text', 'dsml-thinking', 'dsml-residue', 'corrupt', 'reasoning-markup', 'idle'])
+eq('异常类型枚举', verdictModule.VERDICT_KINDS, ['truncated', 'stream-interrupted', 'dsml-text', 'dsml-thinking', 'dsml-residue', 'corrupt', 'reasoning-markup', 'idle'])
 for (const kind of verdictModule.VERDICT_KINDS) {
   const notice = verdictModule.TURN_VERDICT_NOTICE[kind]
   check(kind + ' 有文案', notice !== null && typeof notice === 'object')
@@ -143,6 +144,9 @@ export const SAMPLES = [
     message: { role: 'assistant', stopReason: 'length', content: [{ type: 'text', text: '第一段写完，第二段只写了一半' }] } },
   { name: 'G 推理标记未闭合：出现在正文开头', kind: 'reasoning-markup',
     message: { role: 'assistant', stopReason: 'stop', content: [{ type: 'text', text: '<thinking>Review done.\n已验证，并发测试通过。' }] } },
+  { name: 'H 提前断流：上游在响应过程中报错', kind: 'stream-interrupted',
+    message: { role: 'assistant', stopReason: 'error', errorMessage: 'Upstream response stream ended before completion',
+      content: [{ type: 'toolCall', id: 'unexecuted', name: 'write' }] } },
 
   // ── 排除项（误报面必须为零：本仓库自己的文档里到处在讨论 DSML）
   { name: '排除：toolUse 已解析出结构化调用', kind: 'none',
@@ -173,6 +177,7 @@ eq('结尾行内代码含闭合标签不触发重试', verdictModule.detectTurnV
 eq('落在消息末尾的有名未闭合调用可识别', verdictModule.detectTurnVerdict(assistantText('准备写文件。' + LT + DSML + ' invoke name="write"')).kind, 'dsml-text')
 eq('截断带不完整工具参数也报告截断', verdictModule.detectTurnVerdict(assistantText('', 'length', [{ type: 'toolCall', name: 'write' }])).kind, 'truncated')
 eq('可见短回复不会被判空转', verdictModule.detectTurnVerdict(assistantText('已完成。')).kind, 'none')
+eq('正文里讨论断流不触发恢复', verdictModule.detectTurnVerdict(assistantText('Upstream response stream ended before completion')).kind, 'none')
 for (const sample of SAMPLES) {
   const result = verdictModule.detectTurnVerdict(sample.message)
   eq(sample.name, result.kind, sample.kind)
@@ -209,7 +214,7 @@ section('4. 单点判定：verdict 必须挂在 message_end 上（入环之前�
   eq('DSML 被挂上 verdict', decorated.verdict.kind, 'dsml-text')
   eq('delivered=false', decorated.verdict.delivered, false)
   eq('pi 原有字段不动', [decorated.type, decorated.message.role], ['message_end', 'assistant'])
-  eq('正常回复也带 verdict（面板靠它清掉上一轮提示）', decorator.decoratePiEvent({ type: 'message_end', message: SAMPLES[7].message }).verdict.delivered, true)
+  eq('正常回复也带 verdict（面板靠它清掉上一轮提示）', decorator.decoratePiEvent({ type: 'message_end', message: assistantText('正常回复。') }).verdict.delivered, true)
   eq('user 消息不挂', decorator.decoratePiEvent({ type: 'message_end', message: { role: 'user', content: [] } }).verdict, undefined)
   eq('非 message_end 不挂', decorator.decoratePiEvent({ type: 'turn_start' }).verdict, undefined)
   eq('null 不抛', decorator.decoratePiEvent(null), null)
@@ -323,6 +328,11 @@ check('契约失败文案不再声称「畸形提示不可用」', clientSource.
       verdict: corruptVerdict, lang: 'zh', retryLabel: '继续', detail: '', busy: true,
     }))
     check('运行中按钮禁用（不能并发发两条）', busy.includes('disabled=""'))
+    const disconnect = verdictModule.detectTurnVerdict(SAMPLES.find(s => s.kind === 'stream-interrupted').message)
+    const notice = renderToStaticMarkup(React.createElement(internals.VerdictNotice, {
+      verdict: disconnect, lang: 'zh', retryLabel: '继续', busy: false,
+    }))
+    check('断流提示真实渲染并能继续', notice.includes(disconnect.notice.zh) && notice.includes('>继续<') && !notice.includes('disabled=""'))
     eq('verdict 为空时不渲染任何东西', renderToStaticMarkup(React.createElement(internals.VerdictNotice, { verdict: null })), '')
   }
 }
@@ -352,26 +362,9 @@ section('7. 安装面：模块先于扩展，清单不漏文件')
   const installer = await import(pathToFileURL(path.join(root, 'tools', 'install-pi-extension.mjs')).href)
   const files = installer.EXTENSION_FILES
   const position = new Map(files.map((file, index) => [file.name, index]))
-  eq('安装清单含全部十五个文件', files.length, 15)
-  const expected = [
-    'superpi-brand.mjs',
-    'superpi-text-bytes.mjs',
-    'superpi-turn-verdict.mjs',
-    'superpi-editor.ts',
-    'superpi-text-integrity.ts',
-    'superpi-rules.mjs',
-    'superpi-rules.ts',
-    // 模态模块必须在守卫扩展之前：guard.ts import 它（0.18.0 修正的拓扑缺陷）
-    'superpi-modalities.mjs',
-    'superpi-context-guard.mjs',
-    'superpi-context-guard.ts',
-    'superpi-modalities.ts',
-    'superpi-turn-recovery.ts',
-    'superpi-ask-user.ts',
-    'superpi-verification.mjs',
-    'superpi-delivery.ts',
-  ]
-  eq('清单内容与顺序', files.map(file => file.name), expected)
+  const expected = listRuntimeFiles(root).filter(file => file.startsWith('extensions/'))
+  eq('安装清单包含全部扩展源码', files.map(file => file.source).sort(), expected)
+  eq('安装目标名称与源码文件名一致', files.map(file => file.name).sort(), expected.map(file => path.basename(file)))
   /**
    * 依赖顺序按**真实 import 语句**判，而不是按文件名猜。
    *
@@ -382,7 +375,6 @@ section('7. 安装面：模块先于扩展，清单不漏文件')
    */
   const problems = []
   for (const [index, entry] of files.entries()) {
-    if (entry.source.endsWith('.ts') !== true) continue
     const sourcePath = path.join(root, entry.source)
     if (fs.existsSync(sourcePath) !== true) { problems.push(entry.label + ' 源文件不存在'); continue }
     const source = fs.readFileSync(sourcePath, 'utf8')
@@ -392,7 +384,7 @@ section('7. 安装面：模块先于扩展，清单不漏文件')
       if (position.get(dep.name) > index) problems.push(entry.label + ' 排在它的依赖 ' + dep.name + ' 之前')
     }
   }
-  eq('每个 .ts 的 .mjs 依赖都排在它前面', problems, [])
+  eq('同目录依赖都排在导入者前面', problems, [])
 }
 
 /* ───────────────────────────────── 汇总 ───────────────────────────────── */

@@ -90,6 +90,7 @@ try {
   await fs.mkdir(extensionDir, { recursive: true })
   await fs.mkdir(workspace, { recursive: true })
   for (const file of ['superpi-delivery.ts', 'superpi-verification.mjs', 'superpi-text-bytes.mjs',
+    'superpi-review.mjs',
     'superpi-context-guard.ts', 'superpi-context-guard.mjs', 'superpi-modalities.mjs',
     'superpi-turn-recovery.ts', 'superpi-turn-verdict.mjs']) {
     await fs.copyFile(path.join(root, 'extensions', file), path.join(extensionDir, file))
@@ -176,6 +177,16 @@ try {
     'source changes invalidate previously recorded command evidence')
   check(stale.result('block')?.details.task.status === 'blocked' && stale.modelCalls.length === 6,
     'a recorded blocker persists and prevents an automatic continuation')
+
+  await fs.writeFile(path.join(workspace, 'source.txt'), 'current')
+  const amended = await run('Check the final state before settlement',
+    task('late-start', 'start', { ...plan, replace: true }), verification('late-verify', { command, check: 1 }),
+    task('late-finish', 'finish'), tool('late-edit', 'write', { path: 'source.txt', content: 'changed after finish' }),
+    'Complete.', task('late-block', 'block', { reason: 'The changed source needs verification.' }), 'Verification is pending.')
+  check(amended.result('late-finish')?.details.task.status === 'complete' &&
+    amended.result('late-block')?.details.task.status === 'blocked', 'settlement reopens a receipt invalidated by a late edit')
+  check(JSON.stringify(amended.modelCalls.at(-2).messages).includes('Test the cache input') &&
+    outputWidget.get('superpi-task')?.[0]?.includes('0/1'), 'the reopened evidence and current state are visible to the model and TUI')
 
   const textLeak = '<thinking>Review passed.\nHere is the final answer.'
   const recovered = await run('Check malformed final output', textLeak, 'Clean final answer.')

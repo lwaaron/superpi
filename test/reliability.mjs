@@ -22,6 +22,7 @@ const largeWrite = '已有文件正文。'.repeat(1000)
 const checks = []
 const requests = []
 let replies = []
+let reviewReplies = {}
 let route
 let sessionId
 const disposers = []
@@ -51,13 +52,16 @@ const provider = http.createServer(async (req, res) => {
   for await (const piece of req) raw += piece
   const payload = JSON.parse(raw)
   requests.push(payload)
-  const reply = replies.shift()
+  const role = payload.messages.find(message => message.role === 'system')?.content
+    .match(/^You are the independent (correctness|tests) reviewer\./)?.[1]
+  const reply = (role ? reviewReplies[role] : replies)?.shift()
   if (!reply) { res.writeHead(400).end('Unexpected provider request'); return }
   res.writeHead(200, { 'Content-Type': 'text/event-stream' })
   if (reply.hold) {
     res.write(chunk({ content: '等待' }, null))
     return
   }
+  if (reply.delayMs) await delay(reply.delayMs)
   const frame = chunk(typeof reply.delta === 'string' ? { content: reply.delta } : reply.delta, null)
   if (reply.badUtf8) {
     const at = frame.indexOf(Buffer.from('BAD_UTF8'))
@@ -71,6 +75,11 @@ const provider = http.createServer(async (req, res) => {
   } else {
     res.write(frame)
   }
+  if (reply.streamError) {
+    res.end('data: ' + JSON.stringify({ error: { message: reply.streamError } }) + '\n\n')
+    return
+  }
+  if (reply.endWithoutFinish) { res.end(); return }
   res.end(Buffer.concat([chunk({}, reply.finish ?? 'stop'), Buffer.from('data: [DONE]\n\n')]))
 })
 
@@ -133,7 +142,7 @@ try {
   })
   await fs.writeFile(guardPath, JSON.stringify({ autoRetryCooldownMs: 0 }))
   await fs.writeFile(path.join(agentDir, 'settings.json'), JSON.stringify({
-    compaction: { enabled: false }, retry: { enabled: false }, lastChangelogVersion: '1.5.2',
+    compaction: { enabled: false }, retry: { enabled: true, maxRetries: 1, baseDelayMs: 20 }, lastChangelogVersion: '1.5.2',
   }))
   await listen(provider)
   await fs.writeFile(path.join(agentDir, 'models.json'), JSON.stringify({ providers: { loopback: {
@@ -247,6 +256,45 @@ try {
   check(toolTurn.records.some(entry => entry.type === 'entry_appended' && entry.entry?.type === 'context_edit' &&
     entry.entry.replacement?.content.some(block => block.arguments?._omitted === true)),
     'successful write projection is recorded in native session history')
+
+  const earlyClose = 'Upstream response stream ended before completion'
+  const interrupted = await run('recover after the gateway interrupts a tool proposal', [
+    useTool('write', { path: 'committed-effect.txt', content: 'already written' }, 'before_disconnect'),
+    { delta: { tool_calls: [{ index: 0, id: 'unfinished_write', type: 'function', function: {
+      name: 'write', arguments: '{"path":"interrupted.txt","content":',
+    } }] }, streamError: earlyClose },
+    { delta: 'Recovered with earlier work intact.' },
+  ])
+  const streamFailure = interrupted.records.find(record => record.type === 'message_end' && record.message?.stopReason === 'error')
+  check(streamFailure?.message.errorMessage === earlyClose && streamFailure.verdict?.kind === 'stream-interrupted',
+    'the actual stream error is reported as interrupted without changing the provider evidence')
+  check(interrupted.requests.length === 3 && interrupted.records.filter(record => record.type === 'agent_settled').length === 1 &&
+    lastAssistant(interrupted)?.message.content[0]?.text === 'Recovered with earlier work intact.',
+  'a dropped stream continues inside the same user activity')
+  check(interrupted.records.filter(record => record.type === 'tool_execution_end').length === 1 &&
+    await fs.readFile(path.join(workspace, 'committed-effect.txt'), 'utf8') === 'already written' &&
+    !(await fs.readdir(workspace)).includes('interrupted.txt'), 'only the completed write reaches disk')
+  check(requestText(interrupted.requests.at(-1)).includes('committed-effect.txt') &&
+    !requestText(interrupted.requests.at(-1)).includes('interrupted.txt'),
+  'the next model request contains completed tool effects and excludes the broken proposal')
+  const streamHistory = (await command({ type: 'get_entries' })).data.entries
+  check(streamHistory.some(entry => entry.type === 'message' && entry.message.errorMessage === earlyClose),
+    'the failed provider response is still available in the original session record')
+
+  const repeatedDisconnect = await run('stop after the supplemental stream retry', [
+    { delta: 'First incomplete', streamError: earlyClose }, { delta: 'Second incomplete', streamError: earlyClose },
+  ])
+  check(repeatedDisconnect.requests.length === 2 && (await snapshot()).lastVerdict?.kind === 'stream-interrupted',
+    'a persistent gateway failure settles after one recovery with a visible reason on reconnect')
+  const terminalError = await run('surface a permanent provider error', [{ delta: 'Failed.', streamError: 'Invalid API key' }])
+  check(terminalError.requests.length === 1 && lastAssistant(terminalError)?.verdict?.kind === 'none',
+    'a permanent provider error stays with the existing error path')
+  const nativeRetry = await run('leave recognized stream errors to Pi', [
+    { delta: 'Stopped early.', endWithoutFinish: true }, { delta: 'Native retry recovered.' },
+  ])
+  check(nativeRetry.requests.length === 2 && nativeRetry.records.some(record => record.type === 'auto_retry_start') &&
+    !nativeRetry.records.some(record => record.entry?.customType === 'superpi-recovery'),
+  'Pi still owns its native stream retries')
 
   const corruptWrite = await run('reject damaged writes', [
     { delta: writeCall('bad-body.txt', '文件BAD_UTF8'), finish: 'tool_calls', badUtf8: true },
@@ -380,6 +428,131 @@ try {
   'the task cannot claim a command passed on source that was edited after verification')
   check(changed.requests.length === 6 && toolResult(changed, 'new_block')?.details?.task?.status === 'blocked',
     'an explicit blocker persists and prevents automatic continuation')
+
+  execFileSync('git', ['-c', 'core.autocrlf=false', 'add', '-A'], { cwd: workspace })
+  execFileSync('git', ['-c', 'user.name=Fixture', '-c', 'user.email=test@example.invalid', '-c', 'commit.gpgsign=false',
+    'commit', '--quiet', '-am', 'baseline'], { cwd: workspace })
+  await fs.writeFile(path.join(workspace, 'origin.txt'), 'NEW reviewed line\nsecond line\n')
+  const requestReview = (args, id) => useTool('review_changes', { goal: 'Keep the changed source correct and tested', timeout: 5, ...args }, id)
+  const publish = (summary, findings, id) => useTool('submit_review', { summary, findings }, id)
+  const clean = focus => publish(focus + ' checked the requested change.', [], focus + '_published')
+  reviewReplies = {
+    correctness: [{ ...useTool('read_review_file', { path: '../private.txt' }, 'outside'), delayMs: 150 },
+      useTool('read_review_file', { path: 'origin.txt' }, 'read_changed'), clean('correctness')],
+    tests: [{ ...clean('tests'), delayMs: 150 }],
+  }
+  const independentlyReviewed = await run('review a change in the task checklist', [
+    useTool('task_progress', { action: 'start', goal: 'Review current work', replace: true,
+      checks: [{ description: 'Independent review of all changes', review: true }] }, 'review_plan'),
+    useTool('task_progress', { action: 'observe', check: 1, observation: 'I looked at it myself.' }, 'pretend_review'),
+    requestReview({ check: 1, paths: ['origin.txt'], base: 'HEAD' }, 'review_evidence'),
+    useTool('task_progress', { action: 'finish' }, 'review_finish'),
+    { delta: 'Independent review was recorded.' },
+  ])
+  const reviewResult = toolResult(independentlyReviewed, 'review_evidence')
+  check(reviewResult?.details?.review?.status === 'clear' && reviewResult.details.review.reviewers.length === 2 &&
+    toolResult(independentlyReviewed, 'review_finish')?.details?.task?.status === 'complete',
+  'two structured read-only reviews attest the exact source snapshot')
+  check(toolResult(independentlyReviewed, 'pretend_review')?.isError === true, 'a self-observation cannot replace required independent review')
+  const lanes = independentlyReviewed.requests.filter(payload =>
+    payload.messages.some(message => message.role === 'system' && message.content.startsWith('You are the independent ')))
+  check(lanes.length === 4 && lanes.every(payload => payload.tools?.map(tool => tool.function.name).sort().join(',') ===
+    'read_review_file,submit_review'), 'both independent model contexts get only snapshot read and report tools')
+  check(lanes.slice(0, 2).map(payload => payload.messages[0].content.match(/independent (correctness|tests)/)?.[1]).sort().join(',') ===
+    'correctness,tests', 'the two reviewers start before either one performs another model request')
+  check(lanes.some(payload => requestText(payload).includes('NEW reviewed line')) &&
+    lanes.some(payload => requestText(payload).includes('outside the review snapshot')),
+  'the reviewed snapshot exposes exact file content and rejects a path outside its root')
+
+  reviewReplies = {
+    correctness: [publish('Found a concrete regression.', [{ severity: 'blocking', path: 'origin.txt', line: 1,
+      problem: 'This changed line breaks the fixture contract.' }], 'found')],
+    tests: [clean('tests')],
+  }
+  const defects = await run('surface findings to the parent', [requestReview({}, 'review_findings'), { delta: 'Regression recorded.' }])
+  check(toolResult(defects, 'review_findings')?.details?.review?.status === 'findings' &&
+    requestText(defects.requests.at(-1)).includes('breaks the fixture contract'), 'blocking defects survive the provider and panel transport')
+  reviewReplies = { correctness: [{ hold: true }], tests: [clean('tests')] }
+  const partial = await run('bound a stalled review lane', [requestReview({ timeout: 1 }, 'review_timeout'), { delta: 'Review incomplete.' }])
+  check(toolResult(partial, 'review_timeout')?.details?.review?.status === 'timed_out' &&
+    toolResult(partial, 'review_timeout')?.details?.review?.reviewers.some(reviewer => reviewer.focus === 'tests' && reviewer.status === 'complete'),
+  'deadline returns the completed reviewer evidence without treating a stalled reviewer as clean')
+
+  await fs.writeFile(path.join(workspace, 'review-new.txt'), 'Untracked source included in review.\n')
+  reviewReplies = {
+    correctness: [publish('Invalid line anchor.', [{ severity: 'blocking', path: 'origin.txt', line: 9999,
+      problem: 'A finding cannot cite a nonexistent line.' }], 'bad_anchor'), { delta: 'Review without a valid report.' }],
+    tests: [clean('tests')],
+  }
+  const invalid = await run('require a valid line in the captured snapshot', [
+    requestReview({}, 'review_bad_anchor'), { delta: 'Invalid finding was rejected.' },
+  ])
+  const invalidLanes = invalid.requests.filter(payload => payload.messages[0]?.content?.startsWith('You are the independent '))
+  check(toolResult(invalid, 'review_bad_anchor')?.details?.review?.status === 'partial' &&
+    invalidLanes.some(payload => requestText(payload).includes('Finding line is missing')),
+  'a nonexistent line cannot be recorded as either a blocking or clean report')
+  check(invalidLanes.slice(0, 2).every(payload => requestText(payload).includes('Untracked source included in review.')),
+    'both reviewers see new files along with changes from the Git base')
+
+  reviewReplies = { correctness: [clean('correctness')], tests: [clean('tests')] }
+  const scoped = await run('check that the selected paths cover all work', [
+    useTool('task_progress', { action: 'start', goal: 'Review tracked and untracked changes', replace: true,
+      checks: [{ description: 'Review the full change', review: true }] }, 'scoped_plan'),
+    requestReview({ check: 1, paths: ['origin.txt'] }, 'review_scope'),
+    useTool('task_progress', { action: 'block', reason: 'Untracked source still needs review.' }, 'scoped_block'),
+    { delta: 'The uncovered file remains pending.' },
+  ])
+  const scopedReview = toolResult(scoped, 'review_scope')
+  check(scopedReview?.isError && scopedReview.details?.review?.status === 'clear' &&
+    scopedReview.details.review.uncovered.includes('review-new.txt') && !scopedReview.details.review.recorded,
+  'a clean path-limited review cannot certify a changed file outside its scope')
+
+  const manyReads = Array.from({ length: 11 }, (_, index) =>
+    useTool('read_review_file', { path: 'origin.txt', count: 1 }, 'read_for_budget_' + index))
+  reviewReplies = {
+    correctness: [...manyReads, useTool('submit_review', {
+      summary: 'Some behavior still needs examination.', findings: [], limitation: 'The remaining caller was not reviewed.',
+    }, 'limited_report')],
+    tests: [clean('tests')],
+  }
+  const budgeted = await run('reserve the last reviewer request for a report', [
+    requestReview({ timeout: 12 }, 'review_budget'), { delta: 'The incomplete report is preserved.' },
+  ])
+  const budgetLane = budgeted.requests.filter(payload => payload.messages[0]?.content?.startsWith('You are the independent correctness reviewer.'))
+  check(budgetLane.length === 12 && budgetLane.at(-1).tools.map(tool => tool.function.name).join(',') === 'submit_review',
+  'the last provider request can submit a report after all read requests have been used (requests=' + budgetLane.length +
+    ', tools=' + budgetLane.at(-1)?.tools?.map(tool => tool.function.name).join(',') + ')')
+  const budgetReport = toolResult(budgeted, 'review_budget')?.details?.review
+  check(budgetReport?.status === 'partial' && budgetReport.reviewers.some(reviewer =>
+    reviewer.status === 'incomplete' && reviewer.limitation === 'The remaining caller was not reviewed.'),
+  'a reviewer can preserve findings and explicitly report inadequate coverage (' + JSON.stringify(budgetReport?.reviewers) + ')')
+
+  reviewReplies = {
+    correctness: [{ ...clean('correctness'), delayMs: 250 }],
+    tests: [{ ...clean('tests'), delayMs: 250 }],
+  }
+  const beforeEdit = requests.length
+  const stale = await run('review a moving workspace', [
+    requestReview({}, 'review_stale'), { delta: 'Reviewed source had changed.' },
+  ], { interact: async () => {
+    await until(() => requests.slice(beforeEdit), batch => batch.some(payload =>
+      payload.messages[0]?.content?.startsWith('You are the independent ')), 'the immutable review input')
+    await fs.writeFile(path.join(workspace, 'origin.txt'), 'Edit after the reviewers started.\n')
+  } })
+  const staleReview = toolResult(stale, 'review_stale')?.details?.review
+  check(staleReview?.status === 'stale' && !staleReview.recorded &&
+    staleReview.reviewers.every(reviewer => reviewer.status === 'complete'),
+  'both reports remain available but cannot attest source changed during review')
+
+  await request(session(), undefined, 'DELETE')
+  sessionId = undefined
+  await fs.writeFile(path.join(agentDir, 'settings.json'), JSON.stringify({
+    compaction: { enabled: false }, retry: { enabled: false }, lastChangelogVersion: '1.5.2',
+  }))
+  sessionId = (await request('/sessions', {})).session.id
+  const retryOff = await run('report the interruption with native retry disabled', [{ delta: 'Incomplete', streamError: earlyClose }])
+  check(retryOff.requests.length === 1 && lastAssistant(retryOff)?.verdict?.kind === 'stream-interrupted',
+    'the recovery respects the native retry switch and still reports the interruption')
 } finally {
   if (sessionId) await request(session(), undefined, 'DELETE').catch(() => {})
   for (const dispose of disposers.reverse()) dispose()

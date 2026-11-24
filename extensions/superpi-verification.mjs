@@ -58,8 +58,13 @@ async function sourceFiles(root, signal) {
 /** Identify working bytes, including untracked source. Staging alone does not change the result. */
 export async function workspaceFingerprint(cwd, signal) {
   const root = await repositoryRoot(cwd, signal)
-  const hash = createHash('sha256').update(root).update('\0').update(await fs.realpath(cwd)).update('\0')
-  for (const name of await sourceFiles(root, signal)) {
+  const identity = { root, cwd: await fs.realpath(cwd) }
+  return fingerprintFiles(root, await sourceFiles(root, signal), identity, signal)
+}
+
+async function fingerprintFiles(root, files, identity, signal) {
+  const hash = createHash('sha256').update(identity.root).update('\0').update(identity.cwd).update('\0')
+  for (const name of files) {
     signal.throwIfAborted()
     const source = await fileAt(root, name)
     // A path absent from the working tree contributes nothing even if it is still staged.
@@ -74,7 +79,8 @@ export async function workspaceFingerprint(cwd, signal) {
 /** Copy current tracked and non-ignored untracked files. No Git metadata or linked files are shared. */
 export async function withVerificationSnapshot(cwd, signal, run) {
   const root = await repositoryRoot(cwd, signal)
-  const workdir = path.relative(root, await fs.realpath(cwd))
+  const sourceCwd = await fs.realpath(cwd)
+  const workdir = path.relative(root, sourceCwd)
   if (workdir === '..' || workdir.startsWith('..' + path.sep) || path.isAbsolute(workdir)) {
     throw new Error('The session working directory is outside the discovered Git repository.')
   }
@@ -94,7 +100,7 @@ export async function withVerificationSnapshot(cwd, signal, run) {
     const snapshotCwd = path.join(snapshot, workdir)
     await fs.mkdir(snapshotCwd, { recursive: true })
     signal.throwIfAborted()
-    return await run(snapshotCwd)
+    return await run(snapshotCwd, { root: snapshot, files, source: { root, cwd: sourceCwd } })
   } finally {
     const info = await fs.lstat(snapshot).catch(error => {
       if (error.code !== 'ENOENT') throw error
@@ -107,6 +113,67 @@ export async function withVerificationSnapshot(cwd, signal, run) {
       await fs.rm(snapshot, { recursive: true, force: true, maxRetries: 3 })
     }
   }
+}
+
+/** Pin a review to the same bytes that its reviewers can read. The source index is only consulted. */
+export async function withReviewSnapshot(cwd, base, paths, signal, inspect) {
+  return withVerificationSnapshot(cwd, signal, async (_snapshotCwd, snapshot) => {
+    const source = snapshot.source
+    const revision = utf8.decode(await git(source.root, ['rev-parse', '--verify', '--end-of-options', base + '^{tree}'], signal)).trim()
+    const atCopy = ['--work-tree=' + snapshot.root, '--literal-pathspecs']
+    const diff = [...atCopy, 'diff', '--no-color', '--no-ext-diff', '--no-textconv', '--no-renames']
+    const untracked = [...atCopy, 'ls-files', '-z', '--others', '--exclude-standard']
+    const where = ['--', ...paths]
+    const allPaths = paths.length ? Promise.all([
+      git(source.root, [...diff, '--name-only', '-z', revision, '--'], signal),
+      git(source.root, [...untracked, '--'], signal),
+    ]) : []
+    const [patch, stats, newFiles, deletions, fingerprint, all] = await Promise.all([
+      git(source.root, [...diff, revision, ...where], signal),
+      git(source.root, [...diff, '--numstat', '-z', revision, ...where], signal),
+      git(source.root, [...untracked, ...where], signal),
+      git(source.root, [...diff, '--name-only', '--diff-filter=D', '-z', revision, ...where], signal),
+      fingerprintFiles(snapshot.root, snapshot.files, source, signal),
+      allPaths,
+    ])
+    const changes = records(stats).map(line => {
+      const [added, removed, ...name] = line.split('\t')
+      return { name: name.join('\t'), binary: added === '-' && removed === '-' }
+    })
+    const newNames = records(newFiles)
+    const selected = new Set([...changes.map(change => change.name), ...newNames])
+    const uncovered = [...new Set(all.flatMap(records))].filter(name => !selected.has(name)).sort()
+    const deleted = new Set(records(deletions))
+    const filenames = new Set(snapshot.files)
+    const read = async name => {
+      if (path.isAbsolute(name) || !scanTextBytes(name).clean || (!filenames.has(name) && !deleted.has(name))) {
+        throw new Error('Path is outside the review snapshot or is not a captured project file.')
+      }
+      const file = await fileAt(snapshot.root, name)
+      const bytes = file
+        ? await readReviewBytes(file, signal)
+        : deleted.has(name) ? await git(source.root, ['show', revision + ':' + name], signal) : null
+      if (!bytes) throw new Error('The file is absent from the review snapshot.')
+      if (bytes.length > 256 * 1024) throw new Error('This file exceeds the snapshot text read limit.')
+      const text = utf8.decode(bytes)
+      if (!scanTextBytes(text).clean) throw new Error('This file is not clean UTF-8 source text.')
+      return text
+    }
+    return inspect({
+      patch: utf8.decode(patch),
+      untracked: newNames,
+      omitted: changes.filter(change => change.binary).map(change => change.name),
+      uncovered,
+      fingerprint,
+      revision,
+      read,
+    })
+  })
+}
+
+async function readReviewBytes(file, signal) {
+  if (file.stat.size > 256 * 1024) throw new Error('This file exceeds the snapshot text read limit.')
+  return fs.readFile(file.file, { signal })
 }
 
 export async function applyVerificationMutations(cwd, mutations, signal) {
