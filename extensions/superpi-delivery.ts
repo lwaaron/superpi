@@ -360,11 +360,13 @@ export default function delivery(pi: ExtensionAPI) {
       else if (review.pendingReviewers.length) remaining = 'Independent review still needs complete reports from ' + review.pendingReviewers.join(' and ') + '.'
       const repeated = review.repeated && review.status !== 'stale' && !savedNewEvidence
       const lines = ['Independent review ' + review.status, review.message,
+        blocking && review.pendingReviewers.length ? 'Pending static coverage · ' + review.pendingReviewers.join(', ') : '',
         review.reused.length ? 'Reports carried forward: ' + review.reused.join(', ') : '',
         review.omitted.length ? 'Outside text coverage: ' + review.omitted.join(', ') : '',
         review.uncoveredCount ? 'Scope excludes ' + review.uncoveredCount + ' changed file(s): ' + review.uncovered.join(', ') : '']
       for (const reviewer of review.reviewers) {
         lines.push(reviewer.focus + ' · ' + reviewer.status + (reviewer.summary ? ' · ' + reviewer.summary : ''))
+        if (reviewer.fallback) lines.push('File discovery resumed · ' + reviewer.fallback)
         if (reviewer.failure) lines.push('Model result · ' + reviewer.failure)
         if (reviewer.limitation) lines.push('Coverage limitation · ' + reviewer.limitation)
         if (reviewer.notes) lines.push('Notes · ' + reviewer.notes)

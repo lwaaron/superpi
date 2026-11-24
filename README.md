@@ -229,10 +229,10 @@ New-Item -ItemType Junction `
 ### 方式三：手工 pnpm add（不想跑脚本时）
 
 ```powershell
-npm pack                                        # 得到 superpi-0.23.1.tgz
+npm pack                                        # 得到 superpi-0.24.0.tgz
 cd "$env:USERPROFILE\.dsh\profiles\desktop"
 node "$env:USERPROFILE\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\pnpm\bin\pnpm.cjs" `
-  add "file:C:\path\to\superpi-0.23.1.tgz" --ignore-scripts
+  add "file:C:\path\to\superpi-0.24.0.tgz" --ignore-scripts
 ```
 
 不要在 profile 里用 `npm install`：npm 会另写一份 `package-lock.json`，而宿主插件管理器用的是 pnpm，两套锁文件互相看不见，下次插件安装就会把 node_modules 重建成 pnpm 理解的样子。
@@ -448,6 +448,7 @@ npm install --prefix <插件>/.runtime --save-exact --no-audit --no-fund --logle
 - 同一份源码、基准、有效范围和验收目标，可从当前会话分支复用已完成报告，只补跑缺席的审查。代码变化会触发新的审查。一次用户请求内同一份证据最多发起两轮。持续无进展的重复调用会结束本轮，并保留具体待验收项。
 - `npm run test:engineering` 校验评分与运行记录。`node test/engineering-bench.mjs list` 列出场景，`prepare <场景> <新目录>` 生成等价的 Git 起点和任务描述，`grade <场景> <工作区>` 独立检查代码。`metrics <events.jsonl> <process.json>` 根据 Pi 的 JSONL 事件和进程记录（`exit`、`seconds`、可选 `deadline`）统计实际收尾状态、耗时和审查请求。当前场景覆盖并发缓存与持久化迁移。
 - 0.23.1 在发起审查请求时记录计数，支持回看超时或强制停止前的请求量。`metrics` 对复用报告去重，并标出旧日志中缺失计数的审查。评审自身的断流与其他模型错误可在报告中查阅。
+- 0.24.0 对最多 12 个常规源文件和项目清单、完整证据包不超过 12 KB 且符合模型预算的小型快照，首轮直接提供改动与未修改的源码和测试。确有静态审查缺口时须指出源文件与原因，测试执行仍独立验收。首轮使用剩余时限的三分之一，最长 15 秒。超时或可恢复的输出失败只让受影响的评审切换到精简差异并恢复按需查阅，保留另一份已返回的报告。显式路径、删文件、混合仓库或超预算快照直接按需查阅。阻塞发现与待补覆盖同时回传，仍须两路完成才能验收。
 
 ## 测试
 

@@ -54,7 +54,8 @@ const provider = http.createServer(async (req, res) => {
   requests.push(payload)
   const role = payload.messages.find(message => message.role === 'system')?.content
     .match(/^You are the independent (correctness|tests) reviewer\./)?.[1]
-  const reply = (role ? reviewReplies[role] : replies)?.shift()
+  const next = (role ? reviewReplies[role] : replies)?.shift()
+  const reply = typeof next === 'function' ? next(payload) : next
   if (!reply) { res.writeHead(400).end('Unexpected provider request'); return }
   res.writeHead(200, { 'Content-Type': 'text/event-stream' })
   if (reply.hold) {
@@ -147,7 +148,8 @@ try {
   await listen(provider)
   await fs.writeFile(path.join(agentDir, 'models.json'), JSON.stringify({ providers: { loopback: {
     baseUrl: `http://127.0.0.1:${provider.address().port}/v1`, api: 'openai-completions', apiKey: 'fixture',
-    models: ['fixture', 'replacement'].map(id => ({ id, contextWindow: 24000, maxTokens: 2048, input: ['text', 'image'] })),
+    models: ['fixture', 'replacement', 'fixture-wide'].map(id => ({ id,
+      contextWindow: id === 'fixture-wide' ? 160000 : 24000, maxTokens: 2048, input: ['text', 'image'] })),
   } } }))
   apply({
     effect(fn) { const dispose = fn(); if (typeof dispose === 'function') disposers.push(dispose); return () => {} },
@@ -661,6 +663,137 @@ try {
   const retryOff = await run('report the interruption with native retry disabled', [{ delta: 'Incomplete', streamError: earlyClose }])
   check(retryOff.requests.length === 1 && lastAssistant(retryOff)?.verdict?.kind === 'stream-interrupted',
     'the recovery respects the native retry switch and still reports the interruption')
+
+  await request(session(), undefined, 'DELETE')
+  sessionId = undefined
+  const compact = path.join(temp, 'compact-source')
+  await fs.mkdir(compact)
+  const git = (...args) => execFileSync('git', ['-c', 'core.autocrlf=false', '-c', 'user.name=Fixture',
+    '-c', 'user.email=test@example.invalid', '-c', 'commit.gpgsign=false', ...args], { cwd: compact })
+  git('init', '--quiet')
+  await fs.writeFile(path.join(compact, 'catalog.mjs'), 'export const lookup = () => "value"\n')
+  await fs.writeFile(path.join(compact, 'public.test.mjs'), '// The existing public test expects 恒定结果.\n')
+  await fs.writeFile(path.join(compact, 'package.json'), '{"type":"module"}\n')
+  git('add', '.')
+  git('commit', '--quiet', '-m', 'Compact review fixture')
+  await fs.writeFile(path.join(compact, 'catalog.mjs'), 'export const lookup = () => undefined\n')
+  sessionId = (await request('/sessions', { cwd: compact })).session.id
+  const visibleTest = 'The existing public test expects 恒定结果.'
+  const seedFinding = publish('The public result regressed.', [{ severity: 'blocking', path: 'catalog.mjs', line: 1,
+    problem: 'lookup returns undefined instead of its public value.' }], 'compact_defect')
+  reviewReplies = {
+    correctness: [seedFinding],
+    tests: [payload => requestText(payload).includes(visibleTest) ? clean('tests') :
+      useTool('read_review_file', { path: 'public.test.mjs' }, 'read_instead_of_packet'), clean('tests')],
+  }
+  const ready = await run('review the compact workspace', [requestReview({}, 'compact_review'), { delta: 'Found and recorded the regression.' }])
+  const readyProof = toolResult(ready, 'compact_review')?.details?.review
+  const readyRequests = reviewRequests(ready)
+  check(readyProof?.status === 'findings' && readyProof.reviewers.some(reviewer => reviewer.findings?.some(finding =>
+    finding.path === 'catalog.mjs' && finding.line === 1 && finding.severity === 'blocking')),
+  'a compact review still enforces exact source anchors and preserves the seeded blocking defect')
+  check(readyRequests.length === 2 && readyProof?.newRequests === 2 && readyProof?.inputMode === 'snapshot' &&
+    readyRequests.every(payload => requestText(payload).includes(visibleTest) && requestText(payload).includes('lookup = () => undefined') &&
+      payload.tools?.map(tool => tool.function.name).join(',') === 'submit_review'),
+  'both reviewers get complete changed and unchanged source on their first report request without another read round trip')
+
+  reviewReplies = {
+    correctness: [{ delta: 'I should check a specific line before submitting.' },
+      useTool('read_review_file', { path: 'catalog.mjs', start: 1, count: 1 }, 'inspect_after_fast_attempt'),
+      seedFinding],
+    tests: [clean('tests')],
+  }
+  const fallback = await run('restore discovery when the first response has no report', [
+    requestReview({}, 'compact_fallback'), { delta: 'The retry completed the structured review.' },
+  ])
+  const recoveryRequests = reviewRequests(fallback).filter(payload => laneOf(payload) === 'correctness')
+  check(recoveryRequests.length === 3 && !recoveryRequests[0].tools.some(tool => tool.function.name === 'read_review_file') &&
+    recoveryRequests[1].tools.some(tool => tool.function.name === 'read_review_file') &&
+    toolResult(fallback, 'compact_fallback')?.details?.review?.status === 'findings',
+  'an ordinary response without a report restores discovery within the same deadline and keeps proof validation')
+
+  reviewReplies = { correctness: [{ hold: true },
+    useTool('read_review_file', { path: 'catalog.mjs', start: 1, count: 1 }, 'inspect_after_fast_timeout'), seedFinding],
+  tests: [clean('tests')] }
+  const slow = await run('keep discovery time after a stalled first request', [
+    requestReview({ timeout: 4 }, 'compact_slow'), { delta: 'The independent reports returned.' },
+  ])
+  const slowProof = toolResult(slow, 'compact_slow')?.details?.review
+  const slowCorrectness = reviewRequests(slow).filter(payload => laneOf(payload) === 'correctness')
+  check(slowProof?.status === 'findings' && slowProof.newRequests === 4 &&
+    slowProof.reviewers.find(reviewer => reviewer.focus === 'correctness')?.fallback === 'snapshot-timeout' &&
+    reviewRequests(slow).filter(payload => laneOf(payload) === 'tests').length === 1 &&
+    !requestText(slowCorrectness[1]).includes(visibleTest) && slowCorrectness[1].tools.some(tool => tool.function.name === 'read_review_file'),
+  'a stalled compact request falls back to the lean diff without restarting the reviewer who already reported')
+
+  reviewReplies = { correctness: [{ delta: 'Interrupted review', streamError: earlyClose }, seedFinding], tests: [clean('tests')] }
+  const gateway = await run('restore discovery after a known compact stream failure', [
+    requestReview({}, 'compact_dropped'), { delta: 'Discovery recovered the blocking finding.' },
+  ])
+  check(toolResult(gateway, 'compact_dropped')?.details?.review?.status === 'findings' &&
+    toolResult(gateway, 'compact_dropped')?.details?.review?.reviewers.find(reviewer => reviewer.focus === 'correctness')?.fallback === 'stream-interrupted',
+  'a recognized stream failure during the first attempt changes evidence strategy inside the same review')
+
+  reviewReplies = { correctness: [useTool('submit_review', {
+    summary: 'The caller path is still unresolved.', findings: [],
+    gaps: [{ path: 'catalog.mjs', reason: 'The expected lookup value could not be identified from the supplied contract.' }],
+  }, 'concrete_gap')], tests: [clean('tests')] }
+  const gap = await run('report concrete remaining evidence', [requestReview({}, 'compact_gap'), { delta: 'The review still has a gap.' }])
+  const gapProof = toolResult(gap, 'compact_gap')?.details?.review
+  check(gapProof?.status === 'partial' && gapProof.reviewers.some(reviewer => reviewer.status === 'incomplete' &&
+    reviewer.gaps?.[0].path === 'catalog.mjs' && reviewer.limitation.includes('expected lookup value')),
+  'only anchored material gaps in the compact report keep the verdict partial')
+
+  reviewReplies = { correctness: [useTool('submit_review', {
+    summary: 'Lookup returned an invalid value. Test coverage needs more analysis.', gaps: [{ path: 'public.test.mjs', reason: 'Audit the unchanged expectations.' }],
+    findings: [{ severity: 'blocking', path: 'catalog.mjs', line: 1, problem: 'Lookup returned undefined instead of the required value.' }],
+  }, 'blocking_and_gap')], tests: [clean('tests')] }
+  const blocker = await run('show a blocker even with pending coverage', [requestReview({}, 'compact_blocker'), { delta: 'The blocker and gap were recorded.' }])
+  const blockerProof = toolResult(blocker, 'compact_blocker')?.details?.review
+  check(blockerProof?.status === 'findings' && !blockerProof.recorded && blockerProof.pendingReviewers.includes('correctness') &&
+    blockerProof.reviewers.some(reviewer => reviewer.findings?.some(finding => finding.path === 'catalog.mjs' && finding.line === 1)),
+  'a verified source anchor can surface a blocker immediately while incomplete coverage remains explicit')
+
+  reviewReplies = { correctness: [useTool('submit_review', {
+    summary: 'An outside file might be relevant.', findings: [],
+    gaps: [{ path: '../uncaptured.mjs', reason: 'This is not a supplied source path.' }],
+  }, 'fabricated_gap'), seedFinding], tests: [clean('tests')] }
+  const rejectedGap = await run('refuse a gap outside the captured repository', [
+    requestReview({}, 'compact_bad_gap'), { delta: 'The anchored findings are available.' },
+  ])
+  check(reviewRequests(rejectedGap).some(payload => requestText(payload).includes('Ground each remaining gap in a supplied path')) &&
+    toolResult(rejectedGap, 'compact_bad_gap')?.details?.review?.status === 'findings',
+  'an invented outside path cannot turn previously supplied evidence into an unresolved gap')
+
+  const observeDiscovery = async (prompt, id, options = {}) => {
+    reviewReplies = { correctness: [seedFinding], tests: [clean('tests')] }
+    return run(prompt, [requestReview(options, id), { delta: 'Review recorded.' }])
+  }
+  const scopedPacket = await observeDiscovery('preserve explicit review scope', 'compact_scope', { paths: ['catalog.mjs'] })
+  check(toolResult(scopedPacket, 'compact_scope')?.details?.review?.inputMode === 'diff' &&
+    reviewRequests(scopedPacket).every(payload => payload.tools?.some(tool => tool.function.name === 'read_review_file') &&
+      !requestText(payload).includes(visibleTest)), 'a limited review keeps its path scope and discovery')
+
+  const largeText = '// Unchanged file beyond the compact evidence budget.\n// ' + '\\'.repeat(7_000)
+  await fs.writeFile(path.join(compact, 'large.mjs'), largeText)
+  git('add', 'large.mjs')
+  git('commit', '--quiet', '-m', 'Add a large unchanged source file')
+  const wide = await command({ type: 'set_model', provider: 'loopback', modelId: 'fixture-wide' })
+  assert.equal(wide.ok, true, 'set the wide-context reviewer')
+  const largePacket = await observeDiscovery('preserve budget on unchanged source', 'compact_large')
+  check(toolResult(largePacket, 'compact_large')?.details?.review?.inputMode === 'diff' &&
+    reviewRequests(largePacket).every(payload => payload.model === 'fixture-wide' &&
+      payload.tools?.some(tool => tool.function.name === 'list_review_files') &&
+      !requestText(payload).includes(largeText.slice(0, 45))), 'a wide model still keeps an oversized serialized snapshot on incremental discovery')
+
+  await fs.writeFile(path.join(compact, '.env'), 'TOKEN=fixture-unrelated-private-text\n')
+  await fs.writeFile(path.join(compact, 'large.mjs'), '// The source fits in a compact snapshot again.\n')
+  git('add', '.env', 'large.mjs')
+  git('commit', '--quiet', '-m', 'Add an unchanged repository metadata file')
+  const mixedPacket = await observeDiscovery('keep unrelated metadata out of an automatic packet', 'compact_mixed')
+  check(toolResult(mixedPacket, 'compact_mixed')?.details?.review?.inputMode === 'diff' &&
+    reviewRequests(mixedPacket).every(payload => !requestText(payload).includes('fixture-unrelated-private-text')),
+  'automatic evidence bundling never transmits unrelated metadata in a mixed snapshot')
 } finally {
   if (sessionId) await request(session(), undefined, 'DELETE').catch(() => {})
   for (const dispose of disposers.reverse()) dispose()

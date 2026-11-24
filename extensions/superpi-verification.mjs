@@ -147,16 +147,16 @@ export async function withReviewSnapshot(cwd, base, paths, signal, inspect) {
     const uncovered = [...new Set(all.flatMap(records))].filter(name => !selected.has(name)).sort()
     const deleted = new Set(records(deletions))
     const filenames = new Set(snapshot.files)
-    const read = async name => {
+    const read = async (name, maxBytes = 256 * 1024) => {
       if (path.isAbsolute(name) || !scanTextBytes(name).clean || (!filenames.has(name) && !deleted.has(name))) {
         throw new Error('Path is outside the review snapshot or is not a captured project file.')
       }
       const file = await fileAt(snapshot.root, name)
       const bytes = file
-        ? await readReviewBytes(file, signal)
+        ? await readReviewBytes(file, signal, maxBytes)
         : deleted.has(name) ? await git(source.root, ['show', revision + ':' + name], signal) : null
       if (!bytes) throw new Error('The file is absent from the review snapshot.')
-      if (bytes.length > 256 * 1024) throw new Error('This file exceeds the snapshot text read limit.')
+      if (bytes.length > maxBytes) throw new Error('This file exceeds the snapshot text read limit.')
       const text = utf8.decode(bytes)
       if (!scanTextBytes(text).clean) throw new Error('This file is not clean UTF-8 source text.')
       return text
@@ -167,6 +167,7 @@ export async function withReviewSnapshot(cwd, base, paths, signal, inspect) {
       omitted: changes.filter(change => change.binary).map(change => change.name),
       uncovered,
       files: [...new Set([...filenames, ...deleted])].sort(),
+      hasDeletions: deleted.size > 0,
       fingerprint,
       revision,
       read,
@@ -174,8 +175,8 @@ export async function withReviewSnapshot(cwd, base, paths, signal, inspect) {
   })
 }
 
-async function readReviewBytes(file, signal) {
-  if (file.stat.size > 256 * 1024) throw new Error('This file exceeds the snapshot text read limit.')
+async function readReviewBytes(file, signal, maxBytes) {
+  if (file.stat.size > maxBytes) throw new Error('This file exceeds the snapshot text read limit.')
   return fs.readFile(file.file, { signal })
 }
 
