@@ -10,9 +10,9 @@ import { scanTextBytes } from './superpi-text-bytes.mjs'
 const exec = promisify(execFile)
 const utf8 = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true })
 
-async function git(cwd, args, signal) {
+async function git(cwd, args, signal, maxBuffer = 32 * 1024 * 1024) {
   const { stdout } = await exec('git', ['--no-optional-locks', '-c', 'core.fsmonitor=false', ...args], {
-    cwd, signal, windowsHide: true, maxBuffer: 32 * 1024 * 1024, encoding: 'buffer',
+    cwd, signal, windowsHide: true, maxBuffer, encoding: 'buffer',
   })
   return stdout
 }
@@ -147,6 +147,26 @@ export async function withReviewSnapshot(cwd, base, paths, signal, inspect) {
     const uncovered = [...new Set(all.flatMap(records))].filter(name => !selected.has(name)).sort()
     const deleted = new Set(records(deletions))
     const filenames = new Set(snapshot.files)
+    const readBaseline = async maxBytes => {
+      const raw = records(await git(source.root, [...diff, '--raw', '--no-abbrev', '-z', revision, ...where], signal))
+      const tracked = new Set(changes.map(change => change.name))
+      const baseline = []
+      let bytesLeft = maxBytes
+      for (let i = 0; i < raw.length; i += 2) {
+        const fields = /^:(000000|100644|100755) (100644|100755) ([0-9a-f]+) [0-9a-f]+ ([AM])$/.exec(raw[i])
+        const name = raw[i + 1]
+        if (!fields || !tracked.delete(name) || !filenames.has(name) || bytesLeft <= 0) {
+          throw new Error('The change cannot be represented by ordinary source files.')
+        }
+        const [, beforeMode, mode, object, action] = fields
+        const before = action === 'A' ? null : reviewText(await git(source.root, ['cat-file', 'blob', object], signal, bytesLeft), bytesLeft)
+        const file = { path: name, before, beforeMode, mode }
+        baseline.push(file)
+        bytesLeft -= Buffer.byteLength(JSON.stringify(file)) + 1
+      }
+      if (tracked.size || bytesLeft < 0) throw new Error('The baseline exceeds the source packet budget or is incomplete.')
+      return baseline
+    }
     const read = async (name, maxBytes = 256 * 1024) => {
       if (path.isAbsolute(name) || !scanTextBytes(name).clean || (!filenames.has(name) && !deleted.has(name))) {
         throw new Error('Path is outside the review snapshot or is not a captured project file.')
@@ -156,10 +176,7 @@ export async function withReviewSnapshot(cwd, base, paths, signal, inspect) {
         ? await readReviewBytes(file, signal, maxBytes)
         : deleted.has(name) ? await git(source.root, ['show', revision + ':' + name], signal) : null
       if (!bytes) throw new Error('The file is absent from the review snapshot.')
-      if (bytes.length > maxBytes) throw new Error('This file exceeds the snapshot text read limit.')
-      const text = utf8.decode(bytes)
-      if (!scanTextBytes(text).clean) throw new Error('This file is not clean UTF-8 source text.')
-      return text
+      return reviewText(bytes, maxBytes)
     }
     return inspect({
       patch: utf8.decode(patch),
@@ -171,8 +188,16 @@ export async function withReviewSnapshot(cwd, base, paths, signal, inspect) {
       fingerprint,
       revision,
       read,
+      readBaseline,
     })
   })
+}
+
+function reviewText(bytes, maxBytes) {
+  if (bytes.length > maxBytes) throw new Error('This file exceeds the snapshot text read limit.')
+  const text = utf8.decode(bytes)
+  if (!scanTextBytes(text).clean) throw new Error('This file is not clean UTF-8 source text.')
+  return text
 }
 
 async function readReviewBytes(file, signal, maxBytes) {

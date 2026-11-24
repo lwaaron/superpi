@@ -283,6 +283,17 @@ try {
   check(streamHistory.some(entry => entry.type === 'message' && entry.message.errorMessage === earlyClose),
     'the failed provider response is still available in the original session record')
 
+  const gatewayClosed = 'upstream aborted (gateway closed stream)'
+  const realGatewayError = await run('recover from the observed gateway error', [
+    { delta: 'Unfinished provider draft.', streamError: gatewayClosed },
+    { delta: 'Completed after the gateway closed the stream.' },
+  ])
+  check(realGatewayError.requests.length === 2 && realGatewayError.records.some(record =>
+    record.message?.errorMessage === gatewayClosed && record.verdict?.kind === 'stream-interrupted') &&
+    !requestText(realGatewayError.requests.at(-1)).includes('Unfinished provider draft.') &&
+    lastAssistant(realGatewayError)?.message.content[0]?.text === 'Completed after the gateway closed the stream.',
+  'the observed gateway disconnect is visible and resumes without passing the unfinished draft back to the provider')
+
   const repeatedDisconnect = await run('stop after the supplemental stream retry', [
     { delta: 'First incomplete', streamError: earlyClose }, { delta: 'Second incomplete', streamError: earlyClose },
   ])
@@ -498,6 +509,20 @@ try {
     reviewer.focus === 'correctness' && reviewer.failure === 'stream-interrupted' && reviewer.requests === 1),
   'reviewer transport errors retain their cause and request count')
 
+  const runtimeNote = 'Command execution is verified separately. The source and tests are statically covered.'
+  reviewReplies = { correctness: [clean('correctness')], tests: [payload => {
+    const report = payload.tools.find(tool => tool.function.name === 'submit_review').function.parameters.properties
+    const scope = report.gaps && !report.limitation ? { notes: runtimeNote } : { limitation: runtimeNote }
+    return useTool('submit_review', { summary: 'The changed source and its tests were reviewed.', findings: [], ...scope }, 'review_note')
+  }] }
+  const annotated = await run('distinguish static gaps from runtime observations in a diff', [
+    requestReview({ paths: ['origin.txt'] }, 'review_diff_notes'), { delta: 'Static coverage recorded.' },
+  ])
+  const annotatedProof = toolResult(annotated, 'review_diff_notes')?.details?.review
+  check(annotatedProof?.inputMode === 'diff' && annotatedProof.status === 'clear' && annotatedProof.reviewers.some(reviewer =>
+    reviewer.focus === 'tests' && reviewer.notes === runtimeNote && !reviewer.limitation),
+  'diff and snapshot reports both distinguish runtime notes from a source-anchored static coverage gap')
+
   await fs.writeFile(path.join(workspace, 'review-new.txt'), 'Untracked source included in review.\n')
   reviewReplies = {
     correctness: [publish('Invalid line anchor.', [{ severity: 'blocking', path: 'origin.txt', line: 9999,
@@ -542,7 +567,8 @@ try {
     useTool('read_review_file', { path: 'origin.txt', count: 1 }, 'read_for_budget_' + index))
   reviewReplies = {
     correctness: [...manyReads, useTool('submit_review', {
-      summary: 'Some behavior still needs examination.', findings: [], limitation: 'The remaining caller was not reviewed.',
+      summary: 'Some behavior still needs examination.', findings: [],
+      gaps: [{ path: 'origin.txt', reason: 'The remaining caller was not reviewed.' }],
     }, 'limited_report')],
     tests: [clean('tests')],
   }
@@ -555,7 +581,7 @@ try {
     ', tools=' + budgetLane.at(-1)?.tools?.map(tool => tool.function.name).join(',') + ')')
   const budgetReport = toolResult(budgeted, 'review_budget')?.details?.review
   check(budgetReport?.status === 'partial' && budgetReport.reviewers.some(reviewer =>
-    reviewer.status === 'incomplete' && reviewer.limitation === 'The remaining caller was not reviewed.'),
+    reviewer.status === 'incomplete' && reviewer.gaps?.[0].path === 'origin.txt' && reviewer.limitation.includes('The remaining caller was not reviewed.')),
   'a reviewer can preserve findings and explicitly report inadequate coverage (' + JSON.stringify(budgetReport?.reviewers) + ')')
 
   reviewReplies = {
@@ -580,6 +606,10 @@ try {
   const reviewRequests = activity => activity.requests.filter(payload =>
     payload.messages[0]?.content?.startsWith('You are the independent '))
   const laneOf = payload => payload.messages[0].content.match(/^You are the independent (correctness|tests) reviewer\./)?.[1]
+  const packetOf = payload => {
+    const content = payload.messages.find(message => message.role === 'user').content
+    return JSON.parse(typeof content === 'string' ? content : content.find(block => block.type === 'text').text)
+  }
   reviewReplies = { correctness: [{ delta: 'No structured report yet.' }], tests: [clean('tests')] }
   const firstAttempt = await run('start a review that will need to resume', [
     beginReview('Keep completed evidence across a session reload', 'repeat_plan'),
@@ -696,6 +726,9 @@ try {
     readyRequests.every(payload => requestText(payload).includes(visibleTest) && requestText(payload).includes('lookup = () => undefined') &&
       payload.tools?.map(tool => tool.function.name).join(',') === 'submit_review'),
   'both reviewers get complete changed and unchanged source on their first report request without another read round trip')
+  check(readyRequests.every(payload => packetOf(payload).patch?.includes('@@ -1 +1 @@') &&
+    packetOf(payload).patch.includes('-export const lookup = () => "value"')),
+  'the first request retains exact Git hunk locations when the complete snapshot and diff fit together')
 
   reviewReplies = {
     correctness: [{ delta: 'I should check a specific line before submitting.' },
@@ -774,12 +807,61 @@ try {
     reviewRequests(scopedPacket).every(payload => payload.tools?.some(tool => tool.function.name === 'read_review_file') &&
       !requestText(payload).includes(visibleTest)), 'a limited review keeps its path scope and discovery')
 
+  const wide = await command({ type: 'set_model', provider: 'loopback', modelId: 'fixture-wide' })
+  assert.equal(wide.ok, true, 'set the wide-context reviewer')
+  const oldCatalog = 'export const lookup = () => "value"\n'
+  const changedCatalog = 'export const lookup = () => undefined\n' +
+    Array.from({ length: 97 }, (_, n) => `// catalog choice ${n}: ${'中'.repeat(16)}\n`).join('')
+  const newContract = '// The current repository contract\n' +
+    Array.from({ length: 66 }, (_, n) => `// lookup case ${n}: ${'值'.repeat(14)}\n`).join('')
+  await fs.writeFile(path.join(compact, 'catalog.mjs'), changedCatalog)
+  await fs.writeFile(path.join(compact, 'contract.test.mjs'), newContract)
+  const duplicatedPacket = { patch: git('diff', '--no-color', 'HEAD').toString('utf8'), newFiles: ['contract.test.mjs'],
+    workspaceFiles: [changedCatalog, newContract, '// ' + visibleTest + '\n'] }
+  const medium = await observeDiscovery('review complete before and after evidence once', 'medium_snapshot')
+  const mediumProof = toolResult(medium, 'medium_snapshot')?.details?.review
+  const sameEvidence = payload => {
+    const packet = packetOf(payload)
+    const sources = new Map(packet.workspaceFiles?.map(file => [file.path, file.source]))
+    const changes = new Map(packet.changes?.map(file => [file.path, file.before]))
+    return sources.get('catalog.mjs') === changedCatalog && sources.get('contract.test.mjs') === newContract &&
+      sources.get('public.test.mjs') === '// ' + visibleTest + '\n' && changes.get('catalog.mjs') === oldCatalog &&
+      changes.has('contract.test.mjs') && changes.get('contract.test.mjs') === null && changes.size === 2 &&
+      Buffer.byteLength(JSON.stringify(packet)) <= 12_000 && !packet.patch &&
+      payload.tools.map(tool => tool.function.name).join(',') === 'submit_review'
+  }
+  check(Buffer.byteLength(JSON.stringify(duplicatedPacket)) > 12_000 && mediumProof?.status === 'findings' &&
+    mediumProof.inputMode === 'snapshot' && mediumProof.newRequests === 2 &&
+    reviewRequests(medium).every(sameEvidence),
+  'a medium change keeps exact before and after evidence and the seeded blocker within two report requests')
+
+  reviewReplies = { correctness: [
+    useTool('read_review_file', { path: 'contract.test.mjs', start: 1, count: 40 }, 'already_sent'),
+    useTool('read_review_file', { path: 'catalog.mjs', start: 2, count: 30 }, 'first_source'),
+    useTool('read_review_file', { path: 'catalog.mjs', start: 2, count: 30 }, 'repeat_source'),
+    useTool('read_review_file', { path: 'catalog.mjs', start: 4, count: 1 }, 'numbered_source'), seedFinding,
+  ], tests: [clean('tests')] }
+  const repeatedReads = await run('retain every line and avoid repeating broad excerpts', [
+    requestReview({ paths: ['catalog.mjs', 'contract.test.mjs'] }, 'dedupe_reads'), { delta: 'The blocker was recorded.' },
+  ])
+  const deduped = reviewRequests(repeatedReads).filter(payload => laneOf(payload) === 'correctness').at(-1)
+  const readReplies = deduped.messages.filter(message => message.role === 'tool').map(message => String(message.content))
+  check(toolResult(repeatedReads, 'dedupe_reads')?.details?.review?.status === 'findings' && readReplies.length === 4 &&
+    readReplies[0].includes('initial newFiles') && !readReplies[0].includes('lookup case 2:') &&
+    readReplies[1].includes('catalog choice 3:') && readReplies[2].includes('previous read result') &&
+    !readReplies[2].includes('catalog choice 3:') && readReplies[3].startsWith('4\t// catalog choice 2:'),
+  'large ranges already supplied use references, and first reads and precise line anchors retain source text')
+
+  git('add', 'contract.test.mjs')
+  const staged = await observeDiscovery('preserve exact evidence for a staged addition', 'medium_staged')
+  const stagedProof = toolResult(staged, 'medium_staged')?.details?.review
+  check(stagedProof?.status === 'findings' && stagedProof.inputMode === 'snapshot' && stagedProof.newRequests === 2 &&
+    reviewRequests(staged).every(sameEvidence), 'a staged text addition has the same complete source and an absent base file')
+
   const largeText = '// Unchanged file beyond the compact evidence budget.\n// ' + '\\'.repeat(7_000)
   await fs.writeFile(path.join(compact, 'large.mjs'), largeText)
   git('add', 'large.mjs')
   git('commit', '--quiet', '-m', 'Add a large unchanged source file')
-  const wide = await command({ type: 'set_model', provider: 'loopback', modelId: 'fixture-wide' })
-  assert.equal(wide.ok, true, 'set the wide-context reviewer')
   const largePacket = await observeDiscovery('preserve budget on unchanged source', 'compact_large')
   check(toolResult(largePacket, 'compact_large')?.details?.review?.inputMode === 'diff' &&
     reviewRequests(largePacket).every(payload => payload.model === 'fixture-wide' &&

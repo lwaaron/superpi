@@ -43,6 +43,11 @@
 
 import { describeBytes, scanTextBytes, summarizeCounts } from './superpi-text-bytes.mjs'
 
+const upstreamStreamErrors = new Set([
+  'upstream response stream ended before completion',
+  'upstream aborted (gateway closed stream)',
+])
+
 /** 非 `none` 的判据，按判定顺序排列。 */
 export const VERDICT_KINDS = ['truncated', 'stream-interrupted', 'dsml-text', 'dsml-thinking', 'dsml-residue', 'corrupt', 'reasoning-markup', 'idle']
 
@@ -182,8 +187,7 @@ export function detectTurnVerdict(message) {
     },
     detail,
   })
-  if (stopReason === 'error' && typeof message.errorMessage === 'string' &&
-      message.errorMessage.trim().toLowerCase() === 'upstream response stream ended before completion') {
+  if (stopReason === 'error' && typeof message.errorMessage === 'string' && upstreamStreamErrors.has(message.errorMessage.trim().toLowerCase())) {
     return verdict('stream-interrupted', 'upstream response ended before completion')
   }
   if (!TURN_VERDICT_DETECTION.terminalStopReasons.includes(stopReason)) return ok
