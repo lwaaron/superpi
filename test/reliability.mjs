@@ -429,6 +429,7 @@ try {
   check(changed.requests.length === 6 && toolResult(changed, 'new_block')?.details?.task?.status === 'blocked',
     'an explicit blocker persists and prevents automatic continuation')
 
+  await fs.writeFile(path.join(workspace, 'existing-check.spec.mjs'), '// Verification from the unchanged base.\n')
   execFileSync('git', ['-c', 'core.autocrlf=false', 'add', '-A'], { cwd: workspace })
   execFileSync('git', ['-c', 'user.name=Fixture', '-c', 'user.email=test@example.invalid', '-c', 'commit.gpgsign=false',
     'commit', '--quiet', '-am', 'baseline'], { cwd: workspace })
@@ -439,7 +440,7 @@ try {
   reviewReplies = {
     correctness: [{ ...useTool('read_review_file', { path: '../private.txt' }, 'outside'), delayMs: 150 },
       useTool('read_review_file', { path: 'origin.txt' }, 'read_changed'), clean('correctness')],
-    tests: [{ ...clean('tests'), delayMs: 150 }],
+    tests: [{ ...useTool('list_review_files', { query: '.spec.' }, 'find_existing_spec'), delayMs: 150 }, clean('tests')],
   }
   const independentlyReviewed = await run('review a change in the task checklist', [
     useTool('task_progress', { action: 'start', goal: 'Review current work', replace: true,
@@ -456,13 +457,17 @@ try {
   check(toolResult(independentlyReviewed, 'pretend_review')?.isError === true, 'a self-observation cannot replace required independent review')
   const lanes = independentlyReviewed.requests.filter(payload =>
     payload.messages.some(message => message.role === 'system' && message.content.startsWith('You are the independent ')))
-  check(lanes.length === 4 && lanes.every(payload => payload.tools?.map(tool => tool.function.name).sort().join(',') ===
-    'read_review_file,submit_review'), 'both independent model contexts get only snapshot read and report tools')
+  check(lanes.length === 5 && lanes.every(payload => payload.tools?.map(tool => tool.function.name).sort().join(',') ===
+    'list_review_files,read_review_file,submit_review'), 'both independent model contexts get only snapshot discovery, reading, and report tools')
   check(lanes.slice(0, 2).map(payload => payload.messages[0].content.match(/independent (correctness|tests)/)?.[1]).sort().join(',') ===
     'correctness,tests', 'the two reviewers start before either one performs another model request')
   check(lanes.some(payload => requestText(payload).includes('NEW reviewed line')) &&
     lanes.some(payload => requestText(payload).includes('outside the review snapshot')),
   'the reviewed snapshot exposes exact file content and rejects a path outside its root')
+  const listing = lanes.find(payload => payload.messages.some(message => message.role === 'tool' &&
+    String(message.content).includes('existing-check.spec.mjs')))
+  check(lanes.slice(0, 2).every(payload => requestText(payload).includes('existing-check.spec.mjs')) && listing &&
+    !requestText(listing).includes('private.txt'), 'an unchanged test is discoverable and ignored files are absent from the review catalog')
 
   reviewReplies = {
     correctness: [publish('Found a concrete regression.', [{ severity: 'blocking', path: 'origin.txt', line: 1,
@@ -506,6 +511,17 @@ try {
   check(scopedReview?.isError && scopedReview.details?.review?.status === 'clear' &&
     scopedReview.details.review.uncovered.includes('review-new.txt') && !scopedReview.details.review.recorded,
   'a clean path-limited review cannot certify a changed file outside its scope')
+  reviewReplies = { correctness: [clean('correctness')], tests: [clean('tests')] }
+  const widened = await run('review the previously uncovered file', [
+    useTool('task_progress', { action: 'resume' }, 'resume_full_scope'),
+    requestReview({ check: 1 }, 'review_full_scope'),
+    useTool('task_progress', { action: 'finish' }, 'record_full_scope'),
+    { delta: 'All changed files were reviewed.' },
+  ])
+  check(toolResult(widened, 'review_full_scope')?.details?.review?.execution === 'new' &&
+    widened.requests.filter(payload => payload.messages[0]?.content?.startsWith('You are the independent ')).length === 2 &&
+    toolResult(widened, 'record_full_scope')?.details?.task?.status === 'complete',
+  'widening a review to a previously uncovered file requires both fresh reports')
 
   const manyReads = Array.from({ length: 11 }, (_, index) =>
     useTool('read_review_file', { path: 'origin.txt', count: 1 }, 'read_for_budget_' + index))
@@ -543,6 +559,85 @@ try {
   check(staleReview?.status === 'stale' && !staleReview.recorded &&
     staleReview.reviewers.every(reviewer => reviewer.status === 'complete'),
   'both reports remain available but cannot attest source changed during review')
+
+  const beginReview = (goal, id) => useTool('task_progress', { action: 'start', replace: true, goal,
+    checks: [{ description: 'Review the current source and tests', review: true }] }, id)
+  const reviewRequests = activity => activity.requests.filter(payload =>
+    payload.messages[0]?.content?.startsWith('You are the independent '))
+  const laneOf = payload => payload.messages[0].content.match(/^You are the independent (correctness|tests) reviewer\./)?.[1]
+  reviewReplies = { correctness: [{ delta: 'No structured report yet.' }], tests: [clean('tests')] }
+  const firstAttempt = await run('start a review that will need to resume', [
+    beginReview('Keep completed evidence across a session reload', 'repeat_plan'),
+    requestReview({ check: 1 }, 'partial_review'),
+    useTool('task_progress', { action: 'block', reason: 'Correctness review still has to return.' }, 'pause_review'),
+    { delta: 'Test review completed. Correctness evidence is pending.' },
+  ])
+  const firstProof = toolResult(firstAttempt, 'partial_review')?.details?.review
+  const reviewSessionFile = (await command({ type: 'get_state' })).data.sessionFile
+  await command({ type: 'new_session' })
+  const reopened = await command({ type: 'switch_session', sessionPath: reviewSessionFile })
+  assert.equal(reopened.ok, true, 'reopen the persisted review evidence')
+  execFileSync('git', ['-c', 'core.autocrlf=false', 'add', 'review-new.txt'], { cwd: workspace })
+  reviewReplies = { correctness: [useTool('submit_review', {
+    summary: 'Checked the captured code and callers.', findings: [],
+    notes: 'This is a static review. Test execution is separate verification.',
+  }, 'correctness_with_static_scope_note')] }
+  const resumedReview = await run('resume only the missing reviewer', [
+    useTool('task_progress', { action: 'resume' }, 'resume_review'),
+    requestReview({ check: 1, paths: ['review-new.txt', 'origin.txt'], base: 'HEAD', timeout: 7,
+      goal: 'Additional wording changes neither the saved task nor its checked scope. '.repeat(8) }, 'resumed_review'),
+    useTool('task_progress', { action: 'finish' }, 'resumed_finish'),
+    { delta: 'Verified and complete.' },
+  ])
+  const combined = toolResult(resumedReview, 'resumed_review')?.details?.review
+  check(firstProof?.status === 'partial' && combined?.status === 'clear' && combined.reused?.join(',') === 'tests' &&
+    combined.fingerprint === firstProof.fingerprint && reviewRequests(resumedReview).map(laneOf).join(',') === 'correctness',
+  'reopening and staging the same bytes resume only the unfinished reviewer for the same effective scope')
+  check(toolResult(resumedReview, 'resumed_finish')?.details?.task?.status === 'complete',
+    'resumed independent evidence can complete the real task')
+  check(combined?.reviewers.some(reviewer => reviewer.focus === 'correctness' && reviewer.status === 'complete' &&
+    reviewer.notes === 'This is a static review. Test execution is separate verification.'),
+  'a static-scope note is preserved without being treated as missing review evidence')
+
+  reviewReplies = Object.fromEntries(['correctness', 'tests'].map(focus => [focus, [
+    { delta: 'First ' + focus + ' attempt without a report.' }, { delta: 'Second ' + focus + ' attempt without a report.' },
+  ]]))
+  const repeatedInMixedBatch = requestReview({ check: 1, timeout: 9 }, 'stuck_with_read')
+  const validRead = toolCall('read', { path: 'origin.txt' }, 'read_during_repetition').tool_calls[0]
+  repeatedInMixedBatch.delta.tool_calls.push({ ...validRead, index: 1 })
+  const exhausted = await run('settle a review that repeats against unchanged source', [
+    beginReview('Bound repeated incomplete reviews', 'stuck_plan'),
+    requestReview({ check: 1 }, 'stuck_first'),
+    requestReview({ check: 1, paths: ['origin.txt', 'review-new.txt'], timeout: 7 }, 'stuck_second'),
+    requestReview({ check: 1, timeout: 8 }, 'stuck_reuse'),
+    repeatedInMixedBatch,
+    requestReview({ check: 1, timeout: 9 }, 'stuck_repeat'),
+    { delta: 'An extra parent response should not be needed.' },
+  ])
+  const repeated = toolResult(exhausted, 'stuck_repeat')
+  const finalTask = (await command({ type: 'get_entries' })).data.entries
+    .findLast(entry => entry.type === 'custom' && entry.customType === 'superpi-task')?.data
+  check(reviewRequests(exhausted).length === 4 && toolResult(exhausted, 'stuck_reuse')?.details?.review?.execution === 'reused' &&
+    repeated?.details?.review?.execution === 'reused', 'the same snapshot spends only two attempts on the missing reviewers')
+  check(toolResult(exhausted, 'stuck_with_read')?.details?.review?.repeated === true &&
+    toolResult(exhausted, 'read_during_repetition')?.content[0]?.text.includes('Edit after the reviewers started'),
+  'a repetitive review does not suppress other useful work in the same tool batch')
+  check(exhausted.records.filter(record => record.type === 'agent_settled').length === 1 &&
+    exhausted.requests.length === 10 && finalTask?.status === 'blocked' && /review/i.test(finalTask.blocker ?? '') &&
+    !finalTask.checks[0].evidence, 'a repeated no-progress review settles with the exact unmet check on the session branch')
+
+  await fs.writeFile(path.join(workspace, 'origin.txt'), 'New working bytes after pausing the review.\n')
+  reviewReplies = { correctness: [clean('correctness')], tests: [clean('tests')] }
+  const repaired = await run('resume after the working source changed', [
+    useTool('task_progress', { action: 'resume' }, 'resume_changed_review'),
+    requestReview({ check: 1 }, 'review_new_bytes'),
+    useTool('task_progress', { action: 'finish' }, 'finish_new_review'),
+    { delta: 'The revised source is verified.' },
+  ])
+  check(reviewRequests(repaired).map(laneOf).sort().join(',') === 'correctness,tests' &&
+    toolResult(repaired, 'review_new_bytes')?.details?.review?.fingerprint !== repeated?.details?.review?.fingerprint &&
+    toolResult(repaired, 'finish_new_review')?.details?.task?.status === 'complete',
+  'new source clears the repeat barrier and earns fresh independent proof')
 
   await request(session(), undefined, 'DELETE')
   sessionId = undefined

@@ -130,7 +130,7 @@ export default function delivery(pi: ExtensionAPI) {
     promptGuidelines: [
       'Use task_progress for multi-step coding work and read its status when resuming. Keep the list tied to the user request. Include regression and compatibility checks when relevant.',
       'Record actual observations with file, test, or artifact references. Use verify with the numbered check for command evidence. Call finish before reporting a tracked task complete.',
-      'For changes where independent review is part of acceptance, mark a check review:true. Use review_changes with its check number, resolve concrete findings, and rerun after edits.',
+      'For changes where independent review is part of acceptance, mark a check review:true. Review the tested source, address concrete findings, and review again after edits. If reports stay incomplete, finish other checks and report the exact evidence still missing.',
     ],
     executionMode: 'sequential',
     parameters: Type.Object({
@@ -313,7 +313,7 @@ export default function delivery(pi: ExtensionAPI) {
     promptSnippet: 'Review significant code changes independently for correctness and test gaps.',
     executionMode: 'sequential',
     parameters: Type.Object({
-      goal: Type.Optional(checklistText),
+      goal: Type.Optional(Type.String({ minLength: 1, maxLength: 2000, description: 'Review goal for a standalone request. A numbered check uses the recorded task and criterion.' })),
       timeout: Type.Integer({ minimum: 1, maximum: 2_147_483, description: 'Total seconds for capture and both review requests.' }),
       check: Type.Optional(Type.Integer({ minimum: 1, maximum: 12 })),
       paths: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 1024 }), { minItems: 1, maxItems: 30 })),
@@ -332,32 +332,51 @@ export default function delivery(pi: ExtensionAPI) {
       }
       const review = await reviewChanges(ctx, {
         goal: task && item ? task.goal + '\n' + item.description : goal ?? task?.goal ?? 'Review the changed behavior.',
-        paths, base, timeout,
+        paths, base, timeout, taskCheck: check !== undefined,
       }, signal, count => update?.({
         content: [{ type: 'text', text: 'Independent reviewers returned ' + count + '/2' }], details: undefined,
       }))
       let recorded = false
+      let savedNewEvidence = false
       if (task && item && review.status !== 'aborted') {
-        const evidence = review.status === 'clear' && review.uncoveredCount === 0
-          ? { fingerprint: review.fingerprint, at: new Date().toISOString(), toolCallId: id }
-          : undefined
-        save(ctx, { ...task, checks: task.checks.map((current, i) => i === index ? { ...current, evidence } : current) })
+        const previous = item.evidence
+        const sameSource = previous && 'fingerprint' in previous && previous.fingerprint === review.fingerprint
+        const accepted = review.status === 'clear' && review.uncoveredCount === 0
+        const evidence = accepted ? (sameSource ? previous : {
+          fingerprint: review.fingerprint, at: new Date().toISOString(), toolCallId: id,
+        }) : undefined
         recorded = evidence !== undefined
+        if (evidence !== previous) {
+          save(ctx, { ...task, checks: task.checks.map((current, i) => i === index ? { ...current, evidence } : current) })
+          savedNewEvidence = recorded
+        }
       }
+      const blocking = review.reviewers.some(reviewer => reviewer.findings?.some(finding => finding.severity === 'blocking'))
+      let remaining = 'The recorded review can be used for delivery checks.'
+      if (blocking) remaining = 'Independent review has blocking findings on this source. Address the cited findings before reviewing again.'
+      else if (review.uncoveredCount) remaining = 'Independent review still needs the changed files outside the selected paths.'
+      else if (review.omitted.length) remaining = 'Independent review still needs evidence for the files outside text coverage.'
+      else if (review.pendingReviewers.length) remaining = 'Independent review still needs complete reports from ' + review.pendingReviewers.join(' and ') + '.'
+      const repeated = review.repeated && review.status !== 'stale' && !savedNewEvidence
       const lines = ['Independent review ' + review.status, review.message,
+        review.reused.length ? 'Reports carried forward: ' + review.reused.join(', ') : '',
         review.omitted.length ? 'Outside text coverage: ' + review.omitted.join(', ') : '',
         review.uncoveredCount ? 'Scope excludes ' + review.uncoveredCount + ' changed file(s): ' + review.uncovered.join(', ') : '']
       for (const reviewer of review.reviewers) {
         lines.push(reviewer.focus + ' · ' + reviewer.status + (reviewer.summary ? ' · ' + reviewer.summary : ''))
         if (reviewer.limitation) lines.push('Coverage limitation · ' + reviewer.limitation)
+        if (reviewer.notes) lines.push('Notes · ' + reviewer.notes)
         for (const finding of reviewer.findings ?? []) lines.push(
           finding.severity + ' · ' + finding.path + ':' + finding.line + ' · ' + finding.problem)
       }
+      if (review.execution === 'reused') lines.push(remaining, 'The source and effective review scope are unchanged. This result uses the existing reports.')
+      else if (review.pendingReviewers.length && !blocking && (review.execution === 'new' || review.execution === 'resumed')) lines.push(remaining)
       return {
         content: [{ type: 'text', text: lines.filter(Boolean).join('\n') }],
-        details: { review: { ...review, recorded } },
+        details: { review: { ...review, recorded, check, repeated, remaining } },
         isError: !['clear', 'findings', 'no_changes'].includes(review.status) ||
           (check !== undefined && review.uncoveredCount > 0),
+        terminate: repeated,
       }
     },
   })
@@ -375,8 +394,22 @@ export default function delivery(pi: ExtensionAPI) {
       }
     }
     const settlement = entries === event.entries ? undefined : { entries }
-    if (nudged || waitingForUser || shellStillRunning || event.continue ||
+    if (waitingForUser || shellStillRunning || event.continue ||
       ctx.hasPendingMessages() || event.context.pendingMessages.length) return settlement
+    const last = event.context.contextMessages.at(-1)
+    if (last?.role === 'toolResult' && last.toolName === 'review_changes') {
+      const { review } = (last.details ?? {}) as { review?: { repeated?: boolean; check?: number; remaining: string } }
+      if (review?.repeated) {
+        const item = review.check && task?.checks[review.check - 1]
+        if (task?.status === 'active' && item && !item.evidence) {
+          task = { ...task, status: 'blocked', blocker: review.remaining }
+          showTask(ctx, task)
+          return { entries: [...entries, { type: 'custom', customType: TASK, data: task }] }
+        }
+        return settlement
+      }
+    }
+    if (nudged) return settlement
     if (!task || task.status !== 'active') return settlement
     nudged = true
     const content = 'This task still needs an explicit delivery decision. Continue from the current workspace. ' +

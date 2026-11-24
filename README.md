@@ -229,10 +229,10 @@ New-Item -ItemType Junction `
 ### 方式三：手工 pnpm add（不想跑脚本时）
 
 ```powershell
-npm pack                                        # 得到 superpi-0.22.0.tgz
+npm pack                                        # 得到 superpi-0.23.0.tgz
 cd "$env:USERPROFILE\.dsh\profiles\desktop"
 node "$env:USERPROFILE\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\pnpm\bin\pnpm.cjs" `
-  add "file:C:\path\to\superpi-0.22.0.tgz" --ignore-scripts
+  add "file:C:\path\to\superpi-0.23.0.tgz" --ignore-scripts
 ```
 
 不要在 profile 里用 `npm install`：npm 会另写一份 `package-lock.json`，而宿主插件管理器用的是 pnpm，两套锁文件互相看不见，下次插件安装就会把 node_modules 重建成 pnpm 理解的样子。
@@ -441,7 +441,12 @@ npm install --prefix <插件>/.runtime --save-exact --no-audit --no-fund --logle
 - 对上游明确报告的 `Upstream response stream ended before completion`，在当前回合内补充恢复一次。恢复从已完成的工具结果接续，失败响应仍可在会话中查阅。恢复受 Pi 的重试开关控制，再次中断时两端显示原因和「继续」。
 - `review_changes` 并行发起正确性和测试覆盖两路审查。两路使用当前模型、独立的上下文和同一份 Git 工作区快照，仅能读取快照和提交带文件行号的报告。面板和命令行都显示进度与结果。
 - `task_progress` 的 `review: true` 验收项要求两路审查完成，且全部改动的文本范围内没有阻塞项。选择路径时按实际改动核对范围。限期内已返回的报告会保留，超时、有遗漏或审查期间源码变化时仍待验收。正常收尾时会再次核对本轮刚确认完成的源码证据。
-- `npm run test:engineering` 校验工程评分器。`node test/engineering-bench.mjs list` 列出场景，`prepare <场景> <新目录>` 生成等价的 Git 起点和任务描述，`grade <场景> <工作区>` 按独立断言评分。当前场景覆盖并发缓存与持久化迁移。
+
+## 审查恢复与交付度量（0.23.0）
+
+- 审查员可列出和检索快照内的文件，定位未改动的调用方与既有测试。报告的覆盖限制只记录仓库内仍缺失的审查证据，测试执行由 `verify` 单独记录。面板和命令行沿用同一份报告。
+- 同一份源码、基准、有效范围和验收目标，可从当前会话分支复用已完成报告，只补跑缺席的审查。代码变化会触发新的审查。一次用户请求内同一份证据最多发起两轮。持续无进展的重复调用会结束本轮，并保留具体待验收项。
+- `npm run test:engineering` 校验评分与运行记录。`node test/engineering-bench.mjs list` 列出场景，`prepare <场景> <新目录>` 生成等价的 Git 起点和任务描述，`grade <场景> <工作区>` 独立检查代码。`metrics <events.jsonl> <process.json>` 根据 Pi 的 JSONL 事件和进程记录（`exit`、`seconds`、可选 `deadline`）统计实际收尾状态、耗时和审查请求。当前场景覆盖并发缓存与持久化迁移。
 
 ## 测试
 

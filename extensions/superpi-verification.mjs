@@ -89,6 +89,7 @@ export async function withVerificationSnapshot(cwd, signal, run) {
   const tempParent = await fs.realpath(os.tmpdir())
   const snapshot = await fs.mkdtemp(path.join(tempParent, 'superpi-verify-'))
   try {
+    const captured = []
     for (const name of files) {
       signal.throwIfAborted()
       const source = await fileAt(root, name)
@@ -96,11 +97,12 @@ export async function withVerificationSnapshot(cwd, signal, run) {
       const target = path.join(snapshot, name)
       await fs.mkdir(path.dirname(target), { recursive: true })
       await fs.copyFile(source.file, target)
+      captured.push(name)
     }
     const snapshotCwd = path.join(snapshot, workdir)
     await fs.mkdir(snapshotCwd, { recursive: true })
     signal.throwIfAborted()
-    return await run(snapshotCwd, { root: snapshot, files, source: { root, cwd: sourceCwd } })
+    return await run(snapshotCwd, { root: snapshot, files: captured, source: { root, cwd: sourceCwd } })
   } finally {
     const info = await fs.lstat(snapshot).catch(error => {
       if (error.code !== 'ENOENT') throw error
@@ -164,6 +166,7 @@ export async function withReviewSnapshot(cwd, base, paths, signal, inspect) {
       untracked: newNames,
       omitted: changes.filter(change => change.binary).map(change => change.name),
       uncovered,
+      files: [...new Set([...filenames, ...deleted])].sort(),
       fingerprint,
       revision,
       read,

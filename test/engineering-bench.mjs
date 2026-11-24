@@ -1,13 +1,16 @@
 /** Prepare equivalent workspaces and grade candidates outside the files given to the agent. */
 import assert from 'node:assert/strict'
 import { execFile, execFileSync } from 'node:child_process'
+import { createReadStream } from 'node:fs'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { performance } from 'node:perf_hooks'
+import { createInterface } from 'node:readline'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
 import { cases } from './fixtures/engineering-cases.mjs'
+import { detectTurnVerdict } from '../extensions/superpi-turn-verdict.mjs'
 
 const self = fileURLToPath(import.meta.url)
 const execute = promisify(execFile)
@@ -72,6 +75,51 @@ async function grade(name, folder) {
   return { case: name, passed, total: expected.length, gradingMs: Math.round(performance.now() - started), checks }
 }
 
+function runOutcome(process, trace, task, assistant, settlement) {
+  if (process.deadline === true) return 'deadline'
+  if (process.exit !== 0 || process.signal) return 'process_error'
+  if (trace.malformedLines || trace.settlements > 1) return 'invalid_trace'
+  if (!settlement) return 'no_settlement'
+  if (settlement.aborted) return 'aborted'
+  if (assistant?.stopReason === 'error') return 'model_error'
+  if (task?.status === 'blocked') return 'blocked'
+  if (task?.status === 'active') return 'pending_checks'
+  if (assistant?.stopReason !== 'stop' || !detectTurnVerdict(assistant).delivered) return 'missing_final_answer'
+  return 'finished'
+}
+
+async function runMetrics(events, receipt) {
+  const observed = JSON.parse(await fs.readFile(receipt, 'utf8'))
+  assert.ok(observed.exit === null || Number.isInteger(observed.exit), 'Expected the observed process exit status.')
+  assert.ok(Number.isFinite(observed.seconds) && observed.seconds >= 0, 'Expected elapsed seconds from the process runner.')
+  const trace = { settlements: 0, assistantResponses: 0, toolResults: 0, reviewerRequests: 0, reviewReplays: 0, malformedLines: 0 }
+  let assistant
+  let task
+  let settlement
+  const lines = createInterface({ input: createReadStream(events), crlfDelay: Infinity })
+  for await (const line of lines) {
+    if (line.trim() === '') continue
+    let record
+    try { record = JSON.parse(line) } catch { trace.malformedLines += 1; continue }
+    if (record?.type === 'entry_appended' && record.entry?.customType === 'superpi-task') task = record.entry.data
+    if (record?.type === 'agent_settled') { settlement = record; trace.settlements += 1 }
+    if (record?.type !== 'message_end') continue
+    const message = record.message
+    if (message?.role === 'assistant') { assistant = message; trace.assistantResponses += 1 }
+    if (message?.role !== 'toolResult') continue
+    trace.toolResults += 1
+    const review = message.toolName === 'review_changes' ? message.details?.review : undefined
+    if (!review) continue
+    if (review.execution === 'reused') trace.reviewReplays += 1
+    const reused = new Set(review.reused ?? [])
+    for (const lane of review.reviewers ?? []) {
+      if (!reused.has(lane.focus) && Number.isSafeInteger(lane.requests) && lane.requests >= 0) trace.reviewerRequests += lane.requests
+    }
+  }
+  return { outcome: runOutcome(observed, trace, task, assistant, settlement), seconds: observed.seconds,
+    task: task?.status ?? null, model: assistant?.model ?? null, ...trace }
+}
+
 async function selfTest() {
   const temp = await fs.mkdtemp(path.join(os.tmpdir(), 'superpi-engineering-'))
   let count = 0
@@ -88,6 +136,41 @@ async function selfTest() {
       count += 2
       console.log(name + ' baseline ' + before.passed + '/' + before.total + ' reference ' + after.passed + '/' + after.total)
     }
+    const traceFile = path.join(temp, 'run.jsonl')
+    const receiptFile = path.join(temp, 'process.json')
+    const trace = [
+      { type: 'message_end', message: { role: 'assistant', stopReason: 'toolUse' } },
+      { type: 'message_end', message: { role: 'toolResult', toolName: 'review_changes', details: { review: {
+        reviewers: [{ focus: 'tests', requests: 17 }, { focus: 'correctness', requests: 2 }], reused: ['tests'],
+      } } } },
+      { type: 'entry_appended', entry: { type: 'custom', customType: 'superpi-task', data: { status: 'complete' } } },
+      { type: 'message_end', message: { role: 'assistant', stopReason: 'stop', content: [{ type: 'text', text: 'Finished.' }] } },
+      { type: 'agent_settled', aborted: false },
+    ]
+    const writeTrace = records => fs.writeFile(traceFile, records.map(record => JSON.stringify(record)).join('\n'))
+    const metrics = async (exit, deadline = false) => {
+      await fs.writeFile(receiptFile, JSON.stringify({ exit, deadline, seconds: 24 }))
+      const { stdout } = await execute(process.execPath, [self, 'metrics', traceFile, receiptFile], { timeout: 5000, windowsHide: true })
+      return JSON.parse(stdout)
+    }
+    await writeTrace(trace)
+    const finished = await metrics(0)
+    assert.equal(finished.outcome, 'finished', 'a real final response and settlement finish the run')
+    assert.deepEqual([finished.assistantResponses, finished.reviewerRequests, finished.seconds], [2, 2, 24],
+      'carried-forward reports do not count as new requests')
+    assert.equal((await metrics(null, true)).outcome, 'deadline', 'an externally stopped run cannot finish')
+    await writeTrace(trace.slice(0, -1))
+    assert.equal((await metrics(0)).outcome, 'no_settlement', 'process exit alone cannot finish a run')
+    trace[2].entry.data.status = 'blocked'
+    await writeTrace(trace)
+    assert.equal((await metrics(0)).outcome, 'blocked', 'the session ledger preserves a review blocker')
+    trace[2].entry.data.status = 'active'
+    await writeTrace(trace)
+    assert.equal((await metrics(0)).outcome, 'pending_checks', 'a normal final answer cannot clear unfinished acceptance')
+    trace[3].message.stopReason = 'error'
+    await writeTrace(trace)
+    assert.equal((await metrics(0)).outcome, 'model_error', 'native settlement preserves provider failure')
+    count += 7
     console.log('PASS (' + count + ' checks)')
   } finally {
     await fs.rm(temp, { recursive: true, force: true, maxRetries: 3 })
@@ -97,6 +180,10 @@ async function selfTest() {
 const [action, name, location] = process.argv.slice(2)
 if (!action) await selfTest()
 else if (action === 'list') console.log(Object.keys(cases).join('\n'))
+else if (action === 'metrics') {
+  if (!name || !location) throw new Error('Supply the captured Pi JSONL events and process receipt.')
+  console.log(JSON.stringify(await runMetrics(name, location), null, 2))
+}
 else {
   const selected = scenario(name)
   if (!location) throw new Error('Supply a workspace directory.')
@@ -112,6 +199,6 @@ else {
   } else if (action === 'worker') {
     console.log(JSON.stringify(await score(name, folder)))
   } else {
-    throw new Error('Use list, prepare <case> <new-directory>, or grade <case> <workspace>.')
+    throw new Error('Use list, prepare <case> <new-directory>, grade <case> <workspace>, or metrics <events.jsonl> <process.json>.')
   }
 }
