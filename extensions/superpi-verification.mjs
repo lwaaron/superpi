@@ -38,7 +38,7 @@ async function fileAt(root, name) {
     throw new Error('Path outside the verification working directory: ' + name)
   }
   try {
-    const stat = await fs.lstat(file)
+    const stat = await fs.lstat(file, { bigint: true })
     const real = await fs.realpath(file)
     if (!stat.isFile() || path.relative(file, real) !== '') {
       throw new Error('Verification cannot copy or attest a symbolic link, submodule, or special file: ' + name)
@@ -57,23 +57,45 @@ async function sourceFiles(root, signal) {
 
 /** Identify working bytes, including untracked source. Staging alone does not change the result. */
 export async function workspaceFingerprint(cwd, signal) {
-  const root = await repositoryRoot(cwd, signal)
-  const identity = { root, cwd: await fs.realpath(cwd) }
-  return fingerprintFiles(root, await sourceFiles(root, signal), identity, signal)
+  const { fingerprint } = await workspaceSourceState(cwd, signal, false)
+  return fingerprint
 }
 
-async function fingerprintFiles(root, files, identity, signal) {
+/** Read source bytes and file versions to bound a live verification command. */
+export async function workspaceSourceState(cwd, signal, includeFileVersions = true) {
+  const root = await repositoryRoot(cwd, signal)
+  const identity = { root, cwd: await fs.realpath(cwd) }
+  return fingerprintFiles(root, await sourceFiles(root, signal), identity, signal, includeFileVersions)
+}
+
+async function fingerprintFiles(root, files, identity, signal, includeFileVersions = false) {
   const hash = createHash('sha256').update(identity.root).update('\0').update(identity.cwd).update('\0')
+  const fileVersions = new Map()
   for (const name of files) {
     signal.throwIfAborted()
     const source = await fileAt(root, name)
     // A path absent from the working tree contributes nothing even if it is still staged.
     if (!source) continue
+    if (includeFileVersions) {
+      const { dev, ino, mtimeNs, ctimeNs } = source.stat
+      fileVersions.set(name, `${dev}:${ino}:${mtimeNs}:${ctimeNs}`)
+    }
     const contentHash = createHash('sha256')
     for await (const chunk of createReadStream(source.file, { signal })) contentHash.update(chunk)
     hash.update(name).update('\0').update(String(source.stat.mode)).update('\0').update(contentHash.digest())
   }
-  return hash.digest('hex')
+  return { fingerprint: hash.digest('hex'), fileVersions }
+}
+
+export function firstChangedSource(before, after) {
+  for (const [name, version] of before.fileVersions) {
+    if (after.fileVersions.get(name) !== version) return name
+  }
+  if (before.fileVersions.size !== after.fileVersions.size) {
+    for (const name of after.fileVersions.keys()) {
+      if (!before.fileVersions.has(name)) return name
+    }
+  }
 }
 
 /** Copy current tracked and non-ignored untracked files. No Git metadata or linked files are shared. */
@@ -130,7 +152,7 @@ export async function withReviewSnapshot(cwd, base, paths, signal, inspect) {
       git(source.root, [...diff, '--name-only', '-z', revision, '--'], signal),
       git(source.root, [...untracked, '--'], signal),
     ]) : []
-    const [patch, stats, newFiles, deletions, fingerprint, all] = await Promise.all([
+    const [patch, stats, newFiles, deletions, { fingerprint }, all] = await Promise.all([
       git(source.root, [...diff, revision, ...where], signal),
       git(source.root, [...diff, '--numstat', '-z', revision, ...where], signal),
       git(source.root, [...untracked, ...where], signal),

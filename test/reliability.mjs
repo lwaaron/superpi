@@ -520,6 +520,48 @@ try {
     finishAfterExit.details.task.checks[0].evidence.toolCallId === 'verification_after_exit',
   'only a newly completed run supplies the final command evidence')
 
+  const draftPath = path.join(workspace, 'draft.txt')
+  const draftBeforeVerification = await fs.readFile(draftPath)
+  const readDraft = 'node -e "' + [
+    "const fs = require('node:fs'); console.log('waiting for draft');",
+    'const timer = setInterval(() => {',
+    "  const phase = fs.readFileSync('private.txt', 'utf8');",
+    "  if (phase === 'read draft') {",
+    "    if (fs.readFileSync('draft.txt', 'utf8') !== 'alternate draft') process.exit(7);",
+    "    console.log('tested alternate draft'); fs.writeFileSync('private.txt', 'draft read');",
+    "  } else if (phase === 'finish draft') clearInterval(timer);",
+    '}, 25);',
+  ].join(' ') + '"'
+  const changedDuringVerification = await run('detect an outside edit of a new source file during the check', [
+    useTool('task_progress', { action: 'start', goal: 'Verify the changed draft',
+      checks: [{ description: 'Run the draft check', command: readDraft }] }, 'draft_acceptance'),
+    useTool('verify', { command: readDraft, timeout: 20, check: 1 }, 'verify_changed_draft'),
+    useTool('task_progress', { action: 'finish' }, 'finish_changed_draft'),
+    useTool('task_progress', { action: 'block', reason: 'The draft needs a stable test run.' }, 'block_changed_draft'),
+    { delta: 'The draft needs a stable test run.' },
+  ], { interact: async since => {
+    await until(snapshot, state => state.events.some(entry => entry.seq > since &&
+      entry.record.type === 'tool_execution_update' && entry.record.toolCallId === 'verify_changed_draft' &&
+      entry.record.partialResult?.content?.some(block => block.text?.includes('waiting for draft'))), 'the draft check to start')
+    await fs.writeFile(draftPath, 'alternate draft')
+    await fs.writeFile(verificationControl, 'read draft')
+    await until(() => fs.readFile(verificationControl, 'utf8'), value => value === 'draft read', 'the draft check to read the external edit')
+    await fs.writeFile(draftPath, draftBeforeVerification)
+    await fs.writeFile(verificationControl, 'finish draft')
+  } })
+  await fs.writeFile(verificationControl, 'ignored fixture')
+  const checkedDraft = toolResult(changedDuringVerification, 'verify_changed_draft')
+  check(checkedDraft?.details?.verification?.exitCode === 0 && checkedDraft.content.some(block => block.text?.includes('tested alternate draft')) &&
+    (await fs.readFile(draftPath)).equals(draftBeforeVerification), 'the real shell completed after testing only the outside edit that was later restored')
+  check(checkedDraft?.isError && checkedDraft.details?.verification?.status === 'stale' &&
+    checkedDraft.details.verification.recorded === false &&
+    checkedDraft.content[0].text.includes('changed during this command ("draft.txt")') &&
+    toolResult(changedDuringVerification, 'finish_changed_draft')?.isError &&
+    changedDuringVerification.records.some(record => record.type === 'tool_execution_end' &&
+      record.toolCallId === 'verify_changed_draft' && record.isError === true) &&
+    (await snapshot()).taskWidget?.widgetLines?.some(line => line.includes('0/1')),
+  'the panel shows the command still pending after the concurrent edit of an untracked source file')
+
   await fs.writeFile(path.join(workspace, 'existing-check.spec.mjs'), '// Verification from the unchanged base.\n')
   execFileSync('git', ['-c', 'core.autocrlf=false', 'add', '-A'], { cwd: workspace })
   execFileSync('git', ['-c', 'user.name=Fixture', '-c', 'user.email=test@example.invalid', '-c', 'commit.gpgsign=false',

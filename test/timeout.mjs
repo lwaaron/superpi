@@ -33,18 +33,25 @@ const check = (condition, message) => {
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
 
-function spawnFake(mode) {
+async function spawnFake(mode, startupDelayMs = 0) {
   const proc = new PiProcess({
     cliPath: fake,
     nodePath: process.execPath,
     cwd: root,
     args: ['--mode', 'rpc'],
-    env: { FAKE_PI_MODE: mode },
+    env: { FAKE_PI_MODE: mode, FAKE_PI_STARTUP_DELAY_MS: String(startupDelayMs) },
     label: 'fake-' + mode,
   })
   const logs = []
   proc.on('log', entry => logs.push(entry.level + ' ' + entry.message))
   proc.start()
+  try {
+    const state = await proc.send({ type: 'get_state' }, { timeoutMs: 5000 })
+    if (state?.sessionId !== 'fake-session') throw new Error('Unexpected fixture session state')
+  } catch (error) {
+    await proc.close({ timeoutMs: 1000 })
+    throw new Error('The timeout fixture did not complete its RPC handshake', { cause: error })
+  }
   return { proc, logs }
 }
 
@@ -71,8 +78,7 @@ for (const [label, value] of [['NaN', Number.NaN], ['乱码', 'abc'], ['对象',
 // ── 2. 正数上限真的会超时 ──────────────────────────────────────────────────
 console.log('到期即 reject:')
 {
-  const { proc } = spawnFake('silent')
-  await sleep(120)
+  const { proc } = await spawnFake('silent')
   let error = null
   try {
     await proc.send({ type: 'prompt', message: 'never answers' }, { timeoutMs: 80 })
@@ -88,8 +94,7 @@ console.log('到期即 reject:')
 // ── 3. timeoutMs=0 表示不设上限：永不超时 ──────────────────────────────────
 console.log('timeoutMs=0 不设上限:')
 {
-  const { proc } = spawnFake('silent')
-  await sleep(120)
+  const { proc } = await spawnFake('silent')
   let settled = 'pending'
   const pending = proc.send({ type: 'prompt', message: 'never answers' }, { timeoutMs: 0 })
   pending.then(() => { settled = 'resolved' }, () => { settled = 'rejected' })
@@ -106,8 +111,7 @@ console.log('timeoutMs=0 不设上限:')
 // ── 4. 弹窗未答 → 超时让位；应答后命令才完成 ──────────────────────────────
 console.log('弹窗让位:')
 {
-  const { proc, logs } = spawnFake('dialog')
-  await sleep(120)
+  const { proc, logs } = await spawnFake('dialog', 300)
   const command = proc.send({ type: 'prompt', message: 'probe' }, { timeoutMs: 80 })
   let outcome = 'pending'
   command.then(() => { outcome = 'resolved' }, () => { outcome = 'rejected' })
@@ -131,8 +135,7 @@ console.log('弹窗让位:')
 // 结构性断言（deferrals 归零 + timer 换新）比时间断言可靠：它直接锁住「重开窗口」。
 console.log('应答后重开窗口:')
 {
-  const { proc } = spawnFake('dialog')
-  await sleep(120)
+  const { proc } = await spawnFake('dialog')
   const command = proc.send({ type: 'prompt', message: 'probe' }, { timeoutMs: 120 })
   let outcome = 'pending'
   command.then(() => { outcome = 'resolved' }, () => { outcome = 'rejected' })
@@ -152,8 +155,7 @@ console.log('应答后重开窗口:')
 // ── 5. 续期次数用尽 → 报「弹窗一直没人应答」 ───────────────────────────────
 console.log('续期上限:')
 {
-  const { proc } = spawnFake('dialog')
-  await sleep(120)
+  const { proc } = await spawnFake('dialog')
   let error = null
   // 30ms × MAX_TIMEOUT_DEFERRALS(12) ≈ 360ms 后耗尽
   await proc.send({ type: 'prompt', message: 'nobody answers' }, { timeoutMs: 30 }).catch(caught => { error = caught })

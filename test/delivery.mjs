@@ -168,6 +168,48 @@ try {
   check(outputWidget.get('superpi-task')?.[0]?.includes('1/1'), 'opening a saved session restores its own widget')
   await session.prompt('/superpi-task')
   check(taskDialog?.text?.includes('[command passed] Test the cache input'), 'the restored task command shows the recorded proof')
+
+  const sourceFile = path.join(workspace, 'source.txt')
+  const sourceTime = new Date('2020-01-01T00:00:00Z')
+  await fs.utimes(sourceFile, sourceTime, sourceTime)
+  await fs.writeFile(path.join(workspace, 'ignored.txt'), 'read alternate source')
+  const changeDuringCheck = 'node -e "' + [
+    "const fs = require('node:fs'); const source = 'source.txt'; const original = fs.readFileSync(source);",
+    "if (fs.readFileSync('ignored.txt', 'utf8') === 'read alternate source') {",
+    '  const times = fs.statSync(source);',
+    "  try { fs.writeFileSync(source, 'another');",
+    "    if (fs.readFileSync(source, 'utf8') !== 'another') process.exitCode = 7;",
+    "    else console.log('test read alternate source');",
+    '  } finally { fs.writeFileSync(source, original); fs.utimesSync(source, times.atime, times.mtime); }',
+    '} else {',
+    "  fs.writeFileSync('ignored.txt', 'build output');",
+    "  require('node:child_process').execFileSync('git', ['add', source]);",
+    "  if (original.toString() !== 'current') process.exitCode = 7;",
+    '}',
+  ].join(' ') + '"'
+  const concurrentEdit = await run('Verify the source version actually read by the command',
+    task('start-alternate', 'start', { ...plan, checks: [{ description: 'Verify the delivered source', command: changeDuringCheck, shell }] }),
+    verification('alternate-source', { command: changeDuringCheck, check: 1 }),
+    task('finish-alternate', 'finish'),
+    tool('use-final-source', 'write', { path: 'ignored.txt', content: 'stable run' }),
+    verification('verified-stable', { command: changeDuringCheck, check: 1 }),
+    task('finish-stable', 'finish'), 'Verified the stable source.')
+  const alternateSource = concurrentEdit.result('alternate-source')
+  check(alternateSource?.details.verification.exitCode === 0 && alternateSource.content.some(block =>
+    block.text.includes('test read alternate source')), 'the real command passes while reading the temporary source')
+  check(await fs.readFile(sourceFile, 'utf8') === 'current' && (await fs.stat(sourceFile)).mtimeMs === sourceTime.getTime(),
+    'the fixture restores both source bytes and the visible modification time')
+  check(alternateSource?.isError && alternateSource.details.verification.status === 'stale' &&
+    alternateSource.details.verification.recorded === false &&
+    alternateSource.content[0].text.includes('changed during this command ("source.txt")'),
+    'restored bytes and modification time cannot hide a source change during verification')
+  check(concurrentEdit.result('finish-alternate')?.isError && concurrentEdit.result('finish-alternate')?.details.task.status === 'active',
+    'the command that read a different version cannot deliver the task')
+  check(concurrentEdit.result('verified-stable')?.details.verification.recorded &&
+    concurrentEdit.result('finish-stable')?.details.task.status === 'complete' &&
+    await fs.readFile(path.join(workspace, 'ignored.txt'), 'utf8') === 'build output',
+  'the stable rerun records evidence even when the command stages source and writes ignored build output')
+
   const stale = await run('Validate changed source',
     task('new', 'start', plan), verification('pass', { command, check: 1 }),
     tool('edit', 'write', { path: 'source.txt', content: 'altered' }),

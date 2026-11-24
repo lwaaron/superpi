@@ -18,8 +18,11 @@
  * 只实现测试用到的那几个命令，其余一律 success:true —— 它是替身，不是模拟器。
  */
 import readline from 'node:readline'
+import { setTimeout as delay } from 'node:timers/promises'
 
 const mode = process.env.FAKE_PI_MODE ?? 'normal'
+const startupDelayMs = Number(process.env.FAKE_PI_STARTUP_DELAY_MS ?? 0)
+if (startupDelayMs > 0) await delay(startupDelayMs)
 
 const out = record => {
   process.stdout.write(JSON.stringify(record) + '\n')

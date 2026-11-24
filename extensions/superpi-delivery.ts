@@ -1,7 +1,8 @@
 import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent'
 import { Type } from 'typebox'
 import { scanTextBytes } from './superpi-text-bytes.mjs'
-import { applyVerificationMutations, verificationCommand, waitForVerification, withVerificationSnapshot, workspaceFingerprint } from './superpi-verification.mjs'
+import { applyVerificationMutations, firstChangedSource, verificationCommand, waitForVerification,
+  withVerificationSnapshot, workspaceFingerprint, workspaceSourceState } from './superpi-verification.mjs'
 import { REVIEW_CHECKPOINT, reviewChanges } from './superpi-review.mjs'
 
 const TASK = 'superpi-task'
@@ -29,7 +30,7 @@ type Task = {
   blocker?: string
 }
 
-type VerificationStatus = 'passed' | 'failed' | 'timed_out' | 'aborted' | 'unavailable'
+type VerificationStatus = 'passed' | 'failed' | 'timed_out' | 'aborted' | 'unavailable' | 'stale'
 
 function currentTask(ctx: ExtensionContext): Task | undefined {
   const branch = ctx.sessionManager.getBranch()
@@ -246,7 +247,7 @@ export default function delivery(pi: ExtensionAPI) {
         save(ctx, { ...task, checks: task.checks.map((item, i) => i === index ? { ...item, evidence } : item) })
       }
       const run = async () => {
-        const before = check ? await workspaceFingerprint(ctx.cwd, executionSignal) : undefined
+        const before = check ? await workspaceSourceState(ctx.cwd, executionSignal) : undefined
         const execute = async (snapshotCwd?: string) => {
           executionSignal.throwIfAborted()
           const outcome = await ctx.executeTool(shell, {
@@ -261,10 +262,16 @@ export default function delivery(pi: ExtensionAPI) {
           status = outcome.isError || exitCode !== 0 ? 'failed' : 'passed'
           executionSignal.throwIfAborted()
           if (before && status === 'passed') {
-            const after = await workspaceFingerprint(ctx.cwd, executionSignal)
+            const after = await workspaceSourceState(ctx.cwd, executionSignal)
             executionSignal.throwIfAborted()
-            if (after === before) proof = { fingerprint: after, toolCallId, at: new Date().toISOString() }
-            else note = 'Workspace sources changed during this command. Its exit status is recorded without acceptance evidence.'
+            const changedFile = firstChangedSource(before, after)
+            if (!changedFile && after.fingerprint === before.fingerprint) {
+              proof = { fingerprint: after.fingerprint, toolCallId, at: new Date().toISOString() }
+            } else {
+              status = 'stale'
+              note = 'Workspace sources changed during this command' + (changedFile ? ' (' + JSON.stringify(changedFile) + ')' : '') +
+                '. Rerun the check with stable sources to record acceptance evidence.'
+            }
           }
         }
         if (scope === 'snapshot') {
