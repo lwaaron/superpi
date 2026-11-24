@@ -1,7 +1,7 @@
 /**
  * superpi-context-guard.ts —— 把「请求前窗口化」接到 pi 的 `context` 事件上。
  *
- * 装法：`npm run pi:editor`（与输入框、规则扩展一起装到 `<piAgentDir>/extensions/`）
+ * 装法：`npm run superpi:editor`（与输入框、规则扩展一起装到 `<piAgentDir>/extensions/`）
  *
  * ---------------------------------------------------------------------------
  * 为什么必须挂 `context` 事件

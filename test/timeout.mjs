@@ -79,7 +79,7 @@ console.log('到期即 reject:')
   } catch (caught) {
     error = caught
   }
-  check(error !== null && /pi command timed out: prompt/.test(String(error.message)), 'timeoutMs=80 → 报 "pi command timed out: prompt"，实际 ' + String(error && error.message))
+  check(error !== null && /SuperPi command timed out: prompt/.test(String(error.message)), 'timeoutMs=80 → 报 "SuperPi command timed out: prompt"，实际 ' + String(error && error.message))
   check(error !== null && String(error.message).includes('dialog') === false, '没有弹窗时错误里不提对话框')
   check(proc.pending.size === 0, '超时后 pending 表里不留孤儿，实际 ' + String(proc.pending.size))
   await proc.close({ timeoutMs: 1000 })

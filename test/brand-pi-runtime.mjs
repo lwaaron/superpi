@@ -11,7 +11,10 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
+import { PI_PACKAGE, PI_VERSION } from '../src/pi-runtime.mjs'
+import { runtimeSessionOptions } from '../src/runtime-extensions.mjs'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const root = path.dirname(here)
@@ -87,6 +90,44 @@ try {
   const cfgAfter = JSON.parse(fs.readFileSync(noCfg, 'utf8')).piConfig
   eq(cfgAfter.name, 'SuperPi', '没有 piConfig 时新建并用 SuperPi')
   eq(cfgAfter.configDir, '.pi', '没有 piConfig 时也补 .pi')
+
+  const customDir = path.join(tmp, 'custom-dir.json')
+  fs.writeFileSync(customDir, JSON.stringify({ ...original, piConfig: { configDir: '.existing-data' } }))
+  applyBrand(customDir)
+  eq(readBrand(customDir).configDir, '.existing-data', '显式配置目录仍指向现有数据')
+  eq(applyBrand(customDir).changed, false, '自定义配置目录下也不重复改写')
+
+  const legacyAgent = path.join(tmp, 'legacy-agent')
+  const legacySessions = path.join(tmp, 'legacy-sessions')
+  const legacyEnv = { PI_CODING_AGENT_DIR: legacyAgent, PI_CODING_AGENT_SESSION_DIR: legacySessions }
+  const brandedAgent = path.join(tmp, 'branded-agent')
+  const runtimeDir = path.join(tmp, 'runtime')
+  const pkgDir = path.join(runtimeDir, 'node_modules', ...original.name.split('/'))
+  const pkgPath = path.join(pkgDir, 'package.json')
+  const cliPath = path.join(pkgDir, 'cli.cjs')
+  fs.mkdirSync(pkgDir, { recursive: true })
+  fs.writeFileSync(pkgPath, JSON.stringify({ ...original, bin: { pi: 'cli.cjs' } }))
+  fs.writeFileSync(cliPath, `const cfg = require('./package.json').piConfig
+console.log(JSON.stringify({ name: cfg.name, argv: process.argv.slice(1), agent: process.env.SUPERPI_CODING_AGENT_DIR, sessions: process.env.SUPERPI_CODING_AGENT_SESSION_DIR }))\n`)
+  const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
+  eq(pkg.optionalDependencies[PI_PACKAGE], PI_VERSION, '打包安装与命令行使用相同的运行时版本')
+  ok(typeof pkg.bin?.superpi === 'string', '包声明了 SuperPi 命令')
+  const launched = spawnSync(process.execPath, [path.resolve(root, pkg.bin.superpi), '--session', '测试.jsonl'], {
+    encoding: 'utf8', timeout: 10000,
+    env: { ...process.env, SUPERPI_CLI_PATH: '', SUPERPI_RUNTIME_DIR: runtimeDir, SUPERPI_CODING_AGENT_DIR: '', SUPERPI_CODING_AGENT_SESSION_DIR: '', ...legacyEnv },
+  })
+  eq(launched.status, 0, '品牌 CLI 正常启动选中的运行时：' + launched.stderr)
+  const payload = JSON.parse(launched.stdout)
+  eq(payload.name, BRAND_NAME, 'CLI 启动前应用品牌配置')
+  eq(JSON.stringify(payload.argv), JSON.stringify([cliPath, '--session', '测试.jsonl']), '原样转发 CLI 参数')
+  eq(payload.agent, legacyAgent, '品牌 CLI 识别原有的 agent 目录环境变量')
+  eq(payload.sessions, legacySessions, '品牌 CLI 识别原有的会话目录环境变量')
+  ok(fs.existsSync(path.join(legacyAgent, 'extensions', 'superpi-ask-user.ts')), '首次启动品牌 CLI 即同步询问工具')
+
+  const preferred = runtimeSessionOptions({ packageDir: pkgDir, env: { ...legacyEnv, SUPERPI_CODING_AGENT_DIR: brandedAgent } })
+  eq(preferred.agentDir, brandedAgent, '两端优先采用 SuperPi 的配置变量')
+  eq(preferred.sessionDir, legacySessions, '两端读取同一份历史会话')
+  eq(preferred.envOverrides.SUPERPI_CODING_AGENT_SESSION_DIR, legacySessions, 'RPC 子进程也收到原有会话目录')
 } finally {
   fs.rmSync(tmp, { recursive: true, force: true })
 }

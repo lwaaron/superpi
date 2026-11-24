@@ -31,10 +31,11 @@ window.__ModuleLoader__.load({
     var NS = 'superpi'
     var PANEL_ID = 'superpi'
     var API_PREFIX = 'api/superpi'
+    var BRAND_NAME = 'SuperPi'
 
     // ── 文案（zh / en 必须键集一致，test/client-render.mjs 会断言）─────────────
     var ZH = {
-      panelTitle: 'SuperPi',
+      panelTitle: BRAND_NAME,
       newSession: '新会话',
       newSessionHint: '新会话（等价于命令行 SuperPi 的 /new：同一进程内换一棵会话树）',
       reconnectHint: '重连（关掉 SuperPi 子进程再起一个；会话记录不丢）',
@@ -102,6 +103,7 @@ window.__ModuleLoader__.load({
       procGlob: '查找文件',
       procList: '浏览目录',
       procGeneric: '工具调用',
+      procAsk: '询问用户',
       procResult: '结果',
       deepDiving: '深度求索中',
       working: '深度求索中，用时 {duration} ···',
@@ -185,6 +187,7 @@ window.__ModuleLoader__.load({
       extYes: '确认',
       extNo: '否',
       extSubmit: '提交',
+      extResponseFailed: '回答未能发送。可以重试。',
       extTimeout: '还剩 {n}s 后自动取消',
       notify: '提示',
       steerQueued: '排队中（steer）',
@@ -210,7 +213,7 @@ window.__ModuleLoader__.load({
       rulesDiscard: '丢弃未保存的修改？',
       rulesDiscardBody: '编辑框里还有没保存的内容，关闭就丢了。',
       rulesDiscardOk: '丢弃',
-      rulesCliMissing: '命令行窗口未生效：运行 npm run pi:editor 安装扩展',
+      rulesCliMissing: '命令行窗口未生效：运行 npm run superpi:editor 安装扩展',
       rulesCliReady: '命令行窗口与面板同一份，/superpi-rules 可编辑',
       rulesDelivery: '交付链路',
       rulesPlaceholder: '在这里写你的规则，每行一条；清空 = 不追加任何内容',
@@ -327,7 +330,7 @@ window.__ModuleLoader__.load({
       sessionFallbackTitle: '未命名会话',
     }
     var EN = {
-      panelTitle: 'SuperPi',
+      panelTitle: BRAND_NAME,
       newSession: 'New session',
       newSessionHint: 'New session (same as /new: a fresh session tree in the same process)',
       reconnectHint: 'Reconnect (restart the SuperPi child process; the session files stay)',
@@ -376,6 +379,7 @@ window.__ModuleLoader__.load({
       procGlob: 'Find files',
       procList: 'List folder',
       procGeneric: 'Tool call',
+      procAsk: 'Ask user',
       procResult: 'Result',
       deepDiving: 'Deep diving',
       working: 'Deep diving, {duration} ···',
@@ -458,6 +462,7 @@ window.__ModuleLoader__.load({
       extYes: 'Confirm',
       extNo: 'No',
       extSubmit: 'Submit',
+      extResponseFailed: 'Your response could not be sent. Try again.',
       extTimeout: 'Auto-cancels in {n}s',
       notify: 'Notice',
       steerQueued: 'Queued (steer)',
@@ -483,7 +488,7 @@ window.__ModuleLoader__.load({
       rulesDiscard: 'Discard unsaved changes?',
       rulesDiscardBody: 'The editor still has unsaved content; closing loses it.',
       rulesDiscardOk: 'Discard',
-      rulesCliMissing: 'CLI window not covered yet: run npm run pi:editor to install the extension',
+      rulesCliMissing: 'CLI window not covered yet: run npm run superpi:editor to install the extension',
       rulesCliReady: 'The CLI window shares this file; /superpi-rules edits it there',
       rulesDelivery: 'Delivery',
       rulesPlaceholder: 'Write your rules here, one per line; empty = nothing is appended',
@@ -1177,7 +1182,7 @@ window.__ModuleLoader__.load({
         if (typeof query === 'string' && query !== '') parts.push('query=' + encodeURIComponent(query))
         return requestJson('/directories?' + parts.join('&'))
       },
-      changelog: function () { return requestJson('/pi/changelog') },
+      changelog: function () { return requestJson('/changelog') },
       selfcheck: function () { return requestJson('/selfcheck') },
       runtime: function () { return requestJson('/runtime') },
       install: function () { return requestJson('/runtime/install', { method: 'POST', body: {}, timeoutMs: 900000 }) },
@@ -1867,7 +1872,7 @@ window.__ModuleLoader__.load({
         prefill: typeof record.prefill === 'string' ? record.prefill : null,
         placeholder: typeof record.placeholder === 'string' ? record.placeholder : null,
         timeout: typeof record.timeout === 'number' ? record.timeout : null,
-        receivedAt: Date.now(),
+        receivedAt: typeof record.receivedAt === 'number' ? record.receivedAt : Date.now(),
       }
     }
 
@@ -1971,7 +1976,7 @@ window.__ModuleLoader__.load({
       }
       if (type === 'agent_end') {
         // agent 主循环结束。pi 会在此之后 flush _pendingBashMessages（不进事件流），
-        // PiPanel 收到 agent_settled 后会重拉 snapshot 把 bash 气泡补上。
+        // SuperPiPanel 收到 agent_settled 后会重拉 snapshot 把 bash 气泡补上。
         view.openIndex = -1
         view.streamingIndex = -1
         return
@@ -2250,7 +2255,7 @@ window.__ModuleLoader__.load({
 
     // ── 基础组件 ────────────────────────────────────────────────────────────
 
-    function PiIcon(props) {
+    function SuperPiIcon(props) {
       var size = props !== null && props !== undefined && typeof props.size === 'number' ? props.size : 18
       return h('svg', {
         width: size, height: size, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor',
@@ -2263,7 +2268,7 @@ window.__ModuleLoader__.load({
         h('circle', { cx: 18, cy: 15.5, r: 3.2 }))
     }
 
-    /** 目录图标（与 PiIcon 同一描边风格，用 currentColor，不引入图片资源）。 */
+    /** 目录图标（与 SuperPiIcon 同一描边风格，用 currentColor，不引入图片资源）。 */
     function DirIcon(props) {
       var size = props !== null && props !== undefined && typeof props.size === 'number' ? props.size : 15
       return h('svg', {
@@ -2274,7 +2279,7 @@ window.__ModuleLoader__.load({
         h('path', { d: 'M3 7.5a1.5 1.5 0 0 1 1.5-1.5h4l2 2.5h8A1.5 1.5 0 0 1 20 10v7.5a1.5 1.5 0 0 1-1.5 1.5h-14A1.5 1.5 0 0 1 3 17.5z' }))
     }
 
-    /** 文件图标（折角纸张，同 PiIcon 描边风格）。 */
+    /** 文件图标（折角纸张，同 SuperPiIcon 描边风格）。 */
     function FileIcon(props) {
       var size = props !== null && props !== undefined && typeof props.size === 'number' ? props.size : 15
       return h('svg', {
@@ -2300,7 +2305,7 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * 一组「类型图标」：全部与 PiIcon 同一描边风格（24 网格 / 1.7 / round），
+     * 一组「类型图标」：全部与 SuperPiIcon 同一描边风格（24 网格 / 1.7 / round），
      * 只用 currentColor，颜色由标签的 CSS 决定。
      *
      * 为什么不引入图标包：客户端 require 白名单里只有 react，插件必须零依赖；
@@ -2447,7 +2452,7 @@ window.__ModuleLoader__.load({
       ])
     }
 
-    /** 回形针：插入文件。之前这里用的是产品 logo（PiIcon），语义不对。 */
+    /** 回形针：插入文件。之前这里用的是产品 logo（SuperPiIcon），语义不对。 */
     function PaperclipIcon(props) {
       return iconSvg(props, [
         h('path', { key: 'p', d: 'M20.4 11.4l-8.5 8.5a5.4 5.4 0 0 1-7.6-7.6l8.5-8.5a3.6 3.6 0 0 1 5.1 5.1l-8.5 8.5a1.8 1.8 0 0 1-2.5-2.5l7.8-7.8' }),
@@ -2659,6 +2664,7 @@ window.__ModuleLoader__.load({
       grep: { label: 'procGrep', Icon: SearchIcon },
       find: { label: 'procGlob', Icon: SearchIcon },
       ls: { label: 'procList', Icon: ListIcon },
+      ask_user: { label: 'procAsk', Icon: SparkIcon },
     }
 
     function toolViewOf(name, args) {
@@ -2906,7 +2912,7 @@ window.__ModuleLoader__.load({
      */
     function ImageBlock(props) {
       var open = props.onOpen
-      // t 必须从 props 取：ImageBlock 是 module 级组件，拿不到 PiPanel 闭包里的 t。
+      // t 必须从 props 取：ImageBlock 是 module 级组件，拿不到 SuperPiPanel 闭包里的 t。
       // （少了这一行会直接 ReferenceError —— 0.14.0 的 client-render 门禁抓到过。）
       var t = typeof props.t === 'function' ? props.t : function (key) { return String(key) }
       var stubId = typeof props.stubId === 'string' ? props.stubId : null
@@ -2942,7 +2948,7 @@ window.__ModuleLoader__.load({
      * 所以文本之后再次出现的工具调用会重新起一组，而不是继续挂在很久以前的思考下面。
      *
      * 工具结果不单独占一行：pi 把结果作为独立的 toolResult 消息送达，而 DSH 的
-     * 一次调用 = 一行、输出收在同一行的展开区里。折叠逻辑在 PiPanel 里按 toolCallId
+     * 一次调用 = 一行、输出收在同一行的展开区里。折叠逻辑在 SuperPiPanel 里按 toolCallId
      * 建表后传进来（props.results）；对不上号的孤儿结果仍按行渲染，不能吞掉内容。
      */
     function MessageRow(props) {
@@ -3028,7 +3034,7 @@ window.__ModuleLoader__.load({
     /**
      * 空态：pi 还没有任何消息时显示。
      * cwd 之后给一个「选择工作区」入口 —— 这是用户在 DSH 里第一次用 pi 时
-     * 最想做的事（默认 ~/pi-workspace 不一定是他要的目录），也是 TUI 里
+     * 最想做的事（默认 ~/superpi-workspace 不一定是他要的目录），也是 TUI 里
      * 「新建工作目录」的等价物。
      */
     function EmptyState(props) {
@@ -3037,7 +3043,7 @@ window.__ModuleLoader__.load({
           h(DirIcon, { size: 14 }),
           h('span', null, props.t('pickDir'))))
       return h('div', { className: 'superpi-empty' },
-        h(PiIcon, { size: 30 }),
+        h(SuperPiIcon, { size: 30 }),
         h('h2', null, props.t('emptyTitle')),
         h('p', null, props.t('emptyHint')),
         props.meta === null ? null : h('div', { className: 'superpi-empty-meta' }, props.meta),
@@ -3123,7 +3129,7 @@ window.__ModuleLoader__.load({
      * Composer：所有输入的必经之路。
      *
      * 三种提交形态（与 TUI 的 setupEditorSubmitHandler 一一对应）：
-     *   1. 斜杠命令 → 由 PiPanel.handleSlash 决定走 RPC 还是面板 UI，**绝不把 /compact 当 prompt 发出去**
+     *   1. 斜杠命令 → 由 SuperPiPanel.handleSlash 决定走 RPC 还是面板 UI，**绝不把 /compact 当 prompt 发出去**
      *   2. ! / !!    → bash RPC（!! 带 excludeFromContext）
      *   3. 普通文本  → prompt；busy 时用 streamingBehavior:'steer'（对齐 interactive-mode.ts:3507）
      *
@@ -4096,7 +4102,7 @@ window.__ModuleLoader__.load({
 
     /**
      * 重命名弹窗（项目 / 会话共用）。
-     * 不复用 NameSheet 的原因：NameSheet 挂在 PiPanel 的 drawer 状态上，而 drawer 是单值 ——
+     * 不复用 NameSheet 的原因：NameSheet 挂在 SuperPiPanel 的 drawer 状态上，而 drawer 是单值 ——
      * 改名会把左侧栏自己顶掉。这个弹窗归 SessionsSheet 所属，侧栏与弹窗可以并存。
      */
     function RenameDialog(props) {
@@ -4212,9 +4218,9 @@ window.__ModuleLoader__.load({
      * 0.8.0 起这里还承担 ui-prefs（项目名 / 会话名 / 置顶）与行内菜单的开关状态：
      * 偏好是「面板自己的账」，不归 pi 的 RPC 面管，读写都走 /api/superpi/ui-prefs。
      *
-     * 0.8.1 起 prefs **不再由这里持有**，改由 PiPanel 单点持有后经 props 下传：顶栏标题要显示
+     * 0.8.1 起 prefs **不再由这里持有**，改由 SuperPiPanel 单点持有后经 props 下传：顶栏标题要显示
      * 当前项目名（renamed 优先），若两处各拉一次 /ui-prefs，改名后就会出现「列表已更新、顶栏还是旧名」。
-     * 写入仍由这里发起，成功后把 host 回的全量结构经 props.onPrefs 交回 PiPanel。
+     * 写入仍由这里发起，成功后把 host 回的全量结构经 props.onPrefs 交回 SuperPiPanel。
      */
     function SessionsSheet(props) {
       var t = props.t
@@ -4269,8 +4275,8 @@ window.__ModuleLoader__.load({
       }, [openCwd])
 
       /**
-       * 写一条偏好：成功就把 host 回的**全量**结构交回 PiPanel（host 是唯一真相，不在本地猜合并）。
-       * 收账的人从 0.8.1 起是 PiPanel —— 它同时供顶栏项目标题与这份列表，两处必须同一份。
+       * 写一条偏好：成功就把 host 回的**全量**结构交回 SuperPiPanel（host 是唯一真相，不在本地猜合并）。
+       * 收账的人从 0.8.1 起是 SuperPiPanel —— 它同时供顶栏项目标题与这份列表，两处必须同一份。
        */
       var pushPref = function (request, failText) {
         request.then(onPrefs).catch(function (error) { onNotice(failText + ' · ' + errorText(error), 'err') })
@@ -5052,20 +5058,47 @@ window.__ModuleLoader__.load({
       var stateLeft = useState(null)
       var left = stateLeft[0]
       var setLeft = stateLeft[1]
+      var stateSending = useState(false)
+      var sending = stateSending[0]
+      var setSending = stateSending[1]
+      var stateFailed = useState(false)
+      var failed = stateFailed[0]
+      var setFailed = stateFailed[1]
+      var sendingRef = useRef(false)
+      var dialogRef = useRef(null)
+
+      var respond = function (answer) {
+        if (sendingRef.current) return
+        sendingRef.current = true
+        setSending(true)
+        setFailed(false)
+        Promise.resolve().then(function () {
+          return props.onRespond(Object.assign({ id: request.id }, answer))
+        }).catch(function () {
+          setFailed(true)
+        }).finally(function () {
+          sendingRef.current = false
+          setSending(false)
+        })
+      }
+      var cancel = function () { respond({ cancelled: true }) }
 
       useEffect(function () {
+        if (request.method !== 'input' && dialogRef.current !== null) dialogRef.current.focus()
         var budget = dialogBudgetMs(request)
-        var deadline = Date.now() + budget
-        var timer = window.setInterval(function () {
+        var deadline = (request.receivedAt > 0 ? request.receivedAt : Date.now()) + budget
+        var update = function () {
           var remain = deadline - Date.now()
           if (remain <= 0) {
             window.clearInterval(timer)
-            props.onRespond({ id: request.id, cancelled: true })
+            setLeft(0)
+            cancel()
             return
           }
           setLeft(Math.ceil(remain / 1000))
-        }, 1000)
-        setLeft(Math.ceil(budget / 1000))
+        }
+        var timer = window.setInterval(update, 1000)
+        update()
         return function () { window.clearInterval(timer) }
       }, [request.id])
 
@@ -5074,55 +5107,70 @@ window.__ModuleLoader__.load({
       if (request.method === 'confirm') {
         body.push(h('p', { key: 'msg', className: 'superpi-dialog-msg' }, request.message === null ? '' : request.message))
         body.push(h('div', { key: 'act', className: 'superpi-dialog-actions' },
-          h('button', { type: 'button', className: 'superpi-btn', onClick: function () { props.onRespond({ id: request.id, confirmed: false }) } }, t('extNo')),
-          h('button', { type: 'button', className: 'superpi-btn superpi-btn-primary', onClick: function () { props.onRespond({ id: request.id, confirmed: true }) } }, t('extYes'))))
+          h('button', { type: 'button', className: 'superpi-btn', disabled: sending, onClick: function () { respond({ confirmed: false }) } }, t('extNo')),
+          h('button', { type: 'button', className: 'superpi-btn superpi-btn-primary', disabled: sending, onClick: function () { respond({ confirmed: true }) } }, t('extYes'))))
       } else if (request.method === 'select') {
         body.push(h('div', { key: 'opts', className: 'superpi-dialog-body' }, request.options.map(function (option, index) {
           return h('button', {
             key: 'o' + String(index),
             type: 'button',
             className: 'superpi-opt',
-            onClick: function () { props.onRespond({ id: request.id, value: option }) },
+            disabled: sending,
+            onClick: function () { respond({ value: option }) },
           }, option)
         })))
         body.push(h('div', { key: 'act', className: 'superpi-dialog-actions' },
-          h('button', { type: 'button', className: 'superpi-btn', onClick: function () { props.onRespond({ id: request.id, cancelled: true }) } }, t('cancel'))))
+          h('button', { type: 'button', className: 'superpi-btn', disabled: sending, onClick: cancel }, t('cancel'))))
       } else if (request.method === 'input') {
         body.push(h('input', {
           key: 'input',
           className: 'superpi-search',
           value: value,
+          disabled: sending,
+          autoFocus: true,
+          'aria-label': title,
           placeholder: request.placeholder === null ? '' : request.placeholder,
           onChange: function (event) { setValue(event.target.value) },
-          onKeyDown: function (event) { if (event.key === 'Enter') props.onRespond({ id: request.id, value: value }) },
+          onKeyDown: function (event) {
+            if (event.key === 'Enter' && !(event.nativeEvent && event.nativeEvent.isComposing)) respond({ value: value })
+          },
         }))
         body.push(h('div', { key: 'act', className: 'superpi-dialog-actions' },
-          h('button', { type: 'button', className: 'superpi-btn', onClick: function () { props.onRespond({ id: request.id, cancelled: true }) } }, t('cancel')),
-          h('button', { type: 'button', className: 'superpi-btn superpi-btn-primary', onClick: function () { props.onRespond({ id: request.id, value: value }) } }, t('extSubmit'))))
+          h('button', { type: 'button', className: 'superpi-btn', disabled: sending, onClick: cancel }, t('cancel')),
+          h('button', { type: 'button', className: 'superpi-btn superpi-btn-primary', disabled: sending, onClick: function () { respond({ value: value }) } }, t('extSubmit'))))
       } else {
         body.push(h('textarea', {
           key: 'ta',
           className: 'superpi-mini-ta',
           value: value,
+          disabled: sending,
           onChange: function (event) { setValue(event.target.value) },
         }))
         body.push(h('div', { key: 'act', className: 'superpi-dialog-actions' },
-          h('button', { type: 'button', className: 'superpi-btn', onClick: function () { props.onRespond({ id: request.id, cancelled: true }) } }, t('cancel')),
-          h('button', { type: 'button', className: 'superpi-btn superpi-btn-primary', onClick: function () { props.onRespond({ id: request.id, value: value }) } }, t('extSubmit'))))
+          h('button', { type: 'button', className: 'superpi-btn', disabled: sending, onClick: cancel }, t('cancel')),
+          h('button', { type: 'button', className: 'superpi-btn superpi-btn-primary', disabled: sending, onClick: function () { respond({ value: value }) } }, t('extSubmit'))))
       }
       var label = request.method === 'confirm' ? t('extConfirm') : request.method === 'input' ? t('extInput') : request.method === 'editor' ? t('extEditor') : t('extSelect')
       // 点遮罩 = 取消（回 cancelled:true），与右上角 CloseButton、pi 侧 Esc 同一语义。
       // 卡片同时补 aria-modal：这类弹窗会阻塞 pi 的整轮等待，不声明模态读屏会以为面板其余部分仍可操作。
-      var cancel = function () { props.onRespond({ id: request.id, cancelled: true }) }
       return h('div', { className: 'superpi-dialog-wrap', onClick: maskHandler(cancel) },
-        h('div', { className: 'superpi-dialog', role: 'dialog', 'aria-modal': 'true', 'aria-label': label },
+        h('div', {
+          className: 'superpi-dialog', role: 'dialog', 'aria-modal': 'true', 'aria-label': title, 'aria-busy': sending,
+          ref: dialogRef, tabIndex: -1,
+          onKeyDown: function (event) {
+            if (event.key !== 'Escape' || (event.nativeEvent && event.nativeEvent.isComposing)) return
+            event.stopPropagation()
+            cancel()
+          },
+        },
           // 扩展弹窗以前只有底部「取消 / 提交」，没有右上角关闭；这里补一个与抽屉同款的 CloseButton，
           // 语义等于取消（回 cancelled:true），跟 pi 的 Esc 取消一致。
           h('div', { className: 'superpi-dialog-head' },
             h('h3', null, label + ' · ' + title),
-            h(CloseButton, { t: t, onClick: function () { props.onRespond({ id: request.id, cancelled: true }) } })),
+            h(CloseButton, { t: t, onClick: cancel })),
           left === null ? null : h('div', { className: 'superpi-mono' }, t('extTimeout').replace('{n}', String(left))),
-          body))
+          body,
+          failed ? h('p', { role: 'alert', className: 'superpi-dialog-msg' }, t('extResponseFailed')) : null))
     }
 
     function ImageOverlay(props) {
@@ -5298,11 +5346,11 @@ window.__ModuleLoader__.load({
       return h('div', { className: 'superpi-root' },
         h('div', { className: 'superpi-head' },
           h('div', { className: 'superpi-head-main' },
-            h(PiIcon, { size: 16 }),
+            h(SuperPiIcon, { size: 16 }),
             h('span', { className: 'superpi-brand' }, t('panelTitle')))),
         h('div', { className: 'superpi-gate' },
           h('div', { className: 'superpi-gate-card' },
-            h(PiIcon, { size: 30 }),
+            h(SuperPiIcon, { size: 30 }),
             h('h3', null, t('runtimeMissing')),
             h('p', { className: 'superpi-empty p' }, t('runtimeMissingHint')),
             failure === null ? null : h('div', { className: 'superpi-alert' }, t('installFailed') + '：' + failure),
@@ -5376,7 +5424,7 @@ window.__ModuleLoader__.load({
     // 绝不允许「静默降级」。所有斜杠命令的分发都在 handleSlash 里，与 src/rpc-contract.mjs 的
     // disposition 一一对应。
 
-    function PiPanel(props) {
+    function SuperPiPanel(props) {
       var t = props.t
 
       var phaseState = useState('loading')
@@ -6607,11 +6655,17 @@ window.__ModuleLoader__.load({
 
       var respondUi = function (body) {
         var id = sessionRef.current
-        dropPendingUi(viewRef.current, body.id)
-        repaint()
         if (id === null) return
-        // 会话已经 settled 时 pi 会丢弃未应答请求，host 返回 409 —— 弹窗早已收起，不打扰用户。
-        api.respond(id, body).catch(function () { return null })
+        var closeDialog = function () {
+          if (sessionRef.current !== id) return
+          dropPendingUi(viewRef.current, body.id)
+          repaint()
+        }
+        return api.respond(id, body).then(closeDialog, function (error) {
+          // 409 表示宿主已收起这个问题，例如应答已送达但客户端错过了上一次确认。
+          if (error !== null && error !== undefined && error.status === 409) { closeDialog(); return }
+          throw error
+        })
       }
 
       var consumeEditorText = function () { viewRef.current.editorText = null }
@@ -6808,7 +6862,7 @@ window.__ModuleLoader__.load({
       }
       var head = h('div', { className: 'superpi-head' },
         h('div', { className: 'superpi-head-main' },
-          h(PiIcon, null),
+          h(SuperPiIcon, null),
           // 标题 = 当前项目（用户 35984）。title 给完整路径，窄面板里被 ellipsis 截断时还能悬停看全。
           h('span', { className: 'superpi-brand', title: projectTitle === '' ? null : projectTitle }, projectTitle === '' ? t('panelTitle') : projectTitle),
           h('span', { className: 'superpi-dot', 'data-state': state, title: state }),
@@ -7378,7 +7432,7 @@ window.__ModuleLoader__.load({
               label: function () { return translate('panelTitle') },
               locale: NS,
             }, function (slotProps) {
-              return h(PiIcon, { size: slotProps !== null && slotProps !== undefined && typeof slotProps.size === 'number' ? slotProps.size : 18 })
+              return h(SuperPiIcon, { size: slotProps !== null && slotProps !== undefined && typeof slotProps.size === 'number' ? slotProps.size : 18 })
             })
           })
         }, PANEL_ID + ': sidebar entry')
@@ -7386,7 +7440,7 @@ window.__ModuleLoader__.load({
         ctx.effect(function () {
           return slots.inject('main', function () {
             return slots.register({ name: 'main', key: PANEL_ID, locale: NS }, function (slotProps) {
-              return h(PiPanel, {
+              return h(SuperPiPanel, {
                 t: slotProps !== null && slotProps !== undefined && typeof slotProps.t === 'function' ? slotProps.t : translate,
                 onOpenFile: openInSidebar,
               })
@@ -7401,7 +7455,7 @@ window.__ModuleLoader__.load({
     exports.apply = apply
     // 仅供 test/client-render.mjs 与 test/parity.mjs 使用；宿主只读 name / inject / apply。
     exports.__internals = {
-      PiPanel: PiPanel,
+      SuperPiPanel: SuperPiPanel,
       Composer: Composer,
       BashBlock: BashBlock,
       ToolBlock: ToolBlock,

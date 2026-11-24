@@ -133,7 +133,7 @@
 
 | 环节 | 行为 | 失败时的表现（必须可见，不许静默） |
 | --- | --- | --- |
-| 安装 | `npm run pi:editor` 把 `superpi-editor.ts` + `superpi-rules.ts` + `superpi-rules.mjs` 复制到 `<piAgentDir>/extensions/`（幂等） | `--status` 显示「内容不一致，需 --install」 |
+| 安装 | `npm run superpi:editor` 把 `superpi-editor.ts` + `superpi-rules.ts` + `superpi-rules.mjs` 复制到 `<piAgentDir>/extensions/`（幂等） | `--status` 显示「内容不一致，需 --install」 |
 | 加载 | pi 用 jiti 加载 `.ts`；扩展 `import` 同目录的 `superpi-rules.mjs`（pi 的 jiti alias 不含它，走原生 ESM 相对路径） | 扩展捕获一切异常，绝不阻断 pi 启动 |
 | 生效 | 每轮 `before_agent_start` 读文件（mtime+size 缓存），返回 `{ systemPrompt: 原提示 + 块 }` | 读不到 → 用默认文案（离线安全） |
 | 面板 | `POST /rules` 写文件；下一轮 `before_agent_start` 自动带上新文本 | 面板显示 `delivery.extensionInstalled=false` 的提示 |
@@ -156,7 +156,7 @@
 | 正常（默认文案） | 同上，额外 `默认` 徽标 | 同上 |
 | 空 | `当前未生效（不会追加任何内容）` 告警色 | 同上 |
 | host 读失败 | 错误行 + `重试` 按钮 | 编辑禁用（避免覆盖掉读不出来的文件） |
-| 命令行未安装 | `命令行窗口未生效：运行 npm run pi:editor` 提示行 | 无 |
+| 命令行未安装 | `命令行窗口未生效：运行 npm run superpi:editor` 提示行 | 无 |
 
 编辑弹窗（`RulesSheet`）：
 
@@ -296,12 +296,12 @@
 | `E2E-02` | 点编辑 → 在末尾追加 `## 我的补充\n只回一句话` → 保存 | 关闭弹窗、出现成功提示、摘要变成本地修改后的首行 |
 | `E2E-03` | 直接 `cat <home>/.superpi/rules.json` | `text` 含刚追加的内容，`checksum` 是 64 位十六进制，`createdAt` 未被刷新 |
 | `E2E-04` | 面板里发一句「读一下你现在遵守的最高优先级规则，逐条列出来」 | 回复里出现刚追加的 `只回一句话` 与默认文案的要点（证明真的进了系统提示） |
-| `E2E-05` | 打开命令行 `pi` 会话（已 `npm run pi:editor`），问同一句话 | 与 `E2E-04` 一致（证明两端同一份） |
+| `E2E-05` | 打开命令行 `pi` 会话（已 `npm run superpi:editor`），问同一句话 | 与 `E2E-04` 一致（证明两端同一份） |
 | `E2E-06` | 命令行里 `/superpi-rules` → 选「编辑」→ 改一个字 → 保存 | 面板设置的摘要立刻跟着变（刷新设置弹窗即可看到） |
 | `E2E-07` | 设置里「恢复默认」→ 确认 | 文本回到默认文案，`isDefault:true` |
 | `E2E-08` | 清空文本 → 保存 | 摘要显示「当前未生效」，且下一轮对话里**不再**出现规则块（`E2E-04` 的提问变成「没有规则」） |
 | `E2E-09` | 把 `rules.json` 改成非法 JSON → 重新打开设置 | 面板不崩，显示回落的默认文案 + 警告；再保存一次能修好 |
-| `E2E-10` | 卸载扩展（`npm run pi:editor:remove`）→ 重开设置 | 显示「命令行窗口未生效」提示；面板仍然生效 |
+| `E2E-10` | 卸载扩展（`npm run superpi:editor:remove`）→ 重开设置 | 显示「命令行窗口未生效」提示；面板仍然生效 |
 | `E2E-11` | 长文本（粘贴 19000 字）→ 保存 | 字数显示 `19000 / 20000`，保存后回车不丢字；超 20000 时保存按钮禁用 |
 | `E2E-12` | 暗色 / 亮色主题各看一遍 | 所有新增元素用 `--dsw-*` 令牌，明暗都不失真（`test/css-tokens.mjs` 兜底） |
 | `E2E-13` | 键盘走查：Tab 进弹窗 → 编辑 → Esc（有改动） | 出现「丢弃修改？」确认，取消后内容还在 |
@@ -313,7 +313,7 @@
 
 - 版本回退用 `git revert`（用户明令禁止 `reset --hard`）。
 - 功能回滚：删掉 `<home>/.superpi/rules.json`（规则回到默认）或清空文本（不追加任何内容）；
-  卸载扩展 `npm run pi:editor:remove`。**这三条都不需要回退代码。**
+  卸载扩展 `npm run superpi:editor:remove`。**这三条都不需要回退代码。**
 - 数据安全：`rules.json` 只由本插件写入，写入走 tmp + rename（原子）；读取失败一律回落默认，
   不会出现「规则坏了导致 pi 起不来」。
 

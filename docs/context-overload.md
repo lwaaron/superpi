@@ -166,7 +166,7 @@ pi 也**没有**提供改写历史的 API。所以「本会话已留下几张图
 ### 7.3 这次验证还抓到的一个实施问题
 
 先把代码改完、单测全绿之后才发现：**新扩展压根没装进 pi**
-（`~/.pi/agent/extensions/` 里还是旧版，`npm run pi:editor:status` 报「内容不一致」）。
+（`~/.pi/agent/extensions/` 里还是旧版，`npm run superpi:editor:status` 报「内容不一致」）。
 仓库里的 0.17.0 与用户机器上跑的 pi 是两回事。
 
 **教训**：改扩展 ≠ 生效。安装面必须进验证流程，

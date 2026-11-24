@@ -104,11 +104,11 @@ $stagedPiScope = Join-Path $stage 'node_modules\@earendil-works'
 if (-not (Test-Path (Join-Path $stagedPlugin 'index.js'))) { Fail 'staging dir has no superpi\index.js' }
 $hasPi = Test-Path (Join-Path $stagedPiScope 'pi-coding-agent\package.json')
 Write-Output "staged superpi = $stagedPlugin"
-Write-Output "staged pi     = $hasPi"
+Write-Output "staged runtime = $hasPi"
 if ($hasPi) {
   $stagedCli = Join-Path $stagedPiScope 'pi-coding-agent\dist\bundle\cli.js'
   $stagedVer = (& $nodeExe $stagedCli --version 2>&1 | Out-String).Trim()
-  Write-Output "staged pi cli = $stagedVer"
+  Write-Output "staged CLI   = $stagedVer"
 }
 
 if (-not $SkipVerify) {
@@ -209,7 +209,7 @@ $profilePiScope = Join-Path $profileModules '@earendil-works'
 $profilePiCli = Join-Path $profilePiScope 'pi-coding-agent\dist\bundle\cli.js'
 if (Test-Path $profilePiCli) {
   $profilePiVer = (& $nodeExe $profilePiCli --version 2>&1 | Out-String).Trim()
-  Write-Output "profile pi cli = $profilePiVer"
+  Write-Output "profile CLI  = $profilePiVer"
   $prior.addedPiPackages = @(Get-ChildItem -LiteralPath $profilePiScope -Directory | ForEach-Object { $_.Name })
   $prior | ConvertTo-Json -Depth 6 | Set-Content -Path (Join-Path $backupDir 'prior-state.json') -Encoding utf8
 } else {
@@ -234,7 +234,7 @@ Write-Output 'verified: manifest / lock / node_modules agree'
 # 「Fork and rebrand Pi」）。必须放在 pnpm add 之后 —— 它会把 registry 上的原始
 # package.json 装回来，把之前的品牌配置覆盖掉。脚本是幂等的，已正确则不动。
 # 只改 piConfig.name，configDir 保持 .pi，否则会读不到历史会话。
-Step 'brand pi runtime (piConfig.name = SuperPi)'
+Step 'configure the SuperPi runtime name'
 $brandScript = Join-Path $pluginRoot 'tools\brand-pi-runtime.mjs'
 if (Test-Path $brandScript) {
   $brandOut = & node $brandScript --apply --profile-dir $profileDir 2>&1
@@ -335,8 +335,8 @@ Write-Output "rollback = $rollback"
 Remove-StageDir
 
 Step 'done'
-Write-Output "superpi is now a pnpm dependency of profile '$Profile'. Next:"
+Write-Output "SuperPi is now installed in profile '$Profile'."
 Write-Output '  1) restart DSH (plugin code is snapshotted at import, a restart is required)'
-Write-Output '  2) open the pi panel; if the runtime is missing, click "install pi"'
+Write-Output '  2) open the SuperPi panel and install the SuperPi runtime if prompted'
 Write-Output '  3) diagnostics: GET http://127.0.0.1:<port>/api/superpi/diagnostics'
 Write-Output "  4) rollback: pwsh -File '$rollback'"

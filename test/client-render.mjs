@@ -88,6 +88,10 @@ const internals = exportsObject.__internals
 assert(internals !== undefined && internals !== null, 'factory 没有返回 __internals')
 const Chip = internals.SelfCheckChip
 const strings = internals.strings
+const { BRAND_NAME } = await import('../tools/brand-pi-runtime.mjs')
+assert(strings.zh.panelTitle === BRAND_NAME && strings.en.panelTitle === BRAND_NAME, '两种面板语言与命令行品牌一致')
+assert(strings.zh.rulesCliMissing.includes('npm run superpi:editor') && strings.en.rulesCliMissing.includes('npm run superpi:editor'), '面板引导使用 SuperPi 的安装命令')
+assert(fs.readFileSync(path.join(root, 'assets', 'icon.svg'), 'utf8').includes('aria-label="' + BRAND_NAME + '"'), '插件图标的可访问名称与命令行品牌一致')
 
 // ── 中英文键集必须完全一致 ─────────────────────────────────────────────────
 const zhKeys = Object.keys(strings.zh).sort()
@@ -257,6 +261,61 @@ assert(inputHtml.includes('placeholder="type something..."'), 'input 该透传 p
 assert(inputHtml.includes('value="pre-filled"'), 'input 该回填 prefill 到 value')
 assert(inputHtml.includes('>' + zh('cancel') + '<') && inputHtml.includes('>' + zh('extSubmit') + '<'), 'input 该有取消 / 提交两个按钮')
 assert(inputHtml.includes(zh('extInput') + ' · Enter a value'), 'input 的 h3 该用 extInput 前缀')
+
+// Invoke the same handlers React attaches to the input and button, with a deferred delivery result.
+{
+  const states = []
+  const refs = []
+  let stateIndex = 0
+  let refIndex = 0
+  const { ExtensionDialog: InteractiveDialog } = definition.factory(() => ({
+    ...React,
+    useState(initial) {
+      const i = stateIndex++
+      if (!(i in states)) states[i] = initial
+      return [states[i], value => { states[i] = value }]
+    },
+    useRef(initial) {
+      const i = refIndex++
+      return refs[i] ??= { current: initial }
+    },
+    useEffect() {},
+  })).__internals
+  const sent = []
+  let rejectDelivery
+  const delivery = new Promise((_resolve, reject) => { rejectDelivery = reject })
+  void delivery.catch(() => {})
+  const tick = () => new Promise(resolve => setImmediate(resolve))
+  const nodes = node => React.isValidElement(node) ? [node, ...nodes(node.props.children)] : Array.isArray(node) ? node.flatMap(nodes) : []
+  const render = () => {
+    stateIndex = 0
+    refIndex = 0
+    return nodes(InteractiveDialog({
+      t: zh, request: requestOf({ method: 'input', title: '要用哪个平台？' }),
+      onRespond(body) { sent.push(body); return sent.length === 1 ? delivery : Promise.resolve() },
+    }))
+  }
+  render().find(node => node.type === 'input').props.onChange({ target: { value: '先用 Windows' } })
+  const before = render()
+  const submit = before.find(node => node.type === 'button' && node.props.children === zh('extSubmit'))
+  submit.props.onClick()
+  submit.props.onClick()
+  await tick()
+  assert(sent.length === 1, '发送中不会因双击而重复回答')
+  rejectDelivery(new Error('network disconnected'))
+  await tick()
+  const retried = render()
+  const input = retried.find(node => node.type === 'input')
+  assert(input.props.value === '先用 Windows', '发送失败时保留用户的答案')
+  assert(retried.some(node => node.props.role === 'alert' && node.props.children === zh('extResponseFailed')), '发送失败时在弹窗内提示重试')
+  const previous = sent.length
+  input.props.onKeyDown({ key: 'Enter', nativeEvent: { isComposing: true } })
+  await tick()
+  assert(sent.length === previous, '中文组字期间的 Enter 只确认输入法候选')
+  retried.find(node => node.type === 'button' && node.props.children === zh('extSubmit')).props.onClick()
+  await tick()
+  assert(sent.length === previous + 1 && sent.at(-1).value === '先用 Windows', '重试发送原来的答案')
+}
 
 // 9.5 editor：多行 prefill 原样进 textarea
 const editorHtml = dialogHtml({ method: 'editor', title: 'Edit some text', prefill: 'Line 1\nLine 2\nLine 3' })
@@ -1182,9 +1241,9 @@ assert(projectTitleOf(prefsFixture, null) === '', '没有会话时返回空串�
 assert(projectTitleOf(null, { projectKey: 'x', displayPath: '~\\x' }) === '~\\x', 'prefs 还没拉回来时不该抛异常')
 assert(projectTitleOf(prefsFixture, {}) === '', '元数据里一个路径都没有时返回空串，不编造标题')
 // ── 10. 整棵面板在 loading 阶段能渲染，不抛异常 ────────────────────────────
-const panelHtml = renderToStaticMarkup(React.createElement(internals.PiPanel, { t: zh }))
-assert(panelHtml.includes('superpi-root'), 'PiPanel 应渲染出 superpi-root')
-assert(panelHtml.includes(zh('loading')), 'PiPanel 首帧应是 loading 文案')
+const panelHtml = renderToStaticMarkup(React.createElement(internals.SuperPiPanel, { t: zh }))
+assert(panelHtml.includes('superpi-root'), 'SuperPiPanel 应渲染出 superpi-root')
+assert(panelHtml.includes(zh('loading')), 'SuperPiPanel 首帧应是 loading 文案')
 
 // ── 11. 0.14.0 性能修复的渲染面判据 ──────────────────────────────────────
 // 对应 docs/performance-acceptance.md 判据 B / E。这些点退化时不报错、只是"变卡"，

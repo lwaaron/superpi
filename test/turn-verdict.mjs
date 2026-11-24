@@ -348,8 +348,9 @@ section('7. 安装面：模块先于扩展，清单不漏文件')
   const installer = await import(pathToFileURL(path.join(root, 'tools', 'install-pi-extension.mjs')).href)
   const files = installer.EXTENSION_FILES
   const position = new Map(files.map((file, index) => [file.name, index]))
-  eq('安装清单含全部十一个文件', files.length, 11)
+  eq('安装清单含全部十三个文件', files.length, 13)
   const expected = [
+    'superpi-brand.mjs',
     'superpi-text-bytes.mjs',
     'superpi-turn-verdict.mjs',
     'superpi-editor.ts',
@@ -362,6 +363,7 @@ section('7. 安装面：模块先于扩展，清单不漏文件')
     'superpi-context-guard.ts',
     'superpi-modalities.ts',
     'superpi-turn-recovery.ts',
+    'superpi-ask-user.ts',
   ]
   eq('清单内容与顺序', files.map(file => file.name), expected)
   /**

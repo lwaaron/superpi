@@ -226,7 +226,7 @@ payload 取值优先级 `cancelled` → `confirmed` → `value`（`index.js:1093
 | 复制末条回复 | `/copy` | `handleCopyCommand`（`:6829`、`:6842`） | `rpc` | `runCopy`（`client.js:5321`）+ `navigator.clipboard` | `TUI-09` |
 | 设会话名 | `/name` | `handleNameCommand`（`:6860`、`:6874`） | `rpc` | `runSetName`（`client.js:5335`）/ 抽屉 `setDrawer('name')`（渲染 `client.js:6003-6009`，0.7.0 未改） | `TUI-10` |
 | 会话信息 | `/session` | `handleSessionCommand`（`:6885`、`:6886`、`:6888`） | `client` | `openStats`（`client.js:5440`，统计弹窗；`get_session_stats` + `get_entries` + `loadState`） | `TUI-11` |
-| 更新日志 | `/changelog` | `handleChangelogCommand`（`:6966`） | `local` | `openChangelog`（`client.js:5469`）→ host 代读 `GET /pi/changelog`（`index.js:974`） | `TUI-12` |
+| 更新日志 | `/changelog` | `handleChangelogCommand`（`:6966`） | `local` | `openChangelog` → host 代读 `GET /changelog`，旧地址仍可用 | `TUI-12` / `test/host-parity.mjs` |
 | 快捷键 | `/hotkeys` | `handleHotkeysCommand`（`:7001`） | `client` | 静态表 `hotkeyText()`（`client.js:6072`） | `TUI-13` |
 | 分叉 | `/fork` | `showUserMessageSelector`（`:5693`、`:5709`） | `client` | `openFork`（`client.js:5430`）→ `get_fork_messages` + `fork` | `TUI-14` |
 | 克隆 | `/clone` | `handleCloneCommand`（`:5731`） | `rpc` | `runClone`（`client.js:5351`） | `TUI-15` |
@@ -296,9 +296,9 @@ payload 取值优先级 `cancelled` → `confirmed` → `value`（`index.js:1093
 安装与回滚（都是 pi 官方路径，不碰 `node_modules`）：
 
 ```powershell
-npm run pi:editor          # 装到 <piAgentDir>/extensions/superpi-editor.ts（幂等）
-npm run pi:editor:status    # 只读：源/目标/是否一致/pi 版本
-npm run pi:editor:remove    # 卸载，pi 下次启动恢复原始输入框
+npm run superpi:editor          # 装到 <piAgentDir>/extensions/superpi-editor.ts（幂等）
+npm run superpi:editor:status    # 只读：源/目标/是否一致/pi 版本
+npm run superpi:editor:remove    # 卸载，pi 下次启动恢复原始输入框
 ```
 
 生效方式：重启 pi 会话窗口，或在 pi 里 `/reload`。一键启动（`tools/launch-both.ps1`）会在起 TUI 前自动装一次（`-NoEditorExtension` 可关，装失败只 WARN 不阻断 TUI）。
@@ -323,7 +323,7 @@ pi 只提供 `SYSTEM.md`（整份替换）、`APPEND_SYSTEM.md`（静态文件�
 | 生效位置 | 面板子进程同样由扩展注入 —— 两端**同一份文件、同一时点** | `before_agent_start` → `sections.user_defined_rules`，pi 排在 `cwd` 之后 | `test/rules.mjs` G 段 + 真机暗号验证 |
 | 优先级表达 | 块首 `OVERRIDE_PREFIX`：「优先级最高…冲突时一律以本段为准」 | 同左（同一份渲染函数） | `test/rules.mjs` D 段、`test/parity.mjs` §8 |
 | 坏文件 | 回落默认 + `warning`，面板照样打得开 | 回落默认，**异常不外抛**（pi 照常跑一轮） | `test/rules.mjs` D/G 段 |
-| 命令行未装扩展 | `delivery.extensionInstalled:false`，设置里显示「命令行窗口未生效：运行 npm run pi:editor」 | — | `test/client-render.mjs` ⑥ |
+| 命令行未装扩展 | `delivery.extensionInstalled:false`，设置里显示「命令行窗口未生效：运行 npm run superpi:editor」 | — | `test/client-render.mjs` ⑥ |
 
 **为什么由 host 落盘而不是面板发 RPC**：pi 的 RPC 面没有「读系统提示」命令，扩展命令的返回值也不回传 —— 只走命令的话面板要自己再存一份回显，立刻两份真相；且设置页可能在**没有任何活着的子进程**时被打开（还没开会话 / 子进程崩了），一个设置项不该依赖另一个进程活着。
 
@@ -454,6 +454,22 @@ pi 只提供 `SYSTEM.md`（整份替换）、`APPEND_SYSTEM.md`（静态文件�
 顺序不能反：先剥掉用户明确不要的模态，预算才能算准；反过来则会把「本来就不发的图」算进压力里。
 
 ---
+
+## 5.6 品牌与启动入口（0.20.0）
+
+| 范围 | 面板 | 命令行 | 验证 |
+| --- | --- | --- | --- |
+| 产品名 | 两种语言的侧栏入口、标题、配置和诊断均使用 SuperPi | `superpi` 启动入口、原生横幅和窗口标题均使用 SuperPi | `test/client-render.mjs`、`test/brand-pi-runtime.mjs`、`test/tui-editor.mjs` |
+| 安装运行时 | 一键安装和发布包均使用固定的上游运行时版本，加载时配置品牌 | 启动时读取并应用同一份品牌配置 | `test/brand-pi-runtime.mjs`、`test/fresh-boot.mjs`、`tools/standalone-verify.ps1` |
+| 历史会话 | 读取运行时实际使用的配置目录和环境变量 | 延用 `.pi` 默认配置目录，兼容已有 `PI_CODING_AGENT_*` 环境变量 | `test/brand-pi-runtime.mjs` |
+
+## 5.7 Agent 主动询问（0.20.0）
+
+| 行为 | 面板 | 命令行 | 验证 |
+| --- | --- | --- | --- |
+| 等待用户答复 | 用现有扩展 UI 协议显示选项和输入，重新连接时恢复待答问题 | 用原生 `ctx.ui.select` 和 `ctx.ui.input` | `test/reliability.mjs`、`test/tui-editor.mjs` |
+| 返回答案 | 通过 `/respond` 提交，宿主确认后收起，发送失败可重试 | 选择或输入完成时返回原始答案 | `test/client-render.mjs`、`test/reliability.mjs`、`test/tui-editor.mjs` |
+| 取消和停止 | 关闭或超时返回未回答，停止会同时关闭询问 | 使用同一个 `ask_user` 工具和停止信号，每个弹窗最多等待 5 分钟 | `test/reliability.mjs`、`test/tui-editor.mjs` |
 
 ## 6. 变更记录
 

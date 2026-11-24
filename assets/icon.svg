@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" role="img" aria-label="pi">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" role="img" aria-label="SuperPi">
   <rect x="0" y="0" width="128" height="128" rx="28" fill="#161C26"/>
   <rect x="1" y="1" width="126" height="126" rx="27" fill="none" stroke="#2A3444" stroke-width="2"/>
   <path d="M34 40h60" stroke="#FFFFFF" stroke-width="9" stroke-linecap="round" fill="none"/>

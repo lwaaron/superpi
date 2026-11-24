@@ -34,14 +34,12 @@ import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { resolvePiRuntime, PI_PACKAGE } from '../src/pi-runtime.mjs'
+import { BRAND_NAME, KEEP_CONFIG_DIR, readBrand, applyBrand, revertBrand } from '../extensions/superpi-brand.mjs'
+
+export { BRAND_NAME, KEEP_CONFIG_DIR, readBrand, applyBrand, revertBrand }
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const repoRoot = path.dirname(here)
-
-/** 要写进 piConfig.name 的品牌名。 */
-export const BRAND_NAME = 'SuperPi'
-/** 必须保持不变的会话目录名 —— 改了就读不到历史会话。 */
-export const KEEP_CONFIG_DIR = '.pi'
 
 /**
  * 列出所有可能要打标的 pi 的 package.json 路径。
@@ -92,51 +90,6 @@ export function candidatePackageJsons(options = {}) {
   return out.filter(p => fs.existsSync(p))
 }
 
-/** 读一个 package.json 的品牌状态。 */
-export function readBrand(pkgPath) {
-  const json = JSON.parse(fs.readFileSync(pkgPath, 'utf8'))
-  const cfg = json.piConfig ?? {}
-  return {
-    path: pkgPath,
-    name: typeof cfg.name === 'string' ? cfg.name : '',
-    configDir: typeof cfg.configDir === 'string' ? cfg.configDir : '',
-    branded: cfg.name === BRAND_NAME,
-    configDirOk: (cfg.configDir ?? KEEP_CONFIG_DIR) === KEEP_CONFIG_DIR,
-  }
-}
-
-/** 写入品牌名（幂等）。只动 name，configDir 原样保留。 */
-export function applyBrand(pkgPath, options = {}) {
-  const brand = options.brand ?? BRAND_NAME
-  const raw = fs.readFileSync(pkgPath, 'utf8')
-  const json = JSON.parse(raw)
-  const cfg = json.piConfig ?? {}
-  if (cfg.name === brand && (cfg.configDir ?? KEEP_CONFIG_DIR) === KEEP_CONFIG_DIR) {
-    return { changed: false, reason: 'already branded' }
-  }
-  const next = Object.assign({}, cfg, { name: brand })
-  // 关键：绝不覆盖 configDir；缺省时补成 .pi 而不是让它回落。
-  if (next.configDir === undefined) next.configDir = KEEP_CONFIG_DIR
-  json.piConfig = next
-  // 保持原文件的缩进风格（package.json 通常是 2 空格）
-  const indent = /\n(\s+)"/.exec(raw)?.[1]?.length ?? 2
-  fs.writeFileSync(pkgPath, JSON.stringify(json, null, indent) + '\n')
-  return { changed: true, reason: 'branded' }
-}
-
-/** 还原成 pi 默认（删掉 piConfig.name，保留 configDir）。 */
-export function revertBrand(pkgPath) {
-  const raw = fs.readFileSync(pkgPath, 'utf8')
-  const json = JSON.parse(raw)
-  const cfg = json.piConfig ?? {}
-  if (cfg.name === undefined) return { changed: false, reason: 'not branded' }
-  delete cfg.name
-  json.piConfig = cfg
-  const indent = /\n(\s+)"/.exec(raw)?.[1]?.length ?? 2
-  fs.writeFileSync(pkgPath, JSON.stringify(json, null, indent) + '\n')
-  return { changed: true, reason: 'reverted' }
-}
-
 function main() {
   const argv = process.argv.slice(2)
   const apply = argv.includes('--apply')
@@ -149,7 +102,7 @@ function main() {
 
   const targets = candidatePackageJsons({ pluginRoot, allProfiles, profileDir })
   if (targets.length === 0) {
-    console.error('没找到任何 pi 的 package.json —— 先装一次运行时（或 --profile-dir 指定 profile）')
+    console.error('未找到运行时的 package.json。可先安装 SuperPi 运行时，或用 --profile-dir 指定 profile。')
     process.exit(1)
   }
 
@@ -188,7 +141,7 @@ function main() {
     }
     // 状态模式
     const mark = state.branded ? '  BRANDED ' : '  raw     '
-    const dirMark = state.configDirOk ? '' : '  ⚠ configDir=' + (state.configDir || '(unset)') + ' 会让历史会话读不到'
+    const dirMark = state.configDirOk ? '' : '  configDir=' + state.configDir + '（沿用现有配置）'
     console.log(mark + pkg + dirMark)
   }
 

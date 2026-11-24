@@ -46,6 +46,7 @@
  * 退出码：0 必需依赖齐备 / 1 有必需依赖缺失
  */
 import fs from 'node:fs'
+import { createRequire } from 'node:module'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { PI_PACKAGE, PI_VERSION, resolvePiRuntime } from '../src/pi-runtime.mjs'
@@ -77,6 +78,12 @@ export const DEPENDENCIES = [
     required: true,
     layer: 'client.js 的 SSR 渲染门禁（test/client-render.mjs）',
     hint: 'npm install（本仓库刻意不带 node_modules，需借宿主的 react）',
+  },
+  {
+    id: 'typebox',
+    required: true,
+    layer: '使用 Pi 原生工具 schema 加载 ask_user 扩展',
+    hint: '重新安装与项目版本一致的运行时',
   },
 ]
 
@@ -157,6 +164,17 @@ export function probeJiti(piProbe = probeRuntime()) {
   return { ok: false, path: '', reason: 'jiti not found near ' + piProbe.packageDir }
 }
 
+/** Resolve the schema builder from the same package as Pi's extension loader. */
+export function probeTypeBox(piProbe = probeRuntime()) {
+  if (piProbe.ok !== true || !piProbe.packageDir) return { ok: false, path: '', reason: 'TypeBox 随运行时安装' }
+  try {
+    const require = createRequire(path.join(piProbe.packageDir, 'package.json'))
+    return { ok: true, path: require.resolve('typebox'), reason: '' }
+  } catch (error) {
+    return { ok: false, path: '', reason: '无法从运行时解析 TypeBox（' + String(error.code ?? error.message) + '）' }
+  }
+}
+
 /** 探测 react（SSR 门禁需要；本仓库刻意不带 node_modules）。 */
 export function probeReact(options = {}) {
   const root = typeof options.root === 'string' ? options.root : PLUGIN_ROOT
@@ -180,6 +198,7 @@ export function probeAll() {
     pi,
     jiti: probeJiti(pi),
     react: probeReact(),
+    typebox: probeTypeBox(pi),
   }
 }
 
@@ -217,6 +236,14 @@ export function requireJiti(piProbe = requireRuntime()) {
   process.exit(1)
 }
 
+export function requireTypeBox(piProbe = requireRuntime()) {
+  const probe = probeTypeBox(piProbe)
+  if (probe.ok === true) return probe.path
+  console.error('FAIL[preflight] ' + probe.reason)
+  console.error('  修法：' + DEPENDENCIES.find(item => item.id === 'typebox').hint)
+  process.exit(1)
+}
+
 /** 取必需的 react 目录；缺失即失败。 */
 export function requireReact(options = {}) {
   const probe = probeReact(options)
@@ -247,6 +274,7 @@ export function skipOptional(probe, layer) {
 export function describeAll() {
   const probes = probeAll()
   const lines = []
+  const labelWidth = Math.max(...DEPENDENCIES.map(dep => dep.id.length)) + 1
   for (const dep of DEPENDENCIES) {
     const probe = probes[dep.id === 'pi' ? 'pi' : dep.id]
     const status = probe.ok === true ? 'OK  ' : (dep.required ? 'MISS' : 'miss')
@@ -255,7 +283,7 @@ export function describeAll() {
       : dep.id === 'react'
         ? (probe.ok === true ? probe.home : probe.reason)
         : (probe.ok === true ? probe.path : probe.reason)
-    lines.push('  ' + status + '  ' + dep.id.padEnd(6) + (dep.required ? '必需' : '可选') + '  ' + dep.layer)
+    lines.push('  ' + status + '  ' + dep.id.padEnd(labelWidth) + (dep.required ? '必需' : '可选') + '  ' + dep.layer)
     lines.push('         ' + detail)
   }
   return lines.join('\n')

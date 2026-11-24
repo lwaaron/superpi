@@ -100,12 +100,13 @@ async function until(read, done, label) {
   throw new Error('Timed out waiting for ' + label)
 }
 
-async function run(prompt, scripted, { abort = false } = {}) {
+async function run(prompt, scripted, { abort = false, interact } = {}) {
   const since = (await snapshot()).eventSeq
   const first = requests.length
   replies = [...scripted]
   const sent = await command({ type: 'prompt', message: prompt })
   assert.equal(sent.ok, true, JSON.stringify(sent))
+  if (interact) await interact(since)
   if (abort) {
     await until(() => requests.length, count => count > first, 'provider input before abort')
     await command({ type: 'abort' })
@@ -150,6 +151,53 @@ try {
   check(healthy.requests.length === 1 && lastAssistant(healthy)?.verdict?.kind === 'none', 'valid short completion gets one provider request')
   check(JSON.stringify(healthy.requests[0].messages).includes('Report completion only for work actually done and verified'),
     'both modes inherit the same evidence-based completion guidance')
+
+  const question = '这次通过哪些平台发布？'
+  const answer = '先在 Windows 上发布，之后再支持 macOS。'
+  const asked = await run('ask and wait for my answer', [
+    { delta: toolCall('ask_user', { question, options: ['Windows', 'macOS'] }, 'call_question'), finish: 'tool_calls' },
+    { delta: 'I received your answer.' },
+  ], { interact: async since => {
+    const waiting = await until(snapshot, state => state.pendingUi.length > 0 ||
+      state.events.some(entry => entry.seq > since && entry.record.type === 'agent_settled'), 'user question')
+    const select = waiting.pendingUi[0]
+    assert.equal(select?.method, 'select', 'ask_user must show an actionable pending dialog')
+    check(select.title === question && select.options.slice(0, 2).join(',') === 'Windows,macOS', 'the panel receives the actual question and choices')
+    check(!waiting.events.some(entry => entry.seq > since && entry.record.type === 'agent_settled'), 'the agent remains in the same activity while waiting')
+    check((await snapshot()).pendingUi[0].id === select.id, 'reattaching the panel can recover the same outstanding question')
+    await request(session() + '/respond', { id: select.id, value: select.options.at(-1) })
+    const input = (await until(snapshot, state => state.pendingUi[0]?.method === 'input', 'custom reply')).pendingUi[0]
+    check(input.title === question, 'the free-form follow-up retains the original question')
+    await request(session() + '/respond', { id: input.id, value: answer })
+  } })
+  check(asked.requests[0].tools.some(tool => tool.function?.name === 'ask_user'), 'the actual model request advertises ask_user')
+  check(asked.requests.length === 2 && lastAssistant(asked)?.message.content[0]?.text === 'I received your answer.', 'answering resumes the same agent turn')
+  const questionResult = asked.records.find(record => record.type === 'message_end' && record.message?.toolCallId === 'call_question')
+  check(questionResult?.message.details?.status === 'answered' && questionResult.message.details.answer === answer,
+    'the tool passes the user answer to the agent without rewriting it')
+  check(requestText(asked.requests.at(-1)).includes(answer) && (await snapshot()).pendingUi.length === 0,
+    'the model receives the answer and the panel closes the completed question')
+
+  const waitForQuestion = async () => (await until(snapshot, state => state.pendingUi[0]?.method === 'input', 'open question')).pendingUi[0]
+  const cancelled = await run('ask an open question and let me cancel', [
+    { delta: toolCall('ask_user', { question }, 'call_cancel_question'), finish: 'tool_calls' },
+    { delta: 'I still need a decision.' },
+  ], { interact: async () => {
+    const input = await waitForQuestion()
+    await request(session() + '/respond', { id: input.id, cancelled: true })
+  } })
+  check(cancelled.requests.length === 2 && requestText(cancelled.requests.at(-1)).includes('unanswered'),
+    'cancelling a question reports an unanswered result to the model')
+
+  const stoppedQuestion = await run('ask an open question and let me stop', [
+    { delta: toolCall('ask_user', { question }, 'call_stop_question'), finish: 'tool_calls' },
+  ], { interact: async () => {
+    await waitForQuestion()
+    await command({ type: 'abort' })
+  } })
+  check(stoppedQuestion.requests.length === 1 && stoppedQuestion.records.at(-1)?.aborted === true,
+    'stopping while a question is open ends the same turn with no retry')
+  check((await snapshot()).pendingUi.length === 0, 'stop releases the pending panel question')
 
   const recovery = await run('recover interrupted reasoning', [{ delta: { reasoning_content: broken } }, { delta: 'Recovered.' }])
   check(recovery.requests.length === 2, 'malformed output automatically continues on a fresh panel installation')

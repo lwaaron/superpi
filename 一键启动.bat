@@ -8,12 +8,12 @@ rem  superpi : one-click launch (repo root entry)
 rem
 rem  Starts BOTH front ends at once, in parallel, neither blocking the other:
 rem
-rem    1) pi TUI  - a real console window running the coding session
+rem    1) SuperPi TUI  - a real console window running the coding session
 rem                 (this is the interactive coding agent you type into)
-rem    2) DSH web - a standalone instance of the superpi panel on port 25117
+rem    2) DSH web - a standalone instance of the SuperPi panel on port 25117
 rem                 (browser / sidebar UI, runs in the background)
 rem
-rem  They are two parallel front ends of the SAME pi and the SAME agent loop.
+rem  They are two parallel SuperPi front ends using the same Pi runtime and agent loop.
 rem  Neither replaces the other: the TUI is for writing code, the web panel is
 rem  for the GUI.
 rem

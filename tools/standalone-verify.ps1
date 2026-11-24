@@ -96,7 +96,7 @@ try {
 
   $suffix = -join ((1..6) | ForEach-Object { '0123456789abcdef'[(Get-Random -Max 16)] })
   $homeDir = Join-Path $env:TEMP ("superpi-standalone-" + $suffix)
-  $profileName = 'pi-standalone'
+  $profileName = 'superpi-standalone'
   $profileDir = Join-Path $homeDir ("profiles\" + $profileName)
   New-Item -ItemType Directory -Force -Path $profileDir | Out-Null
   Step "dsh home  = $homeDir"
@@ -145,7 +145,7 @@ try {
   $piCli = Join-Path $profileDir 'node_modules\@earendil-works\pi-coding-agent\dist\bundle\cli.js'
   if (-not (Test-Path -LiteralPath $installedIndex)) { Fail '安装后找不到 superpi/index.js' }
   if (-not (Test-Path -LiteralPath $piCli)) { Fail '安装后找不到 @earendil-works/pi-coding-agent' }
-  Step 'installed superpi + pi runtime'
+  Step 'installed SuperPi and its runtime'
 
   $logPath = Join-Path $homeDir 'standalone.log'
   $env:ELECTRON_RUN_AS_NODE = '1'
@@ -153,7 +153,7 @@ try {
   Step "booting profile $profileName on port $Port"
   # 注意：-ArgumentList 传数组时 PowerShell 会把每个元素裸拼，遇到带空格的路径就断；必须自己加引号拼成一个字符串。
   $bootArgs = '"' + $cli + '" ' + $profileName + ' --port ' + $Port + ' --no-open'
-  $proc = Start-Process -FilePath $dshExePath -ArgumentList $bootArgs -PassThru -RedirectStandardOutput $logPath -RedirectStandardError ($logPath + '.err')
+  $proc = Start-Process -FilePath $dshExePath -ArgumentList $bootArgs -PassThru -WindowStyle Hidden -RedirectStandardOutput $logPath -RedirectStandardError ($logPath + '.err')
   Step ("pid       = " + $proc.Id)
 
   $base = "http://127.0.0.1:$Port/api/superpi"
@@ -176,8 +176,19 @@ try {
   $state = Invoke-RestMethod -Uri ($base + '/state') -TimeoutSec 30
   $plugVersion = (Get-Content -LiteralPath (Join-Path $profileDir 'node_modules\superpi\package.json') -Raw | ConvertFrom-Json).version
   Step ("plugin    = " + $state.version + " (installed " + $plugVersion + ")")
-  Step ("pi source = " + $state.resolved.cliSource + " " + $state.resolved.cliVersion)
-  Step ("pi cli    = " + $state.resolved.cliPath)
+  Step ("runtime   = " + $state.resolved.cliSource + " " + $state.resolved.cliVersion)
+  Step ("CLI path  = " + $state.resolved.cliPath)
+  $expectedRuntime = $pkg.optionalDependencies.'@earendil-works/pi-coding-agent'
+  if ($state.resolved.cliVersion -ne $expectedRuntime) {
+    & taskkill /T /F /PID $proc.Id 2>&1 | Out-Null
+    Fail "独立面板运行时版本与发布配置不一致（预期 $expectedRuntime）"
+  }
+  $cliHelp = & $node $piCli --help
+  if ($LASTEXITCODE -ne 0 -or -not ($cliHelp -match '^SuperPi\s+- AI coding assistant')) {
+    & taskkill /T /F /PID $proc.Id 2>&1 | Out-Null
+    Fail '独立面板安装的运行时未显示 SuperPi'
+  }
+  Step 'CLI help  = SuperPi'
 
   $created = Invoke-RestMethod -Uri ($base + '/sessions') -Method Post -ContentType 'application/json' -Body '{"args":["--no-session"]}' -TimeoutSec 60
   $id = $created.session.id

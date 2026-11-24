@@ -58,8 +58,13 @@ $PluginRoot = Split-Path -Parent $PSScriptRoot
 $StateDir = Join-Path $PluginRoot '.standalone'
 $StateFile = Join-Path $StateDir 'instance.json'
 $LogDir = Join-Path $StateDir 'logs'
-$ProfileName = 'pi-standalone'
 $HomeDir = Join-Path $StateDir 'dsh-home'
+$ProfileName = 'superpi-standalone'
+# Reuse the existing profile so an upgrade keeps its settings and installed data.
+if ((Test-Path -LiteralPath (Join-Path $HomeDir 'profiles\pi-standalone')) -and
+    -not (Test-Path -LiteralPath (Join-Path $HomeDir 'profiles\superpi-standalone'))) {
+  $ProfileName = 'pi-standalone'
+}
 $ProfileDir = Join-Path $HomeDir ('profiles\' + $ProfileName)
 
 function Step([string]$text) { Write-Host ('[start] ' + $text) }
@@ -244,9 +249,9 @@ if ($needInstall) {
   if (-not (Test-Path -LiteralPath $installedIndex)) { Fail '安装后找不到 superpi/index.js' }
   $piCli = Join-Path $ProfileDir 'node_modules\@earendil-works\pi-coding-agent\dist\bundle\cli.js'
   if (-not (Test-Path -LiteralPath $piCli)) { Fail '安装后找不到 @earendil-works/pi-coding-agent' }
-  Step ('installed superpi ' + $version + ' + pi runtime')
+  Step ('installed SuperPi ' + $version + ' with its runtime')
 } else {
-  Step ('reusing installed superpi ' + $version)
+  Step ('reusing installed SuperPi ' + $version)
 }
 
 # ── 启动 ────────────────────────────────────────────────────────────────
@@ -261,7 +266,7 @@ Remove-Item Env:\DSH_PORT -ErrorAction SilentlyContinue
 Step ("booting profile " + $ProfileName + " on port " + $Port)
 # -ArgumentList 传数组时 PowerShell 会裸拼，遇空格路径会断；必须自己加引号拼成一个字符串。
 $bootArgs = '"' + $cli + '" ' + $ProfileName + ' --port ' + $Port + ' --no-open'
-$proc = Start-Process -FilePath $dshExePath -ArgumentList $bootArgs -PassThru `
+$proc = Start-Process -FilePath $dshExePath -ArgumentList $bootArgs -PassThru -WindowStyle Hidden `
   -RedirectStandardOutput $logPath -RedirectStandardError ($logPath + '.err')
 Step ("pid          = " + $proc.Id)
 
@@ -302,7 +307,7 @@ Write-State ([ordered]@{
 
 Step ("health       = ok (boot " + [int]$sw.Elapsed.TotalMilliseconds + " ms)")
 Step ("version      = " + $state.version)
-Step ("pi source    = " + $state.resolved.cliSource + " " + $state.resolved.cliVersion)
+Step ("runtime      = " + $state.resolved.cliSource + " " + $state.resolved.cliVersion)
 Step ''
 # 不要在这里编造浏览器地址：面板是 DSH 的侧栏 slot，没有独立的 /superpi 网页入口。
 # 该实例的 web 根路径由宿主鉴权层保护（无 token 直接 401），而 /api/superpi/* 是免 token 的。
@@ -312,7 +317,7 @@ Step ("  home    ->  " + $HomeDir)
 Step ("  log     ->  " + $logPath)
 Step ''
 Step 'how to open the panel:'
-Step '  add this profile to your DSH desktop app, then open the superpi entry in the sidebar;'
+Step '  add this profile to your DSH desktop app, then open SuperPi in the sidebar;'
 Step '  or point any DSH client at this instance. The HTTP API above needs no token.'
 Step ''
 Step ('stop with:  .\tools\start-standalone.bat -Stop')

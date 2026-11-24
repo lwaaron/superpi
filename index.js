@@ -32,7 +32,8 @@ import {
   TUI_COMMANDS,
 } from './src/rpc-contract.mjs'
 import { decoratePiEvent } from './src/event-verdict.mjs'
-import { rpcExtensionArgs, runtimeAgentDir } from './src/runtime-extensions.mjs'
+import { rpcExtensionArgs, runtimeSessionOptions } from './src/runtime-extensions.mjs'
+import { BRAND_NAME } from './extensions/superpi-brand.mjs'
 import {
   expandUserPath,
   groupSessionsByProject,
@@ -40,7 +41,6 @@ import {
   listSessions,
   pathComparisonKey,
   readSessionCwd,
-  resolveAgentDir,
   samePath,
   sessionRootDir,
   shortenHomePath,
@@ -51,6 +51,7 @@ import {
   SUPERPI_RUNTIME_DIR,
   describeRuntime,
   installPiRuntime,
+  preparePiRuntime,
   readSetting,
   readSettingString,
   resolveNodeRuntime,
@@ -75,12 +76,12 @@ export const name = 'superpi'
 export const inject = []
 
 const PLUGIN_ID = 'superpi'
-const DISPLAY_NAME = 'SuperPi'
+const MANAGED_RUNTIME_SOURCES = new Set(['plugin-node-modules', 'plugin-runtime', 'walk-up', 'pnpm-store'])
 const API_PREFIX = '/api/' + PLUGIN_ID
 const MAX_SESSIONS = 8
 const MAX_BODY_BYTES = 4 * 1024 * 1024
 /** GET /contract 里 version 字段的取值：本插件对外的契约版本，与 package.json 解耦。 */
-const CONTRACT_VERSION = '0.19.0'
+const CONTRACT_VERSION = '0.20.0'
 /** 历史会话列表的条数窗口（与 src/session-store.mjs 的 DEFAULT_LIMIT/MAX_LIMIT 一致）。 */
 const HISTORY_DEFAULT_LIMIT = 20
 const HISTORY_MAX_LIMIT = 200
@@ -142,7 +143,7 @@ const DEFAULTS = {
   cliPath: '',
   /** 空 = 自动探测（PATH 上的 node）。 */
   nodePath: '',
-  /** 空 = ~/pi-workspace。 */
+  /** 空 = ~/superpi-workspace。沿用已有的旧版默认工作区。 */
   workspace: '',
   /** 空格分隔的额外参数，追加到 pi 命令行。 */
   extraArgs: '',
@@ -171,9 +172,11 @@ const SELF_FILES = [
   { rel: 'client.js', runtime: true },
   { rel: 'src/pi-rpc.mjs', runtime: true },
   { rel: 'src/pi-runtime.mjs', runtime: true },
+  { rel: 'src/superpi-cli.mjs', runtime: false },
   { rel: 'src/http-idle-guard.mjs', runtime: true },
   { rel: 'src/session-store.mjs', runtime: true },
   { rel: 'src/rpc-contract.mjs', runtime: true },
+  { rel: 'extensions/superpi-brand.mjs', runtime: true },
   // 面板偏好的落盘层。runtime:true 是因为它参与 /ui-prefs 三条路由的判断逻辑，
   // 改了磁盘上的它而进程里还是旧的那份，就会出现「读到的结构与代码对不上」。
   { rel: 'src/ui-prefs.mjs', runtime: true },
@@ -201,6 +204,7 @@ const SELF_FILES = [
   // 写入闸只活在 pi 进程里（扩展加载），host 不 import 它。
   { rel: 'extensions/superpi-text-integrity.ts', runtime: false },
   { rel: 'extensions/superpi-turn-recovery.ts', runtime: false },
+  { rel: 'extensions/superpi-ask-user.ts', runtime: false },
   { rel: 'extensions/superpi-editor.ts', runtime: false },
   { rel: 'package.json', runtime: false },
   { rel: 'cordis.patch.yml', runtime: false },
@@ -612,7 +616,9 @@ export function apply(ctx, config = {}) {
     if (configured !== '') return configured
     const fromEnv = String(process.env.SUPERPI_WORKSPACE ?? '').trim()
     if (fromEnv !== '') return fromEnv
-    return path.join(os.homedir(), 'pi-workspace')
+    const branded = path.join(os.homedir(), 'superpi-workspace')
+    const legacy = path.join(os.homedir(), 'pi-workspace')
+    return exists(branded) || !exists(legacy) ? branded : legacy
   }
 
   /**
@@ -632,6 +638,11 @@ export function apply(ctx, config = {}) {
     detected.nodePath = node.path
     detected.nodeSource = node.source
     const pi = resolvePiRuntime({ pluginRoot: PLUGIN_ROOT, config: liveConfig })
+    if (MANAGED_RUNTIME_SOURCES.has(pi.source)) {
+      try { preparePiRuntime(pi) } catch (error) {
+        log('warn', 'runtime branding failed: ' + String(error?.message ?? error))
+      }
+    }
     detected.cliPath = pi.cliPath
     detected.cliSource = pi.source
     detected.cliVersion = pi.version
@@ -639,7 +650,7 @@ export function apply(ctx, config = {}) {
     detected.runtimeSearched = pi.searched
     detected.workspace = resolveWorkspace()
     if (pi.cliPath === '') {
-      log('warn', 'pi CLI not found (searched: ' + pi.searched.map(item => item.source + (item.ok ? '=hit' : '=miss')).join(', ') + '); call POST ' + API_PREFIX + '/runtime/install or set cliPath')
+      log('warn', 'CLI not found (searched: ' + pi.searched.map(item => item.source + (item.ok ? '=hit' : '=miss')).join(', ') + '); call POST ' + API_PREFIX + '/runtime/install or set cliPath')
     }
     lastPi = pi
     return pi
@@ -682,7 +693,7 @@ export function apply(ctx, config = {}) {
     // 每次开新会话都过一遍解析：配置可能刚被改过（带指纹比对，没变就是零成本返回）。
     if (detected.cliPath === '' || configSignature() !== lastSignature) refreshRuntime()
     if (detected.cliPath === '') {
-      const error = new Error('pi 运行时未找到（' + PI_PACKAGE + '@' + PI_VERSION + '）。装一次就好：POST ' + API_PREFIX + '/runtime/install，' +
+      const error = new Error(BRAND_NAME + ' 运行时未找到（' + PI_PACKAGE + '@' + PI_VERSION + '）。可通过 POST ' + API_PREFIX + '/runtime/install 安装，' +
         '或在插件配置里填 cliPath / 设置环境变量 SUPERPI_CLI_PATH。已搜索：' +
         detected.runtimeSearched.map(item => item.source + (item.ok ? ' ✓' : ' ✗')).join(' / '))
       error.statusCode = 500
@@ -729,7 +740,8 @@ export function apply(ctx, config = {}) {
       home: os.homedir(),
       base: cwd,
     })
-    const agentDir = runtimeAgentDir({ packageDir: detected.packageDir, cwd })
+    const runtime = runtimeSessionOptions({ packageDir: detected.packageDir, cwd })
+    const { agentDir } = runtime
     // Explicitly load the shared extensions from the same directory Pi uses for TUI discovery.
     if (!hasFlag(args, ['--no-extensions', '-ne'])) args.unshift(...rpcExtensionArgs(PLUGIN_ROOT, agentDir))
     try {
@@ -744,7 +756,7 @@ export function apply(ctx, config = {}) {
       nodePath: detected.nodePath,
       cwd,
       args,
-      env: envOverrides(),
+      env: { ...envOverrides(), ...runtime.envOverrides },
       label: typeof options.label === 'string' && options.label !== '' ? options.label : path.basename(cwd),
       // 每条事件入环前附上 host 的判读（目前只有 message_end 的「这一轮交付了吗」）。
       decorateEvent: decoratePiEvent,
@@ -847,8 +859,7 @@ export function apply(ctx, config = {}) {
   }))
 
   /**
-   * 列历史会话。agentDir / sessionDir 走 pi 同一套解析链（PI_CODING_AGENT_DIR、
-   * PI_CODING_AGENT_SESSION_DIR），所以设了环境变量也能列对。
+   * 列历史会话。与运行时子进程共用配置目录及环境变量解析。
    *
    * 两种 scope，对应 pi 的 SessionManager.list（单项目）与 SessionManager.listAll（全部项目）：
    *  - scope='project' + cwd：只列该 cwd 的会话（面板历史抽屉的第二层，也是 pi 的默认层）。
@@ -865,11 +876,11 @@ export function apply(ctx, config = {}) {
     const target = mode === 'project'
       ? (hasCwd ? expandUserPath(cwd, { env, home, base: detected.workspace }) : detected.workspace)
       : ''
-    const agentDir = resolveAgentDir({ env, home })
-    const root = sessionRootDir({ agentDir, env, home })
+    const { agentDir, sessionDir } = runtimeSessionOptions({ packageDir: detected.packageDir, env, home, cwd: target || detected.workspace })
+    const root = sessionRootDir({ agentDir, env, home, sessionDir })
     const running = listRunningSessions()
     // limit 只截 sessions；分组需要全量，否则非当前项目的会话数会被截掉。
-    const all = await listAllSessions({ agentDir, cwd: target, env, home })
+    const all = await listAllSessions({ agentDir, cwd: target, env, home, sessionDir })
     const sessions = typeof limit === 'number' && limit > 0 ? all.slice(0, limit) : all
     const projects = mode === 'all'
       ? groupSessionsByProject(all, { currentCwd: running.length > 0 ? running[0].sessionCwd : '' })
@@ -908,9 +919,9 @@ export function apply(ctx, config = {}) {
         installing = null
         if (result.ok) {
           refreshRuntime({ force: true })
-          log('info', 'pi runtime installed: ' + result.cliPath + ' (' + String(Math.round(result.durationMs / 1000)) + 's)')
+          log('info', 'runtime installed: ' + result.cliPath + ' (' + String(Math.round(result.durationMs / 1000)) + 's)')
         } else {
-          log('warn', 'pi runtime install failed: ' + String(result.error))
+          log('warn', 'runtime install failed: ' + String(result.error))
         }
         return { ...result, runtime: runtimeReport() }
       })
@@ -970,7 +981,7 @@ export function apply(ctx, config = {}) {
   ctx.inject(['webServer'], services => {
     const server = services === undefined || services === null ? undefined : services.webServer
     if (server === undefined || server === null || typeof server.register !== 'function') {
-      log('warn', 'webServer unavailable; the Pi panel has no data source')
+      log('warn', 'webServer unavailable; the panel has no data source')
       return
     }
     ctx.effect(() => server.register({ kind: 'prefix', path: API_PREFIX, handler }), PLUGIN_ID + ': api routes')
@@ -1017,7 +1028,7 @@ let modalitiesFallbackStore = null
 /**
  * 命令行扩展是否已经装进 pi 的全局扩展目录。
  *
- * 面板据此提示「命令行窗口里还没生效，跑 npm run pi:editor」，而不是让用户
+ * 面板据此提示「命令行窗口里还没生效，跑 npm run superpi:editor」，而不是让用户
  * 改了规则、在 TUI 里却发现没变，还以为功能坏了。
  *
  * 目录解析与 `tools/install-pi-extension.mjs` 同一套（`PI_CONFIG_DIR` 优先），
@@ -1215,7 +1226,7 @@ export function createHandler(deps) {
         })
       }
       /** /changelog（契约 disposition:'local'）：读 pi 包内的 CHANGELOG.md。找不到也回 200，客户端据此显示「无 changelog」。 */
-      if (method === 'GET' && routePath === '/pi/changelog') {
+      if (method === 'GET' && (routePath === '/changelog' || routePath === '/pi/changelog')) {
         return send(200, readChangelog(deps.detected === undefined || deps.detected === null ? '' : deps.detected.packageDir))
       }
 
@@ -2054,7 +2065,7 @@ function makeLog(ctx) {
     if (target === undefined) return
     try {
       const sink = target[level]
-      if (typeof sink === 'function') sink.call(target, PLUGIN_ID + ': ' + message)
+      if (typeof sink === 'function') sink.call(target, BRAND_NAME + ': ' + message)
     } catch { /* 日志不该影响功能 */ }
   }
 }
@@ -2078,18 +2089,18 @@ const schema = await loadSchemastery()
 export const Config = schema === undefined
   ? undefined
   : schema.object({
-    cliPath: schema.string().default('').description('pi CLI 入口文件或包目录。留空自动探测：插件 .runtime → 插件 node_modules → 全局 npm → PATH').volatile(),
+    cliPath: schema.string().default('').description('SuperPi CLI 入口文件或运行时包目录。留空自动探测插件依赖、.runtime 与全局安装').volatile(),
     nodePath: schema.string().default('').description('node 可执行文件。留空自动探测 PATH 上的 node').volatile(),
-    workspace: schema.string().default('').description('新会话默认工作区。留空用 ~/pi-workspace').volatile(),
-    extraArgs: schema.string().default('').description('追加给 pi 的额外参数（空格分隔），例如 --model openai/gpt-4o').volatile(),
+    workspace: schema.string().default('').description('新会话默认工作区。留空用 ~/superpi-workspace 或已有的旧版默认工作区').volatile(),
+    extraArgs: schema.string().default('').description('追加给 SuperPi CLI 的参数（空格分隔），例如 --model openai/gpt-4o').volatile(),
     // 下面三项按字符串暴露：宿主的表单只认 string，布尔/枚举在 volatile 热更新下
     // 类型不稳定。读取端一律经 asBool / trim 归一，见 spawnSession。
-    persist: schema.string().default('true').description('会话是否落盘：true = 落盘（pi 默认），false = 加 --no-session，退出即丢').volatile(),
+    persist: schema.string().default('true').description('会话是否落盘：true = 落盘（默认），false = 加 --no-session，退出即丢').volatile(),
     startup: schema.string().default('continue').description("新会话开局方式：continue = 接上该目录最近的会话，new = 全新会话").volatile(),
-    sessionName: schema.string().default('').description('新会话写入 session_info 的名字（pi --name）。留空不设名').volatile(),
+    sessionName: schema.string().default('').description('新会话写入 session_info 的名字（CLI --name）。留空不设名').volatile(),
   })
 
 if (schema === undefined) {
-  console.warn('[superpi] @deepseek-ai/schemastery 解析失败：插件详情页没有配置区（侧栏面板与运行时自举不受影响）')
+  console.warn('[' + BRAND_NAME + '] @deepseek-ai/schemastery 解析失败：插件详情页没有配置区（侧栏面板与运行时自举不受影响）')
 }
 

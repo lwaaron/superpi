@@ -20,7 +20,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { resolveExtensionDir, EXTENSION_FILE_NAME } from '../tools/install-pi-extension.mjs'
-import { requireRuntime } from './preflight.mjs'
+import { requireRuntime, requireTypeBox } from './preflight.mjs'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const root = path.dirname(here)
@@ -83,7 +83,7 @@ const { createJiti } = await import(pathToFileURL(jitiPath).href)
 const extensionFile = path.join(root, 'extensions', 'superpi-editor.ts')
 ok(fs.existsSync(extensionFile), '扩展源文件存在')
 
-// 与 pi 的 core/extensions/loader.js 同一套 alias（只看扩展用到的两个包）。
+// 按 pi 的 core/extensions/loader.js 解析扩展使用的原生依赖。
 // 值用**绝对路径**而不是 file:// URL —— jiti 的 alias 走 CJS 解析，file:// 会解析失败。
 const jiti = createJiti(extensionFile, {
   interopDefault: true,
@@ -92,6 +92,7 @@ const jiti = createJiti(extensionFile, {
     // pi 自己也是指向 dist/index.js（包根没有 index.js）。
     '@earendil-works/pi-coding-agent': path.join(pi.packageDir, 'dist', 'index.js'),
     '@earendil-works/pi-tui': piTuiEntry,
+    typebox: requireTypeBox(pi),
   },
 })
 
@@ -1180,15 +1181,15 @@ const stripAnsi = text => text.replace(/\x1b\[[0-9;:?]*[A-Za-z]/g, '').replace(/
   const state = status({ dir, env: testEnv })
   ok(state.sourceExists, '扩展源文件可读')
   // 0.16.2 起安装面是八个文件（畸形判据模块 + 输入框 + 规则两枚 + 上下文守卫两枚 + 模态两枚）。
-  eq(EXTENSION_FILES.length, 11, '安装面十一个文件')
-  eq(EXTENSION_FILES.map(file => file.name).sort().join(','), 'superpi-context-guard.mjs,superpi-context-guard.ts,superpi-editor.ts,superpi-modalities.mjs,superpi-modalities.ts,superpi-rules.mjs,superpi-rules.ts,superpi-text-bytes.mjs,superpi-text-integrity.ts,superpi-turn-recovery.ts,superpi-turn-verdict.mjs', '文件清单固定（十一个文件）')
+  eq(EXTENSION_FILES.length, 13, '安装面十三个文件')
+  eq(EXTENSION_FILES.map(file => file.name).sort().join(','), 'superpi-ask-user.ts,superpi-brand.mjs,superpi-context-guard.mjs,superpi-context-guard.ts,superpi-editor.ts,superpi-modalities.mjs,superpi-modalities.ts,superpi-rules.mjs,superpi-rules.ts,superpi-text-bytes.mjs,superpi-text-integrity.ts,superpi-turn-recovery.ts,superpi-turn-verdict.mjs', '文件清单固定（十三个文件）')
   const installed = install({ dir, env: testEnv })
   eq(installed.code, 0, 'install 成功')
   for (const file of EXTENSION_FILES) {
     ok(fs.existsSync(path.join(dir, file.name)), '安装后有 ' + file.name)
   }
   eq(status({ dir, env: testEnv }).identical, true, '安装后 editor 内容与源一致')
-  eq(status({ dir, env: testEnv }).complete, true, '十一个文件全部一致 → complete')
+  eq(status({ dir, env: testEnv }).complete, true, '十三个文件全部一致 → complete')
   eq(install({ dir, env: testEnv }).code, 0, 'install 幂等')
 
   // 真机那一步：装到临时 agentDir 后，用 **pi 自己的扩展加载器**加载一遍。
@@ -1982,6 +1983,39 @@ const guardLogModule = await import(pathToFileURL(path.join(root, 'extensions', 
   }
   fs.rmSync(fakeHome, { recursive: true, force: true })
   fs.rmSync(fakeExtDir, { recursive: true, force: true })
+}
+
+// The TUI invokes the same extension through its native select/input surface.
+{
+  const { default: register } = await jiti.import(path.join(root, 'extensions', 'superpi-ask-user.ts'))
+  let tool
+  register({ registerTool(value) { tool = value } })
+  eq(tool?.name, 'ask_user', '真 TUI 扩展注册询问工具')
+  eq(tool.executionMode, 'sequential', '问题等待期间遵循原生工具串行边界')
+  const abort = new AbortController()
+  let dialogs = []
+  const ctx = { mode: 'tui', hasUI: true, ui: {
+    async select(title, options, settings) { dialogs.push({ title, options, settings }); return options[1] },
+    async input(title, _placeholder, settings) { dialogs.push({ title, settings }); return '  我自己的回答  ' },
+  } }
+  const execute = (params, context = ctx) => tool.execute('tui-question', params, abort.signal, undefined, context)
+  const selected = await execute({ question: '先做哪个？', options: ['甲', '乙'] })
+  eq(dialogs[0].title, '先做哪个？', '真实 TUI 选择器收到问题')
+  eq(dialogs[0].settings.signal, abort.signal, '弹窗使用原生停止信号')
+  eq(dialogs[0].settings.timeout, 300000, '与面板使用相同的等待期限')
+  eq(selected.details.answer, '乙', '返回实际选择')
+  eq(selected.details.source, 'option', '选项答案保留来源')
+  const typed = await execute({ question: '你的要求是什么？' })
+  eq(dialogs.at(-1).title, '你的要求是什么？', '终端自由输入显示原问题')
+  eq(typed.details.answer, '  我自己的回答  ', '用户的自由答案原样返回')
+  eq(typed.details.source, 'input', '自由答案保留来源')
+  dialogs = []
+  eq((await execute({ question: '问题' }, { mode: 'print', hasUI: false })).details.status, 'unavailable', '非交互模式可提示模型走文本对话')
+  eq((await execute({ question: '\ufffd' })).details.status, 'invalid', '坏字节不会显示在终端里')
+  eq((await execute({ question: '问题', options: ['甲', ' 甲 '] })).details.status, 'invalid', '重复选项不会产生含糊的回复')
+  eq(dialogs.length, 0, '不可展示的请求不打开询问组件')
+  abort.abort()
+  eq((await execute({ question: '问题' })).details.status, 'aborted', '已停止的回合不会再次询问用户')
 }
 
 console.log(`PASS (${checks} checks)`)

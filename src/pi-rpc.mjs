@@ -17,6 +17,7 @@
 import { spawn } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import { randomUUID } from 'node:crypto'
+import { BRAND_NAME } from '../extensions/superpi-brand.mjs'
 
 /**
  * 命令等待上限的默认值。
@@ -161,7 +162,7 @@ export class PiProcess extends EventEmitter {
   constructor(options) {
     super()
     this.id = randomUUID()
-    this.label = options.label ?? 'pi'
+    this.label = options.label ?? BRAND_NAME
     this.cwd = options.cwd
     this.cliPath = options.cliPath
     this.nodePath = options.nodePath
@@ -296,7 +297,7 @@ export class PiProcess extends EventEmitter {
     if (key !== undefined) this.pending.delete(key)
     this.clearWaiterTimer(waiter)
     if (record.success === false) {
-      waiter.reject(Object.assign(new Error(String(record.error ?? 'pi command failed')), {
+      waiter.reject(Object.assign(new Error(String(record.error ?? BRAND_NAME + ' command failed')), {
         command: record.command, record,
       }))
       return
@@ -465,7 +466,7 @@ export class PiProcess extends EventEmitter {
   }
 
   send(command, { timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
-    if (this.state === 'dead') return Promise.reject(new Error('pi process is not running'))
+    if (this.state === 'dead') return Promise.reject(new Error(BRAND_NAME + ' process is not running'))
     if (command !== null && typeof command === 'object' && command.type === 'extension_ui_response') {
       // 走 send() 会被重新分配 id，pi 侧永远匹配不上；强制改道。
       this.respond(command)
@@ -519,8 +520,8 @@ export class PiProcess extends EventEmitter {
       // 续期次数用尽仍卡着：说明弹窗一直没人应答（面板关了、客户端崩了）。
       // 这时报「没人应答弹窗」比报「命令超时」更能指出现场。
       waiter.reject(new Error(this.pendingUi.size > 0
-        ? 'pi command timed out: ' + String(waiter.command) + ' (' + String(this.pendingUi.size) + ' dialog(s) never answered)'
-        : 'pi command timed out: ' + String(waiter.command)))
+        ? BRAND_NAME + ' command timed out: ' + String(waiter.command) + ' (' + String(this.pendingUi.size) + ' dialog(s) never answered)'
+        : BRAND_NAME + ' command timed out: ' + String(waiter.command)))
     }, limitMs)
     if (typeof timer.unref === 'function') timer.unref()
     return timer
@@ -542,13 +543,13 @@ export class PiProcess extends EventEmitter {
     if (response === null || typeof response !== 'object') throw new TypeError('extension_ui_response must be an object')
     const id = typeof response.id === 'string' ? response.id : ''
     if (id === '') throw new TypeError('extension_ui_response requires a non-empty string id')
-    if (this.state === 'dead') throw new Error('pi process is not running')
+    if (this.state === 'dead') throw new Error(BRAND_NAME + ' process is not running')
     if (this.proc === null || this.proc.stdin === null || this.proc.stdin.destroyed === true) {
-      throw new Error('pi process stdin is not available')
+      throw new Error(BRAND_NAME + ' process stdin is not available')
     }
     const payload = { ...response, type: 'extension_ui_response', id }
     delete payload.seq
-    if (!this.writeLine(payload)) throw new Error('failed to write to pi stdin')
+    if (!this.writeLine(payload)) throw new Error('failed to write to ' + BRAND_NAME + ' stdin')
     this.pendingUi.delete(id)
     this.restartPendingTimers()
     return { ok: true, id, payload }
@@ -596,7 +597,7 @@ export class PiProcess extends EventEmitter {
     this.pendingUi.clear()
     for (const [, waiter] of this.pending) {
       this.clearWaiterTimer(waiter)
-      waiter.reject(new Error('pi process exited before the command answered'))
+      waiter.reject(new Error(BRAND_NAME + ' process exited before the command answered'))
     }
     this.pending.clear()
     this.emit('exit', this.exitInfo)

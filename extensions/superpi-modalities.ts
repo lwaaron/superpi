@@ -1,7 +1,7 @@
 /**
  * superpi-modalities.ts —— 命令行窗口（pi TUI）的「模型模态」设置入口。
  *
- * 装法：`npm run pi:editor`（与输入框、规则、上下文守卫一起装到 `<piAgentDir>/extensions/`）
+ * 装法：`npm run superpi:editor`（与输入框、规则、上下文守卫一起装到 `<piAgentDir>/extensions/`）
  *
  * ---------------------------------------------------------------------------
  * 它是什么

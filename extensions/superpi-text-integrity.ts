@@ -1,7 +1,7 @@
 /**
  * 写入闸：模型产出的坏字节**不落盘**（0.18.0）。
  *
- * 装法：`npm run pi:editor`（与输入框、规则、守卫、模态一起装到 `<piAgentDir>/extensions/`）
+ * 装法：`npm run superpi:editor`（与输入框、规则、守卫、模态一起装到 `<piAgentDir>/extensions/`）
  *
  * ---------------------------------------------------------------------------
  * 为什么需要它（取证见 `docs/output-integrity.md`）

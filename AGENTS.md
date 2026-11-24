@@ -34,6 +34,7 @@ DSH（DeepSeek Runtime）插件：把 pi 编码 agent 装进 DSH 的侧栏面板
 | `extensions/superpi-context-guard.ts` | 接线层：`turn_end` 为成功的长 `write` / `edit` 追加 `context_edit` 投影，保留原始调用与工具结果。`pi.on('context')` 返回裁剪后的 messages（**不写 session、不调模型、不联网** —— 所以超限那一刻它必然能成功，而压缩/重试都要再用一次已被超限的资源）；无需裁剪时返回 `undefined`（不触发 pi 重放提示）；`pi.on('before_agent_start')` 把「图片用完即弃」准则写进 `sections.superpi_context_hygiene`（与用户规则并列、不抢 key）；`/superpi-context` 看真实占用与释放量。异常一律吞掉。门禁 `test/context-guard.mjs`（规模见 `test/gate-inventory.json`；0.14.0 起含 C2 本轮图片限额 / C3 参数折叠 / C4 兜底三段）。**0.12.2 起**：TUI footer 第 2 行的上下文百分比也取这份日志（`readGuardUsageSync`，2 秒节流、按 sessionId 过滤、拿不到就退回 pi 原值），显示成 `~60.0%/1.0M` —— `~` 表示守卫估算，不是 provider 的 usage。 |
 | `extensions/superpi-turn-verdict.mjs` | **「这一轮交付了吗」的唯一判据**（0.16.2 建为 `superpi-malformed.mjs`，0.18.0 扩到六类并改名）。六类：`dsml-text` / `dsml-thinking` / `dsml-residue`（DSML 三形态，判据细节见 §5.0.1）/ `idle`（`stop` 但无正文无工具调用）/ `corrupt`（正文含坏字节且无 toolCall）/ `truncated`（`stopReason: 'length'`）。导出 `detectTurnVerdict()`（带 `kind` / `bytes` / **中英文案**）、`VERDICT_KINDS`、`TURN_VERDICT_NOTICE`。**只判可机械判定的形态**：156 条 `stop` 无工具调用的回合里只有 6 条有结构信号（以 `：` 收尾），其余 150 条读起来都是完整句子 —— 语义判断必然变成假警报，所以不做。**判据只有一份**：host 对每条 `message_end` 算一次（`src/event-verdict.mjs`），面板只渲染；命令行窗口同进程 import。门禁 `test/turn-verdict.mjs`（规模见 `test/gate-inventory.json`）。 |
 | `extensions/superpi-turn-recovery.ts` | Pi 原生恢复。`turn_end` 将不可用的无工具响应移出请求投影，原始记录仍留在会话树。`agent_before_settle` 在用户未停止、本次未产生工具调用且无待处理输入时最多续跑一次。TUI 和 RPC 共用。 |
+| `extensions/superpi-ask-user.ts` | Agent 需要关键信息或决定时，通过原生 `ask_user` 工具等待用户。`select` 和 `input` 在 TUI 与 RPC 共用，可选项和自由输入都回原回合。关闭、超时、停止和非交互模式都有明确结果。 |
 | `src/runtime-extensions.mjs` | 共享扩展清单及幂等同步。面板启动和 TUI 安装器同步同一套文件，Pi 按官方路径加载。 |
 | `src/event-verdict.mjs` | 把上面那份判读**挂到 pi 的 `message_end` 上**（0.18.0）：`decoratePiEvent(record)` 只加一个 `verdict` 字段，不改 pi 的任何字段，**永不抛**。它解决了两个结构问题：① 面板不再需要一份孪生判据（0.16.2~0.17.3 的「表在契约、算法在面板」，共同盲区测不出）；② 面板不再依赖 `/contract` 先到（0.17.3 那个「契约晚到 → 提示永久丢失」的竞态随依赖一起消失，而不是靠启动顺序绕开）。装饰发生在 `PiProcess.pushEvent` 里 —— 那是**唯一**同时喂 SSE 与环形缓冲回放的地方。 |
 | `extensions/superpi-text-bytes.mjs` | **「什么是坏字节」的唯一判据**（0.18.0）：`scanTextBytes()` 三类 —— `replacement`（U+FFFD，字符的字节已经丢了、不可逆）、`control`（C0 除 `\t\n\r`，外加 DEL）、`surrogate`（孤立代理项：JSON 合法、落盘必坏）。计数全量、位置截断（前 20 处，带行列号）。四个消费者共用：回合判据、写入闸、`test/parity.mjs` §9、`test/host-parity.mjs` 3.98。**为什么必须收成一处**：这三处原本各写一份，而运行时**一份也没有** —— 实测 7 次 `write` 的 content 含 U+FFFD、7 次全部落盘。 |
@@ -421,7 +422,8 @@ return sections ? { role: "system", content: "", sections } : undefined
   ① **只改 `piConfig.name`，`configDir` 必须保持 `.pi`** —— 用户的 9 个项目历史会话都在
   `~/.pi/agent/sessions`，把 configDir 改成 `.superpi` 会让 pi 去新目录找、历史会话全部读不到；
   ② **必须幂等且可重跑** —— `pnpm add` / `npm install` 会用 registry 上的原始 package.json
-  覆盖本地改动，所以 `install-plugin.ps1` 与 `install-pi-extension.mjs` 里都挂了自动重打。
+  覆盖本地改动。插件启动、一键安装、CLI 入口与安装脚本共用 `extensions/superpi-brand.mjs`。
+  两端共用 `src/runtime-extensions.mjs` 的目录解析，优先使用 `SUPERPI_CODING_AGENT_*` 并兼容 `PI_CODING_AGENT_*`。
 - **禁止以「UI 没做」为由在 host 或协议层留缺口。** 缺的是 UI 就说缺 UI，别把能力做成半截。
 - **禁止把斜杠命令当普通文本发给模型。** `/compact` 走的是 `compact` 命令，绝不能当 prompt 发出去——pi 的 RPC prompt 通道只认扩展命令、`/skill:`、prompt template（`agent-session.ts:2410-2445`），TUI 那 27 条内置命令在 RPC 侧一条都没有。输入一律先过 `classifyInput()`，`handleSlash`（`client.js:5667-5673`）按 disposition 五路分流。未知斜杠照发是 pi 的既有语义，不要"顺手修"。
 - **禁止硬编码本机绝对路径。** pi 可执行与 node 必须走 `src/pi-runtime.mjs` 的解析链（config → 环境变量 → 插件 `.runtime` → 插件 `node_modules` → 逐级 walk-up → pnpm store → 全局 npm）。
@@ -469,9 +471,9 @@ npm run test:verdict                            # 只跑回合判据门禁（六
 npm run test:reliability                        # 真 Pi RPC + 本地流式故障场景
 npm run test:integrity                          # 只跑写入闸门禁（含 pi 真 ExtensionRunner 跑 block 链路）
 npm run test:tui                                # 只跑输入框扩展门禁（jiti 加载真 .ts + pi 真 CustomEditor + 真按键序列）
-npm run pi:editor                               # 把 extensions/superpi-editor.ts 装进 pi（<piAgentDir>/extensions/）
-npm run pi:editor:status                        # 只读：源/目标/内容是否一致/pi 版本
-npm run pi:editor:remove                        # 卸掉，pi 下次启动恢复原始输入框
+npm run superpi:editor                               # 把 extensions/superpi-editor.ts 装进 pi（<piAgentDir>/extensions/）
+npm run superpi:editor:status                        # 只读：源/目标/内容是否一致/pi 版本
+npm run superpi:editor:remove                        # 卸掉，pi 下次启动恢复原始输入框
 npm run test:github                             # 只跑线上同步门禁（临时裸仓库，不联网、不碰 origin）
 npm run sync                                    # 把本地提交同步到 GitHub（0 已同步 / 2 离线待补推 / 3 要人处理）
 npm run sync -- --status                        # 本地 vs 线上差多少提交、钩子装没装

@@ -1,7 +1,7 @@
 /**
  * superpi-editor —— pi 命令行会话窗口（TUI）的输入框增强。
  *
- * 装法：`npm run pi:editor`（把本文件复制到 ~/.pi/agent/extensions/，pi 重启会话或 /reload 后生效）
+ * 装法：`npm run superpi:editor`（把本文件复制到 ~/.pi/agent/extensions/，pi 重启会话或 /reload 后生效）
  *
  * ---------------------------------------------------------------------------
  * 为什么需要它（pi 1.5.2 实测）
@@ -65,6 +65,7 @@ import { execFile } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { BRAND_NAME } from './superpi-brand.mjs'
 import { detectTurnVerdict } from './superpi-turn-verdict.mjs'
 
 /**
@@ -2368,7 +2369,6 @@ export class SuperPiFooter {
 /* -------------------------------------------------------------------- 注册 */
 
 /** 终端窗口标题的品牌前缀。pi 未配置 piConfig.name 时默认用 "π"。 */
-const WINDOW_TITLE = 'SuperPi'
 
 /**
  * 把窗口标题设成 `SuperPi - <cwd 目录名>`，形状对齐 pi 自己的
@@ -2389,8 +2389,8 @@ function applyWindowTitle(ctx: any): void {
       }
     } catch { /* cwd 拿不到就只显示品牌名 */ }
     // 目录名与品牌同名（例如就在 SuperPi 仓库里）时不要拼成 "SuperPi - SuperPi"。
-    const sameAsBrand = base.toLowerCase() === WINDOW_TITLE.toLowerCase()
-    ctx.ui.setTitle(base === '' || sameAsBrand ? WINDOW_TITLE : WINDOW_TITLE + ' - ' + base)
+    const sameAsBrand = base.toLowerCase() === BRAND_NAME.toLowerCase()
+    ctx.ui.setTitle(base === '' || sameAsBrand ? BRAND_NAME : BRAND_NAME + ' - ' + base)
   } catch (error) {
     // 终端不支持设置标题（或 API 变了）→ 静默跳过，绝不让 pi 起不来。
     void error
@@ -2527,7 +2527,7 @@ export async function switchProjectVia(
 ): Promise<{ switched: boolean; cwd?: string; message?: string }> {
   try {
     if (!SessionManager || typeof SessionManager.listAll !== 'function') {
-      return { switched: false, message: '当前 pi 版本没有 SessionManager.listAll' }
+      return { switched: false, message: '当前运行时没有 SessionManager.listAll' }
     }
     let currentCwd = ''
     try {
@@ -2537,7 +2537,7 @@ export async function switchProjectVia(
     }
     const sessions = await SessionManager.listAll()
     const projects = groupProjects(sessions, currentCwd)
-    if (projects.length === 0) return { switched: false, message: '还没有任何项目（先在某个目录里跑一次 pi）' }
+    if (projects.length === 0) return { switched: false, message: '还没有项目。在项目目录中启动 ' + BRAND_NAME + ' 后即可在这里切换。' }
     const currentKey = pathComparisonKey(currentCwd)
     const labels = projects.map(project => {
       const mark = project.key === currentKey ? '● ' : '○ '

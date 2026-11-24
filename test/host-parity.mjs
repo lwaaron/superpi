@@ -604,18 +604,21 @@ try {
     const rootsAgain = await request(server.base, '/directories?dir=' + encodeURIComponent(dirsRoot))
     eq('directories roots 稳定（10s 缓存）', rootsAgain.body.roots, dirs.body.roots)
 
-    // 3.9 /pi/changelog
+    // 3.9 /changelog
     const pkg = path.join(tmp, 'pkg')
     fs.mkdirSync(path.join(pkg, 'dist', 'bundle'), { recursive: true })
     fs.writeFileSync(path.join(pkg, 'CHANGELOG.md'), '# changelog\n- 1.5.2\n')
     const clServer = await makeServer({ detected: { packageDir: path.join(pkg, 'dist', 'bundle') } })
     try {
-      const changelog = await request(clServer.base, '/pi/changelog')
+      const changelog = await request(clServer.base, '/changelog')
       eq('changelog 200', changelog.status, 200)
       eq('changelog ok', changelog.body.ok, true)
       eq('changelog 路径', changelog.body.path, path.join(pkg, 'CHANGELOG.md'))
       eq('changelog 内容', changelog.body.text, '# changelog\n- 1.5.2\n')
       eq('changelog truncated', changelog.body.truncated, false)
+      const legacyChangelog = await request(clServer.base, '/pi/changelog')
+      eq('旧 changelog 地址仍返回 200', legacyChangelog.status, 200)
+      eq('旧 changelog 地址返回同一份内容', legacyChangelog.body, changelog.body)
     } finally {
       await clServer.close()
     }
@@ -624,7 +627,7 @@ try {
     fs.writeFileSync(path.join(bigPkg, 'CHANGELOG.md'), 'x'.repeat(200 * 1024 + 500))
     const bigServer = await makeServer({ detected: { packageDir: bigPkg } })
     try {
-      const big = await request(bigServer.base, '/pi/changelog')
+      const big = await request(bigServer.base, '/changelog')
       eq('changelog 截断标记', big.body.truncated, true)
       eq('changelog 截断长度', big.body.text.length, 200 * 1024)
     } finally {
@@ -632,7 +635,7 @@ try {
     }
     const noneServer = await makeServer({ detected: { packageDir: path.join(tmp, 'no-such-pkg') } })
     try {
-      const none = await request(noneServer.base, '/pi/changelog')
+      const none = await request(noneServer.base, '/changelog')
       eq('changelog 找不到仍 200', none.status, 200)
       eq('changelog 找不到体', none.body, { ok: false, path: null, text: '', truncated: false })
     } finally {
@@ -1110,7 +1113,7 @@ try {
     }
     eq('每个 .ts 的 .mjs 依赖都排在它前面', problems, [])
     // 完整清单不能漏文件（漏了就是"装了但没生效"）
-    eq('安装清单包含全部十一个文件', files.length, 11)
+    eq('安装清单包含全部十三个文件', files.length, 13)
   }
 
   // ── 3.98 发布文本文档里不得有控制字符（0.15.3，这是 400 的真因）

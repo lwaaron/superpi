@@ -133,7 +133,7 @@ export function resolveModelModalities(model, overrides = {}) {
     entries,
     unsupported: unknownDeclared.map(id => ({
       id,
-      reason: '模型协议声明了该模态，但 pi 运行时没有对应的内容块类型，无法发送',
+      reason: '运行时缺少该模态所需的内容块类型，无法发送',
       reasonEn: 'Declared by the model protocol, but the pi runtime has no content block for it',
     })),
   }

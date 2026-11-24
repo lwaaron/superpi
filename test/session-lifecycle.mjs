@@ -173,7 +173,7 @@ section('L0. 运行时缺失时，新建会话是明确的 500（而不是造出
    */
   const created = await request(app.base, 'POST', '/sessions', {})
   eq(created.status, 500, '缺运行时建会话应为 500')
-  ok(created.body !== null && created.body !== undefined && String(created.body.error ?? '').includes('pi'), '错误信息应点名 pi 运行时')
+  ok(created.body !== null && created.body !== undefined && String(created.body.error ?? '').includes('SuperPi 运行时未找到'), '错误信息应点名 SuperPi 运行时')
   // 关键：失败的 create 不得在池里留下任何东西
   const state = await request(app.base, 'GET', '/state')
   eq(state.status, 200, '/state 仍可用')

@@ -2,9 +2,15 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
+import { BRAND_NAME, KEEP_CONFIG_DIR, readBrand } from '../extensions/superpi-brand.mjs'
+
+const AGENT_DIR = '_CODING_AGENT_DIR'
+const SESSION_DIR = '_CODING_AGENT_SESSION_DIR'
+const BRAND_ENV_PREFIX = BRAND_NAME.toUpperCase()
 
 // Ordered by local imports, so these files can also be loaded from Pi's discovery directory.
 export const EXTENSION_FILES = [
+  ['brand-module', 'superpi-brand.mjs'],
   ['text-bytes-module', 'superpi-text-bytes.mjs'],
   ['turn-verdict-module', 'superpi-turn-verdict.mjs'],
   ['editor', 'superpi-editor.ts'],
@@ -16,21 +22,30 @@ export const EXTENSION_FILES = [
   ['context-guard', 'superpi-context-guard.ts'],
   ['modalities', 'superpi-modalities.ts'],
   ['turn-recovery', 'superpi-turn-recovery.ts'],
+  ['ask-user', 'superpi-ask-user.ts'],
 ].map(([label, name]) => ({ label, name, source: 'extensions/' + name }))
 
-/** Match the selected Pi binary's config directory and application-specific environment variable. */
-export function runtimeAgentDir({ packageDir, env = process.env, home = os.homedir(), cwd = process.cwd() } = {}) {
+/** Resolve SuperPi's paths and project them onto the variable names the selected CLI reads. */
+export function runtimeSessionOptions({ packageDir, env = process.env, home = os.homedir(), cwd = process.cwd() } = {}) {
   let config
   if (packageDir) {
-    try { config = JSON.parse(fs.readFileSync(path.join(packageDir, 'package.json'), 'utf8')).piConfig } catch { /* stock Pi */ }
+    try { config = readBrand(path.join(packageDir, 'package.json')) } catch { /* stock Pi */ }
   }
   const app = typeof config?.name === 'string' && config.name !== '' ? config.name.toUpperCase() : 'PI'
-  const custom = env[app + '_CODING_AGENT_DIR']
-  if (custom === '~') return home
-  if (typeof custom === 'string' && custom !== '') {
-    return /^[~][\\/]/.test(custom) ? path.join(home, custom.slice(2)) : path.resolve(cwd, custom)
+  const envOverrides = {}
+  for (const suffix of [AGENT_DIR, SESSION_DIR]) {
+    const value = env[BRAND_ENV_PREFIX + suffix] || env[app + suffix] || env['PI' + suffix]
+    if (value) envOverrides[app + suffix] = value
   }
-  return path.join(home, config?.configDir || '.pi', 'agent')
+  const custom = envOverrides[app + AGENT_DIR]
+  let agentDir = path.join(home, config?.configDir || KEEP_CONFIG_DIR, 'agent')
+  if (custom === '~') agentDir = home
+  else if (custom) agentDir = /^[~][\\/]/.test(custom) ? path.join(home, custom.slice(2)) : path.resolve(cwd, custom)
+  return { agentDir, sessionDir: envOverrides[app + SESSION_DIR] ?? '', envOverrides }
+}
+
+export function runtimeAgentDir(options) {
+  return runtimeSessionOptions(options).agentDir
 }
 
 function readInstalled(file) {

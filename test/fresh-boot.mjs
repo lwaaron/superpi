@@ -10,6 +10,7 @@ import fs from 'node:fs'
 import http from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
+import { spawnSync } from 'node:child_process'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
@@ -84,6 +85,10 @@ if (runtime.body.ok === false) {
 
   const after = await j('/runtime')
   expect(after.body.ok === true && after.body.source === 'plugin-runtime', '装完 /runtime 立刻变成 plugin-runtime 命中')
+  if (install.body.ok === true) {
+    const help = spawnSync(process.execPath, [install.body.cliPath, '--help'], { encoding: 'utf8', timeout: 10000 })
+    expect(help.status === 0 && /^SuperPi\s+- AI coding assistant/m.test(help.stdout), '一键安装后的正式 CLI 显示 SuperPi')
+  }
 
   const created = await j('/sessions', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })
   console.log('created ' + created.status + ' ' + JSON.stringify(created.body).slice(0, 200))

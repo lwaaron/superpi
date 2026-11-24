@@ -69,11 +69,11 @@ if (asJson) {
   if (summary.missingCount > 0) console.log('缺失      ' + summary.missing.join(', '))
   const pi = report.pi
   if (pi === undefined || pi !== null && pi.skipped === true) {
-    console.log('pi        跳过')
+    console.log('运行时      跳过')
   } else {
-    console.log('pi cli    ' + (pi.cliExists ? pi.cliPath : 'MISSING: ' + pi.cliPath))
+    console.log('运行时 CLI  ' + (pi.cliExists ? pi.cliPath : 'MISSING: ' + pi.cliPath))
     const build = pi.buildFresh === null ? 'unclear' : pi.buildFresh ? 'fresh' : 'STALE（源码比构建新，需要 npm run build）'
-    console.log('pi 构建   ' + build + '  bundle=' + String(pi.bundleNewestAt) + '  src=' + String(pi.srcNewestAt) + (pi.srcNewestRel === null ? '' : '  (' + pi.srcNewestRel + ')'))
+    console.log('运行时构建  ' + build + '  bundle=' + String(pi.bundleNewestAt) + '  src=' + String(pi.srcNewestAt) + (pi.srcNewestRel === null ? '' : '  (' + pi.srcNewestRel + ')'))
   }
   console.log('结论      ' + summary.hint)
 }

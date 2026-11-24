@@ -125,7 +125,7 @@ console.log(`工具目录   : ${TOOLKIT_DIR}`)
 console.log(`记忆目录   : ${MEMORY_DIR}`)
 console.log('')
 console.log(`skill 在位 : ${REQUIRED_SKILLS.filter((n) => fs.existsSync(path.join(SKILLS_DIR, n, 'SKILL.md'))).join(', ') || '(无)'}`)
-console.log(`pi 加载到  : ${loaded.join(', ') || '(无)'}`)
+console.log(`SuperPi 加载到 : ${loaded.join(', ') || '(无)'}`)
 console.log(`工具在位   : ${REQUIRED_TOOLS.filter((t) => fs.existsSync(path.join(TOOLKIT_DIR, t))).join(', ') || '(无)'}`)
 
 if (problems.length > 0) {

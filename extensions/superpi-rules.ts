@@ -2,7 +2,7 @@
  * superpi-rules —— 把「用户自定义规则」追加进 pi 的系统提示（最高优先级），
  * 并注册 `/superpi-rules` 让命令行窗口也能编辑同一份规则。
  *
- * 装法：`npm run pi:editor`（与输入框扩展一起装到 `<piAgentDir>/extensions/`）
+ * 装法：`npm run superpi:editor`（与输入框扩展一起装到 `<piAgentDir>/extensions/`）
  *
  * ---------------------------------------------------------------------------
  * 为什么需要它（而不是写 SYSTEM.md / APPEND_SYSTEM.md）

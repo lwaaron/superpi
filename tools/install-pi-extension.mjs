@@ -216,7 +216,7 @@ export function remove(options = {}) {
     const dir = path.dirname(skill.target)
     try { if (fs.readdirSync(dir).length === 0) fs.rmdirSync(dir) } catch { /* 目录已不在或非空 */ }
   }
-  return { code: 0, message: '已卸载（pi 下次启动/`/reload` 后恢复原始输入框、系统提示与技能）' }
+  return { code: 0, message: '已卸载（SuperPi 下次启动或执行 `/reload` 后恢复原始输入框、系统提示与技能）' }
 }
 
 function report(state) {
@@ -236,8 +236,8 @@ function report(state) {
       : (skill.targetExists !== true ? '(未安装)' : (skill.identical ? '已同步' : '内容不一致，需要 --install'))
     line('skill:' + skill.name, skill.target + '  ' + text)
   }
-  line('pi 运行时', state.piFound ? `${state.piVersion || '(版本未知)'}` : '未找到（扩展仍然可装，pi 会自己找）')
-  process.stdout.write('\n生效方式：重启 pi 会话窗口，或在 pi 里执行 /reload\n')
+  line('SuperPi 运行时', state.piFound ? `${state.piVersion || '(版本未知)'}` : '未找到（扩展仍可安装）')
+  process.stdout.write('\n生效方式：重新打开 SuperPi 命令行，或执行 /reload\n')
   process.stdout.write(
     '外观：四边闭合、框线 80% 白 · Working 按状态变色（正常白 / 成功绿 / 出错红） · 粘贴路径带浅灰底 · ' +
     'footer：项目名 (分支) ⇄ + settings / home 同行（鼠标移入变亮，点了就执行）\n',
@@ -258,7 +258,7 @@ if (isMain) {
   if (args.has('--install')) {
     result = install()
     if (result.message) process.stdout.write((result.code === 0 ? '' : '失败：') + result.message + '\n')
-    if (result.brand) process.stdout.write('品牌名 ' + (result.brand.ok ? '' : '(未生效) ') + result.brand.message + '\n')
+    if (result.brand) process.stdout.write(result.brand.message + '\n')
     report(status())
   } else if (args.has('--remove')) {
     result = remove()

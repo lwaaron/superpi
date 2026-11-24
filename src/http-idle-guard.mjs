@@ -107,7 +107,7 @@ export function decideIdleTimeout(settings, { min = MIN_HTTP_IDLE_TIMEOUT_MS } =
     // 显式配置一律尊重：不因"小于下限"去覆盖用户的明确意图。
     return { action: 'keep', ms: current.ms, reason: '用户已显式设置为 ' + String(current.ms) + 'ms，保持不动' }
   }
-  return { action: 'write', ms: min, reason: '未设置（pi 默认 ' + String(PI_DEFAULT_HTTP_IDLE_TIMEOUT_MS) + 'ms 会误杀长思考）→ ' + String(min) }
+  return { action: 'write', ms: min, reason: '未设置（运行时默认 ' + String(PI_DEFAULT_HTTP_IDLE_TIMEOUT_MS) + 'ms 会误杀长思考）→ ' + String(min) }
 }
 
 /**

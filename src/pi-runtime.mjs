@@ -22,6 +22,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { spawn } from 'node:child_process'
+import { applyBrand, BRAND_NAME } from '../extensions/superpi-brand.mjs'
 
 /** pi 的 npm 包名（官方发布，与 pi-main 源码同版本）。 */
 export const PI_PACKAGE = '@earendil-works/pi-coding-agent'
@@ -176,7 +177,7 @@ export function resolvePiRuntime(options = {}) {
     if (abs === '') return null
     if (isDir(abs)) {
       const cli = entryOfPackageDir(abs)
-      if (cli === '') { miss(source, abs, 'directory has no pi entry'); return null }
+      if (cli === '') { miss(source, abs, 'directory has no CLI entry'); return null }
       return hit(source, cli)
     }
     if (isFile(abs)) return hit(source, abs)
@@ -343,6 +344,11 @@ export function describeRuntime(pi) {
   }
 }
 
+/** Apply the upstream CLI's official branding configuration to a resolved package. */
+export function preparePiRuntime(runtime) {
+  if (runtime.packageDir) applyBrand(path.join(runtime.packageDir, 'package.json'))
+}
+
 /**
  * 一键安装 pi 到 <pluginRoot>/.runtime。
  * 用系统 npm（不引第三方依赖），继承环境变量（含 HTTP_PROXY/HTTPS_PROXY）。
@@ -354,7 +360,7 @@ export function installPiRuntime(options = {}) {
   const onLog = typeof options.onLog === 'function' ? options.onLog : () => {}
   if (pluginRoot === '') return Promise.resolve({ ok: false, code: null, log: [], error: 'plugin root unknown', cliPath: '', durationMs: 0 })
 
-  const runtimeDir = path.join(pluginRoot, SUPERPI_RUNTIME_DIR)
+  const runtimeDir = path.resolve(pluginRoot, SUPERPI_RUNTIME_DIR)
   const spec = PI_PACKAGE + '@' + version
   const startedAt = Date.now()
   try { fs.mkdirSync(runtimeDir, { recursive: true }) } catch (error) {
@@ -415,14 +421,23 @@ export function installPiRuntime(options = {}) {
     child.stderr?.on('data', collect)
     child.on('error', error => finish({ ok: false, code: null, error: String(error?.message ?? error), cliPath: '' }))
     child.on('close', code => {
-      const probe = resolvePiRuntime({ pluginRoot })
-      const ok = code === 0 && probe.cliPath !== ''
-      finish({
-        ok,
-        code,
-        error: ok ? null : (code === 0 ? 'npm finished but pi entry still missing' : 'npm exited with code ' + String(code)),
-        cliPath: probe.cliPath,
-      })
+      if (settled) return
+      if (code !== 0) {
+        finish({ ok: false, code, error: 'npm exited with code ' + String(code), cliPath: '' })
+        return
+      }
+      const packageDir = path.join(runtimeDir, 'node_modules', ...PI_PACKAGE.split('/'))
+      const cliPath = entryOfPackageDir(packageDir)
+      if (cliPath === '') {
+        finish({ ok: false, code, error: BRAND_NAME + ' CLI entry is missing after installation', cliPath })
+        return
+      }
+      try {
+        preparePiRuntime({ packageDir })
+        finish({ ok: true, code, error: null, cliPath })
+      } catch (error) {
+        finish({ ok: false, code, error: BRAND_NAME + ' runtime branding failed: ' + String(error?.message ?? error), cliPath })
+      }
     })
   })
 }

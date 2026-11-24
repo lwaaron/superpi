@@ -71,6 +71,7 @@ $PluginRoot = Split-Path -Parent $PSScriptRoot
 $StateDir = Join-Path $PluginRoot '.standalone'
 $TuiStateFile = Join-Path $StateDir 'tui.json'
 $WebLauncher = Join-Path $PluginRoot 'tools\start-standalone.ps1'
+$TuiLauncher = Join-Path $PluginRoot 'src\superpi-cli.mjs'
 
 function Step([string]$t) { Write-Host ('[launch] ' + $t) }
 function Ok([string]$t) { Write-Host ('[launch]   OK   ' + $t) -ForegroundColor Green }
@@ -161,13 +162,13 @@ process.stdout.write(JSON.stringify({ pi, node }))
     $nodePath = [string]$parsed.node.path
   } finally { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
 } catch {
-  Warn2 ('pi 运行时解析失败：' + $_.Exception.Message)
+  Warn2 ('SuperPi 运行时解析失败：' + $_.Exception.Message)
 }
 
 if ($piResolved -and $piResolved.cliPath) {
-  Step ('pi   ' + $piResolved.cliPath + ' (' + $piResolved.source + ' ' + $piResolved.version + ')')
+  Step ('SuperPi runtime: ' + $piResolved.cliPath + ' (' + $piResolved.source + ' ' + $piResolved.version + ')')
 } elseif (-not $NoTui) {
-  Bad 'pi 运行时未找到 —— TUI 无法启动。先跑 npm run test:fresh 或装一次运行时。'
+  Bad 'SuperPi 运行时未找到，无法启动命令行。请先安装运行时。'
 }
 if ($nodePath -ne '') { Step ('node ' + $nodePath) }
 
@@ -188,7 +189,7 @@ if ($NoTui) {
 } elseif (-not $piResolved -or -not $piResolved.cliPath) {
   # 想启动但运行时不可用 —— 这是**失败**，不是跳过。必须如实报。
   $results.tui = 'failed'
-  if ($reasons['tui'] -eq '') { $reasons['tui'] = 'pi 运行时未解析出来' }
+  if ($reasons['tui'] -eq '') { $reasons['tui'] = 'SuperPi 运行时未找到' }
 } else {
   Step ('starting SuperPi TUI in a new console, cwd = ' + $WorkDir)
 
@@ -202,6 +203,7 @@ if ($NoTui) {
         $nodeExe = 'node'
         if ($nodePath -ne '') { $nodeExe = $nodePath }
         $null = & $nodeExe $extScript --install 2>&1
+        if ($LASTEXITCODE -ne 0) { throw ('installer exited with ' + $LASTEXITCODE) }
         Ok 'input-box extension installed (Ctrl+A/Shift-select/Ctrl+C/X/file paste)'
       } catch {
         Warn2 ('input-box extension not installed: ' + $_.Exception.Message)
@@ -221,11 +223,12 @@ if ($NoTui) {
 
   # 记录启动前的 pi 进程集合，之后用差集找到新起的那个（wt/start 都是异步开窗，拿不到 pid）。
   $before = @(Get-CimInstance Win32_Process -Filter "Name='node.exe'" -ErrorAction SilentlyContinue |
-    Where-Object { $_.CommandLine -and $_.CommandLine -like ('*' + $piResolved.cliPath + '*') } |
+    Where-Object { $_.CommandLine -and $_.CommandLine -like ('*' + $TuiLauncher + '*') } |
     Select-Object -ExpandProperty ProcessId)
 
   # 拼一条 cmd 命令行（node + cli + resume 参数），交给新窗口执行。
-  $cmdLine = '"' + $nodePath + '" "' + $piResolved.cliPath + '" ' + $respArg
+  $syncArg = if ($NoEditorExtension) { ' --superpi-skip-extension-sync' } else { '' }
+  $cmdLine = '"' + $nodePath + '" "' + $TuiLauncher + '"' + $syncArg + ' ' + $respArg
 
   try {
     if ($haveWt) {
@@ -244,7 +247,7 @@ if ($NoTui) {
     $swTui = [Diagnostics.Stopwatch]::StartNew()
     while ($swTui.Elapsed.TotalSeconds -lt 15) {
       $now = @(Get-CimInstance Win32_Process -Filter "Name='node.exe'" -ErrorAction SilentlyContinue |
-        Where-Object { $_.CommandLine -and $_.CommandLine -like ('*' + $piResolved.cliPath + '*') } |
+        Where-Object { $_.CommandLine -and $_.CommandLine -like ('*' + $TuiLauncher + '*') } |
         Select-Object -ExpandProperty ProcessId)
       $diff = @($now | Where-Object { $before -notcontains $_ })
       if ($diff.Count -gt 0) { $newPid = [int]$diff[0]; break }
