@@ -15,7 +15,9 @@ import fs from 'node:fs'
 import http from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
+import { spawnSync } from 'node:child_process'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import { SUITE_GATES } from './gate-inventory.mjs'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const root = path.dirname(here)
@@ -79,6 +81,57 @@ async function getJson(url) {
 
 function readVersion(dir) {
   return JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8')).version
+}
+
+function verifyGateExecution(fixture, inventory) {
+  const scripts = path.join(fixture, 'test')
+  const trace = path.join(fixture, 'launches.txt')
+  const runner = path.join(scripts, 'gate-inventory.mjs')
+  fs.mkdirSync(scripts, { recursive: true })
+  fs.copyFileSync(path.join(here, 'gate-inventory.mjs'), runner)
+  fs.writeFileSync(path.join(scripts, 'gate-inventory.json'), JSON.stringify(inventory))
+
+  function writeGate(name, lines, exitCode = 0) {
+    fs.writeFileSync(path.join(scripts, name + '.mjs'), [
+      "import fs from 'node:fs'",
+      'fs.appendFileSync(' + JSON.stringify(trace) + ', ' + JSON.stringify(name + '\n') + ')',
+      ...lines.map(line => 'console.log(' + JSON.stringify(line) + ')'),
+      'process.exitCode = ' + exitCode,
+    ].join('\n'))
+  }
+  for (const name of SUITE_GATES) {
+    writeGate(name, Object.hasOwn(inventory, name) ? ['PASS (' + inventory[name] + ' checks)'] : ['PASS'])
+  }
+  const run = () => {
+    fs.writeFileSync(trace, '')
+    const result = spawnSync(process.execPath, [runner, '--suite'], {
+      cwd: fixture, timeout: 30_000, encoding: 'utf8', windowsHide: true,
+    })
+    if (result.error) throw result.error
+    return { status: result.status, stdout: result.stdout, stderr: result.stderr,
+      launches: fs.readFileSync(trace, 'utf8').trim().split(/\r?\n/) }
+  }
+  const completed = run()
+  assert(completed.status === 0, '受控门禁应通过：' + completed.stderr)
+  assert(JSON.stringify(completed.launches) === JSON.stringify(SUITE_GATES), '门禁必须按顺序各运行一次')
+  const name = SUITE_GATES.find(gate => Object.hasOwn(inventory, gate))
+  const floor = inventory[name]
+  const passed = 'PASS (' + floor + ' checks)'
+  const expectedLaunches = SUITE_GATES.slice(0, SUITE_GATES.indexOf(name) + 1)
+  const failures = [
+    { lines: ['PASS (' + (floor - 1) + ' checks)'], exit: 0, expected: 1, diagnostic: '低于登记下限' },
+    { lines: ['PASS'], exit: 0, expected: 1, diagnostic: '需要且只能有一行' },
+    { lines: [passed, passed], exit: 0, expected: 1, diagnostic: '需要且只能有一行' },
+    { lines: [passed], exit: 7, expected: 7, diagnostic: '子进程未通过' },
+  ]
+  for (const { lines, exit, expected, diagnostic } of failures) {
+    writeGate(name, lines, exit)
+    const result = run()
+    assert(result.status === expected && result.stderr.includes('FAIL ' + name) && result.stderr.includes(diagnostic),
+      '门禁应按当次退出状态和摘要失败：' + diagnostic)
+    assert(JSON.stringify(result.launches) === JSON.stringify(expectedLaunches), '失败后不得复跑或启动后续门禁')
+  }
+  console.log('6) 受控门禁验证：顺序与单次执行、覆盖下限、摘要、退出码')
 }
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'superpi-version-'))
@@ -147,58 +200,22 @@ try {
   console.log('4) README 应含', tarball, '→', readme.includes(tarball))
   assert(readme.includes(tarball), 'README 里没有 ' + tarball + '，照着文档装会找不到文件')
 
-  // ── 5. 门禁规模登记表：documented check 数的唯一真源（0.16.1）────────
-  //
-  // 为什么要有这一段：0.16.0 的对抗性审查发现 AGENTS.md 里声称的 check 数
-  // 已全面漂移（parity 98→102、host-parity 412→430、context-guard 150→179、
-  // tui-editor 459→521），而**没有任何门禁校验这些数字**。
-  //
-  // 那不只是「数字不准」：AGENTS.md 把「412 checks」加粗当作对齐强度的证据。
-  // 数字漂移后，文档从「可校验的事实」退化为「曾经的印象」——
-  // 而它恰恰是接手者唯一的行为指南。
-  //
-  // 修法（结构性，不是把数字改一遍）：
-  //   · 数字**只登记在这里一处**，AGENTS.md 引用它而不是各自维护副本；
-  //   · 判据是**下限**而不是相等：修复会让数字上升（合理），
-  //     下降才说明某条能力被削弱或某个门禁漏跑（那才是要拦的）；
-  //   · 下面是「实测值」，由各门禁自己打印。这里跑一遍并比对登记值。
-  //
-  // 注意：本段只做登记与自校验，不重跑子进程（那会让 npm test 翻倍）。
-  // 「登记值 ≤ 实测值」这条由 test/version.mjs 在**拿到各门禁输出后**判断 ——
-  // 见 test/gate-inventory.mjs（它读 package.json 的 scripts.test 按序跑并汇总）。
+  // 登记表描述覆盖下限，执行器的顺序表描述本次实际要运行的文件。
   const inventory = JSON.parse(fs.readFileSync(path.join(root, 'test', 'gate-inventory.json'), 'utf8'))
-  // 以下划线开头的是元数据（_comment / _why / _how_to_update ...），不是门禁名。
-  const inventoryGates = Object.keys(inventory).filter(key => key.startsWith('_') === false)
-  const missingGates = inventoryGates.filter(name => {
-    const script = 'test/' + name + '.mjs'
-    return fs.existsSync(path.join(root, script)) === false
-  })
-  console.log('5) 门禁登记表覆盖', inventoryGates.length, '套 → 文件缺失', JSON.stringify(missingGates))
-  assert(missingGates.length === 0, '登记表里有门禁文件不存在：' + missingGates.join(', '))
-
-  // 登记表必须覆盖 npm test 里跑到的每一套（漏登记 = 那套的规模没人看着）
+  const inventoryGates = Object.keys(inventory).filter(key => !key.startsWith('_'))
   const pkgForScripts = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
-  const testScript = String(pkgForScripts.scripts?.test ?? '')
-  const runGates = Array.from(testScript.matchAll(/test\/([a-z0-9-]+)\.mjs/g)).map(m => m[1])
-  const unregistered = runGates.filter(name => Object.prototype.hasOwnProperty.call(inventory, name) === false)
-  /**
-   * 「规模可核对」的门禁 = 登记表里的那些。其余的分两类，都**显式**列在下面，
-   * 而不是悄悄放过：
-   *
-   *  A. STRUCTURAL：断言以「抛错」为失败方式，天然没有数量概念
-   *     （selfcheck 验的是文件清单一致、runtime-resolve 验的是解析链分支、
-   *      config-hot 验的是热更新能否穿透快照）。强行给它们加计数只会制造假的精确。
-   *  B. META：本对账体系自身的构件（preflight 探测依赖、gate-inventory 做汇总）。
-   *
-   * 两类都必须在这里**点名**：新增一套门禁若既不登记规模、也不在名单里，仍然会红。
-   * 这样「漏登记」不可能静默发生 —— 那正是 F-06 的教训。
-   */
+  assert(pkgForScripts.scripts?.test === 'node test/gate-inventory.mjs --suite', 'npm test 必须由同一执行器启动并核对门禁')
+  // 结构门禁以实际退出状态验收，preflight 检查依赖。其余门禁必须声明覆盖下限。
   const STRUCTURAL_GATES = ['selfcheck', 'runtime-resolve', 'config-hot', 'restart-lib', 'version']
-  const META_GATES = ['preflight', 'gate-inventory']
-  const exempt = new Set(STRUCTURAL_GATES.concat(META_GATES))
-  const unregisteredSizeGates = runGates.filter(name => exempt.has(name) === false && Object.prototype.hasOwnProperty.call(inventory, name) === false)
-  console.log('5) npm test 跑了', runGates.length, '套 → 未登记规模', JSON.stringify(unregisteredSizeGates))
-  assert(unregisteredSizeGates.length === 0, '这些门禁跑了但没登记规模：' + unregisteredSizeGates.join(', ') + '（在 test/gate-inventory.json 补一条，或加进 STRUCTURAL_GATES 并说明理由）')
+  const required = new Set(['preflight', ...STRUCTURAL_GATES, ...inventoryGates])
+  const unscheduled = [...required].filter(name => !SUITE_GATES.includes(name))
+  const unregistered = SUITE_GATES.filter(name => !required.has(name))
+  const missingGates = SUITE_GATES.filter(name => !fs.existsSync(path.join(here, name + '.mjs')))
+  assert(!unscheduled.length, '未执行的门禁：' + unscheduled.join(', '))
+  assert(!unregistered.length, '门禁未登记下限或结构约束：' + unregistered.join(', '))
+  assert(!missingGates.length, '门禁文件不存在：' + missingGates.join(', '))
+  console.log('5) 执行顺序已覆盖', SUITE_GATES.length, '套门禁，其中', inventoryGates.length, '套有规模下限')
+  verifyGateExecution(path.join(tempDir, 'gate-runner-fixture'), inventory)
 
   console.log('PASS')
 } catch (error) {

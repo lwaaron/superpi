@@ -24,7 +24,7 @@ DSH（DeepSeek Runtime）插件：把 pi 编码 agent 装进 DSH 的侧栏面板
 | `src/http-idle-guard.mjs` | **HTTP idle 超时下限**（0.15.0）：pi 默认 `httpIdleTimeoutMs = 300_000`（5 分钟）会误杀长思考 —— 实测 4 次 `BODY_TIMEOUT` 的静默时长是 317/323/331/503s，刚过线且**与上下文规模无关**（最浅一次仅 7.3%）。`ensureHttpIdleTimeout({agentDir})` 在 spawn 前把它抬到 **30 分钟**。边界严格：只补「未设置」的、显式配置一律尊重（哪怕小于下限）、显式关闭（`0`/`"disabled"`）一律保留、坏 JSON **绝不覆盖**、幂等不重复写盘（已达标不刷 mtime）。设置项本身是 pi 官方支持的（`settings-manager.js:713-722` + `main.js:765` 会在进 `runRpcMode` 前重新配置调度器），所以这是**配置面不是补丁**。详见 `docs/session-interruption.md`。 |
 | `src/runtime-files.mjs` | **运行时文件清单的唯一来源**（0.15.0）：`listRuntimeFiles(root)` 按目录自动发现（根文件 + `src/` 与 `extensions/` 下全部 `.mjs`/`.ts`），`copyRuntimeFiles(root,target)` 供 `test/selfcheck.mjs` 与 `test/version.mjs` 共用。**为什么需要**：这两处原各硬编码一份复制清单，实测已漂移（16 vs 15 项），新增一个源文件就同时让两个门禁报 `Cannot find module` —— 而修法是每处各补一条，下一个人必然再漏。门禁断言「不许退回硬编码」。 |
 | `test/preflight.mjs` | **门禁依赖的唯一判据**（0.16.1）：`probeRuntime()` / `probeJiti()` / `probeReact()` 永不退出、只返回事实；`requireRuntime()` / `requireJiti()` / `requireReact()` 缺失即**失败**（不是 SKIP）。**为什么需要**：0.16.0 审查证实 6 套门禁缺依赖时整段跳过并 exit 0 —— 实测隐藏 `.runtime/` 后 `tui-editor` 的 521 条检查一条没跑，`npm test` 仍是绿的；而 `.runtime/` 是 gitignore 的，**新机器 clone 下来必然命中**。修法刻意**不是**给 6 个文件各加一个 `exit(1)`（那是 6 个补丁，第 7 个必然再漏，与 `runtime-files.mjs` 修「硬编码清单漂移」同构），而是让「依赖就绪」成为一个可查询的事实。三种终态：通过 / 失败 / **显式**跳过（`skipOptional()` 必须标 `[可选]` 并给理由）。 |
-| `test/gate-inventory.mjs` + `test/gate-inventory.json` | **门禁规模的唯一真源与对账判据**（0.16.1）：登记表给每套门禁一条**下限**，`npm test` 末尾实跑全部门禁、读它们自己打印的 `PASS (N checks)`，**实测 < 登记即红**。**为什么需要**：0.16.0 审查发现 AGENTS.md 里散落的 check 数已全面漂移（parity 98→102、host-parity 412→430、context-guard 150→179、tui-editor 459→521）而无人校验 —— 数字分散在多处手写副本就必然漂移，而本文恰恰把它们加粗当作「对齐强度」的证据。判据取下限而非相等：上升=补了用例（正常，顺手抬高登记值），下降=能力被削弱或门禁漏跑（必须拦）。`--list` 看登记表，`--print` 打印实测值。 |
+| `test/gate-inventory.mjs` + `test/gate-inventory.json` | **门禁规模的唯一真源与对账判据**（0.16.1）：登记表给每套门禁一条**下限**，`npm test` 按 `SUITE_GATES` 顺序执行每套门禁一次并读取当次退出状态与 `PASS (N checks)`，**实测 < 登记即红**。**为什么需要**：0.16.0 审查发现 AGENTS.md 里散落的 check 数已全面漂移（parity 98→102、host-parity 412→430、context-guard 150→179、tui-editor 459→521）而无人校验 —— 数字分散在多处手写副本就必然漂移，而本文恰恰把它们加粗当作「对齐强度」的证据。判据取下限而非相等：上升=补了用例（正常，顺手抬高登记值），下降=能力被削弱或门禁漏跑（必须拦）。`--list` 看登记表，`--print` 打印实测值。 |
 | `src/ui-prefs.mjs` | 面板偏好的落盘层（0.8.0）：项目显示名 / 会话显示名 / 会话置顶的唯一真相，落在 `<home>/.superpi/ui-prefs.json`（`SUPERPI_UI_PREFS` 可覆盖路径，`UI_PREFS_DIR_NAME` = `.superpi`，版本号 `UI_PREFS_VERSION = 1` 供将来迁移）。对外只经 host 的 `/ui-prefs` 三条路由（`index.js:991-1007`：GET 只读、`POST /ui-prefs/project`、`POST /ui-prefs/session` 走合并式补丁），校验与 400 语义都收在这一层（`MAX_PROJECT_NAME_LENGTH` 120 / `MAX_SESSION_PATH_LENGTH` 4096）。**它不归 pi 的 RPC 面管** —— 偏好是「面板自己的账」。 |
 | `extensions/superpi-editor.ts` | 命令行会话窗口（pi TUI）的**输入框增强**（0.9.2 起）：继承 pi 公开的 `CustomEditor`，通过官方扩展点 `ctx.ui.setEditorComponent()` 替换输入框 —— **不改 pi 任何文件、不打补丁、不碰 `node_modules`**。①输入语义：Ctrl+A 全选、Shift+方向/Home/End 扩选、Ctrl+C 复制（不再清空内容）、Ctrl+X 剪切、Backspace/Delete 删选区、可打印字符与粘贴替换选区、Windows 下 Ctrl+V 粘贴**剪贴板里的文件**时插入绝对路径（读 PowerShell 的 `GetFileDropList`，因为 pi-tui 的 Windows native 模块没有 `getFilePaths`）。②外观与入口（0.9.4，0.9.7 收口）：四边闭合的**直角**框（`┌─┐ │ │ └─┘`）+ 框线 80% 白（`FRAME_RGB=[204,204,204]`，pi 原本只有上下两条线，滚动提示保留）；Working 行**回到 pi 原来的位置（上边框内侧左侧）**并按状态换色（正常白 `[255,255,255]` / 成功绿 `[126,211,133]` / 出错红 `[236,94,94]`，图标同色，状态来自 `agent_start`/`tool_execution_end.isError`/`agent_settled`，并 `setWorkingVisible(false)` 关掉 pi 内置那条）；粘贴进来的绝对路径加浅灰底色（`PATH_CHIP_RGB=[104,104,104]`，`trimPathToken()` 保证**只染路径本身**、不溢出到后面打的字，圆角格只在确实是空白时才吃）；`settings` / `home` 两个入口（**全小写**）放在**框外右下角、模型上方**，颜色**与模型名一致**（`theme.fg('dim', …)`）：`settings` 展开 pi 自己的四条斜杠命令（`/settings` `/model` `/thinking` `/scoped-models`，点了走 `editor.onSubmit`），`home` 提交 `/new`（回启动界面）。③**Ctrl+V 判定归扩展自己**（0.9.7）：`resolveClipboardPaste()` 先问 native 快路径（位图落成临时 PNG），失败才起 PowerShell 探头 `readWindowsClipboard()` 一次性拿文件/文本/位图 —— 因为 pi-tui 的 Windows native 模块既没有 `getFilePaths`，实测连 `getImage`/`getText` 也会读不到，pi 自己的 `handleClipboardPaste` 于是「截图后 Ctrl+V 没反应」。三者都没有才回落 `onPasteImage`。安装面 `tools/install-pi-extension.mjs`（`--install/--remove/--status`）落到 `<piAgentDir>/extensions/`（0.10.0 起一次装三个文件：editor + `superpi-rules.ts` + `superpi-rules.mjs`，`status.complete` 才算完整）；门禁 `test/tui-editor.mjs`（规模见 `test/gate-inventory.json`；0.9.11 起 footer 接管见 0.9.9，底部那行回归见 0.9.10，点击命中区回归见 0.9.11；0.14.1 起含等待可见性：Working 行显示当前工具与命令自设上限）。 |
 
@@ -56,7 +56,7 @@ DSH（DeepSeek Runtime）插件：把 pi 编码 agent 装进 DSH 的侧栏面板
 - 检查动作：`npm test`。它含三套机器门禁 —— `test/parity.mjs`（契约 ↔ pi 类型与官方文档 ↔ `client.js`/`index.js` 的面板覆盖，三向对账）、`test/host-parity.mjs`（`buildSpawnArgs` 与 HTTP 面，0.14.0 起含切帧器线性耗时与历史分页）与 `test/timeout.mjs`（用 `test/fixtures/fake-pi-rpc.mjs` 协议替身把 5 分钟的超时/弹窗时序压到毫秒级实测）。**这三套门禁是本仓库对齐的机器保障，不是可选装饰**：删掉或绕过它，等于把"100% 对齐"退回人肉承诺。
 
   > **各套门禁的当前规模不写在这里**（0.16.1）。唯一真源是 **`test/gate-inventory.json`**，
-  > 由 `test/gate-inventory.mjs` 在 `npm test` 末尾实测对账：**实测值低于登记值即红**。
+  > `test/gate-inventory.mjs` 用 `npm test` 当次的子进程结果对账，**实测值低于登记值即红**。
   > 为什么改成这样：0.16.0 的审查发现本文里散落的 check 数已全面漂移
   > （parity 98→102、host-parity 412→430、context-guard 150→179、tui-editor 459→521），
   > 而没有任何门禁校验它们 —— 数字分散在多处手写副本就必然漂移，
@@ -450,7 +450,7 @@ return sections ? { role: "system", content: "", sections } : undefined
 故意制造错误来验证测试时，把变异和验收命令交给 `verify` 的 `snapshot` 模式。测试退出码和截止时间都要保留。任务收尾使用 `task_progress` 核对目标及验收证据。
 
 ```powershell
-npm test                                        # 离线门禁（顺序即依赖顺序）：
+npm test                                        # 按依赖顺序运行离线门禁，每套执行一次
                                                 # preflight（依赖前置断言，缺 pi/react 直接红）
                                                 # → selfcheck → client-render
                                                 # → css-tokens → runtime-resolve → config-hot
@@ -459,14 +459,13 @@ npm test                                        # 离线门禁（顺序即依赖
                                                 # → turn-verdict → text-integrity → reliability
                                                 # → parity → tui-editor → brand-pi-runtime
                                                 # → restart-lib → github-sync → version
-                                                # → gate-inventory（各套规模对账，收口）
+                                                # → 汇总各套当次执行的规模
                                                 #
                                                 # 各套的 check 数不写在这里：唯一真源是
                                                 # test/gate-inventory.json（实测低于登记值即红）。
                                                 # 看当前真实规模：node test/gate-inventory.mjs --list
                                                 # 耗时大头：github-sync（真 git 跑完整同步）、
-                                                # restart-lib（起 pwsh 7 + 5.1 各跑一遍）、
-                                                # gate-inventory（把所有门禁再跑一遍做对账，约 40 s）
+                                                # restart-lib（起 pwsh 7 + 5.1 各跑一遍）
 npm run test:all                                # 全量离线门禁，加真实模型冒烟和图片写入验证
 npm run test:preflight                          # 只做依赖探测（缺什么、怎么装）
 npm run check:carriers                          # 巡检本机已配置的个人技能、工具和记忆

@@ -229,10 +229,10 @@ New-Item -ItemType Junction `
 ### 方式三：手工 pnpm add（不想跑脚本时）
 
 ```powershell
-npm pack                                        # 得到 superpi-0.41.0.tgz
+npm pack                                        # 得到 superpi-0.42.0.tgz
 cd "$env:USERPROFILE\.dsh\profiles\desktop"
 node "$env:USERPROFILE\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\pnpm\bin\pnpm.cjs" `
-  add "file:C:\path\to\superpi-0.41.0.tgz" --ignore-scripts
+  add "file:C:\path\to\superpi-0.42.0.tgz" --ignore-scripts
 ```
 
 不要在 profile 里用 `npm install`：npm 会另写一份 `package-lock.json`，而宿主插件管理器用的是 pnpm，两套锁文件互相看不见，下次插件安装就会把 node_modules 重建成 pnpm 理解的样子。
@@ -469,7 +469,7 @@ npm install --prefix <插件>/.runtime --save-exact --no-audit --no-fund --logle
 
 ```powershell
 npm ci              # 按 package-lock.json 安装验收依赖
-npm test            # 离线门禁（顺序即依赖顺序）：
+npm test            # 按依赖顺序运行离线门禁，每套执行一次
                     # preflight（依赖前置断言，缺 pi/react 直接红）
                     # → selfcheck → client-render + css-tokens
                     # → runtime-resolve + config-hot + host-parity
@@ -478,7 +478,7 @@ npm test            # 离线门禁（顺序即依赖顺序）：
                     # → turn-verdict + text-integrity + delivery + reliability + engineering-bench
                     # → parity + tui-editor
                     # → brand-pi-runtime + restart-lib + github-sync + version
-                    # → gate-inventory（各套规模对账，收口）
+                    # → 汇总各套当次执行的规模
                     #
                     # 各套的 check 数不写在这里：唯一真源是 test/gate-inventory.json，
                     # 由 gate-inventory 实测对账（实测低于登记值即红）。
@@ -511,7 +511,7 @@ pwsh -NoProfile -File .\tools\standalone-verify.ps1   # 全新 DSH_HOME 里只�
 | `test/selfcheck.mjs` | 证明 `/selfcheck` 能分辨「内存里跑的代码」与「磁盘上的代码」 |
 | `test/preflight.mjs` | **门禁依赖的唯一判据**：缺 pi / react / jiti 直接失败，不再 `SKIP + exit 0`。为什么必须这样：`.runtime/` 是 gitignore 的，**新机器 clone 下来必然没有 pi**，而实测隐藏它之后 `tui-editor` 的整段检查一条都没跑、`npm test` 仍是绿的。 |
 | `test/session-lifecycle.mjs` | **会话池生命周期**：spawn 进池、`exit` 立刻摘除、摘除后 `/state` 不再列出、路由 404、崩溃累积不撞 8 个上限、`exit` 与主动关闭并存时幂等。对应的真实缺陷是「死进程永不摘除 → 8 次崩溃后新建会话 429」。 |
-| `test/gate-inventory.mjs`+`.json` | **门禁规模的唯一真源与对账**：登记表给每套一条下限，`npm test` 末尾实跑全部门禁并比对，**实测 < 登记即红**。`--list` 看登记表、`--print` 打印实测值。 |
+| `test/gate-inventory.mjs`+`.json` | **门禁执行与对账**。按原顺序执行每套检查，用当次退出状态和实测数量判断是否通过。`--list` 查看登记下限，`--print` 执行计数门禁并打印实测值。 |
 | `test/timeout.mjs` | 超时语义门禁（规模见 `test/gate-inventory.json`）：`timeoutLimitMs` 的三态（正数=毫秒上限 / `0``负数``Infinity`=不设上限 / `NaN``乱码``对象`=TypeError 绝不静默降级）、到期即 reject 且不留孤儿 pending、不设上限时进程关闭由 `handleExit` 兜底、**弹窗未答则计时期续期**、**应答后重开一整轮窗口**、续期上限耗尽时报「dialog(s) never answered」。用 `test/fixtures/fake-pi-rpc.mjs` 做协议替身，把 5 分钟的真实等待压到毫秒级 —— 这是 0.3.0 之前「红条与对话框并存」那个缺陷唯一可靠的门禁 |
 | `test/fixtures/fake-pi-rpc.mjs` | 假 pi RPC 子进程（`FAKE_PI_MODE=dialog/silent`）：只为复现「命令永不回答」与「命令在等弹窗」两种时序，不模拟其他行为 |
 | `test/fixtures/pi-ext-ui-probe.ts` | 扩展 UI 探针（人工验证用，不参与 `npm test`）：复制到 `%USERPROFILE%\.pi\agent\extensions\` 并重启 pi 会话后，`/dsh-ui-probe` 依次弹 select→confirm→input→editor，`/dsh-ui-notify` 验五个单向方法。**扩展对话框必须真人点，自动化只能测到 host 侧的时序**，所以探针留在仓库里当复现手段 |
