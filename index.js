@@ -33,6 +33,7 @@ import {
 } from './src/rpc-contract.mjs'
 import { decoratePiEvent } from './src/event-verdict.mjs'
 import { rpcExtensionArgs, runtimeSessionOptions } from './src/runtime-extensions.mjs'
+import { SESSION_CONTROL } from './extensions/superpi-session-controls.mjs'
 import { BRAND_NAME } from './extensions/superpi-brand.mjs'
 import {
   expandUserPath,
@@ -81,7 +82,7 @@ const API_PREFIX = '/api/' + PLUGIN_ID
 const MAX_SESSIONS = 8
 const MAX_BODY_BYTES = 4 * 1024 * 1024
 /** GET /contract 里 version 字段的取值：本插件对外的契约版本，与 package.json 解耦。 */
-const CONTRACT_VERSION = '0.43.0'
+const CONTRACT_VERSION = '0.44.0'
 /** 历史会话列表的条数窗口（与 src/session-store.mjs 的 DEFAULT_LIMIT/MAX_LIMIT 一致）。 */
 const HISTORY_DEFAULT_LIMIT = 20
 const HISTORY_MAX_LIMIT = 200
@@ -209,6 +210,8 @@ const SELF_FILES = [
   { rel: 'extensions/superpi-review.mjs', runtime: false },
   { rel: 'extensions/superpi-delivery.ts', runtime: false },
   { rel: 'extensions/superpi-editor.ts', runtime: false },
+  { rel: 'extensions/superpi-session-controls.mjs', runtime: true },
+  { rel: 'extensions/superpi-session-controls.ts', runtime: false },
   { rel: 'package.json', runtime: false },
   { rel: 'cordis.patch.yml', runtime: false },
 ]
@@ -380,6 +383,7 @@ function buildSelfCheck(detected, options = {}) {
   const staleAny = files.filter(file => file.fresh === false && file.diskSha256 !== null)
   // 文件被删/被挪走也算「重启才生效」，但它跟「内容被改」是两回事，分开报。
   const goneRuntime = files.filter(file => file.runtime && file.diskSha256 === null)
+  const stale = staleRuntime.length > 0 || goneRuntime.length > 0
 
   // pi 侧构建新鲜度：bundle 目录里最新文件 vs src 目录里最新文件。
   const cliPath = scanPi && detected.cliPath !== '' ? detected.cliPath : ''
@@ -399,7 +403,7 @@ function buildSelfCheck(detected, options = {}) {
   }
 
   return {
-    ok: staleRuntime.length === 0,
+    ok: !stale,
     plugin: PLUGIN_ID,
     version: VERSION,
     root: PLUGIN_ROOT,
@@ -409,13 +413,13 @@ function buildSelfCheck(detected, options = {}) {
     git: readGitHead(PLUGIN_ROOT),
     summary: {
       // 唯一该看的字段：true 就是「磁盘上已经改了，但内存里跑的还是旧代码，重启 DSH 才生效」。
-      stale: staleRuntime.length > 0 || goneRuntime.length > 0,
+      stale,
       staleRuntimeCount: staleRuntime.length + goneRuntime.length,
       changedCount: staleAny.length,
       missingCount: missing.length,
       changed: staleAny.map(file => file.rel),
       missing: missing.map(file => file.rel),
-      hint: staleRuntime.length > 0 || goneRuntime.length > 0
+      hint: stale
         ? [
           staleRuntime.length > 0 ? '磁盘上的 ' + staleRuntime.map(file => file.rel).join(', ') + ' 已修改' : '',
           goneRuntime.length > 0 ? goneRuntime.map(file => file.rel).join(', ') + ' 已不在磁盘上' : '',
@@ -1048,6 +1052,7 @@ function rulesExtensionInstalled({ env = process.env, home = os.homedir() } = {}
 }
 
 export function createHandler(deps) {
+  const switchingFiles = new Map()
   /**
    * 历史图片回取表：整个 handler 一份，按 `<sessionId>:<seq>:<block>` 索引。
    * 放在 handler 闭包里而不是 per-request：面板翻页 / 重新挂载后仍能取回同一张图，
@@ -1388,6 +1393,29 @@ export function createHandler(deps) {
           const since = Number(url.searchParams.get('since') ?? 0)
           return send(200, snapshotOf(proc, { sinceSeq: Number.isFinite(since) ? since : 0 }))
         }
+        if (tail === '/controls/retry' && (method === 'GET' || method === 'POST')) {
+          if (method === 'GET') {
+            const { enabled } = await proc.requestSessionControl(SESSION_CONTROL.retry)
+            return send(200, { ok: true, enabled })
+          }
+          const contentType = String(req.headers['content-type'] ?? '')
+          if (!contentType.toLowerCase().includes('application/json')) return send(415, { error: 'content-type must be application/json' })
+          const body = await readJsonBody(req)
+          if (typeof body?.enabled !== 'boolean') return send(400, { error: 'enabled must be a boolean' })
+          let { enabled } = await proc.requestSessionControl(SESSION_CONTROL.retry)
+          if (enabled !== body.enabled) {
+            await proc.send({ type: 'set_auto_retry', enabled: body.enabled })
+            enabled = (await proc.requestSessionControl(SESSION_CONTROL.retry)).enabled
+          }
+          return send(200, { ok: true, enabled, applied: enabled === body.enabled })
+        }
+        if (method === 'POST' && tail === '/controls/previous-model') {
+          const { changed } = await proc.requestSessionControl(SESSION_CONTROL.previousModel)
+          if (!changed) return send(200, { ok: true, model: null })
+          const state = await proc.send({ type: 'get_state' })
+          proc.noteCommand({ type: 'get_state' }, state)
+          return send(200, { ok: true, model: state.model, thinkingLevel: state.thinkingLevel })
+        }
         /**
          * 取一张历史图片的真实像素（0.14.0）。
          *
@@ -1443,29 +1471,31 @@ export function createHandler(deps) {
           // 原样透传会让 pi 收到未声明的键（契约污染，且 host-parity 会亮红）。
           const command = { ...body }
           delete command.timeoutMs
-          const data = await proc.send(command, { timeoutMs: limit ?? 0 })
-          // 状态回填统一交给 PiProcess.noteCommand：set_model / set_session_name / 会话替换
-          // 这些命令的响应里带着新值，不回填的话 /snapshot 会一直报旧值。
-          proc.noteCommand?.(body, data)
-          // switch_session 之后 pi 的 get_state 不回报 cwd（rpc-types.ts:96-109 没有该字段），
-          // 只能从目标会话文件的 header 里补，否则面板的 cwd 还停在 spawn 时那个目录。
-          if (body.type === 'switch_session' && body.cancelled !== true && data?.cancelled !== true &&
-            typeof proc.setSessionCwd === 'function') {
-            const nextCwd = await readSessionCwd(body.sessionPath)
-            proc.setSessionCwd(nextCwd)
+          const targetKey = body.type === 'switch_session' ? pathComparisonKey(body.sessionPath) : ''
+          if (targetKey !== '') {
+            const owner = switchingFiles.get(targetKey) ?? deps.listRunningSessions?.().find(session =>
+              session.id !== id && pathComparisonKey(session.sessionFile) === targetKey)?.id
+            if (owner !== undefined) return send(409, { error: 'This session is already open in another tab.', sessionId: owner })
+            switchingFiles.set(targetKey, id)
           }
-          // 这四条命令会把 pi 内部的会话指针挪到别处（甚至换掉 sessionFile）。旧事件留在
-          // 缓冲里，面板下一次重连回放就会把两个会话混着渲染，所以成功即清空。
-          // 判定放在 send 之后：失败的命令（比如 clone 无叶子节点）不该丢事件。
-          if (SESSION_REPLACING_COMMANDS.has(body.type) && body.cancelled !== true && data?.cancelled !== true) {
-            proc.resetEvents?.()
-            // 新会话的 sessionFile/sessionId 只有 get_state 才给得出。等一小会儿再返回：
-            // 客户端紧接着那次 /snapshot 就能看到正确的会话身份，而不是 null 要再补一次。
-            if (typeof proc.refreshState === 'function') {
-              await Promise.race([proc.refreshState({ timeoutMs: SPAWN_STATE_TIMEOUT_MS }), delay(POST_SPAWN_STATE_WAIT_MS)])
+          try {
+            const data = await proc.send(command, { timeoutMs: limit ?? 0 })
+            // 状态回填统一交给 PiProcess.noteCommand。会话替换后要重建会话身份。
+            proc.noteCommand?.(body, data)
+            if (SESSION_REPLACING_COMMANDS.has(body.type) && body.cancelled !== true && data?.cancelled !== true) {
+              // Pi 不回报切换后的 cwd，使用目标会话头部补全。
+              if (body.type === 'switch_session' && typeof proc.setSessionCwd === 'function') {
+                proc.setSessionCwd(await readSessionCwd(body.sessionPath))
+              }
+              proc.resetEvents?.()
+              if (typeof proc.refreshState === 'function') {
+                await Promise.race([proc.refreshState({ timeoutMs: SPAWN_STATE_TIMEOUT_MS }), delay(POST_SPAWN_STATE_WAIT_MS)])
+              }
             }
+            return send(200, { ok: true, data })
+          } finally {
+            if (targetKey !== '') switchingFiles.delete(targetKey)
           }
-          return send(200, { ok: true, data })
         }
         if (method === 'POST' && tail === '/respond') {
           const contentType = String(req.headers['content-type'] ?? '')

@@ -3,6 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { BRAND_NAME, KEEP_CONFIG_DIR, readBrand } from '../extensions/superpi-brand.mjs'
+import { SESSION_CONTROL_FILE } from '../extensions/superpi-session-controls.mjs'
 
 const AGENT_DIR = '_CODING_AGENT_DIR'
 const SESSION_DIR = '_CODING_AGENT_SESSION_DIR'
@@ -26,6 +27,8 @@ export const EXTENSION_FILES = [
   ['verification', 'superpi-verification.mjs'],
   ['review', 'superpi-review.mjs'],
   ['delivery', 'superpi-delivery.ts'],
+  ['session-controls-protocol', 'superpi-session-controls.mjs'],
+  ['session-controls', SESSION_CONTROL_FILE],
 ].map(([label, name]) => ({ label, name, source: 'extensions/' + name }))
 
 /** Resolve SuperPi's paths and project them onto the variable names the selected CLI reads. */

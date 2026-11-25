@@ -28,6 +28,23 @@ pwsh -NoProfile -File .\tools\install-plugin.ps1 -Profile desktop
 
 终端入口为 `superpi`。在源码目录也可运行 `node src/superpi-cli.mjs`。找不到 Pi 运行时时，DSH 面板提供「安装 SuperPi 运行时」入口。
 
+### 离线安装
+
+先在能安装依赖的机器上生成含 Pi 运行时的归档。构建机与目标机须使用相同的操作系统和 CPU 架构。
+
+```powershell
+npm run pack:offline -- .\artifacts
+```
+
+把生成的归档复制到目标机。在现有 DSH profile 目录下用 DSH 自带的 pnpm 安装，然后重启该实例。
+
+```powershell
+node "$env:USERPROFILE\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\pnpm\bin\pnpm.cjs" `
+  add "file:C:\path\to\superpi-0.44.0-offline-win32-x64.tgz" --offline --ignore-scripts
+```
+
+归档包含当前平台的 Pi 和生产依赖。使用远程模型时仍需连通模型服务。已经安装 Pi 时，也可在配置中用 `cliPath` 指定运行时。
+
 <details>
 <summary>启动参数、安装过程与其他安装方式</summary>
 
@@ -215,10 +232,10 @@ New-Item -ItemType Junction `
 ### 使用 pnpm 手工安装
 
 ```powershell
-npm pack                                        # 得到 superpi-0.43.0.tgz
+npm pack                                        # 得到 superpi-0.44.0.tgz
 cd "$env:USERPROFILE\.dsh\profiles\desktop"
 node "$env:USERPROFILE\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\pnpm\bin\pnpm.cjs" `
-  add "file:C:\path\to\superpi-0.43.0.tgz" --ignore-scripts
+  add "file:C:\path\to\superpi-0.44.0.tgz" --ignore-scripts
 ```
 
 不要在 profile 里用 `npm install`：npm 会另写一份 `package-lock.json`，而宿主插件管理器用的是 pnpm，两套锁文件互相看不见，下次插件安装就会把 node_modules 重建成 pnpm 理解的样子。
@@ -277,7 +294,7 @@ pwsh -NoProfile -File .\tools\standalone-verify.ps1 -Keep      # 保留临时目
 
 | 能力 | 面板和命令行中的行为 |
 | --- | --- |
-| 项目与会话 | 按项目查看和恢复历史。模型、会话和扩展沿用 Pi 的配置目录 `~/.pi/agent`，SuperPi 的偏好和诊断存放在 `~/.superpi`。 |
+| 项目与会话 | 面板标签栏可新建和切换运行中的会话，各自保留任务与输入草稿。按项目查看和恢复历史。模型、会话和扩展沿用 Pi 的配置目录 `~/.pi/agent`，SuperPi 的偏好和诊断存放在 `~/.superpi`。 |
 | 异常恢复 | 识别空响应、乱码、畸形工具标记、输出截断与特定上游断流。满足重试条件时从已完成的工具结果续跑一次。故障持续时提供「继续」入口。 |
 | 写入保护 | 在 `write` 和 `edit` 执行前检查路径与新文本。0.43.0 起，下一次模型请求保留错误诊断和安全路径，被拦截的参数留在原始会话记录中供排查。 |
 | 主动询问 | Agent 通过 `ask_user` 请求必要信息或决策。选择和自由输入都能回到当前任务。 |
@@ -372,7 +389,7 @@ npm install --prefix <插件>/.runtime --save-exact --no-audit --no-fund --logle
 | --- | --- | --- |
 | GET | `/api/superpi/state` 或 `/api/superpi/` | `{version, apiPrefix, resolved, runtime, limits, sessions}`；`resolved` 是 node/pi 的解析结果，`sessions` 是当前所有会话的无事件快照 |
 | GET | `/api/superpi/health` | `{ok, version}`，不碰磁盘也不碰子进程 |
-| GET | `/api/superpi/selfcheck` | 自检：内存中加载的代码 vs 磁盘上的代码、pi 构建新鲜度；宿主没注入自检能力时回 501 |
+| GET | `/api/superpi/selfcheck` | 对照已加载文件与当前磁盘内容，并检查 Pi 构建时间。加载文件缺失或变化时 `ok=false`，恢复原字节后同一进程可立即通过。 |
 | GET | `/api/superpi/diagnostics` | `plugin`（id/version/root/apiPrefix/pid/node/execPath）+ `runtime` + `selfcheck`，排障先看这个 |
 | GET | `/api/superpi/runtime` | 运行时解析报告（`ok` / `source` / `cliPath` / `searched` / `install`） |
 | POST | `/api/superpi/runtime/refresh` | 重新解析（手工装好 pi 后不必重启 DSH） |
@@ -389,6 +406,8 @@ npm install --prefix <插件>/.runtime --save-exact --no-audit --no-fund --logle
 | GET | `/api/superpi/sessions/:id/events?since=N` | SSE 事件流，15s 心跳注释帧 |
 | GET | `/api/superpi/sessions/:id/snapshot?since=N` | 增量快照（重连补数据用），带本轮未应答的 `pendingUi` |
 | POST | `/api/superpi/sessions/:id/command` | 转发一条 pi RPC 命令，body 必须是带 `type` 的 JSON 对象；`new_session` / `switch_session` / `fork` / `clone` 成功后清空事件缓冲并回填会话身份 |
+| GET / POST | `/api/superpi/sessions/:id/controls/retry` | 读取当前会话生效的自动重试设置。POST 接收 `{enabled}`，返回有效值和 `applied`。 |
+| POST | `/api/superpi/sessions/:id/controls/previous-model` | 在当前会话的可用模型范围内反向切换，返回更新后的模型和推理档位。 |
 | POST | `/api/superpi/sessions/:id/respond` | 应答扩展 UI 请求（`{id, value}` / `{id, confirmed}` / `{id, cancelled}` 三选一） |
 | GET | `/api/superpi/ui-prefs` | 面板偏好（项目显示名 / 会话显示名 / 置顶）的只读快照 `{version, updatedAt, projects, sessions}`；文件还不存在也照常回 200 与空结构；宿主没注入时回 501 |
 | POST | `/api/superpi/ui-prefs/project` | body `{key, name}`：`key` 是项目路径、`name` 是显示名（自动 trim，空串 = 删除覆盖，上限 120 字）。未知键一个都不落盘（白名单），非法值回 400 |
@@ -403,7 +422,7 @@ npm install --prefix <插件>/.runtime --save-exact --no-audit --no-fund --logle
 
 ## 面板行为
 
-- 打开时先 `GET /state`：`runtime.ok === false` 直接切整页引导（不建会话）；否则已有会话就 `attach` 第一个，没有才 `POST /sessions`。挂载时还取一次 `GET /contract`，斜杠菜单与命令分发都读它，不在前端硬编码。
+- 面板通过 `GET /state` 检查运行时并取得运行中的会话。首次打开时接入首个可用会话，切标签时接入所选会话。标签栏的 `+` 始终新建独立会话，现有任务继续执行。斜杠菜单与分发规则从 `GET /contract` 读取。
 - **「新会话」与「重连」是两件不同的事**：新会话在顶栏，走 RPC `new_session`（同一个 `pi` 子进程里换会话树，与命令行 `/new` 同一条路径，快），新树建在**当前工作区**里；重连走 `endSession`（`DELETE` 旧会话 + 重建面板 + 新建，等于换一个子进程，旧事件缓冲一并丢掉），0.7.0 起它收进顶栏的「更多」菜单并且要过二次确认——换进程是恢复手段，不是日常动作。0.2.5 把「换进程」当成了新会话，导致顶栏按钮与 `/new` 同名不同义（D-03），0.3.0 起两者分开，0.7.0 起一个在明面一个进菜单。
 - 对话区把 `turn_start / text_delta / thinking_delta / toolcall_* / turn_end` 归并成消息气泡，**过程流按 DSH 会话过程流的形状渲染**（0.6.4，见下方「过程行」条）：思考是父行、工具调用是它下面的缩进子行组，一次调用只占一行，展开即「参数 + 输出」（流式期间边跑边长，单条 partial 截 2000 字符），消息底部给 in/out/total token 数。
 - composer 键位与 TUI 的 `keybindings.ts` 对齐：`Enter` 发送、`Shift+Enter` 换行、`Esc` 打断、`Ctrl+P` 下一个模型（`cycle_model`，只正循环）、`Shift+Tab` 切思考档位（`cycle_thinking_level`）、`Alt+Enter` 追加一条 follow-up（`follow_up`）、`Alt+Q` 取回排队中的消息（`clear_queue`）。输入 `/` 弹命令菜单、输入 `@` 弹文件补全（`GET /files`，选中只插入路径文本）。
@@ -614,11 +633,8 @@ DSH 的插件管理器（dshmarket / 插件详情页）在安装、卸载、升�
 
 `.dsh-local-packages/` 里的 tarball 是回滚与重装的锚点，不要手动清。
 
-## 已知限制
+## 会话与模型快捷操作
 
-- 只支持单实例面板：多开同一 keyed slot 会互相覆盖状态。
-- 会话默认落盘（`persist=true`，pi 写 `~/.pi/agent/sessions`），DSH 重启后能靠 `startup=continue` 接回该目录最近的会话；把 `persist` 设为 `false` 才会「退出即丢」。
-- `cycle_model` 在 RPC 面上没有方向参数（pi 只给 `cycleModel()` 正循环），所以 `Ctrl+P` 只能往前走，反向切换得到会话内用 `/model` 打开向上弹层选（见 `docs/parity.md` D-08）。
-- `get_state` 不返回 `autoRetryEnabled`（pi 的 `RpcSessionState` 12 个字段里没有它，`client.js:4167` 读到的永远是 `undefined`）。开关点下去确实发 `set_auto_retry` 并生效，但重开设置弹窗仍显示 off —— 面板侧没有任何回填来源，只能等上游补字段（见 `docs/parity.md` D-07，`test/parity.mjs:290` 用断言把这个缺口锁住）。
-- `/selfcheck` 只能回答「进程加载的 vs 磁盘的」。插件被别处改过又被指回来时，需要重启一次让快照刷新。
-- 一键安装需要能访问 npm registry；离线环境请把 `cliPath` 指到已有 pi，或先手工把依赖装到 `.runtime`。
+- 在同一个 DSH 侧栏中使用顶部 `+` 打开并行会话。选择已在运行的历史会话会切到对应标签。多标签时可关闭当前会话以释放名额。命令行可在不同窗口运行独立会话。
+- `persist=true` 默认保存会话。`startup=continue` 在重启后恢复该目录最近的会话，也可以从历史中选择其他会话。临时任务可使用 `persist=false`，命令行等价选项为 `--no-session`。
+- 两端均可用 `Ctrl+P` 和 `Ctrl+Shift+P` 正向及反向切换可用模型。面板从 Pi 进程读取自动重试状态。命令行使用 `/superpi-retry`；项目配置覆盖全局设置时，两端均会显示有效值。

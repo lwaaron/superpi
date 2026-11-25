@@ -145,7 +145,7 @@ export const ASSISTANT_EVENT_TYPES = [
  * match 描述参数形态：'exact' 只认完全相同，'prefix' 认 "cmd" 与 "cmd ..."。
  */
 export const TUI_COMMANDS = [
-  { text: '/settings', disposition: 'client', commands: ['get_state'], match: 'exact', note: '面板设置弹窗（0.7.0 起由抽屉改为居中弹窗）：自动压缩/自动重试/steering/followUp 四个开关，读 get_state 回填' },
+  { text: '/settings', disposition: 'client', commands: ['get_state'], match: 'exact', note: '面板设置弹窗。自动重试通过 SuperPi 会话控制读取 Pi 的有效设置，其余状态从 get_state 读取' },
   { text: '/scoped-models', disposition: 'client', commands: ['get_available_models'], match: 'exact', note: '模型下拉的过滤视图；TUI 是 scoped 子集，面板统一展示全量并标注' },
   { text: '/model', disposition: 'rpc', commands: ['get_available_models', 'set_model'], match: 'prefix', note: '无参开下拉，有参精确匹配后 set_model' },
   { text: '/thinking', disposition: 'rpc', commands: ['get_available_thinking_levels', 'set_thinking_level'], match: 'prefix', note: '无参开档位下拉，有参精确匹配后 set_thinking_level' },

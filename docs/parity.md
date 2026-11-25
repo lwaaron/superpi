@@ -64,7 +64,7 @@ selfcheck → client-render(1013) → css-tokens(98) → runtime-resolve → con
 | 新会话 | `new_session` | `/new` → `handleClearCommand`（`:7118`）→ `runtimeHost.newSession()` | 已实现（`runNewSession` `client.js:5236`，发 `new_session`；顶栏「新会话」主按钮 `client.js:5761` 与 `AddMenu` 的 `new` 项（`client.js:2970`）都走它。**0.7.0 起「重连」（换子进程 `endSession` `client.js:5248`）退进 `⋯` 更多菜单并过二次确认**，同一件事不再有两个入口，见 `D-03`） | `RPC-06` |
 | 读取会话状态 | `get_state` | TUI 无此命令，直接读 `session` | 已实现（`client.js:4974` `loadState`；host 侧 `src/pi-rpc.mjs` 的 `noteCommand` 另外缓存了一份 `lastState`） | `RPC-07` |
 | 选模型 | `set_model` | `/model <provider/model>` → `session.setModel(model,{persist:false})`（`:5396`）；选择器 `:5539` | 已实现（`applyModelBySearch` `client.js:5377`；无参 `/model` 开输入框上方弹层 `ModelPicker` `client.js:3258`，受控开合 `togglePicker` `client.js:5415`） | `RPC-08` |
-| 轮换模型 | `cycle_model` | Ctrl+P → `session.cycleModel(direction)`（`:4725`，键位 `:3229-3230`） | 已实现（`client.js:5203`）。**RPC 面没有 `direction` 参数**，见 `D-08` | `RPC-09` |
+| 轮换模型 | `cycle_model` | `Ctrl+P` 正向，`Ctrl+Shift+P` 反向 | 同样的快捷键。正向调用原生 RPC，反向由会话控制扩展按当前模型范围切换。见 `D-08` | `RPC-09`、`test/reliability.mjs` |
 | 列出可用模型 | `get_available_models` | `/scoped-models` 选择器读 `modelRuntime.getAvailableSnapshot()`（`:5109`、`:5571`） | 已实现（`ModelPicker` `client.js:3258` 向上弹层；名称解析 `applyModelBySearch` `client.js:5377`） | `RPC-10` |
 | 设思考档位 | `set_thinking_level` | `/thinking <level>` → `session.setThinkingLevel(level)`（`:5207`、`:5357`） | 已实现（`client.js:5091`） | `RPC-11` |
 | 轮换思考档位 | `cycle_thinking_level` | 键位 `app.thinking.cycle` → `session.cycleThinkingLevel()`（`:4712-4713`） | 已实现（`client.js:5222`，Shift+Tab） | `RPC-12` |
@@ -73,7 +73,7 @@ selfcheck → client-render(1013) → css-tokens(98) → runtime-resolve → con
 | 设 follow-up 模式 | `set_follow_up_mode` | `/settings` → `session.setFollowUpMode(mode)`（`:5184`） | 已实现（`client.js:5990`） | `RPC-15` |
 | 手动压缩 | `compact` | `/compact [指令]` → `handleCompactCommand`（`:7276`）→ `session.compact(customInstructions)`（`:7280`） | 已实现（`runCompact` `client.js:5287`，0.7.0 起入口在 `⋯` 更多菜单（`moreItems` `client.js:5700-5703`）+ `ConfirmDialog` 二次确认（`client.js:3190`）；**曾经把 `/compact` 当 prompt 发的缺陷已修**，见 `handleSlash` `client.js:5667-5673`） | `RPC-16` |
 | 自动压缩开关 | `set_auto_compaction` | `/settings` → `session.setAutoCompactionEnabled(enabled)`（`:5151`） | 已实现（`client.js:5987`） | `RPC-17` |
-| 自动重试开关 | `set_auto_retry` | **TUI 无对应 UI**；仅 `auto_retry_start` 时 Esc 临时改绑 `abortRetry()`（`:3873-3877`） | 已实现（`client.js:5988`）。**这是面板领先 TUI 的能力**；但 `get_state` 不返回该字段，开关无法回读，见 `D-07` | `RPC-18` |
+| 自动重试开关 | `set_auto_retry` | `/superpi-retry` 查看并修改，使用 Pi 设置 API | 设置弹窗从 Pi 进程回读有效值，写入后再次确认。见 `D-07` | `RPC-18`、`test/reliability.mjs`、`test/client-render.mjs` |
 | 中止重试 | `abort_retry` | `:3877`（Esc 改绑） | 已实现（`client.js:5134`，Esc 第一分支） | `RPC-19` |
 | 跑 bash | `bash` | `!` / `!!` 前缀（`:3473-3474`，`!!` = `excludeFromContext:true`） | 已实现（`client.js:5077` `handleBash`，`BASH_SHORTCUTS` 在 `src/rpc-contract.mjs:181-184`） | `RPC-20` |
 | 中止 bash | `abort_bash` | `isBashRunning` 时 Esc → `session.abortBash()`（`:3199-3200`） | 已实现（`client.js:5135`） | `RPC-21` |
@@ -251,7 +251,7 @@ payload 取值优先级 `cancelled` → `confirmed` → `value`（`index.js:1093
 
 ## 5. 已知契约缺陷清单
 
-| 编号 | 缺陷 | 位置 | 0.8.1 状态 |
+| 编号 | 缺陷 | 位置 | 当前状态 |
 | --- | --- | --- | --- |
 | `D-01` | `RPC_EVENTS` 混进 5 条伪事件（`extension_ui_notify/status/widget/title/editor_text`） | 原 `src/rpc-contract.mjs:99-103`（**注**：这两个坐标是本行登记时的写法，`99-103` 实际落在 `RPC_EVENTS` 中段的真实事件上 —— 伪事件名只出现在同文件 `:78-80` 的注释里，该文件的唯一提交 `91270e0`（0.3.0）起契约数组就从未真的包含它们。数字保留作历史记录，别当坐标） | **已闭环**。契约现 25 条真实事件（`src/rpc-contract.mjs:82-108`），`test/parity.mjs:318-319` 用 `contractOnly === []` 防回归 |
 | `D-02` | `disposition` 出现未文档化的第 6 种取值 `unsupported` | 原 `src/rpc-contract.mjs:147` vs 注释 `:128-139` | **已闭环**。`DISPOSITIONS`（`:283`）声明 6 种，注释 `:128-146` 已枚举 6 种，`validateContract()`（`:286-323`）校验取值合法性 |
@@ -259,9 +259,9 @@ payload 取值优先级 `cancelled` → `confirmed` → `value`（`index.js:1093
 | `D-04` | `src/session-store.mjs`（只读会话枚举）零引用 | 原全仓 grep 无 import | **已闭环**。`index.js:34-45` import 八个函数（`listAllSessions` / `groupSessionsByProject` / `readSessionCwd` 于 0.5.0 追加），`GET /sessions/history?scope=`（`index.js:870`）暴露，面板 `SessionsSheet`（`client.js:3659`）消费 |
 | `D-05` | `index.js` 未暴露 `pendingUi`，无扩展 UI 专用应答面 | 原 `index.js:484-567` | **已闭环**（host 面 0.3.0）+ **面板面 0.16.1 才真闭环**。`POST /sessions/:id/respond`；`pendingUi` 随 `snapshot()` 下发（`src/pi-rpc.mjs:603`）。<br>⚠️ **原记录在这里犯过一个错，务必记住**：它把「`pendingUi` 随 snapshot() 下发」当作闭环依据，但**面板从来没有读过这个字段**（0.16.0 实测：`client.js` 里 `snapshot.pendingUi` 出现 0 次）。验收只覆盖到「管道通了」，没覆盖到「交付到了」。真实后果：面板刷新时若 pi 正等扩展弹窗，弹窗在 UI 上不存在、用户无法应答，命令挂到 12 轮续期耗尽（约 12 分钟）才报 `N dialog(s) never answered`。<br>0.16.1 修法：`hydrateFromSnapshot()` 里消费 `snapshot.pendingUi`，走与实时事件**同一条**路径（`pendingUiOf` + `addPendingUi`）。门禁 `test/client-render.mjs` §13 四条断言钉死。**教训**：闭环判据必须落在「用户能感知到的那一端」，不是「协议字段发出去了」。 |
 | `D-06` | `test/parity.mjs` 不存在，`npm test` 不含门禁 | 原 `package.json` `scripts.test` | **已闭环**。`test/parity.mjs` 78 checks + `test/host-parity.mjs` 291 checks + `test/session-projects.mjs` 55 checks（0.5.0 起）+ `test/timeout.mjs` 28 checks + `test/restart-lib.mjs`（0.4.2 起），都在 `npm test` 的 11 项里 |
-| `D-07` | `RpcSessionState` 无 `autoRetryEnabled`，设置弹窗的自动重试开关无法回读 | pi `dist/modes/rpc/rpc-types.d.ts:148`（12 字段，实测无该字段）；`agent-session.ts:4122` 有 getter 但 RPC 面未暴露 | **开放（上游）**。后果：`client.js:4232` 读 `state.autoRetryEnabled` 恒为 `undefined`，开关永远显示 off —— 点一下会发 `set_auto_retry`（`client.js:5988`）确实生效，但刷新后仍显示 off。面板侧今天连乐观本地态都没有（`loadState` `client.js:4974-4986` 只回填 model / thinkingLevel / sessionName / sessionFile 四个字段），所以唯一出路是上游补字段 + 面板加一份乐观态。`test/parity.mjs:290` 用断言把这个缺口**锁住**：pi 哪天补了字段，这条会红，届时可闭环 |
+| `D-07` | `RpcSessionState` 无 `autoRetryEnabled` | Pi 1.5.2 的 `rpc-types.d.ts` | **产品闭环（0.44.0）**。SuperPi 会话控制使用 `pi.getSettings()` 回读有效状态。两端支持查看和修改，项目覆盖时显示实际生效的值。原生 RPC 字段仍按上游契约对账。 |
 | `D-09` | 点开历史会话后对话区空白：`switch_session` 成功后 host 清空事件缓冲，面板只重放缓冲 | 原 `client.js:2881-2884` `reload`（只 `attach`，无 `get_messages`）；根因在 `index.js:100` `SESSION_REPLACING_COMMANDS` → `proc.resetEvents()`（`index.js:1074`） | **已闭环（0.4.1）**。`attach` 末尾接 `hydrate(id)`（≈ `get_messages` 整表重建，剔除 `system`），覆盖首次进入 / `switch_session` / `fork` / `clone` / `new_session` 五个入口；两道防线：响应回来时会话已切走则丢弃（`sessionRef.current !== id`）、`busy` 期间不覆盖流式气泡（挂 `hydratePendingRef`，`agent_settled` 后由 `drainHydrate()` 补）。命令行 pi 不受影响：它从 jsonl 恢复 `messages`。`test/parity.mjs` §7 用 12 条断言钉死接线，`test/client-render.mjs` §9.16 用 14 条断言钉死数据整形 |
-| `D-08` | `cycle_model` 在 RPC 面无方向参数 | pi `rpc-types.ts:34` 是 `{ type: "cycle_model" }`；`rpc-mode.ts:501` 调 `session.cycleModel()` 单参；TUI `interactive-mode.ts:4723-4725` 的 `cycleModel(direction)` 有 `forward`/`backward`，键位 `:3229-3230` | **开放（上游）**。后果：`Ctrl+P` 只能正循环（`client.js:5203` 注释处已标注），反向要开模型弹层手动选。面板侧不改协议无解 |
+| `D-08` | `cycle_model` 在 RPC 面无方向参数 | Pi 1.5.2 的 `rpc-types.ts` 和 `rpc-mode.ts` | **产品闭环（0.44.0）**。面板反向切换采用 Pi 公开的模型范围、注册表、`setModel` 和 `setThinkingLevel`。命令行保留 Pi 的原生键位。 |
 
 ---
 
@@ -529,6 +529,7 @@ pi 只提供 `SYSTEM.md`（整份替换）、`APPEND_SYSTEM.md`（静态文件�
 
 | 日期 | 版本 | 变更 |
 | --- | --- | --- |
+| 2026-11-25 | 0.44.0 | 面板在一个 DSH 入口中运行和切换独立会话。重复选择已运行的历史时切换到其标签。两端可查看和修改有效的自动重试设置，并支持正向和反向轮换模型。自检对运行文件缺失给出失败状态，恢复原字节后实时通过。提供按平台打包的离线安装归档。 |
 | 2026-11-25 | 0.43.0 | 写入闸从后续模型请求中移除已确认被拦截的参数。保留原始会话记录、工具诊断及同批调用结果。检查覆盖后续请求、同轮改正与 Pi 进程重开。README 将启动、能力、配置和验证入口提前。 |
 | 2026-11-25 | 0.42.0 | `npm test` 按原顺序运行每套门禁一次，按子进程当次的退出状态、摘要和登记下限完成两端验收。 |
 | 2026-11-25 | 0.41.0 | 全新副本用 `npm ci` 安装锁定的验收依赖。React 渲染共用依赖判据，临时技能安装与记忆样本让命令行和面板验收在空白用户目录也能完整执行。 |

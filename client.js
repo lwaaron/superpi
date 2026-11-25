@@ -40,6 +40,9 @@ window.__ModuleLoader__.load({
       newSessionHint: '新会话（等价于命令行 SuperPi 的 /new：同一进程内换一棵会话树）',
       reconnectHint: '重连（关掉 SuperPi 子进程再起一个；会话记录不丢）',
       sessions: '历史会话',
+      runningSessions: '运行中的会话',
+      closeRunningSession: '关闭当前会话',
+      closeRunningSessionBody: '正在运行的任务会停止，未提交的输入草稿会丢失。已保存的历史仍可打开。',
       sessionsEmpty: '这个目录下还没有历史会话。',
       sessionsLoading: '正在读取会话…',
       sessionsHint: '点击任意一条即可切换过去（等价于命令行 SuperPi 的 /resume）。',
@@ -196,6 +199,8 @@ window.__ModuleLoader__.load({
       steerQueued: '排队中（steer）',
       autoCompact: '自动压缩',
       autoRetry: '自动重试',
+      retryUnavailable: '暂无法读取重试状态',
+      retryOverride: '当前会话的项目设置优先，重试状态未改变。',
       // ── 用户自定义规则（0.10.0）───────────────────────────────────────
       rulesSection: '用户自定义规则（最高优先级）',
       rulesSummary: '{lines} 行 · {chars} 字',
@@ -338,6 +343,9 @@ window.__ModuleLoader__.load({
       newSessionHint: 'New session (same as /new: a fresh session tree in the same process)',
       reconnectHint: 'Reconnect (restart the SuperPi child process; the session files stay)',
       sessions: 'Sessions',
+      runningSessions: 'Running sessions',
+      closeRunningSession: 'Close current session',
+      closeRunningSessionBody: 'Running work will stop and the input draft will be discarded. Saved history will remain available.',
       sessionsEmpty: 'No sessions in this directory yet.',
       sessionsLoading: 'Loading sessions…',
       sessionsHint: 'Click one to switch to it (same as /resume in the CLI).',
@@ -474,6 +482,8 @@ window.__ModuleLoader__.load({
       steerQueued: 'Queued (steer)',
       autoCompact: 'Auto-compact',
       autoRetry: 'Auto-retry',
+      retryUnavailable: 'Retry setting unavailable',
+      retryOverride: 'The project setting takes precedence. The effective retry setting is unchanged.',
       // ── User-defined rules (0.10.0) ──────────────────────────────────
       rulesSection: 'User-defined rules (highest priority)',
       rulesSummary: '{lines} lines · {chars} chars',
@@ -617,6 +627,10 @@ window.__ModuleLoader__.load({
       // transparent（等于不要环），面板在根节点上把它指回 state-business-primary，
       // 这样键盘可达性不打折，且仍由主题决定具体色值。
       '.superpi-root{display:flex;flex-direction:column;height:100%;min-height:0;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);font-family:var(--dsw-font-family);font-size:var(--dsw-font-s-14-font-size);line-height:var(--dsw-font-s-14-line-height);position:relative;--dsw-focus-ring-color:var(--dsw-alias-state-business-primary);--dsh-scrollbar-thumb:var(--dsw-alias-scrollbar-bg-l2);--dsh-scrollbar-thumb-hover:var(--dsw-alias-scrollbar-hover-l2)}',
+      '.superpi-workspace>.superpi-root{flex:1;min-height:0;height:auto}',
+      '.superpi-session-tabs{display:flex;align-items:center;gap:4px;overflow-x:auto;flex-shrink:0;padding:4px 8px;border-bottom:1px solid var(--dsw-alias-border-l1)}',
+      '.superpi-session-tabs .superpi-btn{flex-shrink:0;max-width:22ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      '.superpi-session-tabs .superpi-btn[aria-current=true]{background:var(--dsw-alias-bg-module-platform);color:var(--dsw-alias-label-primary)}',
       '.superpi-root *{box-sizing:border-box}',
       '.superpi-root :is(button,input,select,textarea){font-family:inherit}',
       '.superpi-root :is(button,input,select,textarea,summary,a,[tabindex]):focus-visible{outline:var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary));outline-offset:2px}',
@@ -1079,6 +1093,7 @@ window.__ModuleLoader__.load({
       else if (typeof body === 'string' && body.trim() !== '') message = body.trim().slice(0, 400)
       var error = new Error(message)
       error.status = status
+      if (status === 409 && typeof body?.sessionId === 'string') error.sessionId = body.sessionId
       return error
     }
 
@@ -1140,6 +1155,13 @@ window.__ModuleLoader__.load({
           body: body,
           timeoutMs: typeof timeoutMs === 'number' ? timeoutMs : 120000,
         })
+      },
+      retry: function (id, enabled) {
+        return requestJson('/sessions/' + encodeURIComponent(id) + '/controls/retry',
+          typeof enabled === 'boolean' ? { method: 'POST', body: { enabled: enabled } } : undefined)
+      },
+      previousModel: function (id) {
+        return requestJson('/sessions/' + encodeURIComponent(id) + '/controls/previous-model', { method: 'POST', body: {} })
       },
       respond: function (id, body) {
         return requestJson('/sessions/' + encodeURIComponent(id) + '/respond', { method: 'POST', body: body, timeoutMs: 20000 })
@@ -3157,9 +3179,12 @@ window.__ModuleLoader__.load({
       var t = props.t
       var textRef = useRef(null)
       var taRef = useRef(null)
-      var stateText = useState('')
+      var stateText = useState(props.draftText ?? '')
       var text = stateText[0]
-      var setText = stateText[1]
+      var setText = function (value) {
+        stateText[1](value)
+        props.onDraftText?.(value)
+      }
       var stateMenu = useState(null)
       var menu = stateMenu[0]
       var setMenu = stateMenu[1]
@@ -3306,9 +3331,9 @@ window.__ModuleLoader__.load({
         //   shift+tab         → app.thinking.cycle          → cycle_thinking_level
         //   alt+enter / ctrl+q → app.message.followUp       → follow_up
         //   alt+q / alt+up    → app.message.dequeue         → clear_queue
-        if (event.ctrlKey === true && event.key === 'p') {
+        if (event.ctrlKey === true && (event.key === 'p' || event.key === 'P')) {
           event.preventDefault()
-          props.onCycleModel()
+          props.onCycleModel(event.shiftKey === true ? 'backward' : 'forward')
           return
         }
         if (event.shiftKey === true && event.key === 'Tab') {
@@ -4809,10 +4834,11 @@ window.__ModuleLoader__.load({
         })))
     }
 
-    /** 设置弹窗 = 面板的 /settings（0.7.0 起是居中弹窗 Dialog，不再是抽屉）。四个开关全部走 RPC，与 TUI 的 settingsManager 语义一致。 */
+    /** 面板的 /settings 读取当前会话的有效设置。 */
     function SettingsSheet(props) {
       var t = props.t
       var state = props.state
+      var retry = props.retry
       /** 开关：对齐 DSH 的 ._switch_1ik0f_5（36x20 胶囊 + 16px 滑块），不再是文字按钮。 */
       function toggle(key, label, value, onChange) {
         var checked = value === true
@@ -4829,7 +4855,11 @@ window.__ModuleLoader__.load({
       }
       return h(Dialog, { t: t, title: t('settings'), onClose: props.onClose, wide: true },
         toggle('autoCompaction', t('autoCompact'), state.autoCompactionEnabled, function (next) { props.onAutoCompaction(next) }),
-        toggle('autoRetry', t('autoRetry'), state.autoRetryEnabled, function (next) { props.onAutoRetry(next) }),
+        retry !== null && retry !== undefined && typeof retry.enabled === 'boolean'
+          ? toggle('autoRetry', t('autoRetry'), retry.enabled, props.onAutoRetry)
+          : h('div', { className: 'superpi-switch-row' }, h('span', { className: 'superpi-switch-label' }, t('autoRetry')),
+            h('span', { role: 'status', className: 'superpi-kv-k' }, retry?.loading === true ? t('loading') : t('retryUnavailable'))),
+        retry?.applied === false ? h('div', { role: 'status', className: 'superpi-sess-line' }, t('retryOverride')) : null,
         h('div', { className: 'superpi-row2' },
           h('span', { className: 'superpi-kv-k', style: { minWidth: '180px' } }, t('steeringMode')),
           h('button', { type: 'button', className: 'superpi-btn', onClick: function () { props.onSteering(state.steeringMode === 'all' ? 'one-at-a-time' : 'all') } }, String(state.steeringMode === undefined ? 'all' : state.steeringMode))),
@@ -5442,6 +5472,125 @@ window.__ModuleLoader__.load({
     // 绝不允许「静默降级」。所有斜杠命令的分发都在 handleSlash 里，与 src/rpc-contract.mjs 的
     // disposition 一一对应。
 
+    function RunningSessionsBar(props) {
+      if (props.sessions.length === 0) return null
+      var t = props.t
+      return h('nav', { className: 'superpi-session-tabs', 'aria-label': t('runningSessions') },
+        props.sessions.map(function (session) {
+          var directory = String(session.sessionCwd ?? session.cwd ?? '').split(/[\\/]/).filter(Boolean).at(-1)
+          var label = session.sessionName || ((directory || t('sessions')) + ' · ' + session.id.slice(0, 4))
+          return h('button', { key: session.id, type: 'button', className: 'superpi-btn', title: label,
+            'aria-current': props.activeId === session.id ? 'true' : undefined, onClick: function () { props.onPick(session.id) } }, label)
+        }),
+        h('button', { type: 'button', className: 'superpi-btn', title: t('newSession'), 'aria-label': t('newSession'),
+          disabled: props.creating === true, onClick: props.onNew }, h(PlusIcon, { size: 16 })),
+        props.sessions.length > 1 && props.activeId !== null ? h('button', {
+          type: 'button', className: 'superpi-btn', title: t('closeRunningSession'), 'aria-label': t('closeRunningSession'),
+          disabled: props.closing === true, onClick: props.onClose,
+        }, h(CloseIcon, { size: 16 })) : null)
+    }
+
+    function workspaceSession(session) {
+      return { id: session.id, sessionId: session.sessionId, sessionName: session.sessionName, sessionFile: session.sessionFile,
+        sessionCwd: session.sessionCwd ?? session.cwd }
+    }
+
+    function upsertSession(sessions, session) {
+      var at = sessions.findIndex(function (item) { return item.id === session.id })
+      if (at < 0) return sessions.concat(workspaceSession(session))
+      var next = sessions.slice()
+      next[at] = workspaceSession(session)
+      return next
+    }
+
+    function SuperPiWorkspace(props) {
+      var navigation = useState({ key: 0, requested: null, active: null, sessions: [] })
+      var nav = navigation[0]
+      var setNav = navigation[1]
+      var drafts = useRef(new Map())
+      var creation = useRef(false)
+      var creatingState = useState(false)
+      var errorState = useState(null)
+      var confirmClose = useState(null)
+      var closing = useState(false)
+
+      function pick(id) {
+        setNav(function (previous) {
+          return previous.active === id ? previous : Object.assign({}, previous, { key: previous.key + 1, requested: id, active: id })
+        })
+      }
+
+      function close(session) {
+        confirmClose[1](null)
+        closing[1](true)
+        errorState[1](null)
+        api.close(session.id).catch(function (error) {
+          if (error?.status !== 404) throw error
+        }).then(function () {
+          drafts.current.delete(session.sessionId ?? session.id)
+          setNav(function (previous) {
+            var sessions = previous.sessions.filter(function (item) { return item.id !== session.id })
+            if (previous.active !== session.id) return Object.assign({}, previous, { sessions: sessions })
+            var next = sessions[0]?.id ?? null
+            return { key: previous.key + 1, requested: next, active: next, sessions: sessions }
+          })
+        }).catch(function (error) { errorState[1](String(error?.message ?? error)) }).finally(function () { closing[1](false) })
+      }
+
+      function add() {
+        if (creation.current) return
+        creation.current = true
+        creatingState[1](true)
+        errorState[1](null)
+        var active = nav.sessions.find(function (session) { return session.id === nav.active })
+        api.create({ cwd: active?.sessionCwd, continue: false }).then(function (result) {
+          var session = result.session
+          setNav(function (previous) {
+            var sessions = upsertSession(previous.sessions, session)
+            return previous.key === nav.key ? { key: previous.key + 1, requested: session.id, active: session.id, sessions: sessions }
+              : Object.assign({}, previous, { sessions: sessions })
+          })
+        }).catch(function (error) { errorState[1](String(error?.message ?? error)) }).finally(function () {
+          creation.current = false
+          creatingState[1](false)
+        })
+      }
+
+      function reportSession(snapshot) {
+        setNav(function (previous) {
+          if (previous.key !== nav.key) return previous
+          return Object.assign({}, previous, { active: snapshot.id, sessions: upsertSession(previous.sessions, snapshot) })
+        })
+      }
+
+      function reportSessions(list) {
+        setNav(function (previous) {
+          return previous.key === nav.key ? Object.assign({}, previous, { sessions: list.map(workspaceSession) }) : previous
+        })
+      }
+
+      function openRunning(file, ownerId) {
+        if (typeof ownerId === 'string' && ownerId !== nav.active) {
+          pick(ownerId)
+          return true
+        }
+        var running = nav.sessions.find(function (session) { return session.sessionFile === file })
+        if (!running || running.id === nav.active) return false
+        pick(running.id)
+        return true
+      }
+
+      return h('div', { className: 'superpi-root superpi-workspace' },
+        h(RunningSessionsBar, { t: props.t, sessions: nav.sessions, activeId: nav.active, creating: creatingState[0], closing: closing[0],
+          onPick: pick, onNew: add, onClose: function () { confirmClose[1](nav.sessions.find(function (session) { return session.id === nav.active }) ?? null) } }),
+        errorState[0] === null ? null : h('div', { role: 'alert', className: 'superpi-sess-line' }, errorState[0]),
+        h(SuperPiPanel, Object.assign({}, props, { key: nav.key, requestedSession: nav.requested, drafts: drafts.current,
+          onSessionReady: reportSession, onSessions: reportSessions, onOpenRunning: openRunning })),
+        confirmClose[0] === null ? null : h(ConfirmDialog, { t: props.t, title: props.t('closeRunningSession'),
+          body: props.t('closeRunningSessionBody'), onCancel: function () { confirmClose[1](null) },
+          onConfirm: function () { close(confirmClose[0]) } }))
+    }
+
     function SuperPiPanel(props) {
       var t = props.t
 
@@ -5489,6 +5638,9 @@ window.__ModuleLoader__.load({
       var imagesState = useState([])
       var images = imagesState[0]
       var setImages = imagesState[1]
+      var drafts = useRef(props.drafts ?? new Map())
+      var activeDraft = useRef(null)
+      var mounted = useRef(false)
       var overlayState = useState(null)
       var overlay = overlayState[0]
       var setOverlay = overlayState[1]
@@ -5500,6 +5652,10 @@ window.__ModuleLoader__.load({
       var drawerState = useState(null)
       var drawer = drawerState[0]
       var setDrawer = drawerState[1]
+      var retryState = useState(null)
+      var retry = retryState[0]
+      var setRetry = retryState[1]
+      var retryRequest = useRef(0)
       // 模型 / 思考档位共用的向上弹层（用户 30427：点左下角模型名向上弹，思考档位放在同一层）。
       // 受控：开合在面板上，Composer 只渲染与转发 —— 这样左下角、+ 菜单、/model、
       // /thinking、以及「按名字找不到模型」的兜底可以共用同一个弹层。
@@ -5867,6 +6023,7 @@ window.__ModuleLoader__.load({
 
       var attach = function (id) {
         return api.snapshot(id, 0).then(function (snapshot) {
+          if (!mounted.current) return null
           var view = viewRef.current
           view.messages = []
           view.openIndex = -1
@@ -5882,6 +6039,10 @@ window.__ModuleLoader__.load({
           if (snapshot.state === 'busy') markBusy(view)
           else markIdle(view)
           sessionRef.current = id
+          var draftId = snapshot.sessionId ?? id
+          if (!drafts.current.has(draftId)) drafts.current.set(draftId, { text: '', images: [] })
+          activeDraft.current = drafts.current.get(draftId)
+          setImages(activeDraft.current.images)
           setMeta(snapshot)
           setPhase('ready')
           openStream(id, view.lastSeq)
@@ -5976,15 +6137,19 @@ window.__ModuleLoader__.load({
         setPhase('loading')
         setError(null)
         return api.state().then(function (state) {
+          if (!mounted.current) return null
           var report = state !== null && state !== undefined && state.runtime !== null && typeof state.runtime === 'object' ? state.runtime : null
           setRuntime(report)
           if (report !== null && report.ok === false) {
             setPhase('missing')
             return null
           }
-          var existing = target !== null ? [] : (state !== null && state !== undefined && Array.isArray(state.sessions) ? state.sessions : [])
+          var running = Array.isArray(state?.sessions) ? state.sessions : []
+          props.onSessions?.(running)
+          var existing = target !== null ? [] : running
           if (existing.length > 0) {
-            var id = existing[0].id
+            var requested = existing.find(function (session) { return session.id === props.requestedSession })
+            var id = (requested ?? existing[0]).id
             return attach(id)
               .then(function () { return loadState(id) })
               .then(function () { return loadLevels(id) })
@@ -6028,6 +6193,7 @@ window.__ModuleLoader__.load({
        */
       useEffect(function () {
         var cancelled = false
+        mounted.current = true
         loadContract()
           .catch(function (failure) {
             if (cancelled) return null
@@ -6040,10 +6206,16 @@ window.__ModuleLoader__.load({
           })
         return function () {
           cancelled = true
+          mounted.current = false
+          sessionRef.current = null
           closeStream()
           if (timerRef.current !== null) window.clearTimeout(timerRef.current)
         }
       }, [])
+
+      useEffect(function () {
+        if (meta !== null && meta.id === sessionRef.current) props.onSessionReady?.(meta)
+      }, [meta])
 
       // 自检只读磁盘、不碰 pi 子进程，面板打开时问一次即可；失败静默。
       var runSelfCheck = function () {
@@ -6239,12 +6411,14 @@ window.__ModuleLoader__.load({
         })
       }
 
-      /** 下一个模型（TUI 的 ctrl+p / app.model.cycleForward）。反向循环 RPC 面没有（parity D-08）。 */
-      var cycleModel = function () {
+      /** 与 TUI 的 Ctrl+P 及 Ctrl+Shift+P 对齐。 */
+      var cycleModel = function (direction) {
         var id = sessionRef.current
         if (id === null) return
-        rpc(id, { type: 'cycle_model' }).then(function (data) {
-          if (data === null || data === undefined) { notice(t('modelsEmpty'), 'warn'); return null }
+        var switching = direction === 'backward' ? api.previousModel(id) : rpc(id, { type: 'cycle_model' })
+        switching.then(function (data) {
+          if (id !== sessionRef.current) return null
+          if (data === null || data === undefined || data.model === null) { notice(t('modelsEmpty'), 'warn'); return null }
           setMeta(function (prev) {
             return Object.assign({}, prev === null ? {} : prev, {
               model: data.model === undefined ? null : data.model,
@@ -6493,7 +6667,7 @@ window.__ModuleLoader__.load({
         loadState(id)
       }
 
-      /** 设置开关：四个 set_* 命令都无返回数据，成功后再拉一次 get_state 回填。 */
+      /** 原生设置命令成功后用 get_state 回填。 */
       var runSetting = function (payload) {
         var id = sessionRef.current
         if (id === null) return
@@ -6504,6 +6678,20 @@ window.__ModuleLoader__.load({
         })
       }
 
+      var loadRetry = function (enabled) {
+        var id = sessionRef.current
+        var sequence = ++retryRequest.current
+        setRetry(id === null ? null : { loading: true })
+        if (id === null) return
+        return api.retry(id, enabled).then(function (data) {
+          if (id === sessionRef.current && sequence === retryRequest.current) setRetry(data)
+        }, function (failure) {
+          if (id !== sessionRef.current || sequence !== retryRequest.current) return
+          setRetry(null)
+          if (typeof enabled === 'boolean') notice(String(failure?.message ?? failure), 'err')
+        })
+      }
+
       var openSettings = function () {
         setDrawer('settings')
         // 规则是设置弹窗里的一节，而且它不依赖会话 —— 即使还没有会话也要拉。
@@ -6511,6 +6699,7 @@ window.__ModuleLoader__.load({
         // 模态开关同样不依赖会话进程（状态在 host 的 JSON 里），先拉状态；
         // 模型列表要会话（get_available_models），会话不在就只显示状态、不显示模型。
         loadModalities()
+        loadRetry()
         var id = sessionRef.current
         if (id === null) return
         loadState(id)
@@ -6626,6 +6815,7 @@ window.__ModuleLoader__.load({
         var id = sessionRef.current
         if (id === null || session === null || session === undefined) return
         setDrawer(null)
+        if (props.onOpenRunning?.(session.path)) return
         var targetCwd = typeof session.cwd === 'string' ? session.cwd : ''
         rpc(id, { type: 'switch_session', sessionPath: session.path }).then(function (data) {
           if (data !== null && data !== undefined && data.cancelled === true) return null
@@ -6640,6 +6830,7 @@ window.__ModuleLoader__.load({
             return result
           })
         }, function (failure) {
+          if (props.onOpenRunning?.(session.path, failure?.sessionId)) return null
           var text = String(failure !== null && failure !== undefined && failure.message !== undefined ? failure.message : failure)
           if (text.indexOf('Stored session working directory does not exist') >= 0) {
             var missing = targetCwd
@@ -6727,6 +6918,8 @@ window.__ModuleLoader__.load({
       }
 
       var addImages = function (files) {
+        var draft = activeDraft.current
+        if (draft === null) return
         var list = files === null || files === undefined ? [] : files
         var added = []
         var pending = 0
@@ -6734,7 +6927,7 @@ window.__ModuleLoader__.load({
           pending -= 1
           if (pending > 0) return
           if (added.length === 0) return
-          setImages(function (prev) { return prev.concat(added) })
+          updateImages(draft, function (prev) { return prev.concat(added) })
         }
         for (var i = 0; i < list.length; i += 1) {
           var file = list[i]
@@ -6744,15 +6937,21 @@ window.__ModuleLoader__.load({
         }
       }
 
+      var updateImages = function (draft, update) {
+        if (draft === null) return
+        draft.images = update(draft.images)
+        if (mounted.current && activeDraft.current === draft) setImages(draft.images)
+      }
+
       var removeImage = function (index) {
-        setImages(function (prev) { return prev.filter(function (item, at) { return at !== index }) })
+        updateImages(activeDraft.current, function (prev) { return prev.filter(function (item, at) { return at !== index }) })
       }
 
       var submit = function (text) {
         var parsed = classifyInput(text, contract)
         if (parsed.kind === 'empty') return
         var attached = images.slice()
-        setImages([])
+        updateImages(activeDraft.current, function () { return [] })
         if (parsed.kind === 'bash') { handleBash(parsed); return }
         if (parsed.kind === 'slash') { handleSlash(parsed); return }
         var body = { type: 'prompt', message: parsed.text }
@@ -7243,9 +7442,10 @@ window.__ModuleLoader__.load({
         drawerNode = h(SettingsSheet, {
           t: t,
           state: Object.assign({}, info === null ? {} : info),
+          retry: retry,
           onClose: function () { setDrawer(null) },
           onAutoCompaction: function (next) { runSetting({ type: 'set_auto_compaction', enabled: next }) },
-          onAutoRetry: function (next) { runSetting({ type: 'set_auto_retry', enabled: next }) },
+          onAutoRetry: loadRetry,
           onSteering: function (mode) { runSetting({ type: 'set_steering_mode', mode: mode }) },
           onFollowUp: function (mode) { runSetting({ type: 'set_follow_up_mode', mode: mode }) },
           rules: rules,
@@ -7292,6 +7492,7 @@ window.__ModuleLoader__.load({
         })
       }
 
+      var composedDraft = activeDraft.current
       return h('div', { className: 'superpi-root' },
         head,
         h('div', { className: 'superpi-scroll', ref: scrollRef, onScroll: onScroll },
@@ -7301,6 +7502,9 @@ window.__ModuleLoader__.load({
             earlierNodes,
             view.messages.length === 0 ? h(EmptyState, { t: t, meta: emptyMeta, onPickDir: function () { setDrawer('dir') } }) : rows)),
         h(Composer, {
+          key: meta?.sessionId ?? meta?.id,
+          draftText: composedDraft?.text ?? '',
+          onDraftText: function (text) { if (composedDraft !== null) composedDraft.text = text },
           t: t,
           busy: view.busy === true,
           images: images,
@@ -7360,7 +7564,7 @@ window.__ModuleLoader__.load({
         'Shift+Enter — 换行',
         'Alt+Enter — 排队（follow_up）：本次回答结束后再处理',
         'Alt+Q — 把排队消息取回输入框（alt+q / app.message.dequeue）',
-        'Ctrl+P — 下一个模型（与 TUI 的 app.model.cycleForward 一致）',
+        'Ctrl+P / Ctrl+Shift+P — 下一个 / 上一个模型',
         'Shift+Tab — 下一个思考档位（与 TUI 的 app.thinking.cycle 一致）',
         'Esc — 停止：重试中→取消重试；bash 运行中→中止 bash；生成中→取回排队并中止；否则关补全菜单',
         '/ — 斜杠命令补全',
@@ -7458,7 +7662,7 @@ window.__ModuleLoader__.load({
         ctx.effect(function () {
           return slots.inject('main', function () {
             return slots.register({ name: 'main', key: PANEL_ID, locale: NS }, function (slotProps) {
-              return h(SuperPiPanel, {
+              return h(SuperPiWorkspace, {
                 t: slotProps !== null && slotProps !== undefined && typeof slotProps.t === 'function' ? slotProps.t : translate,
                 onOpenFile: openInSidebar,
               })
@@ -7474,6 +7678,7 @@ window.__ModuleLoader__.load({
     // 仅供 test/client-render.mjs 与 test/parity.mjs 使用；宿主只读 name / inject / apply。
     exports.__internals = {
       SuperPiPanel: SuperPiPanel,
+      RunningSessionsBar: RunningSessionsBar,
       Composer: Composer,
       BashBlock: BashBlock,
       ToolBlock: ToolBlock,

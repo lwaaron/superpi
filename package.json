@@ -1,6 +1,6 @@
 {
   "name": "superpi",
-  "version": "0.43.0",
+  "version": "0.44.0",
   "type": "module",
   "description": "SuperPi 编码助手，支持 DSH 聊天面板与命令行，复用 Pi 的运行时和 JSONL RPC 协议。",
   "icon": "./assets/icon.svg",
@@ -56,6 +56,7 @@
     "test:all": "npm test && npm run test:host",
     "verify": "pwsh -NoProfile -File ./tools/verify-packed.ps1",
     "pack": "npm pack",
+    "pack:offline": "node tools/pack-offline.mjs",
     "test:brand": "node test/brand-pi-runtime.mjs",
     "superpi:brand": "node tools/brand-pi-runtime.mjs --apply --all-profiles",
     "superpi:brand:status": "node tools/brand-pi-runtime.mjs",

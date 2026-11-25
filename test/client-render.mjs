@@ -357,7 +357,8 @@ const SettingsSheet = internals.SettingsSheet
 assert(typeof SettingsSheet === 'function', 'client.js 应导出 SettingsSheet 以便测试')
 const settingsHtml = renderToStaticMarkup(React.createElement(SettingsSheet, {
   t: zh,
-  state: { autoCompactionEnabled: true, autoRetryEnabled: false, steeringMode: 'one-at-a-time', followUpMode: 'one-at-a-time' },
+  state: { autoCompactionEnabled: true, steeringMode: 'one-at-a-time', followUpMode: 'one-at-a-time' },
+  retry: { enabled: false },
   onClose() {},
   onAutoCompaction() {},
   onAutoRetry() {},
@@ -374,6 +375,23 @@ assert(settingsHtml.includes('superpi-switch-thumb'), '开关该有滑块元素'
 assert(settingsHtml.includes('>' + zh('on') + '<') === false, '开关不该再把「' + zh('on') + '」当按钮文本')
 assert(settingsHtml.includes('>' + zh('off') + '<') === false, '开关不该再把「' + zh('off') + '」当按钮文本')
 assert(settingsHtml.includes(zh('autoCompact')) && settingsHtml.includes(zh('autoRetry')), '设置项标签该照旧显示')
+const missingRetry = renderToStaticMarkup(React.createElement(SettingsSheet, { t: zh, state: {}, retry: null }))
+assert(missingRetry.includes(zh('retryUnavailable')) && !missingRetry.includes('aria-labelledby="superpi-sw-autoRetry"'),
+  '暂时读不到的有效值有说明，不能呈现为已关闭的开关')
+const overriddenRetry = renderToStaticMarkup(React.createElement(SettingsSheet, { t: zh, state: {}, retry: { enabled: false, applied: false } }))
+assert(overriddenRetry.includes(zh('retryOverride')) && overriddenRetry.includes('aria-labelledby="superpi-sw-autoRetry"'),
+  '项目覆盖后仍展示实际值，并说明开关为何保持原值')
+
+const RunningSessionsBar = internals.RunningSessionsBar
+assert(typeof RunningSessionsBar === 'function', '面板提供正在运行的会话切换入口')
+if (typeof RunningSessionsBar === 'function') {
+  const tabs = renderToStaticMarkup(React.createElement(RunningSessionsBar, { t: zh, activeId: 'tab-a',
+    sessions: [{ id: 'tab-a', sessionName: 'Working session A' }, { id: 'tab-b', sessionName: 'Working session B' }] }))
+  assert(tabs.includes('Working session A') && tabs.includes('Working session B'), '并行会话均能独立选择')
+  assert((tabs.match(/aria-current="true"/g) ?? []).length === 1 && tabs.includes(zh('newSession')),
+    '会话栏只标一个当前视图，并提供新会话入口')
+  assert(tabs.includes('关闭当前会话'), '运行中的标签具备释放会话名额的入口')
+}
 
 // ── 9.11d 用户自定义规则区（0.10.0）────────────────────────────────────────
 // 设置弹窗里多了一节「用户自定义规则」：它是一个状态机，不是一行按钮。

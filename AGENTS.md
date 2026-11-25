@@ -39,6 +39,7 @@ DSH（DeepSeek Runtime）插件：把 pi 编码 agent 装进 DSH 的侧栏面板
 | `extensions/superpi-verification.mjs` | Git 普通文件快照、源码指纹、命令运行期的文件版本校验、精确变异和 Shell 截止时间。文件版本包含设备、文件标识和状态时间，与持久化的源码指纹分开使用。编号验收使用文件系统通知捕获短暂出现的工作区路径，沿用 Git 的跟踪和忽略规则。观察明确失败时保留命令结果与待验收状态。带对照的变异验证从同一次采集建立两个独立副本，使用 Shell 原始记录匹配诊断。 |
 | `extensions/superpi-review.mjs` | 正确性和测试覆盖使用同一 Git 快照，在独立的 Pi 上下文中并行审查。符合预算的快照首轮提供完整源码和 Git 差异或改动文件的基准内容。首轮预算计入差异材料及查阅工具定义的序列化字节，空闲窗口随模型内容重开，整次评审遵循总时限。评审取得源码后遇到可识别的断流，可从完成的读取恢复一次，沿用原时限、请求预算和会话重试设置。评审进行中把已读路径、行号和已提交的有效报告通过 Pi 写入会话分支，重开时从匹配的快照重建源码摘录。已有最终结果的评审以最终结果为准。静态缺口须给出快照路径。基准、源码、有效范围、验收目标与模型相同才复用证据。会话恢复时，当前用户请求对同一份证据最多发起两轮。只有完整且无阻塞项的结果可用于交付验收。模型请求边界记录计数，超时仍保留已发请求和可判定的失败类型。 |
 | `src/runtime-extensions.mjs` | 共享扩展清单及幂等同步。面板启动和 TUI 安装器同步同一套文件，Pi 按官方路径加载。 |
+| `extensions/superpi-session-controls.ts` | 使用 Pi 的扩展 API 读取有效重试设置，按当前可用模型范围反向切换。面板通过 host 的会话控制接口访问，TUI 保留原生选模键位并提供 `/superpi-retry`。 |
 | `src/event-verdict.mjs` | 把上面那份判读**挂到 pi 的 `message_end` 上**（0.18.0）：`decoratePiEvent(record)` 只加一个 `verdict` 字段，不改 pi 的任何字段，**永不抛**。它解决了两个结构问题：① 面板不再需要一份孪生判据（0.16.2~0.17.3 的「表在契约、算法在面板」，共同盲区测不出）；② 面板不再依赖 `/contract` 先到（0.17.3 那个「契约晚到 → 提示永久丢失」的竞态随依赖一起消失，而不是靠启动顺序绕开）。装饰发生在 `PiProcess.pushEvent` 里 —— 那是**唯一**同时喂 SSE 与环形缓冲回放的地方。 |
 | `extensions/superpi-text-bytes.mjs` | **「什么是坏字节」的唯一判据**（0.18.0）：`scanTextBytes()` 三类 —— `replacement`（U+FFFD，字符的字节已经丢了、不可逆）、`control`（C0 除 `\t\n\r`，外加 DEL）、`surrogate`（孤立代理项：JSON 合法、落盘必坏）。计数全量、位置截断（前 20 处，带行列号）。四个消费者共用：回合判据、写入闸、`test/parity.mjs` §9、`test/host-parity.mjs` 3.98。**为什么必须收成一处**：这三处原本各写一份，而运行时**一份也没有** —— 实测 7 次 `write` 的 content 含 U+FFFD、7 次全部落盘。 |
 | `extensions/superpi-text-integrity.ts` | **写入闸**（0.18.0）：`pi.on('tool_call')` 在写盘前拦坏字节 —— `write` / `edit` 的目标路径、`write.content` 或 `edit.edits[].newText` 含坏字节 → `{block:true, reason}`（文件不写）；**`edit.oldText` 放行**（修已坏文件时匹配串必然含 U+FFFD，拦它等于禁止修复）；**`bash`/`powershell` 只提醒不拦**（同一串字节可能是修复脚本），改为在 `tool_result` 末尾追加一行警告。`turn_end` 将已确认被写入闸拦截的参数移出后续模型请求，保留安全路径、调用与错误的配对、原始会话记录。它与同批成功写入共用 `projectTurnAssistant()` 合成投影。拦截理由带行号/码位/总数 + 「文件未写入」+ 「不要原样重发」+ 转义写法。观测落 `~/.superpi/integrity.log.jsonl`（滚动 240 行），`/superpi-integrity` 看汇总与路径。门禁 `test/text-integrity.mjs` 与 `test/reliability.mjs`。取证见 `docs/output-integrity.md`。 |
@@ -442,8 +443,8 @@ return sections ? { role: "system", content: "", sections } : undefined
 | 编号 | 缺陷 | 影响 |
 | --- | --- | --- |
 | — | **`set_session_name` 在会话未命名时可能抛 `Cannot read properties of undefined (reading 'slice')`（pi 1.5.2）** | 面板侧原样透出错误文本，不做吞掉。注意：全量 grep pi 源码未找到对应的 `slice` 调用，根因**未证实**，不要在注释里编造行号。真正修要上游改。 |
-| `D-07` | `RpcSessionState` 无 `autoRetryEnabled`（`rpc-types.d.ts:148` 的 12 字段里没有；`agent-session.ts:4122` 有 getter 但 RPC 面未暴露） | 设置弹窗的自动重试开关无法回读，`client.js:4232` 恒读到 `undefined` → 永远显示 off，但点一下确实生效。`test/parity.mjs:290` 用断言锁住该缺口。注意 `autoCompactionEnabled` **不是**同类问题：它在 `RpcSessionState` 里，面板 `loadState` 整份存进 `info`，`client.js:4231` 读到的是真值。 |
-| `D-08` | `cycle_model` 在 RPC 面无方向参数（`rpc-types.ts:34` 是 `{ type: "cycle_model" }`） | `Ctrl+P` 只能正循环；TUI 的 `cycleModel(direction)`（`interactive-mode.ts:4723-4725`）两个方向，RPC 面只有一个。 |
+| `D-07` | 原生 `RpcSessionState` 无 `autoRetryEnabled` | 0.44.0 起面板从 Pi 扩展查询有效值，TUI 通过 `/superpi-retry` 查看和修改。 |
+| `D-08` | 原生 `cycle_model` 无方向参数 | 0.44.0 起面板从 Pi 扩展执行反向切换，两端均支持 `Ctrl+Shift+P`。 |
 
 ## 7. 验证命令
 
@@ -501,7 +502,7 @@ pwsh -NoProfile -File install-plugin.ps1 -Profile desktop   # 装进 desktop pro
 - **事件**：25 类 = 已实现 22 + 显式忽略 3（`turn_end` / `agent_end` / `summarization_retry_attempt_start`，理由见 `docs/parity.md` §3），缺口 0。
 - **TUI 斜杠**：27 条 = 已实现 17 + 仅命令行 9 + `unsupported` 1（`/import`）+ 缺口 0。
 - **`D-03` 已闭环**：「新会话」`runNewSession` → RPC `new_session`（与 `/new` 同一条路径，同进程换树，`client.js:5236`）、「重连」`endSession`（换子进程，旧事件缓冲丢掉，`client.js:5248`）。0.2.5 把换进程当新会话，同一件事两个入口两种结果。0.7.0 起重连不再占顶栏明面 —— 它退进 `⋯` 更多菜单并要过二次确认（见 0.7.0 那段），因为换子进程是恢复手段而不是日常动作。
-- **剩两个上游协议面限制未闭环**：`D-07`（`get_state` 无 `autoRetryEnabled`）与 `D-08`（`cycle_model` 无方向参数），面板侧无解，见第 6 节；`test/parity.mjs:290` 用断言锁住 `D-07`，pi 哪天补了字段该断言会红，届时才是闭环时机。
+- `D-07` 和 `D-08` 的原生 RPC 边界在第 6 节记录。SuperPi 通过会话控制扩展闭环，两端行为由回环测试与渲染门禁保护。
 - **工作区选择（0.4.0）**：入口统一叫「选择工作区」（`pickDir`/`dirTitle`/`dirHere` 三处 ZH+EN 同改），交互从铺满面板的抽屉改成 680x500 居中模态（用法 `client.js:4097`，CSS 定义 `client.js:800`；`.superpi-dialog-wrap` + `.superpi-dir-dialog`，`role="dialog"`/`aria-modal`）——它是打断当前会话的决策。新增「此电脑」盘符层：`GET /directories` 下发 `roots`（Windows 探 A-Z 各盘根，10s 缓存 `ROOTS_TTL_MS`），否则从工作区逐级往上只能走到当前盘根，D:/E:/F: 上的工程永远选不到。
 - **过程行（0.4.0）**：工具调用 / 工具结果 / `!` bash 三类行去掉圆角卡片外壳（`border-radius:0`、`background:transparent`、无 hairline），改平铺行 + 展开区左侧竖线，与 `.superpi-think` 同一套语言。一次任务十几条工具卡若每条都套圆角 + 描边，会形成框套框的噪音墙。
 - **会话历史对账（0.4.1）**：`attach` 之后补一次 `get_messages` 整表重建（`messagesFromHistory()`，`client.js` 内由 `hydrate()` 调用）。根因：`new_session` / `switch_session` / `fork` / `clone` 成功后 host 会 `proc.resetEvents()`（`SESSION_REPLACING_COMMANDS`，`index.js:100`）把事件缓冲清空，历史消息不再以事件重放 —— 只靠 `snapshot` 重放的话切过去必然空白（0.4.0 及之前「点开历史会话没有内容」）。两道防线：会话已切走则丢弃响应（`sessionRef.current !== id`）；`busy` 期间不覆盖列表，改挂 `hydratePendingRef`，由 `drainHydrate()` 在 `agent_settled` 之后补。`bashRef` 语义不变（仍只表示「bash 正在跑」，Esc `abort_bash` 依赖它）。

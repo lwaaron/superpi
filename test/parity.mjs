@@ -221,18 +221,17 @@ if (contractVersionMatch !== null) {
 // ── 2. 面板覆盖（契约的每一项都真的有接线）──────────────────────────────
 section('2. 面板覆盖（client.js / host 字面量）')
 /**
- * 0.14.0：`get_messages` 由 **host 代发**（GET /sessions/:id/messages 分页）。
- * client.js 不再直接发这条 RPC —— 一次性拉 55.1MB 正是这一轮要治的病。
- *
- * 显式排除而不是让缺口静默存在：排除项集中写在这里，理由记在 docs/parity.md，
- * 并且下面立刻断言 host 真的代发了它 —— 否则"排除"就退化成"缺失"。
+ * host 代发的 RPC 在此对账。消息读取经过分页，重试写入在同一接口内回读有效值。
+ * test/reliability.mjs 运行真实 Pi 检查这两个接口的行为。
  */
-const HOST_PROXIED_COMMANDS = new Set(['get_messages'])
+const HOST_PROXIED_COMMANDS = new Set(['get_messages', 'set_auto_retry'])
 const commandsMissing = contract.RPC_COMMAND_NAMES
   .filter((name) => HOST_PROXIED_COMMANDS.has(name) === false)
   .filter((name) => clientSource.includes("'" + name + "'") === false)
 eq('client.js 引用全部 RPC 命令（除 host 代发的）', commandsMissing, [])
 check('host 代发 get_messages（分页端点）', hostSource.includes("{ type: 'get_messages' }") === true)
+check('面板使用会话重试接口，host 代发 set_auto_retry', clientSource.includes("'/controls/retry'") &&
+  hostSource.includes("{ type: 'set_auto_retry', enabled: body.enabled }"))
 const eventsMissing = contract.RPC_EVENT_TYPES.filter((type) => clientSource.includes("'" + type + "'") === false)
 eq('client.js 处理全部 25 类事件', eventsMissing, [])
 const assistantMissing = contract.ASSISTANT_EVENT_TYPES.filter((type) => clientSource.includes("'" + type + "'") === false)

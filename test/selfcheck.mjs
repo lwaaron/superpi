@@ -143,10 +143,15 @@ try {
     const gone = await getJson(A.base + '/selfcheck')
     console.log('3b) summary =', JSON.stringify(gone.body.summary))
     assert(gone.body.summary.stale === true, '删掉 runtime 文件后应 stale=true')
+    assert(gone.body.ok === false, '删掉 runtime 文件后应 ok=false')
     assert(gone.body.summary.missing.includes('client.js'), 'missing 应含 client.js，实际 ' + JSON.stringify(gone.body.summary.missing))
     assert(gone.body.summary.changed.includes('client.js') === false, '被删的文件不应同时算进 changed，实际 ' + JSON.stringify(gone.body.summary.changed))
     assert(gone.body.summary.hint.includes('已不在磁盘上'), 'hint 应说明文件已不在磁盘上，实际 ' + JSON.stringify(gone.body.summary.hint))
     fs.writeFileSync(clientPath, cleanBytes)
+    const restored = await getJson(A.base + '/selfcheck')
+    assert(restored.body.ok === true && restored.body.summary.stale === false, '原字节恢复后应立即通过自检')
+    assert(restored.body.loadedAt === a.body.loadedAt && restored.body.process.pid === a.body.process.pid,
+      '恢复后应使用首次加载的自检基准')
     // 漂移不干扰其它路由
     const health = await getJson(A.base + '/health')
     assert(health.status === 200 && health.body.ok === true, '/health 应仍可用')

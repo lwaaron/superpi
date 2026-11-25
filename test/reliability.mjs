@@ -149,6 +149,7 @@ try {
   await fs.writeFile(guardPath, JSON.stringify({ autoRetryCooldownMs: 0 }))
   await fs.writeFile(path.join(agentDir, 'settings.json'), JSON.stringify({
     compaction: { enabled: false }, retry: { enabled: true, maxRetries: 1, baseDelayMs: 20 }, lastChangelogVersion: '1.5.2',
+    defaultProjectTrust: 'always',
   }))
   await listen(provider)
   await fs.writeFile(path.join(agentDir, 'models.json'), JSON.stringify({ providers: { loopback: {
@@ -166,11 +167,59 @@ try {
   sessionId = (await request('/sessions', {})).session.id
   check(typeof sessionId === 'string', 'fresh host session starts with empty agent extension directory')
 
+  const retryRoute = session() + '/controls/retry'
+  check((await request(retryRoute)).enabled === true, 'the panel can read Pi’s enabled retry setting before the first prompt')
+  check((await request(retryRoute, { enabled: false })).enabled === false &&
+    (await request(retryRoute)).enabled === false, 'the effective retry setting survives closing and reopening the panel settings')
+  check((await request(retryRoute, { enabled: true })).enabled === true, 'retry write returns the effective setting')
+
+  const controlledProject = path.join(temp, 'controlled-project')
+  await fs.mkdir(path.join(controlledProject, '.pi'), { recursive: true })
+  await fs.writeFile(path.join(controlledProject, '.pi', 'settings.json'), JSON.stringify({ retry: { enabled: false } }))
+  const controlled = await request('/sessions', { cwd: controlledProject, continue: false,
+    args: ['--models', 'loopback/replacement,loopback/fixture'] })
+  const controlledRoute = '/sessions/' + controlled.session.id
+  try {
+    const override = await request(controlledRoute + '/controls/retry', { enabled: true })
+    check(override.enabled === false && override.applied === false, 'a project override is visible after a successful retry write acknowledgement')
+    const backward = await request(controlledRoute + '/controls/previous-model', {})
+    const wrap = await request(controlledRoute + '/controls/previous-model', {})
+    check(backward.model?.id === 'replacement' && wrap.model?.id === 'fixture',
+      'reverse cycling wraps in the scoped order and excludes unscoped models')
+    check((await request(controlledRoute + '/snapshot')).model?.id === 'fixture',
+      'a reconnected panel reads the model selected through the Pi extension')
+  } finally {
+    await request(controlledRoute, undefined, 'DELETE')
+  }
+  check(requests.length === 0, 'reading or changing controls never starts a model request')
+  check((await snapshot()).events.every(row => !row.record.statusKey?.startsWith('superpi-control/')),
+    'control replies stay out of the panel’s event history')
+
   const healthy = await run('healthy', [{ delta: '中文，正常。', splitUtf8: true }])
   check(lastAssistant(healthy)?.message.content[0]?.text === '中文，正常。', 'valid UTF-8 survives a split network frame')
   check(healthy.requests.length === 1 && lastAssistant(healthy)?.verdict?.kind === 'none', 'valid short completion gets one provider request')
   check(JSON.stringify(healthy.requests[0].messages).includes('Report completion only for work actually done and verified'),
     'both modes inherit the same evidence-based completion guidance')
+
+  const mainId = sessionId
+  const mainState = (await command({ type: 'get_state' })).data
+  const separate = await request('/sessions', { cwd: workspace, continue: false })
+  try {
+    sessionId = separate.session.id
+    check(separate.session.sessionId !== mainState.sessionId, 'new tabs at the same path receive independent Pi sessions')
+    const duplicate = await fetch(base + session() + '/command', { method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ type: 'switch_session', sessionPath: mainState.sessionFile }) })
+    assert.equal(duplicate.status, 409, 'a second tab cannot take over the live session file')
+    check((await duplicate.json()).sessionId === mainId, 'conflict identifies the tab that owns the live session')
+    const secondTurn = await run('independent tab', [{ delta: 'Only in the second tab.' }])
+    check(!requestText(secondTurn.requests[0]).includes('中文，正常。'), 'a new tab sends only its own conversation to the model')
+  } finally {
+    await request(session(), undefined, 'DELETE')
+    sessionId = mainId
+  }
+  const mainMessages = (await command({ type: 'get_messages' })).data.messages
+  check(JSON.stringify(mainMessages).includes('中文，正常。') && !JSON.stringify(mainMessages).includes('Only in the second tab.'),
+    'reopening the original tab retains its transcript without messages from the other tab')
 
   const question = '这次通过哪些平台发布？'
   const answer = '先在 Windows 上发布，之后再支持 macOS。'

@@ -17,7 +17,9 @@
 import { spawn } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import { randomUUID } from 'node:crypto'
+import path from 'node:path'
 import { BRAND_NAME } from '../extensions/superpi-brand.mjs'
+import { SESSION_CONTROL, SESSION_CONTROL_COMMAND, SESSION_CONTROL_FILE, SESSION_CONTROL_STATUS } from '../extensions/superpi-session-controls.mjs'
 import { TASK_WIDGET_KEY } from './rpc-contract.mjs'
 
 /**
@@ -172,6 +174,7 @@ export class PiProcess extends EventEmitter {
     this.state = 'starting' // starting | ready | busy | dead
     this.createdAt = Date.now()
     this.pending = new Map()
+    this.controlReplies = new Map()
     this.events = []
     this.lastVerdict = null
     /** 与 events 等长的字节数，用于 O(1) 维护字节预算。 */
@@ -318,6 +321,11 @@ export class PiProcess extends EventEmitter {
   }
 
   pushEvent(record, sizeHint) {
+    if (record.type === 'extension_ui_request' && record.method === 'setStatus' &&
+        typeof record.statusKey === 'string' && record.statusKey.startsWith(SESSION_CONTROL_STATUS)) {
+      if (this.controlReplies.has(record.statusKey)) this.controlReplies.set(record.statusKey, record.statusText)
+      return
+    }
     this.eventSeq += 1
     /**
      * 装饰发生在**入环之前**：`events` 里的对象与 SSE 推出去的是同一个，
@@ -468,6 +476,35 @@ export class PiProcess extends EventEmitter {
       this.noteCommand({ type: 'get_state' }, data)
     } catch { /* 超时/进程已退出：保留旧值，由后续事件或下一次 refresh 补 */ }
     return this.lastState
+  }
+
+  async requestSessionControl(operation) {
+    if (!Object.values(SESSION_CONTROL).includes(operation)) throw new TypeError('Unknown SuperPi session control')
+    const extensionPath = this.args.find((arg, index) => this.args[index - 1] === '--extension' && path.basename(arg) === SESSION_CONTROL_FILE)
+    const unavailable = () => Object.assign(new Error('SuperPi session controls are unavailable in this process.'), { statusCode: 501 })
+    if (extensionPath === undefined) throw unavailable()
+    const { commands } = await this.send({ type: 'get_commands' }, { timeoutMs: 5000 })
+    const command = commands?.find(entry => entry.source === 'extension' && typeof entry.sourceInfo?.path === 'string' &&
+      path.relative(extensionPath, entry.sourceInfo.path) === '' &&
+      (entry.name === SESSION_CONTROL_COMMAND || (entry.name.startsWith(SESSION_CONTROL_COMMAND + ':') && /^\d+$/.test(entry.name.split(':').at(-1)))))
+    if (command === undefined) throw unavailable()
+
+    const nonce = randomUUID()
+    const key = SESSION_CONTROL_STATUS + nonce
+    this.controlReplies.set(key, undefined)
+    try {
+      // Pi executes registered extension commands before acknowledging a handled prompt.
+      const ack = await this.send({ type: 'prompt', message: `/${command.name} ${operation} ${nonce}` }, { timeoutMs: 5000 })
+      const reply = this.controlReplies.get(key)
+      if (ack?.disposition !== 'handled' || typeof reply !== 'string') throw new Error('SuperPi session control did not return a result.')
+      const result = JSON.parse(reply)
+      if (typeof result?.error === 'string') throw new Error(result.error)
+      const field = operation === SESSION_CONTROL.retry ? 'enabled' : 'changed'
+      if (typeof result?.[field] !== 'boolean') throw new Error('Invalid SuperPi session control result.')
+      return result
+    } finally {
+      this.controlReplies.delete(key)
+    }
   }
 
   send(command, { timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
