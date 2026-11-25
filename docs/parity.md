@@ -407,7 +407,7 @@ pi 只提供 `SYSTEM.md`（整份替换）、`APPEND_SYSTEM.md`（静态文件�
 | 六类异常和健康短回复 | host 在 `message_end` 使用共享判据，视图消费结果 | Working 行使用同一判据和文案 | `test/turn-verdict.mjs`、`test/tui-editor.mjs` |
 | 手动继续 | 告警里的「继续」按钮 | 底栏的「继续」入口 | 告警 SSR、终端命中和发送、`test/reliability.mjs` |
 | 自动续跑 | Pi 在 `agent_before_settle` 从已保存的工具结果继续未交付的回复 | 同一扩展、同一配置、同一条件 | `test/reliability.mjs` 覆盖成功写入后遇到 DSML、续跑后验证文件，以及截断回复的工具处理 |
-| 写入保护和诊断 | 在 Pi 的 `tool_call` 执行，`/superpi-integrity` 查询 | 同一钩子和命令 | `test/text-integrity.mjs`、`test/reliability.mjs` |
+| 写入保护和诊断 | 写入前检查文本。被拦截的参数从下一次请求中移除，工具错误和安全路径继续提供给模型。`/superpi-integrity` 查询 | 同一扩展和会话投影 | `test/text-integrity.mjs`、`test/reliability.mjs` 覆盖混合工具批次与重开会话 |
 | 长任务上下文 | 对成功写入的长正文做会话投影，压缩摘要参与预算 | 同一投影和预算 | `test/context-guard.mjs`、`test/reliability.mjs` |
 | 取消和会话进度 | 主动停止后清理继续提示，重连时从快照恢复未解决的提示 | 主动停止后返回空闲，未解决的原因显示在 Working 行 | `test/turn-verdict.mjs`、`test/tui-editor.mjs`、`test/reliability.mjs` |
 
@@ -529,6 +529,7 @@ pi 只提供 `SYSTEM.md`（整份替换）、`APPEND_SYSTEM.md`（静态文件�
 
 | 日期 | 版本 | 变更 |
 | --- | --- | --- |
+| 2026-11-25 | 0.43.0 | 写入闸从后续模型请求中移除已确认被拦截的参数。保留原始会话记录、工具诊断及同批调用结果。检查覆盖后续请求、同轮改正与 Pi 进程重开。README 将启动、能力、配置和验证入口提前。 |
 | 2026-11-25 | 0.42.0 | `npm test` 按原顺序运行每套门禁一次，按子进程当次的退出状态、摘要和登记下限完成两端验收。 |
 | 2026-11-25 | 0.41.0 | 全新副本用 `npm ci` 安装锁定的验收依赖。React 渲染共用依赖判据，临时技能安装与记忆样本让命令行和面板验收在空白用户目录也能完整执行。 |
 | 2026-11-25 | 0.40.0 | 工作区指纹和验证快照使用同一套有限并发采集逻辑，以原有顺序生成指纹。 |

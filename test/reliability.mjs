@@ -339,13 +339,77 @@ try {
   'Pi still owns its native stream retries')
 
   const corruptWrite = await run('reject damaged writes', [
-    { delta: writeCall('bad-body.txt', '文件BAD_UTF8'), finish: 'tool_calls', badUtf8: true },
+    { delta: writeCall('bad-body.txt', '文件BAD_UTF8', 'call_bad_body'), finish: 'tool_calls', badUtf8: true },
     { delta: writeCall('bad-' + bad + '.txt', 'clean', 'call_path'), finish: 'tool_calls' },
     { delta: 'Blocked.' },
   ])
   check(!(await fs.readdir(workspace)).some(name => name.startsWith('bad-')), 'bad content and paths never reach the filesystem')
   check(corruptWrite.records.filter(entry => entry.type === 'tool_execution_end' && entry.isError === true).length === 2,
     'both rejected writes produce actual tool errors in the panel')
+  const argumentsIn = (payload, id) => {
+    const call = payload?.messages.flatMap(message => message.tool_calls ?? []).find(call => call.id === id)
+    return call && JSON.parse(call.function.arguments)
+  }
+  const followDamagedBody = corruptWrite.requests[1]
+  const followDamagedPath = corruptWrite.requests[2]
+  check(argumentsIn(followDamagedBody, 'call_bad_body')?.path === 'bad-body.txt' &&
+    !requestText(followDamagedBody).includes(bad) && followDamagedBody.messages.some(message =>
+      message.tool_call_id === 'call_bad_body' && message.content.includes('U+FFFD')),
+  'the first request after a corrupted UTF-8 write retains a clean path and the paired diagnostic without replaying the body')
+  check(argumentsIn(followDamagedPath, 'call_path') !== undefined &&
+    !requestText(followDamagedPath).includes(bad) && followDamagedPath.messages.some(message =>
+      message.tool_call_id === 'call_path' && message.content.includes('U+FFFD')),
+  'a rejected path is omitted from the call without losing its diagnostic or tool pairing')
+
+  const originalText = 'Original contents.'
+  const repairedEdit = 'Corrected contents.'
+  const damagedEditPath = 'recover-damaged.txt'
+  const siblingPath = 'confirmed-sibling.txt'
+  await fs.writeFile(path.join(workspace, damagedEditPath), originalText)
+  const editCall = (newText, id) => toolCall('edit', { path: damagedEditPath, edits: [{ oldText: originalText, newText }] }, id)
+  const cleanFailure = { path: 'nonexistent.txt', edits: [{ oldText: 'missing', newText: 'intact write input' }] }
+  const damagedBatch = { tool_calls: [
+    ...editCall('Bad proposal ' + bad, 'damaged_edit').tool_calls,
+    { ...writeCall(siblingPath, largeWrite, 'confirmed_sibling').tool_calls[0], index: 1 },
+    { ...toolCall('edit', cleanFailure, 'ordinary_failure').tool_calls[0], index: 2 },
+  ] }
+  const mixed = await run('regenerate only a rejected edit from a mixed tool batch', [
+    { delta: damagedBatch, finish: 'tool_calls' },
+    payload => requestText(payload).includes(bad)
+      ? { delta: 'History refused.', streamError: 'Invalid tool history in fixture' }
+      : { delta: editCall(repairedEdit, 'repaired_edit'), finish: 'tool_calls' },
+    { delta: 'The corrected edit is complete.' },
+  ])
+  const mixedFollowup = mixed.requests[1]
+  check(toolResult(mixed, 'damaged_edit')?.isError === true && toolResult(mixed, 'repaired_edit')?.isError === false &&
+    await fs.readFile(path.join(workspace, damagedEditPath), 'utf8') === repairedEdit &&
+    lastAssistant(mixed)?.message.content[0]?.text === 'The corrected edit is complete.' && mixed.requests.length === 3,
+  'a provider that rejects damaged history can complete the corrected edit in the same activity')
+  const batchCallIds = damagedBatch.tool_calls.map(call => call.id)
+  check(argumentsIn(mixedFollowup, 'damaged_edit')?.path === damagedEditPath &&
+    argumentsIn(mixedFollowup, 'confirmed_sibling')?._omitted === true &&
+    JSON.stringify(argumentsIn(mixedFollowup, 'ordinary_failure')) === JSON.stringify(cleanFailure) &&
+    toolResult(mixed, 'ordinary_failure')?.isError === true &&
+    batchCallIds.every(id => mixedFollowup?.messages.some(message => message.tool_call_id === id)) &&
+    await fs.readFile(path.join(workspace, siblingPath), 'utf8') === largeWrite &&
+    mixed.records.filter(record => record.type === 'tool_execution_end' && record.toolCallId === 'confirmed_sibling').length === 1,
+  'the mixed batch retains all three results, the ordinary failed input and the single successful write projection')
+
+  const integrityHistoryFile = (await command({ type: 'get_state' })).data.sessionFile
+  const closedIntegritySession = sessionId
+  await request(session(), undefined, 'DELETE')
+  sessionId = (await request('/sessions', {})).session.id
+  assert.notEqual(sessionId, closedIntegritySession, 'restart Pi before verifying the persisted projection')
+  assert.equal((await command({ type: 'switch_session', sessionPath: integrityHistoryFile })).ok, true)
+  const integrityHistory = (await command({ type: 'get_entries' })).data.entries
+  check(integrityHistory.some(entry => entry.type === 'message' && entry.message.role === 'assistant' &&
+    entry.message.content.some(block => block.type === 'toolCall' && block.id === 'damaged_edit' &&
+      block.arguments.edits[0].newText.endsWith(bad))), 'the original rejected payload is kept in the native session record')
+  const resumedIntegrity = await run('resume with the repaired file', [{ delta: 'History reloaded.' }])
+  check(!requestText(resumedIntegrity.requests[0]).includes(bad) &&
+    argumentsIn(resumedIntegrity.requests[0], 'damaged_edit')?.path === damagedEditPath &&
+    resumedIntegrity.requests[0].messages.some(message => message.tool_call_id === 'damaged_edit'),
+  'a new Pi process reloads the same clean projection with the original failure still paired')
 
   await fs.writeFile(guardPath, JSON.stringify({ autoRetryOnMalformed: false, autoRetryCooldownMs: 0 }))
   const disabled = await run('retry disabled explicitly', [{ delta: 'invalid ' + bad }])

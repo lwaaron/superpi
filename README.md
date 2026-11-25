@@ -1,45 +1,37 @@
 # SuperPi
 
-把 [pi](https://github.com/lwaaron/pi) 作为 DSH 的侧栏面板接进来：左侧栏「pi」入口，主区一整页聊天界面，背后是一个常驻的 `pi --mode rpc` 子进程。
+SuperPi 是可在命令行和 DeepSeek Runtime（DSH）侧栏使用的编码 Agent。两端共用 Pi 1.5.2、同一套 SuperPi 扩展和本地会话格式。DSH 面板通过官方 JSONL RPC 协议驱动 Pi 子进程。可在任一入口打开同一项目的历史会话。
 
-不是重新实现 pi 的 TUI，而是复用 pi 官方的 **RPC 协议**（`packages/coding-agent/docs/rpc.md`）做一层薄适配 —— pi 升级时只要 RPC 帧不破，面板就不用改。
-
-**这个插件本身是可独立分发的**：pi 运行时从插件自己的目录解析（`node_modules` → `.runtime` → 逐级向上 → pnpm store → npm 全局），装不上还能在面板里一键安装到 `.runtime`。不需要在代码里写死任何本机路径，也不需要用户先手工构建 pi。
-
-## 结构
-
-```
-index.js              host 半区：HTTP 路由 + 会话池 + 子进程生命周期 + 自检
-client.js             浏览器半区：侧栏入口注册 + 聊天面板（零构建，纯 JS + React.createElement）
-cordis.patch.yml      bundle 补丁，把本插件插入 DSH 宿主组合
-src/rpc-contract.mjs  RPC 契约：33 条命令 / 25 类事件 / 27 条斜杠 / 9 个扩展 UI method 的唯一真相源
-src/pi-rpc.mjs        JSONL 帧解析 / RPC 命令配对 / 事件缓冲 / 扩展 UI 请求跟踪与应答
-src/pi-runtime.mjs    pi 运行时解析链 + 一键安装（唯一知道「pi 装在哪」的地方）
-src/session-store.mjs 会话落盘目录扫描（读 ~/.pi/agent/sessions，语义对齐 pi 的 SessionManager）
-assets/icon.svg       插件图标
-```
-
-两半区的硬约束（改动前先读）：
-
-- `index.js` / `src/pi-rpc.mjs` / `src/pi-runtime.mjs` **不 import 任何 `@deepseek-ai/*` 包**。宿主里那些包解析不到，写死依赖会让插件 fiber 永久 pending，DSH 启动就卡住。只用 node 内建。
-- `@deepseek-ai/schemastery` 是唯一例外，且必须**动态 import + 兜底**：静态 import 失败会让整个 server entry 加载失败，插件被标「异常」；兜底成 `Config = undefined` 只是「插件详情页没有配置区」，面板照常工作。
-- 子进程隔离而非 SDK 内嵌：pi 崩掉只影响这个面板，不会带崩 DSH 主进程。
-- `client.js` 里 `sidebar.panellist` 的 `id` 必须与 `main` keyed slot 的 `key` 相同，且两次 `slots.inject` 都要包在 `ctx.inject([...])` 内，否则 entry 永久 pending。
-- 客户端 `require` 白名单只有 `react` / `react-dom` / `jsx-runtime` / `@deepseek-ai/dsh-client-ui-primitives`；样式只用 `--dsw-*` 变量，深浅色主题自动适配。
-- 命令表 / 事件表 / 斜杠表只在 `src/rpc-contract.mjs` 里定义一份。`client.js` 不许硬编码命令名与事件名，挂载时先取 `GET /contract`；加一条 RPC 能力的顺序固定为「改契约 → 改面板 → 跑 `test/parity.mjs`」。
+[安装与启动](#安装) · [核心能力](#核心能力) · [配置](#配置) · [排查故障](#排查故障) · [测试](#测试) · [版本记录](docs/parity.md#6-变更记录)
 
 ## 安装
 
-### 方式零：一键启动（TUI 编程会话 + 面板，两个一起起）
+### Windows 一键启动
 
-**双击仓库根目录的 `一键启动.bat`** 即可。它**同时**起两个前端，互不阻塞：
+双击仓库根目录的 `一键启动.bat`，同时启动 SuperPi 终端和独立的 DSH 面板服务。也可以在仓库目录按需运行。
 
-| 前端 | 形态 | 用途 |
-| --- | --- | --- |
-| **pi TUI** | 新开一个真实控制台窗口（Windows Terminal 优先，回落 conhost） | **写代码的交互式编程会话**——就是你要敲字进去的那个窗口 |
-| **DSH web** | 后台服务，端口 25117 | 浏览器 / 侧栏面板形态的 UI |
+```powershell
+.\一键启动.bat -WorkDir D:\your-project
+.\一键启动.bat -NoWeb -Resume pick
+.\一键启动.bat -NoTui
+```
 
-两者是**同一个 pi、同一个 agent loop 的两个平级前端**（见 AGENTS.md 第 1 节），不是父子、不互相替代。
+第二条只开终端并选择历史会话。第三条只启动面板服务。面板要从 DSH 客户端侧栏打开，独立服务默认端口为 `25117`。
+
+### 安装到现有 DSH
+
+运行以下命令把 SuperPi 装进 `desktop` profile。安装完成后，从外部终端或资源管理器启动 `tools\restart-dsh.bat` 核对新版本，再从 DSH 左侧栏打开 **SuperPi**。
+
+```powershell
+pwsh -NoProfile -File .\tools\install-plugin.ps1 -Profile desktop
+```
+
+终端入口为 `superpi`。在源码目录也可运行 `node src/superpi-cli.mjs`。找不到 Pi 运行时时，DSH 面板提供「安装 SuperPi 运行时」入口。
+
+<details>
+<summary>启动参数、安装过程与其他安装方式</summary>
+
+### 完整启动参数
 
 ```powershell
 .\一键启动.bat                                # 两个一起起
@@ -69,7 +61,7 @@ assets/icon.svg       插件图标
 > 所以中文交互文案全部放在 `.ps1` 里（PowerShell 不经过 cmd 的行解析），`.bat` 只留 ASCII。
 > 仓库既有的 `tools\restart-dsh.bat` 也受同一问题影响（会刷出几条乱码，但主流程仍能跑通），暂未改动。
 
-#### 只想要面板（不起 TUI）
+### 单独启动面板服务
 
 双击 `tools\start-standalone.bat`，或：
 
@@ -88,15 +80,9 @@ assets/icon.svg       插件图标
 - 已装版本与仓库 `package.json` 版本不一致时自动重装，避免面板跑旧代码。
 - 全部路径从脚本自身位置推导，**换目录、换盘符都不用改脚本**。
 
-> 与「方式四」的区别：`standalone-verify.ps1` 是**一次性自证**——每次从空 `DSH_HOME` 重装、跑完真实 LLM 往返就把临时目录删掉，
-> 默认端口 25119（不与常驻的一键启动实例争用）。本脚本是**常驻启动器**，装一次留着用。
+`start-standalone.bat` 保留独立实例供日常使用。`standalone-verify.ps1` 在端口 `25119` 临时验证全新安装和真实模型往返，验证后清理临时实例。
 
-### 方式一：一键装进 DSH profile（推荐）
-
-```powershell
-# 打包 → 装到临时目录验证（真跑一轮 LLM）→ pnpm add 进 profile → 再验证一次 → 生成回滚脚本
-pwsh -NoProfile -File .\tools\install-plugin.ps1 -Profile desktop
-```
+### 安装与升级的验证步骤
 
 **必须由包管理器落地，不能手工往 node_modules 里塞副本。** DSH 的插件管理器运行时会跑 pnpm；只要 `package.json` 与 `pnpm-lock.yaml` 对不上，或者 `node_modules/.modules.yaml` 不认识这个包，pnpm 就会把手放的目录当孤儿清掉。脚本因此把三份状态交给 pnpm 一次写一致：
 
@@ -205,7 +191,7 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\fix-bom.ps1               
 
 只想验证不落地：`pwsh -NoProfile -File .\tools\verify-packed.ps1 -Keep keep`。
 
-### 方式二：手工挂载（开发插件本身时用）
+### 开发时手工挂载
 
 把源码目录链到 profile，改完重启 DSH 就能看到：
 
@@ -226,13 +212,13 @@ New-Item -ItemType Junction `
 
 `id` 同时是配置命名空间，不要随意改。
 
-### 方式三：手工 pnpm add（不想跑脚本时）
+### 使用 pnpm 手工安装
 
 ```powershell
-npm pack                                        # 得到 superpi-0.42.0.tgz
+npm pack                                        # 得到 superpi-0.43.0.tgz
 cd "$env:USERPROFILE\.dsh\profiles\desktop"
 node "$env:USERPROFILE\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\pnpm\bin\pnpm.cjs" `
-  add "file:C:\path\to\superpi-0.42.0.tgz" --ignore-scripts
+  add "file:C:\path\to\superpi-0.43.0.tgz" --ignore-scripts
 ```
 
 不要在 profile 里用 `npm install`：npm 会另写一份 `package-lock.json`，而宿主插件管理器用的是 pnpm，两套锁文件互相看不见，下次插件安装就会把 node_modules 重建成 pnpm 理解的样子。
@@ -247,7 +233,7 @@ Test-Path node_modules\superpi\index.js                                     # �
 Select-String -LiteralPath node_modules\.modules.yaml -Pattern 'superpi'    # pnpm 认识它
 ```
 
-### 方式四：独立运行验证（全新 DSH_HOME，不动现有 profile）
+### 在临时 DSH_HOME 验证安装
 
 想知道「这东西真的能独立跑吗」，用这个脚本自证。它在你没碰过的临时 `DSH_HOME` 里从零搭一个 profile，只装 superpi，启动、开会话、跑一轮真实 LLM 往返，然后全部删掉：
 
@@ -285,6 +271,23 @@ pwsh -NoProfile -File .\tools\standalone-verify.ps1 -Keep      # 保留临时目
 
 > 脚本里的 `npm pack` 兜底走 `127.0.0.1:10808` 代理（仅在环境里没设 `HTTPS_PROXY` 时）。换机器跑请先导出自己的代理变量，或用 `-PnpmPath` 指到有效的 `pnpm.cjs`。
 
+</details>
+
+## 核心能力
+
+| 能力 | 面板和命令行中的行为 |
+| --- | --- |
+| 项目与会话 | 按项目查看和恢复历史。模型、会话和扩展沿用 Pi 的配置目录 `~/.pi/agent`，SuperPi 的偏好和诊断存放在 `~/.superpi`。 |
+| 异常恢复 | 识别空响应、乱码、畸形工具标记、输出截断与特定上游断流。满足重试条件时从已完成的工具结果续跑一次。故障持续时提供「继续」入口。 |
+| 写入保护 | 在 `write` 和 `edit` 执行前检查路径与新文本。0.43.0 起，下一次模型请求保留错误诊断和安全路径，被拦截的参数留在原始会话记录中供排查。 |
+| 主动询问 | Agent 通过 `ask_user` 请求必要信息或决策。选择和自由输入都能回到当前任务。 |
+| 验收与代码审查 | `verify` 记录命令退出结果及对应的源码，`review_changes` 审查正确性和测试覆盖。用 `/superpi-task` 查验收进度，用 `/superpi-integrity` 查写入拦截。 |
+
+详细契约、已知差异和版本记录见[两端能力对齐](docs/parity.md)。
+
+<details>
+<summary>SuperPi 运行时的安装与定位</summary>
+
 ## SuperPi 运行时的安装与定位
 
 `src/pi-runtime.mjs` 是唯一知道答案的地方，顺序固定（命中即停，未命中也会记进 `searched` 供排障）：
@@ -310,6 +313,8 @@ npm install --prefix <插件>/.runtime --save-exact --no-audit --no-fund --logle
 
 装完立刻重新解析，无需重启 DSH（已开的会话不受影响，新会话用新装的那份）。Windows 上不用 `spawn(npm.cmd, { shell: true })`（会触发 DEP0190 且参数未转义），走 `cmd.exe /d /s /c` 自行加引号。
 
+</details>
+
 ## 配置
 
 写在 `cordis.patch.yml` 那条 insert 的 `config` 里；插件详情页的配置表单来自 `Config` schema，**只有标了 `.volatile()` 的字段**会进表单并被宿主原位热更新+持久化。
@@ -331,6 +336,33 @@ npm install --prefix <插件>/.runtime --save-exact --no-audit --no-fund --logle
 环境变量（优先级低于 config）：`SUPERPI_CLI_PATH`、`SUPERPI_NODE_PATH`、`SUPERPI_WORKSPACE`、`PI_BASH`、`SUPERPI_RUNTIME_DIR`。
 
 `PI_BASH` 用来告诉 pi 用哪个 bash（Windows 上装 Git for Windows 后指向 `C:\Program Files\Git\bin\bash.exe`）；不设则由 pi 自己找。
+
+## 排查故障
+
+| 遇到的问题 | 查看位置 |
+| --- | --- |
+| 面板找不到运行时 | 使用面板的「安装 SuperPi 运行时」，或在 `/api/superpi/runtime` 查看已搜索的位置。 |
+| 更新后仍显示旧版本 | 用 `tools\restart-dsh.bat -SkipRestart` 核对正在运行的实例。`/api/superpi/selfcheck` 的 `summary.stale` 表示运行中的文件与磁盘版本有差异。 |
+| 写入被拦截或模型中途停下 | 查看工具错误中的路径、行号和码位，或用 `/superpi-integrity` 查记录。会话中的「继续」从已保存的进度接续。 |
+| 验收项仍待完成 | 用 `/superpi-task` 查看当前会话分支的通过证据、待验收项与阻塞原因。 |
+
+<details>
+<summary>宿主结构、HTTP 接口和面板实现</summary>
+
+## 结构
+
+| 文件 | 职责 |
+| --- | --- |
+| `index.js` | DSH HTTP 路由、会话池、子进程和自检 |
+| `client.js` | 侧栏入口和 React 聊天面板 |
+| `cordis.patch.yml` | 将 SuperPi 注册到 DSH 宿主 |
+| `src/pi-rpc.mjs` | JSONL 解析、RPC 命令配对和扩展 UI |
+| `src/rpc-contract.mjs` | 命令、事件、斜杠与扩展 UI 的契约 |
+| `src/pi-runtime.mjs` | Pi 和 Node 的解析与安装 |
+| `src/session-store.mjs` | 枚举 Pi 的本地会话与项目 |
+| `extensions/` | 两端共享的 Agent 能力 |
+
+挂载时，面板从 `/contract` 获得命令与事件表。`sidebar.panellist` 的 `id` 与 `main` keyed slot 的 `key` 一致，两处 `slots.inject` 均由 `ctx.inject` 托管。运行时依赖、样式变量和两端对齐的工程约束见 [AGENTS.md](AGENTS.md)。
 
 ## HTTP 接口
 
@@ -416,10 +448,15 @@ npm install --prefix <插件>/.runtime --save-exact --no-audit --no-fund --logle
 | `git` | 不用 spawn git，直接读 `.git/HEAD` 与 `refs`；`available:false` 表示没有仓库 |
 | `pi.buildFresh` | bundle 目录里最新文件 vs `src` 目录里最新文件；`null` = 判断不了，`false` = 源码比构建新 |
 
-## 会话恢复与写入保护（0.19.0）
+</details>
 
-- **恢复同一任务**。Pi 在收尾时识别空响应、乱码、畸形工具标记或输出截断。没有发起工具调用时，默认从已有上下文自动续跑一次。已有工具结果或连续异常时，两端都显示原因和「继续」入口。主动停止会结束本次运行。
-- **保护工作区**。`write` 和 `edit` 在写盘前检查目标路径和新内容，失败会给出行号与码位。`edit.oldText` 可以匹配已损坏内容。Shell 命令仍可用于修复，检测到乱码时会提示核对文件。`/superpi-integrity` 可查看诊断。
+<details>
+<summary>会话工作流、验收与工程基准</summary>
+
+## 会话恢复与写入保护
+
+- **恢复同一任务**。SuperPi 在 Pi 的收尾阶段判断异常回复是否可恢复。满足重试条件时，从此前已完成的工具结果自动续跑一次。故障持续时，两端都能显示原因并接受「继续」。主动停止会结束本次运行。
+- **保护工作区**。`write` 和 `edit` 在写盘前检查路径与新内容。拦下后，SuperPi 用错误诊断和安全路径指导下一次请求重新生成参数。`edit.oldText` 可匹配已经受损的内容。Shell 命令检测到乱码时提示核对文件。`/superpi-integrity` 可查看诊断。
 - **降低长任务的重复输入**。成功写入的大段正文在下一次请求中用文件引用表示，原调用保留在 Pi 的会话记录里。原生压缩生成的摘要计入上下文预算。多步骤任务沿用同一会话和工具结果，收尾前按用户要求核对交付。
 - **同一套 Pi 扩展**。面板启动子进程前同步包内扩展。终端可用 `npm run superpi:editor` 同步，随后重新打开会话或执行 `/reload`。`autoRetryOnMalformed` 和 `autoRetryCooldownMs` 沿用 `~/.superpi/context-guard.json`。排查和复现见 [输出完整性](docs/output-integrity.md)。
 
@@ -463,37 +500,27 @@ npm install --prefix <插件>/.runtime --save-exact --no-audit --no-fund --logle
 - 0.27.0 未完成的评审会在会话里保存最近读取成功的文件路径和行号，最多 64 段。重新打开会话后，续审从同一指纹的 Git 快照重建带行号的摘录，按原输入预算送给待补审的一路。评审结果显示保存和恢复的数量。源码变化会启动新评审，完整报告仍是验收条件。
 - 0.28.0 会在每次有新源码读取结果、一路评审提交有效报告时写入 Pi 会话。若进程在 `review_changes` 回传前退出，重新打开会话后发起同一项评审即可恢复已读范围和已提交的报告。源码指纹仍须匹配。记录只保存路径、行号和已验证的报告，续审时从快照恢复源码。
 
+</details>
+
 ## 测试
 
-在新克隆的仓库中，使用 Node.js 22.19 或更新版本和 Git。先运行 `npm ci` 安装锁定的 Pi 和 React 开发依赖，再运行离线门禁。技能安装与加载使用临时用户目录。本机已配置的个人技能、工具和记忆可通过 `npm run check:carriers` 单独巡检。
+在新克隆的仓库中使用 Node.js 22.19 或更新版本和 Git。用 `npm ci` 安装锁定的 Pi 和 React 依赖，再运行全量门禁。
 
 ```powershell
-npm ci              # 按 package-lock.json 安装验收依赖
-npm test            # 按依赖顺序运行离线门禁，每套执行一次
-                    # preflight（依赖前置断言，缺 pi/react 直接红）
-                    # → selfcheck → client-render + css-tokens
-                    # → runtime-resolve + config-hot + host-parity
-                    # → session-projects + session-lifecycle + timeout
-                    # → rules + context-guard + modalities
-                    # → turn-verdict + text-integrity + delivery + reliability + engineering-bench
-                    # → parity + tui-editor
-                    # → brand-pi-runtime + restart-lib + github-sync + version
-                    # → 汇总各套当次执行的规模
-                    #
-                    # 各套的 check 数不写在这里：唯一真源是 test/gate-inventory.json，
-                    # 由 gate-inventory 实测对账（实测低于登记值即红）。
-                    # 看当前真实规模：node test/gate-inventory.mjs --list
-                    #
-                    # 全离线（真实 pi 子进程经回环接口测试，不用模型账号）。主要门禁：
-                    #   test/restart-lib.mjs（pwsh 7 与 PowerShell 5.1 各起一遍跑 fixture）
-                    #   test/github-sync.mjs（临时仓库里用真 git 跑完整同步流程：裸仓库当远端、
-                    #                          127.0.0.1:1 拒连当断网、另一个 clone 当分叉的那一方）
-                    #   test/timeout.mjs      ~3.1 s（协议替身真等若干超时周期，把「弹窗让位」压到毫秒级）
-                    #   其余八项合计 <1.5 s
-npm run test:host   # 真起 pi 子进程跑一轮 LLM 往返（用插件的 .runtime）
+npm ci
+npm test
+```
+
+`npm test` 使用回环模型服务与真实 Pi 子进程，不需要模型账号。它按依赖顺序运行每套门禁一次，并比对当次退出状态和 [检查数下限](test/gate-inventory.json)。`npm run test:reliability` 单独验证输出异常、会话恢复和交付流程。`npm run check:carriers` 巡检本机的技能、工具和记忆。
+
+<details>
+<summary>联网检查、打包验证与门禁参考</summary>
+
+```powershell
+npm run test:host   # 使用已配置的模型执行一次真实往返
 npm run test:fresh  # 模拟全新机器：拷一份不带运行时的插件 → 断言 missing → 一键安装 → 能开会话
 npm run test:config # 配置热更新：宿主就地写入 volatile 引用后 /state 必须立刻反映
-npm run test:all    # 以上除 fresh 外全部串起来
+npm run test:all    # 依次运行 npm test 和 npm run test:host
 npm run verify      # npm pack → 装到临时目录 → 用打包产物跑真实 LLM 往返
 pwsh -NoProfile -File .\tools\standalone-verify.ps1   # 全新 DSH_HOME 里只装本插件，独立起服务跑一轮真实 LLM
 ```
@@ -538,7 +565,9 @@ pwsh -NoProfile -File .\tools\standalone-verify.ps1   # 全新 DSH_HOME 里只�
 | `tools/git-hooks/post-commit` / `npm run hooks` | 装进 `.git/hooks/post-commit` 的 8 行 sh 钩子：每次 commit 后**后台**跑一次 `github-sync.mjs --from-hook`（短超时、安静、`&` 不阻塞、永远 `exit 0`）。离线时它什么都不做 —— 提交已经落地，下次提交或 `npm run sync` 会把欠的提交一起推上去。关掉：`SUPERPI_GIT_SYNC=0` |
 | `test/github-sync.mjs` | 线上同步门禁 82 条：文件层（无 BOM / LF / ASCII 钩子 / 不硬编码本机路径 / 无 `--force` / 带超时与禁交互认证）+ 纯函数（四类错误分类、`ls-remote` 解析、退出码）+ **真 git** 跑完整个生命周期（首推 / 幂等 / 新提交再推 / 补 tag / 锁与残留锁接管 / 无远端 / 断网且本地提交不丢 / 分叉拒绝且远端 ref 不动 / 游离 HEAD / 无提交 / 开关关闭 / 只读状态 / 装钩子）+ 接线（`npm run sync` / `npm run hooks` / README / AGENTS.md / `tools/` 不进 npm 包）。远端是临时裸仓库，断网用 `127.0.0.1:1` 拒连模拟，**全程不联网** |
 
-`client-render.mjs` 需要 `react` / `react-dom` —— 本插件刻意不带 `node_modules`，所以它从同级 `pi-main/node_modules` 借（找不到就 SKIP 并退出 0，不算失败）。
+`client-render.mjs` 通过验收预检查找 `react` 和 `react-dom`。依赖缺失时门禁失败，可在仓库根目录运行 `npm ci` 安装。
+
+</details>
 
 ## 线上仓库与版本同步
 

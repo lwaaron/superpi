@@ -43,6 +43,7 @@ import {
   limitImagesForWrite,
   imagePlaceholder,
   foldCompletedWriteArgs,
+  projectTurnAssistant,
   resetMeterMemo,
 } from './superpi-context-guard.mjs'
 import {
@@ -274,15 +275,10 @@ export default function contextGuard(pi) {
   })
 
   pi.on('turn_end', (event) => {
-    const { message, messageEntryId, entries, toolResults, outcome } = event
-    if (outcome !== 'completed' || !messageEntryId || toolResults.length === 0) return undefined
-    if (entries.some(entry => entry.type === 'context_edit' && entry.targetId === messageEntryId)) return undefined
+    const { toolResults, outcome } = event
+    if (outcome !== 'completed' || toolResults.length === 0) return undefined
     if (!readGuardSettingsSync({ cache }).enabled) return undefined
-    const folded = foldCompletedWriteArgs(message, toolResults)
-    if (!folded) return undefined
-    return { entries: [...entries, {
-      type: 'context_edit', targetId: messageEntryId, replacement: { content: folded.content },
-    }] }
+    return projectTurnAssistant(event, message => foldCompletedWriteArgs(message, toolResults))
   })
 
   pi.on('before_agent_start', (event, _ctx) => {

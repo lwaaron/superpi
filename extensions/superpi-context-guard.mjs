@@ -997,6 +997,24 @@ export function foldCompletedWriteArgs(message, toolResults) {
   return completed.size === 0 ? null : foldToolCallArgs(message, completed)
 }
 
+/** Compose assistant content edits from extensions within the same Pi turn boundary. */
+export function projectTurnAssistant(event, transform) {
+  const { message, messageEntryId, entries } = event
+  if (message?.role !== 'assistant' || !messageEntryId) return undefined
+  const index = entries.findLastIndex(entry => entry.type === 'context_edit' && entry.targetId === messageEntryId)
+  const previous = entries[index]?.replacement
+  if (previous === null) return undefined
+  const current = previous ? { ...message, content: previous.content } : message
+  if (!Array.isArray(current.content)) return undefined
+  const projected = transform(current)
+  if (!projected) return undefined
+  const draft = { type: 'context_edit', targetId: messageEntryId, replacement: { content: projected.content } }
+  const next = entries.slice()
+  if (index < 0) next.push(draft)
+  else next[index] = draft
+  return { entries: next }
+}
+
 /**
  * 兜底：按整轮（user 边界）丢弃最旧的轮次，直到回到预算以内。
  *
