@@ -11,12 +11,16 @@ import { createInterface } from 'node:readline'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
 import { cases } from './fixtures/engineering-cases.mjs'
+import { scanTextBytes } from '../extensions/superpi-text-bytes.mjs'
 import { detectTurnVerdict } from '../extensions/superpi-turn-verdict.mjs'
+import { withVerificationSnapshot } from '../extensions/superpi-verification.mjs'
 import { EXTENSION_FILES } from '../src/runtime-extensions.mjs'
 
 const self = fileURLToPath(import.meta.url)
 const root = fileURLToPath(new URL('../', import.meta.url))
 const execute = promisify(execFile)
+const GRADING_TIMEOUT_MS = 20_000
+const sourceExtensions = new Set(['.js', '.cjs', '.mjs', '.jsx', '.ts', '.cts', '.mts', '.tsx', '.json'])
 
 function scenario(name) {
   if (!Object.hasOwn(cases, name)) throw new Error('Unknown case. Choices: ' + Object.keys(cases).join(', '))
@@ -75,7 +79,7 @@ async function grade(name, folder) {
     /^(PATH|PATHEXT|SYSTEMROOT|WINDIR|TEMP|TMP|TMPDIR|LANG|LC_ALL)$/i.test(key)))
   const started = performance.now()
   const { stdout } = await execute(process.execPath, [self, 'worker', name, folder], {
-    cwd: folder, env, timeout: 20_000, windowsHide: true, maxBuffer: 512 * 1024,
+    cwd: folder, env, timeout: GRADING_TIMEOUT_MS, windowsHide: true, maxBuffer: 512 * 1024,
   })
   const checks = JSON.parse(stdout.trim().split('\n').at(-1))
   const expected = Object.keys(selected.checks)
@@ -83,6 +87,26 @@ async function grade(name, folder) {
   assert.ok(checks.every(item => typeof item.pass === 'boolean'))
   const passed = checks.filter(item => item.pass).length
   return { case: name, passed, total: expected.length, gradingMs: Math.round(performance.now() - started), checks }
+}
+
+async function inspectSourceIntegrity(snapshot, signal) {
+  const utf8 = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true })
+  const files = snapshot.files.filter(name => sourceExtensions.has(path.extname(name).toLowerCase()))
+  const findings = []
+  for (const name of files) {
+    const bytes = await fs.readFile(path.join(snapshot.root, name), { signal })
+    let text
+    try {
+      text = utf8.decode(bytes)
+    } catch (error) {
+      if (error.code !== 'ERR_ENCODING_INVALID_ENCODED_DATA') throw error
+      findings.push({ path: name, kind: 'invalid_utf8' })
+      continue
+    }
+    const { clean, total, counts, spans } = scanTextBytes(text)
+    if (!clean) findings.push({ path: name, kind: 'bad_text', total, counts, spans })
+  }
+  return { filesChecked: files.length, findings }
 }
 
 function runOutcome(process, trace, task, assistant, settlement) {
@@ -309,18 +333,28 @@ async function compareCase(name, destination, seconds, agents = comparisonAgents
     const format = agent.format ?? agent.id
     const metrics = await capturedMetrics(format, events, processFile)
     let score = null
+    let sourceIntegrity = null
     let gradingError
     if (!receipt.launchError && receipt.terminationConfirmed) {
-      try { score = await grade(name, workspace) } catch (error) { gradingError = String(error?.message ?? error).slice(0, 350) }
+      try {
+        const signal = AbortSignal.timeout(GRADING_TIMEOUT_MS)
+        await withVerificationSnapshot(workspace, signal, async (copy, snapshot) => {
+          sourceIntegrity = await inspectSourceIntegrity(snapshot, signal)
+          score = await grade(name, copy)
+        })
+      } catch (error) {
+        gradingError = String(error?.message ?? error).slice(0, 350)
+      }
     }
-    const delivered = metrics.outcome === 'finished' && score !== null && score.passed === score.total
+    const delivered = metrics.outcome === 'finished' && score !== null && score.passed === score.total &&
+      sourceIntegrity?.findings.length === 0 && !gradingError
     let version = format === 'superpi' ? suite : null
     if (!receipt.launchError && format !== 'superpi') {
       const result = await execute(agent.program, ['--version'], { cwd: workspace, timeout: 5000, windowsHide: true }).catch(() => null)
       version = result?.stdout.trim().slice(0, 120) || null
     }
     report.runs.push({ agent: agent.id, version, invocation: [agent.program, ...agent.args], workspace, startingTree, processFile, events,
-      stderrFile, metrics, score, delivered,
+      stderrFile, metrics, score, sourceIntegrity, delivered,
       ...(gradingError ? { gradingError } : {}) })
     await save()
     if (receipt.interrupted) break
@@ -409,25 +443,43 @@ async function selfTest() {
       'if (fs.readFileSync(0, "utf8") !== ' + JSON.stringify(selected.prompt) + ') process.exit(11);',
       'for (const [file, text] of Object.entries(' + JSON.stringify(selected.files) + '))',
       '  if (fs.readFileSync(file, "utf8") !== text) process.exit(12);',
-      'for (const [file, text] of Object.entries(' + JSON.stringify(changes) + ')) fs.writeFileSync(file, text);',
+      'for (const [file, data] of Object.entries(' + JSON.stringify(changes) + '))',
+      '  fs.writeFileSync(file, typeof data === "string" ? data : Buffer.from(data));',
       'for (const event of ' + JSON.stringify(records) + ') console.log(JSON.stringify(event));',
       hang ? 'setInterval(() => {}, 1000);' : '',
     ].join('\n')] })
+    const candidateWithSideEffect = selected.files[selected.entry] +
+      '\n// 正常源码 🧪\n' +
+      'await (await import("node:fs/promises")).writeFile(new URL("grading.marker", import.meta.url), "graded")\n'
     const comparisonFolder = path.join(temp, 'comparison-report')
     const report = await compareCase(firstCase, comparisonFolder, 2, [
       fixture('superpi', 'superpi', [
         { type: 'message_end', message: { role: 'assistant', stopReason: 'stop', content: [{ type: 'text', text: 'Finished.' }] } },
         { type: 'agent_settled', aborted: false },
-      ], selected.reference),
+      ], { ...selected.reference, [selected.entry]: candidateWithSideEffect }),
       fixture('codex', 'codex', codexTrace),
       fixture('claude-code', 'claude-code', claudeTrace, selected.reference),
       fixture('stopped', 'codex', [...codexTrace, { type: 'error', message: 'The upstream request timed out.' }], selected.reference, true),
       { id: 'missing', format: 'claude-code', program: path.join(temp, 'missing-candidate'), args: [] },
+      fixture('damaged', 'claude-code', claudeTrace, { ...selected.reference,
+        [selected.entry]: selected.files[selected.entry] + '\n// ' + String.fromCodePoint(0xFFFD) + '\n',
+        'extra.test.mjs': [...Buffer.from('// '), 0xff, 0x0a],
+      }),
     ], temp)
-    const [superpi, codex, claude, stopped, missing] = report.runs
+    const [superpi, codex, claude, stopped, missing, damaged] = report.runs
+    assert.equal(damaged.metrics.outcome, 'finished')
+    assert.equal(damaged.score.passed, damaged.score.total, 'the known damaged fixture still passes every functional assertion')
+    assert.equal(damaged.delivered, false, 'passing behavior cannot certify delivery when the final source contains damaged bytes')
+    assert.deepEqual(damaged.sourceIntegrity.findings.map(file => [file.path, file.kind]),
+      [[selected.entry, 'bad_text'], ['extra.test.mjs', 'invalid_utf8']],
+      'the report distinguishes replacement characters from raw malformed UTF-8 in a new test file')
+    assert.equal(damaged.sourceIntegrity.findings[0].counts.replacement, 1, 'the replacement character is counted in the source file')
+    assert.equal(superpi.sourceIntegrity.findings.length, 0, 'valid Chinese and emoji remain clean in the candidate source')
+    await assert.rejects(fs.stat(path.join(superpi.workspace, 'grading.marker')), { code: 'ENOENT' },
+      'a verifier side effect stays in the diagnostic snapshot')
     assert.equal(await fs.readFile(report.promptFile, 'utf8'), selected.prompt, 'the report retains the exact prompt delivered to each process')
     assert.ok(report.runs.every(run => run.startingTree === report.startingTree) &&
-      new Set(report.runs.map(run => run.workspace)).size === 5, 'all engines start with the same Git tree in separate workspaces')
+      new Set(report.runs.map(run => run.workspace)).size === 6, 'all engines start with the same Git tree in separate workspaces')
     assert.ok(superpi.delivered && superpi.metrics.outcome === 'finished', 'the independent score and terminal result both support delivery')
     assert.ok(codex.metrics.outcome === 'finished' && !codex.delivered && codex.score.passed < codex.score.total,
       'a successful exit and final reply cannot compensate for failed external assertions')
@@ -439,7 +491,7 @@ async function selfTest() {
       'a missing executable is recorded without assigning a benchmark score')
     assert.deepEqual(JSON.parse(await fs.readFile(path.join(comparisonFolder, 'comparison.json'), 'utf8')), report,
       'the comparison report matches the captured process results and scores')
-    count += 8
+    count += 15
     console.log('PASS (' + count + ' checks)')
   } finally {
     await fs.rm(temp, { recursive: true, force: true, maxRetries: 3 })
