@@ -497,6 +497,58 @@ try {
   check((await snapshot()).taskWidget?.widgetLines?.some(line => line.includes('1/1')) &&
     (await snapshot()).eventSeq === 0, 'resuming a session restores its task progress beyond the reset event ring')
 
+  const automaticPlan = { action: 'start', goal: 'Deliver a fully verified result', finishWhenVerified: true,
+    checks: [{ description: 'Run the final acceptance command', command: acceptanceCommand }] }
+  const automatic = await run('finish when the declared verification passes', [
+    useTool('task_progress', automaticPlan, 'automatic_start'),
+    useTool('verify', { command: acceptanceCommand, check: 1, timeout: 3 }, 'automatic_verify'),
+    { delta: 'This extra model request should be unnecessary.' },
+  ])
+  const isReceipt = entry => entry?.type === 'custom_message' && entry.customType === 'superpi-task-receipt' && entry.display === true
+  const receipt = automatic.records.find(record => record.type === 'entry_appended' && isReceipt(record.entry))?.entry
+  check(automatic.requests.length === 2 && toolResult(automatic, 'automatic_verify')?.details?.verification?.recorded === true &&
+    automatic.records.some(record => record.type === 'agent_settled' && !record.aborted),
+  'the last standalone verification can settle a declared automatic task without a third model request')
+  check(receipt?.content.includes('Run the final acceptance command') &&
+    (await snapshot()).taskWidget?.widgetLines?.some(line => line.includes('已完成')),
+  'the panel receives the actual acceptance receipt and completed task state')
+  check((await command({ type: 'get_entries' })).data.entries.filter(isReceipt).length === 1 &&
+    (await command({ type: 'get_messages' })).data.messages.some(message => message.role === 'custom' &&
+      message.customType === 'superpi-task-receipt' && message.display === true),
+  'receipt and completion can be retrieved from the Pi session after the live event')
+
+  const mixedVerification = useTool('verify', { command: acceptanceCommand, check: 1, timeout: 3 }, 'automatic_verify_before_edit')
+  mixedVerification.delta.tool_calls.push({ ...writeCall('origin.txt', 'Changed after automatic verification').tool_calls[0],
+    index: 1, id: 'automatic_following_edit' })
+  const staleAutomatic = await run('settlement rechecks evidence after every tool in the batch', [
+    useTool('task_progress', { ...automaticPlan, replace: true }, 'automatic_stale_start'),
+    mixedVerification, { delta: 'The batch included an edit.' },
+    useTool('task_progress', { action: 'block', reason: 'The edited file needs another test.' }, 'automatic_stale_block'),
+    { delta: 'Acceptance remains pending.' },
+  ])
+  check(toolResult(staleAutomatic, 'automatic_following_edit')?.isError === false &&
+    !staleAutomatic.records.some(record => record.type === 'entry_appended' && isReceipt(record.entry)) &&
+    toolResult(staleAutomatic, 'automatic_stale_block')?.details?.task?.checks?.[0]?.evidence === undefined,
+  'a write in the same batch lands normally and invalidates evidence before an automatic receipt can be emitted')
+  await command({ type: 'new_session' })
+  const steerText = 'Please wait for the decision before closing the task.'
+  const delayedTest = 'node -e "setTimeout(() => console.log(123), 500)"'
+  const withInput = await run('preserve user input arriving during final verification', [
+    useTool('task_progress', { ...automaticPlan, checks: [{ description: 'Verify after waiting', command: delayedTest }] }, 'queued_start'),
+    useTool('verify', { command: delayedTest, check: 1, timeout: 3 }, 'queued_verify'),
+    useTool('task_progress', { action: 'block', reason: 'The user wants to decide before closing.' }, 'queued_block'),
+    { delta: 'Waiting for the decision.' },
+  ], { interact: async since => {
+    await until(snapshot, state => state.events.some(entry => entry.seq > since && entry.record.type === 'tool_execution_start' &&
+      entry.record.toolCallId === 'queued_verify'), 'the last verification before user steering')
+    assert.equal((await command({ type: 'prompt', message: steerText, streamingBehavior: 'steer' })).ok, true)
+  } })
+  check(toolResult(withInput, 'queued_verify')?.details?.verification?.recorded === true &&
+    withInput.requests.slice(2).some(request => requestText(request).includes(steerText)) &&
+    !withInput.records.some(record => record.type === 'entry_appended' && isReceipt(record.entry)),
+  'queued user input reaches the model before automatic completion can settle the earlier task')
+  assert.equal((await command({ type: 'new_session' })).ok, true)
+
   const changed = await run('invalidate evidence after a source edit', [
     useTool('task_progress', { action: 'start', goal: 'Run evidence on current sources',
       checks: [{ description: 'Verify final content', command: acceptanceCommand }] }, 'new_task'),
@@ -698,6 +750,17 @@ try {
     String(message.content).includes('existing-check.spec.mjs')))
   check(lanes.slice(0, 2).every(payload => requestText(payload).includes('existing-check.spec.mjs')) && listing &&
     !requestText(listing).includes('private.txt'), 'an unchanged test is discoverable and ignored files are absent from the review catalog')
+
+  reviewReplies = { correctness: [clean('correctness')], tests: [clean('tests')] }
+  const automaticReview = await run('finish only after the declared independent review reports return', [
+    useTool('task_progress', { action: 'start', goal: 'Deliver independently reviewed changes', finishWhenVerified: true,
+      checks: [{ description: 'Independent review of all changes', review: true }] }, 'automatic_review_plan'),
+    requestReview({ check: 1, paths: ['origin.txt'], base: 'HEAD' }, 'automatic_review_check'),
+    { delta: 'The native receipt already reported the review.' },
+  ])
+  check(automaticReview.requests.length === 4 && toolResult(automaticReview, 'automatic_review_check')?.details?.review?.recorded === true &&
+    automaticReview.records.some(record => record.type === 'entry_appended' && isReceipt(record.entry)),
+  'automatic completion waits for both independent reports and then uses the same visible receipt')
 
   reviewReplies = {
     correctness: [publish('Found a concrete regression.', [{ severity: 'blocking', path: 'origin.txt', line: 1,

@@ -857,6 +857,17 @@ assert(allSystem.length === 0, '只有 system 时该得到空列表，实际 ' +
 const dirty = internals.messagesFromHistory([null, 'x', { role: 'user', content: 'hi' }])
 assert(dirty.length === 1 && dirty[0].blocks[0].text === 'hi', '脏数据该被跳过，string content 兜底成 text 块')
 
+const deliveredEntry = { type: 'custom_message', customType: 'superpi-task-receipt', display: true,
+  content: '任务验收通过\nRun the final acceptance command' }
+const deliveryView = internals.createView()
+internals.applyRecord(deliveryView, { type: 'entry_appended', entry: deliveredEntry })
+assert(deliveryView.messages.length === 1, '验收回执在边界事件到达时进入对话')
+const renderDelivery = message => message ? renderToStaticMarkup(React.createElement(internals.MessageRow, { message, t: zh, toolStatus: {} })) : ''
+assert(renderDelivery(deliveryView.messages[0]).includes('Run the final acceptance command'), '实时消息渲染实际验收回执')
+const storedReceipt = { ...deliveredEntry, role: 'custom' }
+assert(renderDelivery(internals.messagesFromHistory([storedReceipt])[0]).includes('任务验收通过'), '重开会话后可读到持久化验收回执')
+assert(renderDelivery(internals.messagesFromHistory([{ ...storedReceipt, display: false }])[0]) === '', '隐藏的扩展提示不渲染成回执')
+
 // ── 9.17 历史会话抽屉：两级导航（0.5.0 修「历史会话只显示一条」） ──────────────
 // 根因：面板把当前 cwd 当成唯一过滤条件，host 端空 cwd 又回落 workspace，
 // 结果抽屉永远只列得出一个项目的会话。修法是照 pi SessionSelectorComponent 做两级：

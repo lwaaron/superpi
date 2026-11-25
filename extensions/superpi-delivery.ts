@@ -7,6 +7,7 @@ import { applyVerificationMutations, firstChangedSource, verificationCommand, ve
 import { REVIEW_CHECKPOINT, reviewChanges } from './superpi-review.mjs'
 
 const TASK = 'superpi-task'
+const RECEIPT = 'superpi-task-receipt'
 const shells = Type.Union([Type.Literal('bash'), Type.Literal('powershell')])
 const commandText = Type.String({ minLength: 1, maxLength: 32_768 })
 const checklistText = Type.String({ minLength: 1, maxLength: 400 })
@@ -41,6 +42,7 @@ type Task = {
   status: 'active' | 'blocked' | 'complete'
   checks: Check[]
   blocker?: string
+  finishWhenVerified?: boolean
 }
 
 type VerificationStatus = 'passed' | 'failed' | 'timed_out' | 'aborted' | 'unavailable' | 'stale'
@@ -85,6 +87,18 @@ function taskResult(task: Task | undefined, note?: string, isError = false) {
   }
 }
 
+function hasAllEvidence(task: Task) {
+  return task.checks.length > 0 && task.checks.every(check => Boolean(check.evidence))
+}
+
+function receiptText(task: Task) {
+  return ['任务验收通过 / Delivery verified', '', task.goal, '', ...task.checks.map((check, index) => {
+    const mutation = check.evidence && 'fingerprint' in check.evidence ? check.evidence.mutation : undefined
+    const result = mutation ? ' · baseline exit ' + mutation.baselineExitCode + ' · mutation exit ' + mutation.mutationExitCode : ''
+    return (index + 1) + '. ' + check.description + result
+  })].join('\n')
+}
+
 function showTask(ctx: ExtensionContext, task = currentTask(ctx)) {
   const count = task?.checks.filter(check => check.evidence).length
   const status = task?.status === 'complete' ? '已完成 / Complete' : task?.status === 'blocked' ? '待处理 / Blocked' : '进行中 / In progress'
@@ -117,10 +131,22 @@ export default function delivery(pi: ExtensionAPI) {
   let waitingForUser = false
   let shellStillRunning = false
   let completedHere = false
+  let automaticFinishPending = false
 
   const save = (ctx: ExtensionContext, task: Task) => {
     pi.appendEntry(TASK, task)
     showTask(ctx, task)
+  }
+  const saveEvidence = (ctx: ExtensionContext, task: Task, index: number, evidence: Check['evidence']) => {
+    const next = { ...task, checks: task.checks.map((item, i) => i === index ? { ...item, evidence } : item) }
+    save(ctx, next)
+    return next
+  }
+  const canFinish = (ctx: ExtensionContext) => !waitingForUser && !shellStillRunning && !ctx.hasPendingMessages()
+  const stopAfterEvidence = (ctx: ExtensionContext, task?: Task) => {
+    if (!task?.finishWhenVerified || task.status !== 'active' || !hasAllEvidence(task) || !canFinish(ctx)) return false
+    automaticFinishPending = true
+    return true
   }
   const resetActivity = () => {
     engaged = false
@@ -128,6 +154,7 @@ export default function delivery(pi: ExtensionAPI) {
     waitingForUser = false
     shellStillRunning = false
     completedHere = false
+    automaticFinishPending = false
   }
   const restore = (_event: unknown, ctx: ExtensionContext) => {
     resetActivity()
@@ -137,6 +164,9 @@ export default function delivery(pi: ExtensionAPI) {
   pi.on('session_switch', restore)
   pi.on('session_tree', restore)
   pi.on('agent_settled', resetActivity)
+  pi.on('message_start', event => {
+    if (event.message.role === 'user') automaticFinishPending = false
+  })
   pi.on('tool_result', event => {
     if (event.toolName === 'ask_user') waitingForUser = (event.details as { status?: string })?.status !== 'answered'
   })
@@ -155,7 +185,8 @@ export default function delivery(pi: ExtensionAPI) {
     promptSnippet: 'Track acceptance checks and actual evidence for multi-step work.',
     promptGuidelines: [
       'Use task_progress for multi-step coding work and read its status when resuming. Tie checks to the user request. Exercise regressions and compatibility, including overlapping operations on the same resource and partial failures when relevant.',
-      'Record actual observations with file, test, or artifact references. Use verify with the numbered check for command evidence. Call finish before reporting a tracked task complete.',
+      'Record actual observations with file, test, or artifact references. Use verify with the numbered check for command evidence. Call finish for tasks that require a separate completion decision.',
+      'Set finishWhenVerified on start when the declared checks cover the entire requested delivery, including any required independent review. Run the last check on its own for an automatic receipt as soon as all evidence is current.',
       'If acceptance requires proving a test detects a specific regression, declare mutation with exact replacements and an expectedFailure diagnostic on its command check. Run verify with that check number.',
       'For changes where independent review is part of acceptance, mark a check review:true. Review the tested source, address concrete findings, and review again after edits. If reports stay incomplete, finish other checks and report the exact evidence still missing.',
     ],
@@ -174,6 +205,7 @@ export default function delivery(pi: ExtensionAPI) {
       observation: Type.Optional(checklistText),
       reason: Type.Optional(checklistText),
       replace: Type.Optional(Type.Boolean({ description: 'Use only when the user changes the goal or acceptance criteria of a task in progress.' })),
+      finishWhenVerified: Type.Optional(Type.Boolean({ description: 'On start, allow checked evidence for the full task to complete it and publish a receipt automatically.' })),
     }, { additionalProperties: false }),
     async execute(_id, params, signal, _update, ctx) {
       let task = currentTask(ctx)
@@ -185,7 +217,9 @@ export default function delivery(pi: ExtensionAPI) {
           (check.mutation && (!check.command || !validText(check.mutation.expectedFailure))))) {
           return taskResult(task, 'Provide a goal and at least one specific acceptance check with valid text.', true)
         }
-        task = { version: 1, status: 'active', goal: params.goal!.trim(), checks: params.checks }
+        task = { version: 1, status: 'active', goal: params.goal!.trim(), checks: params.checks,
+          ...(params.finishWhenVerified ? { finishWhenVerified: true } : {}) }
+        automaticFinishPending = false
         engaged = true
       } else {
         if (!task || task.status === 'complete') return taskResult(task, 'There is no unfinished task on this branch.', true)
@@ -205,9 +239,11 @@ export default function delivery(pi: ExtensionAPI) {
               return taskResult(task, 'Select an observation check. Use verify for command checks and review_changes for independent reviews.', true)
             }
             const evidence = { observation: params.observation!.trim(), at: new Date().toISOString() }
-            task = { ...task, checks: task.checks.map((item, i) => i === index ? { ...item, evidence } : item) }
+            signal?.throwIfAborted()
+            task = saveEvidence(ctx, task, index, evidence)
+            return { ...taskResult(task), terminate: stopAfterEvidence(ctx, task) }
           } else {
-            if (task.checks.some(check => !check.evidence)) return taskResult(task, 'Acceptance checks are still pending.', true)
+            if (!hasAllEvidence(task)) return taskResult(task, 'Acceptance checks are still pending.', true)
             const checked = await refreshSourceEvidence(task, ctx.cwd, signal)
             if (checked !== task) {
               save(ctx, checked)
@@ -220,7 +256,7 @@ export default function delivery(pi: ExtensionAPI) {
       }
       signal?.throwIfAborted()
       save(ctx, task)
-      return taskResult(task)
+      return { ...taskResult(task), terminate: params.action === 'resume' && stopAfterEvidence(ctx, task) }
     },
   })
 
@@ -285,7 +321,7 @@ export default function delivery(pi: ExtensionAPI) {
       }
       const recordEvidence = (evidence: Check['evidence']) => {
         if (!task || !check) return
-        save(ctx, { ...task, checks: task.checks.map((item, i) => i === index ? { ...item, evidence } : item) })
+        return saveEvidence(ctx, task, index, evidence)
       }
       const run = async () => {
         const before = check && scope === 'workspace' ? await workspaceSourceState(ctx.cwd, executionSignal) : undefined
@@ -420,7 +456,7 @@ export default function delivery(pi: ExtensionAPI) {
         proof = undefined
       }
       const resultStatus = status as VerificationStatus
-      if (proof) recordEvidence(proof)
+      const recordedTask = proof ? recordEvidence(proof) : undefined
       const headings = comparison ? 'Mutation verification ' + resultStatus +
         (comparison.baselineExitCode !== null ? ' · baseline exit ' + comparison.baselineExitCode : '') +
         (comparison.mutationExitCode !== null ? ' · mutation exit ' + comparison.mutationExitCode : '') :
@@ -434,6 +470,7 @@ export default function delivery(pi: ExtensionAPI) {
         details: { verification: { status: resultStatus, scope, exitCode, timeout, mutationsApplied, terminationConfirmed,
           recorded: proof !== undefined, ...(comparison ? { comparison } : {}) } },
         isError: resultStatus !== 'passed',
+        terminate: stopAfterEvidence(ctx, recordedTask),
       }
     },
   })
@@ -475,6 +512,7 @@ export default function delivery(pi: ExtensionAPI) {
       }), appendCheckpoint)
       let recorded = false
       let savedNewEvidence = false
+      let reviewedTask = task
       if (task && item && review.status !== 'aborted') {
         const previous = item.evidence
         const sameSource = previous && 'fingerprint' in previous && previous.fingerprint === review.fingerprint
@@ -484,7 +522,7 @@ export default function delivery(pi: ExtensionAPI) {
         }) : undefined
         recorded = evidence !== undefined
         if (evidence !== previous) {
-          save(ctx, { ...task, checks: task.checks.map((current, i) => i === index ? { ...current, evidence } : current) })
+          reviewedTask = saveEvidence(ctx, task, index, evidence)
           savedNewEvidence = recorded
         }
       }
@@ -519,7 +557,7 @@ export default function delivery(pi: ExtensionAPI) {
         details: { review: { ...review, recorded, check, repeated, remaining } },
         isError: !['clear', 'findings', 'no_changes'].includes(review.status) ||
           (check !== undefined && review.uncoveredCount > 0),
-        terminate: repeated,
+        terminate: repeated || (recorded && stopAfterEvidence(ctx, reviewedTask)),
       }
     },
   })
@@ -528,17 +566,27 @@ export default function delivery(pi: ExtensionAPI) {
     if (!engaged || event.outcome !== 'completed' || ctx.signal?.aborted) return
     let task = currentTask(ctx)
     let entries = event.entries
-    if (task?.status === 'complete' && completedHere) {
+    const pendingInput = () => !canFinish(ctx) || event.continue || event.context.pendingMessages.length > 0
+    const finishAutomatically = automaticFinishPending && task?.status === 'active' && task.finishWhenVerified &&
+      hasAllEvidence(task) && !pendingInput()
+    if (task && ((task.status === 'complete' && completedHere) || finishAutomatically)) {
       const checked = await refreshSourceEvidence(task, ctx.cwd, ctx.signal)
       if (checked !== task) {
         task = checked
         entries = [...entries, { type: 'custom', customType: TASK, data: task }]
         showTask(ctx, task)
+      } else if (finishAutomatically && !pendingInput()) {
+        const completed = { ...task, status: 'complete' as const }
+        showTask(ctx, completed)
+        return { entries: [...entries,
+          { type: 'custom', customType: TASK, data: completed },
+          { type: 'custom_message', customType: RECEIPT, display: true, content: receiptText(completed),
+            details: { goal: completed.goal, checks: completed.checks.length } },
+        ] }
       }
     }
     const settlement = entries === event.entries ? undefined : { entries }
-    if (waitingForUser || shellStillRunning || event.continue ||
-      ctx.hasPendingMessages() || event.context.pendingMessages.length) return settlement
+    if (pendingInput()) return settlement
     const last = event.context.contextMessages.at(-1)
     if (last?.role === 'toolResult' && last.toolName === 'review_changes') {
       const { review } = (last.details ?? {}) as { review?: { repeated?: boolean; check?: number; remaining: string } }

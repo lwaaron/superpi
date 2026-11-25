@@ -114,7 +114,7 @@ async function inspectSourceIntegrity(snapshot, signal) {
   return { filesChecked: files.length, findings }
 }
 
-function runOutcome(process, trace, task, assistant, settlement) {
+function runOutcome(process, trace, task, assistant, settlement, receipt) {
   if (process.deadline === true) return 'deadline'
   if (process.interrupted === true || settlement?.aborted) return 'aborted'
   if (assistant?.stopReason === 'error' && !trace.malformedLines && trace.settlements <= 1) return 'model_error'
@@ -123,7 +123,12 @@ function runOutcome(process, trace, task, assistant, settlement) {
   if (!settlement) return 'no_settlement'
   if (task?.status === 'blocked') return 'blocked'
   if (task?.status === 'active') return 'pending_checks'
-  if (assistant?.stopReason !== 'stop' || !detectTurnVerdict(assistant).delivered) return 'missing_final_answer'
+  const verifiedReceipt = assistant?.stopReason === 'toolUse' && task?.status === 'complete' && task.finishWhenVerified === true &&
+    Array.isArray(task.checks) && task.checks.length > 0 && task.checks.every(check => check?.evidence) &&
+    receipt?.type === 'custom_message' && receipt.display === true && typeof receipt.content === 'string' &&
+    receipt.content.trim() !== '' && scanTextBytes(receipt.content).clean && receipt.details?.goal === task.goal &&
+    receipt.details?.checks === task.checks.length
+  if (!verifiedReceipt && (assistant?.stopReason !== 'stop' || !detectTurnVerdict(assistant).delivered)) return 'missing_final_answer'
   return 'finished'
 }
 
@@ -141,6 +146,7 @@ async function runMetrics(events, observed) {
   }
   let assistant
   let task
+  let receipt
   let settlement
   const lines = createInterface({ input: createReadStream(events), crlfDelay: Infinity })
   for await (const line of lines) {
@@ -151,10 +157,16 @@ async function runMetrics(events, observed) {
       if (record.type === 'tool_execution_start') reviewCalls.add(record.toolCallId)
       if (record.type === 'tool_execution_update') countReview(record.toolCallId, record.partialResult?.details?.reviewProgress?.requests, true)
     }
-    if (record?.type === 'entry_appended' && record.entry?.customType === 'superpi-task') task = record.entry.data
+    if (record?.type === 'entry_appended') {
+      if (record.entry?.type === 'custom' && record.entry.customType === 'superpi-task') {
+        task = record.entry.data
+        receipt = undefined
+      } else if (record.entry?.customType === 'superpi-task-receipt') receipt = record.entry
+    }
     if (record?.type === 'agent_settled') { settlement = record; trace.settlements += 1 }
     if (record?.type !== 'message_end') continue
     const message = record.message
+    if (message?.role === 'user') receipt = undefined
     if (message?.role === 'assistant') { assistant = message; trace.assistantResponses += 1 }
     if (message?.role !== 'toolResult') continue
     trace.toolResults += 1
@@ -170,8 +182,10 @@ async function runMetrics(events, observed) {
   }
   for (const count of requestCounts.values()) trace.reviewerRequests += count
   const unmeteredReviews = [...reviewCalls].filter(id => !knownCounts.has(id)).length
-  return { outcome: runOutcome(observed, trace, task, assistant, settlement), seconds: observed.seconds,
+  const outcome = runOutcome(observed, trace, task, assistant, settlement, receipt)
+  return { outcome, seconds: observed.seconds,
     task: task?.status ?? null, model: assistant?.model ?? null, ...trace, unmeteredReviews,
+    ...(outcome === 'finished' ? { completion: assistant.stopReason === 'stop' ? 'assistant' : 'verification_receipt' } : {}),
     ...(assistant?.errorMessage ? { reason: String(assistant.errorMessage).slice(0, 350) } : {}) }
 }
 
@@ -458,6 +472,20 @@ async function selfTest() {
     assert.equal((await metrics(0)).outcome, 'model_error', 'native settlement preserves provider failure')
     assert.equal((await metrics(1)).outcome, 'model_error', 'a documented model failure survives the CLI nonzero exit')
     count += 10
+
+    const verifiedTask = { version: 1, goal: 'Deliver a verified result', status: 'complete', finishWhenVerified: true,
+      checks: [{ description: 'Run the test', evidence: { fingerprint: 'fixture', toolCallId: 'verify' } }] }
+    const taskRecord = { type: 'entry_appended', entry: { type: 'custom', customType: 'superpi-task', data: verifiedTask } }
+    const receiptRecord = { type: 'entry_appended', entry: { type: 'custom_message', customType: 'superpi-task-receipt',
+      display: true, content: '任务验收通过 / Delivery verified', details: { goal: verifiedTask.goal, checks: 1 } } }
+    const receiptTrace = [trace[0], taskRecord, receiptRecord, trace.at(-1)]
+    await writeTrace(receiptTrace)
+    assert.equal((await metrics(0)).outcome, 'finished', 'a verified native receipt can finish without an assistant follow-up')
+    await writeTrace([trace[0], taskRecord, trace.at(-1)])
+    assert.equal((await metrics(0)).outcome, 'missing_final_answer', 'completed task metadata without visible output cannot finish')
+    await writeTrace([...receiptTrace.slice(0, -1), { ...trace.at(-1), aborted: true }])
+    assert.equal((await metrics(0)).outcome, 'aborted', 'a receipt cannot erase an aborted settlement')
+    count += 3
 
     const codexTrace = [{ type: 'item.completed', item: { type: 'agent_message', text: 'The requested result is ready.' } },
       { type: 'turn.completed', usage: { input_tokens: 25, output_tokens: 10 } }]

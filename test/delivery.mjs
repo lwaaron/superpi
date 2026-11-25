@@ -352,6 +352,16 @@ try {
   check(JSON.stringify(amended.modelCalls.at(-2).messages).includes('Test the cache input') &&
     outputWidget.get('superpi-task')?.[0]?.includes('0/1'), 'the reopened evidence and current state are visible to the model and TUI')
 
+  await fs.writeFile(sourceFile, 'current')
+  const automatic = await run('Complete from the last accepted test',
+    task('automatic-start', 'start', { ...plan, replace: true, finishWhenVerified: true }),
+    verification('automatic-check', { command, check: 1 }))
+  check(automatic.modelCalls.length === 2 && automatic.result('automatic-check')?.details.verification.recorded,
+    'the TUI settles after the final accepted check without requesting additional model output')
+  check(automatic.events.some(event => event.type === 'entry_appended' && event.entry.customType === 'superpi-task-receipt' &&
+    event.entry.display === true && event.entry.content.includes('Test the cache input')) &&
+    outputWidget.get('superpi-task')?.[0]?.includes('已完成'), 'the TUI receives the persisted visible receipt and completed widget')
+
   const textLeak = '<thinking>Review passed.\nHere is the final answer.'
   const recovered = await run('Check malformed final output', textLeak, 'Clean final answer.')
   check(recovered.modelCalls.length === 2 &&

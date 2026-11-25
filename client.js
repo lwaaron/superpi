@@ -1290,6 +1290,10 @@ window.__ModuleLoader__.load({
       return blocks
     }
 
+    function isDeliveryReceipt(value) {
+      return value.customType === 'superpi-task-receipt' && value.display === true
+    }
+
     function makeMessage(raw, seq) {
       var message = raw === null || typeof raw !== 'object' ? {} : raw
       var role = typeof message.role === 'string' ? message.role : 'assistant'
@@ -1299,6 +1303,7 @@ window.__ModuleLoader__.load({
       return {
         seq: seq,
         role: role,
+        deliveryReceipt: role === 'custom' && isDeliveryReceipt(message),
         blocks: blocksOf(message.content),
         streaming: false,
         stopReason: typeof message.stopReason === 'string' ? message.stopReason : null,
@@ -2138,6 +2143,9 @@ window.__ModuleLoader__.load({
         if (entry !== null && typeof entry === 'object') {
           if (entry.type === 'session_info' && typeof entry.name === 'string') view.title = entry.name
           else if (entry.type === 'thinking_level_change' && typeof entry.thinkingLevel === 'string') view.thinkingLevel = entry.thinkingLevel
+          else if (entry.type === 'custom_message' && isDeliveryReceipt(entry)) {
+            view.messages = view.messages.concat([makeMessage(Object.assign({}, entry, { role: 'custom' }), view.messages.length)])
+          }
         }
         return
       }
@@ -2983,7 +2991,7 @@ window.__ModuleLoader__.load({
       if (message.role === 'bashExecution') {
         return h('div', { className: 'superpi-row' }, h('div', { className: 'superpi-body' }, h(BashBlock, { t: t, message: message })))
       }
-      if (message.role !== 'assistant') return null
+      if (message.role !== 'assistant' && !message.deliveryReceipt) return null
 
       var openThinking = null
       var openTools = null
