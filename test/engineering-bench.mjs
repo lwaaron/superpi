@@ -43,6 +43,11 @@ function baselineCommit(cwd) {
 
 async function score(name, folder) {
   const selected = scenario(name)
+  const evaluate = check => scoreCandidate(selected, folder, check)
+  return selected.withGradingEnvironment ? selected.withGradingEnvironment(evaluate) : evaluate()
+}
+
+async function scoreCandidate(selected, folder, check) {
   let candidate
   try {
     candidate = await import(pathToFileURL(path.join(folder, selected.entry)))
@@ -58,7 +63,7 @@ async function score(name, folder) {
       try {
         const deadline = new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('Assertion timed out')), 1800) })
         const sample = await fs.mkdtemp(path.join(temp, 'sample-'))
-        await Promise.race([verify(candidate, path.join(sample, 'settings.json')), deadline])
+        await Promise.race([verify(candidate, path.join(sample, 'settings.json'), check), deadline])
         checks.push({ label, pass: true })
       } catch (error) {
         checks.push({ label, pass: false, reason: String(error?.message ?? error).slice(0, 350) })
@@ -378,6 +383,26 @@ async function selfTest() {
       count += 2
       console.log(name + ' baseline ' + before.passed + '/' + before.total + ' reference ' + after.passed + '/' + after.total)
     }
+    const migration = scenario('state-migration')
+    const serialized = migration.reference['settings.mjs']
+    const withoutQueue = serialized.replace('(writes.get(file) ?? Promise.resolve()).catch(() => {})', 'Promise.resolve()')
+      .replace("import fs from 'node:fs/promises'", "import fs, { rename } from 'node:fs/promises'\nconst replaceFile = rename")
+      .replace('await fs.rename(temporary, file)', 'await replaceFile(temporary, file)')
+    assert.notEqual(withoutQueue, serialized)
+    const racy = path.join(temp, 'state-migration-overlap')
+    await prepare(racy, { ...migration.files, ...migration.reference, 'settings.mjs': withoutQueue })
+    const checkName = 'concurrent saves complete while replacement is busy'
+    const scoreWithConflict = await grade('state-migration', racy)
+    assert.ok(scoreWithConflict.checks.some(check => check.label === checkName && !check.pass && check.reason.includes('EPERM')),
+      'independent grading catches overlapping replacements even when the candidate captures the rename function during import')
+    const runPublicTest = folder => execute(process.execPath, ['--test', '--test-reporter=tap', 'public.test.mjs'],
+      { cwd: folder, timeout: 8000, windowsHide: true })
+    const safePublic = await runPublicTest(path.join(temp, 'state-migration-reference'))
+    assert.match(safePublic.stdout, /ok \d+ - concurrent saves complete while replacement is busy/,
+      'the serialized reference satisfies the visible concurrency test')
+    await assert.rejects(runPublicTest(racy), error => error.code === 1 && error.stdout.includes(checkName) && error.stdout.includes('EPERM'),
+      'the visible project test catches the same regression before delivery')
+    count += 3
     const invalid = path.join(temp, 'invalid-implementation')
     const firstCase = Object.keys(cases)[0]
     const selected = scenario(firstCase)

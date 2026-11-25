@@ -229,10 +229,10 @@ New-Item -ItemType Junction `
 ### 方式三：手工 pnpm add（不想跑脚本时）
 
 ```powershell
-npm pack                                        # 得到 superpi-0.36.1.tgz
+npm pack                                        # 得到 superpi-0.37.0.tgz
 cd "$env:USERPROFILE\.dsh\profiles\desktop"
 node "$env:USERPROFILE\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\pnpm\bin\pnpm.cjs" `
-  add "file:C:\path\to\superpi-0.36.1.tgz" --ignore-scripts
+  add "file:C:\path\to\superpi-0.37.0.tgz" --ignore-scripts
 ```
 
 不要在 profile 里用 `npm install`：npm 会另写一份 `package-lock.json`，而宿主插件管理器用的是 pnpm，两套锁文件互相看不见，下次插件安装就会把 node_modules 重建成 pnpm 理解的样子。
@@ -453,6 +453,7 @@ npm install --prefix <插件>/.runtime --save-exact --no-audit --no-fund --logle
 - `npm run test:engineering` 校验评分与运行记录。`node test/engineering-bench.mjs list` 列出场景，`prepare <场景> <新目录>` 生成等价的 Git 起点和任务描述，`grade <场景> <工作区>` 独立检查代码。`metrics <events.jsonl> <process.json>` 根据 Pi 的 JSONL 事件和进程记录（`exit`、`seconds`、可选 `deadline`）统计实际收尾状态、耗时和审查请求。当前场景覆盖并发缓存与持久化迁移。
 - 在仓库中用 `node test/engineering-bench.mjs compare async-cache _scratch/cache-run 120` 可运行一个三方对照。报告目录必须是新目录。SuperPi、Codex 和 Claude Code 串行接收同一份提示词，分别在相同 Git 树的临时工作区上运行，每个有独立的 120 秒时限。外部 CLI 从 `PATH` 查找并沿用已有授权。不同产品实际使用的模型与工具权限可能不同。
 - `comparison.json` 保留提示词指纹、起点树、原始日志路径、进程退出和独立断言评分。对照工具在同一份交付快照上检查功能与源码完整性。成功收尾、所有断言通过且源码检查通过时记为已交付。`sourceIntegrity` 检查 Git 跟踪及未忽略的 JavaScript、TypeScript 和 JSON 普通文件，分别记录非法 UTF-8 与坏字符。超时保留已产生的代码和可判定分数。缺少可执行文件时记录原因，评分和源码检查留空。报告保留工作区路径，便于复核代码改动。
+- 0.37.0 的状态迁移题自带可运行的并发保存回归。用例让首次异步替换保持进行中，再启动同一目标文件的其余保存，模拟短暂的 `EPERM` 占用冲突。公开测试与独立评分使用同一受控场景和不同样本，同时保留实际文件系统的并发断言。变更后的起点、提示词和评分分母随报告版本记录。
 - 如需从保存的事件重新计算运行结局，可用 `metrics <events.jsonl> <process.json> [superpi|codex|claude-code]`。省略格式时按 SuperPi 读取。
 - 0.23.1 在发起审查请求时记录计数，支持回看超时或强制停止前的请求量。`metrics` 对复用报告去重，并标出旧日志中缺失计数的审查。评审自身的断流与其他模型错误可在报告中查阅。
 - 独立评审对最多 12 个常规源文件和项目清单提供当前完整源码，加 Git 差异或改动文件的基准内容。0.36.1 从差异材料与实际查阅工具定义的序列化大小计算首轮证据预算，保留基础 12 KB 额度，并受模型上下文预算约束。首轮的空闲窗口取剩余时限的三分之一，最长 15 秒。收到模型内容会重开空闲窗口，整次评审仍以原时限为准。空闲超时或可恢复的输出失败时，该路评审改为按需查阅。显式路径、删文件、混合仓库和超预算快照从 Git 差异开始。按需查阅会引用已经提供过的大段源码，短范围仍返回精确的带行号原文。评审和验收计划会检查重叠操作与部分失败等涉及的边界。

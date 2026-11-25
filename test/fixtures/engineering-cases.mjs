@@ -1,7 +1,9 @@
 /** Public project seeds and private grading cases for engineering-bench.mjs. */
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import fs from 'node:fs/promises'
 import path from 'node:path'
+import { withBusyReplacement } from './busy-replacement.mjs'
 
 function deferred() {
   let resolve
@@ -26,15 +28,33 @@ test('lookup and refresh through the public API', async () => {
 
 const testPublicStore = `import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { decode, encode } from './state.mjs'
+import fs from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
+import { withBusyReplacement } from './busy-replacement.mjs'
 
-test('ordinary state survives a round trip', () => {
-  const state = decode({ enabled: true, retries: 4 })
-  assert.equal(state.enabled, true)
-  assert.equal(state.retries, 4)
-  assert.deepEqual(decode(encode(state)), state)
+await withBusyReplacement(async check => {
+  const { decode, encode } = await import('./state.mjs')
+  const storage = await import('./settings.mjs')
+  await test('ordinary state survives a round trip', () => {
+    const state = decode({ enabled: true, retries: 4 })
+    assert.equal(state.enabled, true)
+    assert.equal(state.retries, 4)
+    assert.deepEqual(decode(encode(state)), state)
+  })
+  await test('concurrent saves complete while replacement is busy', async t => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'settings-overlap-'))
+    t.after(async () => {
+      const file = path.join(dir, 'settings.json')
+      await fs.rm(file, { force: true })
+      await fs.rmdir(dir)
+    })
+    const values = Array.from({ length: 5 }, (_, retries) => ({ enabled: Boolean(retries % 2), retries, source: 'public' }))
+    await check(storage, path.join(dir, 'settings.json'), values)
+  })
 })
 `
+const busyReplacementSource = readFileSync(new URL('./busy-replacement.mjs', import.meta.url), 'utf8')
 
 export const cases = {
   'async-cache': {
@@ -177,8 +197,10 @@ export function createCatalog(load, options) {
       'Keep the flat in-memory API { enabled, retries, ...otherFields } and the public load/save functions. ' +
       'Read existing flat files, default missing enabled/retries to true/3, preserve explicit false/0 and unrelated extra fields, ' +
       'and reject unsupported schema versions and invalid field types. Missing files use defaults. ' +
-      'Validate before replacing an existing file, and make persistence atomic. Add focused tests, run them, and leave changes uncommitted.',
+      'Validate before replacing an existing file, and make persistence atomic. Every overlapping save to the same file must succeed even while a previous replacement is briefly busy, and the file must end with one complete submitted document. ' +
+      'Run the supplied tests with node --test, add focused coverage as needed, and leave changes uncommitted.',
     entry: 'settings.mjs',
+    withGradingEnvironment: withBusyReplacement,
     files: {
       'state.mjs': `export function decode(value) {
   return { ...value, enabled: value.enabled || true, retries: value.retries || 3 }
@@ -196,6 +218,7 @@ export async function save(file, value) {
 }
 `,
       'public.test.mjs': testPublicStore,
+      'busy-replacement.mjs': busyReplacementSource,
     },
     reference: {
       'state.mjs': `function fields(value) {
@@ -276,6 +299,11 @@ export async function save(file, value) {
         const loaded = await load(file)
         assert.deepEqual(loaded, values[loaded.retries])
         assert.deepEqual(await fs.readdir(path.dirname(file)), [path.basename(file)])
+      },
+      async 'concurrent saves complete while replacement is busy'(storage, file, check) {
+        const values = Array.from({ length: 8 }, (_, retries) =>
+          ({ enabled: Boolean(retries % 2), retries, text: String(retries).repeat(16_000) }))
+        await check(storage, file, values)
       },
     },
   },
