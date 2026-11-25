@@ -62,6 +62,11 @@ const provider = http.createServer(async (req, res) => {
     res.write(chunk({ content: '等待' }, null))
     return
   }
+  for (const content of reply.progress ?? []) {
+    if (res.destroyed) return
+    res.write(chunk({ content }, null))
+    await delay(350)
+  }
   if (reply.delayMs) await delay(reply.delayMs)
   const frame = chunk(typeof reply.delta === 'string' ? { content: reply.delta } : reply.delta, null)
   if (reply.badUtf8) {
@@ -1155,6 +1160,30 @@ try {
     !requestText(slowCorrectness[1]).includes(visibleTest) && slowCorrectness[1].tools.some(tool => tool.function.name === 'read_review_file'),
   'a stalled compact request falls back to the lean diff without restarting the reviewer who already reported')
 
+  reviewReplies = {
+    correctness: [{ ...seedFinding, progress: Array(6).fill('Reviewing the supplied contract.\n') }, seedFinding],
+    tests: [clean('tests')],
+  }
+  const streaming = await run('let a progressing compact review finish using its captured source', [
+    requestReview({ timeout: 4 }, 'compact_streaming'), { delta: 'The original requests returned the independent reports.' },
+  ])
+  const streamingProof = toolResult(streaming, 'compact_streaming')?.details?.review
+  check(streamingProof?.status === 'findings' && streamingProof.newRequests === 2 &&
+    streamingProof.reviewers.every(reviewer => reviewer.status === 'complete' && !reviewer.fallback),
+  'ongoing model output preserves the complete evidence request beyond its initial idle window')
+
+  reviewReplies = {
+    correctness: [{ ...seedFinding, progress: Array(9).fill('Reviewing another part of the contract.\n') }, { hold: true }],
+    tests: [clean('tests')],
+  }
+  const limitedReview = await run('keep the total deadline even with recurring model output', [
+    requestReview({ timeout: 2 }, 'compact_total_timeout'), { delta: 'The time-limited review retained the completed lane.' },
+  ])
+  const limitedProof = toolResult(limitedReview, 'compact_total_timeout')?.details?.review
+  check(limitedProof?.status === 'timed_out' && limitedProof.newRequests === 2 && limitedProof.reviewers.some(reviewer =>
+    reviewer.focus === 'tests' && reviewer.status === 'complete'),
+  'continuous progress still stops at the shared deadline and retains the other report')
+
   reviewReplies = { correctness: [{ delta: 'Interrupted review', streamError: earlyClose }, seedFinding], tests: [clean('tests')] }
   const gateway = await run('restore discovery after a known compact stream failure', [
     requestReview({}, 'compact_dropped'), { delta: 'Discovery recovered the blocking finding.' },
@@ -1253,6 +1282,38 @@ try {
   const stagedProof = toolResult(staged, 'medium_staged')?.details?.review
   check(stagedProof?.status === 'findings' && stagedProof.inputMode === 'snapshot' && stagedProof.newRequests === 2 &&
     reviewRequests(staged).every(sameEvidence), 'a staged text addition has the same complete source and an absent base file')
+
+  const extendedCatalog = changedCatalog + Array.from({ length: 75 }, (_, n) =>
+    `// Another changed catalog branch ${n}: ${'文'.repeat(20)}\n`).join('')
+  const extendedTest = '// ' + visibleTest + '\n// ' + 'unchanged test context '.repeat(25) + '\n'
+  await fs.writeFile(path.join(compact, 'catalog.mjs'), extendedCatalog)
+  await fs.writeFile(path.join(compact, 'public.test.mjs'), extendedTest)
+  git('commit', '--quiet', '--only', '-m', 'Expand the unchanged test context', '--', 'public.test.mjs')
+  const diffChoice = await observeDiscovery('measure the alternative evidence and tools', 'expanded_diff',
+    { paths: ['catalog.mjs', 'contract.test.mjs'] })
+  const hasSource = (payload, path, source) => packetOf(payload).workspaceFiles?.some(file => file.path === path && file.source === source)
+  reviewReplies = {
+    correctness: [payload => hasSource(payload, 'catalog.mjs', extendedCatalog) ? seedFinding :
+      useTool('read_review_file', { path: 'catalog.mjs', count: 1 }, 'read_extended_catalog'), seedFinding],
+    tests: [payload => hasSource(payload, 'public.test.mjs', extendedTest) ? clean('tests') :
+      useTool('read_review_file', { path: 'public.test.mjs', count: 1 }, 'read_extended_tests'), clean('tests')],
+  }
+  const expanded = await run('use complete evidence when the alternative sends at least as much', [
+    requestReview({}, 'expanded_snapshot'), { delta: 'Review recorded.' },
+  ])
+  const expandedProof = toolResult(expanded, 'expanded_snapshot')?.details?.review
+  const diffRequest = reviewRequests(diffChoice)[0]
+  const expandedRequest = reviewRequests(expanded)[0]
+  const evidenceBytes = payload => Buffer.byteLength(JSON.stringify(packetOf(payload)))
+  const diffBytes = evidenceBytes(diffRequest)
+  const diffTools = diffRequest.tools.filter(tool => tool.function.name !== 'submit_review').map(tool => tool.function)
+  const compactBytes = evidenceBytes(expandedRequest)
+  check(compactBytes > Math.max(12_000, diffBytes) && compactBytes <= diffBytes + Buffer.byteLength(JSON.stringify(diffTools)),
+    'the complete evidence fits specifically because discovery definitions are removed from the first request')
+  check(expandedProof?.status === 'findings' && expandedProof.inputMode === 'snapshot' && expandedProof.newRequests === 2 &&
+    reviewRequests(expanded).every(payload => hasSource(payload, 'catalog.mjs', extendedCatalog) &&
+      hasSource(payload, 'public.test.mjs', extendedTest) && payload.tools.map(tool => tool.function.name).join(',') === 'submit_review'),
+  'a large diff can fund complete first-request evidence beyond the default packet size without losing the blocker')
 
   const largeText = '// Unchanged file beyond the compact evidence budget.\n// ' + '\\'.repeat(7_000)
   await fs.writeFile(path.join(compact, 'large.mjs'), largeText)

@@ -154,7 +154,7 @@ export default function delivery(pi: ExtensionAPI) {
     description: 'Manage a branch-local delivery checklist. Use verify for command checks, review_changes for independent review checks, and observe for inspected artifacts. Block on a real dependency, resume to continue, and finish after evidence is recorded.',
     promptSnippet: 'Track acceptance checks and actual evidence for multi-step work.',
     promptGuidelines: [
-      'Use task_progress for multi-step coding work and read its status when resuming. Keep the list tied to the user request. Include regression and compatibility checks when relevant.',
+      'Use task_progress for multi-step coding work and read its status when resuming. Tie checks to the user request. Exercise regressions and compatibility, including overlapping operations on the same resource and partial failures when relevant.',
       'Record actual observations with file, test, or artifact references. Use verify with the numbered check for command evidence. Call finish before reporting a tracked task complete.',
       'If acceptance requires proving a test detects a specific regression, declare mutation with exact replacements and an expectedFailure diagnostic on its command check. Run verify with that check number.',
       'For changes where independent review is part of acceptance, mark a check review:true. Review the tested source, address concrete findings, and review again after edits. If reports stay incomplete, finish other checks and report the exact evidence still missing.',

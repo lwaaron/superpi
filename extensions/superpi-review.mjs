@@ -16,10 +16,29 @@ const READ_LINES = 180
 const SAVED_READS = 64
 const sourceExtension = /\.(?:[cm]?[jt]sx?|pyi?|go|rs|java|kts?|h|hpp|c|cc|cpp|cs|rb|php|swift|lua|sh|ps1|sql|vue|svelte|html|css)$/i
 const projectManifest = /^(?:package\.json|pyproject\.toml|Cargo\.toml|go\.(?:mod|sum)|pom\.xml|build\.gradle(?:\.kts)?)$/i
-const discoveryTools = [{ name: 'list_review_files' }, { name: 'read_review_file' }]
+const listReviewFilesTool = {
+  name: 'list_review_files',
+  description: 'Find available repository-relative paths from the same immutable snapshot. Filter by file name or path substring.',
+  parameters: Type.Object({
+    query: Type.Optional(Type.String({ maxLength: 256 })),
+    offset: Type.Optional(Type.Integer({ minimum: 0 })),
+    limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 50 })),
+  }, { additionalProperties: false }),
+}
+const readReviewFileTool = {
+  name: 'read_review_file',
+  description: 'Read relevant lines from the snapshot by relative path. Broad reads of supplied source reference the earlier evidence. Use a small count for exact numbered citations.',
+  parameters: Type.Object({
+    path: Type.String({ minLength: 1, maxLength: 1024 }),
+    start: Type.Optional(Type.Integer({ minimum: 1 })),
+    count: Type.Optional(Type.Integer({ minimum: 1, maximum: READ_LINES })),
+  }, { additionalProperties: false }),
+}
+const discoveryTools = [listReviewFilesTool, readReviewFileTool].map(({ name }) => ({ name }))
+const DISCOVERY_TOOL_BYTES = Buffer.byteLength(JSON.stringify([listReviewFilesTool, readReviewFileTool]))
 const focuses = {
-  correctness: 'Trace changed behavior through its callers. Look for compatibility breaks, reentrancy, races, unchecked failures, and lost state. Trace what happens if user callbacks run synchronously before state is published.',
-  tests: 'Trace each important change to its verification. Look for missing failure paths, misleading passes, weak assertions, and nondeterministic tests.',
+  correctness: 'Trace changed behavior through its callers. Look for compatibility breaks, reentrancy, races, unchecked failures, and lost state. Trace what happens if user callbacks run synchronously before state is published. For persistence or shared state, trace overlapping operations on the same resource, including partial failures.',
+  tests: 'Trace each important change to its verification. Look for missing failure paths, misleading passes, weak assertions, and nondeterministic tests. For concurrency and atomicity, look for tests that overlap operations on the same resource and check the invariant after they settle.',
 }
 const reportPath = Type.String({ minLength: 1, maxLength: 1024 })
 const reportSchema = Type.Object({
@@ -141,9 +160,8 @@ function canInlineSource(name) {
   return name.split('/').every(segment => !segment.startsWith('.')) && (sourceExtension.test(name) || projectManifest.test(name))
 }
 
-async function bundledEvidence(snapshot, payload, inputBytes, signal) {
+async function bundledEvidence(snapshot, payload, limit, signal) {
   if (snapshot.hasDeletions || snapshot.files.length > SNAPSHOT_INLINE_FILES || !snapshot.files.every(canInlineSource)) return
-  const limit = Math.min(inputBytes, SNAPSHOT_INLINE_BYTES)
   try {
     const { goal } = payload
     const workspaceFiles = []
@@ -218,7 +236,7 @@ function recoveryInput(goal, messages, restored, limit) {
 }
 
 async function reviewPass({ focus, goal, input, inputLimit, model, registry, snapshot, signal, readAllowance, resuming, suppliedSources, retryStreams,
-  inline = false, meter, onRequest, onCheckpoint }) {
+  inline = false, meter, onRequest, onCheckpoint, onOutput }) {
   let report
   let resumingStream = false
   let bytesLeft = readAllowance
@@ -252,14 +270,8 @@ async function reviewPass({ focus, goal, input, inputLimit, model, registry, sna
         'The final request will only accept a report.' + (resuming ?
           ' An earlier review did not finish. Focus on the changed behavior and essential callers or tests. Submit the findings as soon as the evidence supports them.' : ''),
       tools: [{
-        name: 'list_review_files',
+        ...listReviewFilesTool,
         label: 'List review files',
-        description: 'Find available repository-relative paths from the same immutable snapshot. Filter by file name or path substring.',
-        parameters: Type.Object({
-          query: Type.Optional(Type.String({ maxLength: 256 })),
-          offset: Type.Optional(Type.Integer({ minimum: 0 })),
-          limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 50 })),
-        }, { additionalProperties: false }),
         async execute(_id, { query = '', offset = 0, limit = 30 }) {
           signal.throwIfAborted()
           if (meter.requests >= REQUEST_LIMIT) return textResult('File discovery has ended. Submit the report now.', true)
@@ -274,14 +286,8 @@ async function reviewPass({ focus, goal, input, inputLimit, model, registry, sna
           return textResult(text)
         },
       }, {
-        name: 'read_review_file',
+        ...readReviewFileTool,
         label: 'Read review file',
-        description: 'Read relevant lines from the snapshot by relative path. Broad reads of supplied source reference the earlier evidence. Use a small count for exact numbered citations.',
-        parameters: Type.Object({
-          path: Type.String({ minLength: 1, maxLength: 1024 }),
-          start: Type.Optional(Type.Integer({ minimum: 1 })),
-          count: Type.Optional(Type.Integer({ minimum: 1, maximum: READ_LINES })),
-        }, { additionalProperties: false }),
         async execute(_id, { path, start = 1, count = 100 }) {
           try {
             signal.throwIfAborted()
@@ -361,6 +367,7 @@ async function reviewPass({ focus, goal, input, inputLimit, model, registry, sna
     },
   })
   const unlisten = agent.subscribe(event => {
+    if (onOutput && event.type === 'message_update' && event.assistantMessageEvent?.delta?.length) onOutput()
     if (event.type !== 'message_end') return
     const { message } = event
     if (!signal.aborted && completedRead(message) && saveSourceRange(meter.sourceRanges, message.details)) {
@@ -408,22 +415,26 @@ async function reviewPass({ focus, goal, input, inputLimit, model, registry, sna
 async function reviewLane(options, bundle, deadlineAt) {
   if (!bundle) return reviewPass(options)
   const { signal, meter } = options
-  const firstBudget = Math.floor(Math.min(SNAPSHOT_PROBE_MS, (deadlineAt - performance.now()) / 3))
-  if (firstBudget < 1) return reviewPass(options)
-  const probe = AbortSignal.timeout(firstBudget)
-  const firstSignal = AbortSignal.any([signal, probe])
+  const idleMs = Math.floor(Math.min(SNAPSHOT_PROBE_MS, (deadlineAt - performance.now()) / 3))
+  if (idleMs < 1) return reviewPass(options)
+  const idle = new AbortController()
+  const firstSignal = AbortSignal.any([signal, idle.signal])
+  const timer = setTimeout(() => idle.abort(), idleMs)
   let report
   try {
-    const first = reviewPass({ ...options, input: bundle.input, signal: firstSignal, inline: bundle.format })
+    const first = reviewPass({ ...options, input: bundle.input, signal: firstSignal, inline: bundle.format,
+      onOutput: () => { if (!firstSignal.aborted) timer.refresh() } })
     await waitForVerification(first.then(outcome => { report = outcome }), firstSignal)
   } catch (error) {
     signal.throwIfAborted()
-    if (!probe.aborted) throw error
+    if (!idle.signal.aborted) throw error
+  } finally {
+    clearTimeout(timer)
   }
   signal.throwIfAborted()
   if (report?.summary || report?.failure === 'model-error') return report
   if (meter.requests >= REQUEST_LIMIT) return incompleteLane(options.focus, meter)
-  meter.fallback = probe.aborted ? 'snapshot-timeout' : report?.failure ?? 'no-report'
+  meter.fallback = idle.signal.aborted ? 'snapshot-timeout' : report?.failure ?? 'no-report'
   meter.failure = undefined
   return reviewPass(options)
 }
@@ -503,9 +514,11 @@ export async function reviewChanges(ctx, params, signal, onProgress, appendCheck
       result.inputMode = previous.inputMode ?? 'diff'
       result.repeated = latest?.execution === 'reused'
     } else {
-      const bundle = !previous && !result.scope.length && !result.omitted.length ?
-        await bundledEvidence(snapshot, payload, inputBytes, active) : undefined
       const reviewInput = Buffer.byteLength(withCatalog) <= inputBytes ? withCatalog : input
+      // A first request that can report directly needs none of the discovery tool definitions.
+      const bundleLimit = Math.min(inputBytes, Math.max(SNAPSHOT_INLINE_BYTES, Buffer.byteLength(reviewInput) + DISCOVERY_TOOL_BYTES))
+      const bundle = !previous && !result.scope.length && !result.omitted.length ?
+        await bundledEvidence(snapshot, payload, bundleLimit, active) : undefined
       result.inputMode = bundle ? 'snapshot' : 'diff'
       result.execution = previous ? 'resumed' : 'new'
       result.attempts += 1
