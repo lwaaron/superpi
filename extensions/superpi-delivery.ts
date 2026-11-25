@@ -1,7 +1,7 @@
 import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent'
-import { Type } from 'typebox'
+import { Type, type Static } from 'typebox'
 import { scanTextBytes } from './superpi-text-bytes.mjs'
-import { applyVerificationMutations, firstChangedSource, verificationCommand, verificationOutputContains,
+import { applyVerificationMutations, firstChangedSource, verificationCommand, verificationOutputContains, verificationSnapshotFingerprint,
   waitForVerification, watchWorkspaceEntries, withVerificationPair, withVerificationSnapshot,
   workspaceFingerprint, workspaceSourceState } from './superpi-verification.mjs'
 import { REVIEW_CHECKPOINT, reviewChanges } from './superpi-review.mjs'
@@ -10,6 +10,14 @@ const TASK = 'superpi-task'
 const shells = Type.Union([Type.Literal('bash'), Type.Literal('powershell')])
 const commandText = Type.String({ minLength: 1, maxLength: 32_768 })
 const checklistText = Type.String({ minLength: 1, maxLength: 400 })
+const mutationsSchema = Type.Array(Type.Object({
+  path: Type.String({ minLength: 1, maxLength: 4096 }),
+  oldText: commandText,
+  newText: Type.String({ maxLength: 32_768 }),
+}, { additionalProperties: false }), { minItems: 1, maxItems: 12 })
+const failureDiagnostic = Type.String({ minLength: 1, maxLength: 400,
+  description: 'Literal test diagnostic expected only after applying the snapshot mutations.' })
+const mutationCheckSchema = Type.Object({ mutations: mutationsSchema, expectedFailure: failureDiagnostic }, { additionalProperties: false })
 const statusActions = Type.Union([
   Type.Literal('start'), Type.Literal('status'), Type.Literal('observe'),
   Type.Literal('block'), Type.Literal('resume'), Type.Literal('finish'),
@@ -20,7 +28,11 @@ type Check = {
   command?: string
   shell?: 'bash' | 'powershell'
   review?: boolean
-  evidence?: { at: string; observation: string } | { at: string; fingerprint: string; toolCallId: string }
+  mutation?: Static<typeof mutationCheckSchema>
+  evidence?: { at: string; observation: string } | {
+    at: string; fingerprint: string; toolCallId: string
+    mutation?: { baselineExitCode: 0; mutationExitCode: number }
+  }
 }
 
 type Task = {
@@ -55,10 +67,14 @@ function taskSummary(task: Task | undefined) {
   if (!task) return 'No task has been recorded on this session branch.'
   const heading = task.status === 'blocked' ? 'Blocked: ' + task.blocker : 'Task ' + task.status
   return [heading, task.goal, ...task.checks.map((check, index) => {
-    const label = !check.evidence ? 'pending' : check.review ? 'review complete' : 'fingerprint' in check.evidence ? 'command passed' : 'observed'
+    const mutation = check.evidence && 'fingerprint' in check.evidence ? check.evidence.mutation : undefined
+    const label = !check.evidence ? 'pending' : mutation ? 'mutation detected' : check.review ? 'review complete' :
+      'fingerprint' in check.evidence ? 'command passed' : 'observed'
     const proof = !check.evidence ? '' : ' · ' + check.evidence.at +
       ('observation' in check.evidence ? ' · ' + check.evidence.observation : ' · tool ' + check.evidence.toolCallId)
-    return (index + 1) + '. [' + label + '] ' + check.description + (check.command ? '\n   $ ' + check.command : '') + proof
+    const diagnostic = check.mutation ? '\n   Expected assertion ' + JSON.stringify(check.mutation.expectedFailure) : ''
+    const exits = mutation ? ' · baseline exit ' + mutation.baselineExitCode + ' · mutation exit ' + mutation.mutationExitCode : ''
+    return (index + 1) + '. [' + label + '] ' + check.description + (check.command ? '\n   $ ' + check.command : '') + proof + diagnostic + exits
   })].join('\n')
 }
 
@@ -140,6 +156,7 @@ export default function delivery(pi: ExtensionAPI) {
     promptGuidelines: [
       'Use task_progress for multi-step coding work and read its status when resuming. Keep the list tied to the user request. Include regression and compatibility checks when relevant.',
       'Record actual observations with file, test, or artifact references. Use verify with the numbered check for command evidence. Call finish before reporting a tracked task complete.',
+      'If acceptance requires proving a test detects a specific regression, declare mutation with exact replacements and an expectedFailure diagnostic on its command check. Run verify with that check number.',
       'For changes where independent review is part of acceptance, mark a check review:true. Review the tested source, address concrete findings, and review again after edits. If reports stay incomplete, finish other checks and report the exact evidence still missing.',
     ],
     executionMode: 'sequential',
@@ -151,6 +168,7 @@ export default function delivery(pi: ExtensionAPI) {
         command: Type.Optional(commandText),
         shell: Type.Optional(shells),
         review: Type.Optional(Type.Boolean()),
+        mutation: Type.Optional(mutationCheckSchema),
       }, { additionalProperties: false }), { minItems: 1, maxItems: 12 })),
       check: Type.Optional(Type.Integer({ minimum: 1, maximum: 12 })),
       observation: Type.Optional(checklistText),
@@ -163,7 +181,8 @@ export default function delivery(pi: ExtensionAPI) {
       if (params.action === 'start') {
         if (task && task.status !== 'complete' && !params.replace) return taskResult(task, 'A task already exists. Resume it or explicitly replace it when the user changes scope.', true)
         if (!validText(params.goal) || !params.checks?.length || params.checks.some(check =>
-          !validText(check.description) || (check.command !== undefined && (!validText(check.command) || check.review)))) {
+          !validText(check.description) || (check.command !== undefined && (!validText(check.command) || check.review)) ||
+          (check.mutation && (!check.command || !validText(check.mutation.expectedFailure))))) {
           return taskResult(task, 'Provide a goal and at least one specific acceptance check with valid text.', true)
         }
         task = { version: 1, status: 'active', goal: params.goal!.trim(), checks: params.checks }
@@ -213,7 +232,7 @@ export default function delivery(pi: ExtensionAPI) {
     promptGuidelines: [
       'Use verify for builds and tests, with a deadline appropriate to the command. Declare deliberate mutations as exact replacements in a snapshot and invoke tests there using relative paths.',
       'To confirm a test catches a specific regression, use expectedFailure with stable, literal output from the failing assertion. The comparison confirms a passing baseline and that exact diagnostic from the mutated run.',
-      'After changes, use the exact command declared on a task check and pass its number to record evidence. A timeout or a snapshot experiment cannot complete a command check.',
+      'For numbered checks use the declared command and shell. Normal checks run in the workspace. A numbered mutation check runs the declared comparison in snapshots and records evidence on detection if the workspace still matches.',
     ],
     reachesTools: ['bash', 'powershell'],
     executionMode: 'sequential',
@@ -223,26 +242,30 @@ export default function delivery(pi: ExtensionAPI) {
       scope: Type.Optional(Type.Union([Type.Literal('workspace'), Type.Literal('snapshot')])),
       shell: Type.Optional(shells),
       check: Type.Optional(Type.Integer({ minimum: 1, maximum: 12 })),
-      expectedFailure: Type.Optional(Type.String({ minLength: 1, maxLength: 400, description: 'Literal test diagnostic expected only after applying the snapshot mutations.' })),
-      mutations: Type.Optional(Type.Array(Type.Object({
-        path: Type.String({ minLength: 1, maxLength: 4096 }),
-        oldText: commandText,
-        newText: Type.String({ maxLength: 32_768 }),
-      }, { additionalProperties: false }), { minItems: 1, maxItems: 12 })),
+      expectedFailure: Type.Optional(failureDiagnostic),
+      mutations: Type.Optional(mutationsSchema),
     }, { additionalProperties: false }),
     async execute(toolCallId, params, signal, onUpdate, ctx) {
-      const { command, timeout, scope = 'workspace', shell = 'bash', mutations, expectedFailure } = params
+      const { command, timeout, shell = 'bash' } = params
       const task = currentTask(ctx)
       const index = (params.check ?? 0) - 1
       const check = task?.checks[index]
+      const declaredMutation = check?.mutation
+      const requiredScope = declaredMutation ? 'snapshot' : 'workspace'
+      const scope = params.scope ?? requiredScope
+      const mutations = declaredMutation?.mutations ?? params.mutations
+      const expectedFailure = declaredMutation?.expectedFailure ?? params.expectedFailure
       if (!validText(command)) return taskResult(task, 'Provide a non-empty verification command with valid text.', true)
+      if (params.check !== undefined && (task?.status !== 'active' || check?.command !== command || (check.shell ?? 'bash') !== shell)) {
+        return taskResult(task, 'Use the exact command and shell of a recorded check in the active task.', true)
+      }
+      if (declaredMutation && (scope !== 'snapshot' || params.mutations !== undefined || params.expectedFailure !== undefined)) {
+        return taskResult(task, 'Use the declared snapshot mutations and failure diagnostic for this numbered check.', true)
+      }
+      if (check && scope !== requiredScope) return taskResult(task, 'This numbered check runs in the workspace.', true)
       if (mutations && scope !== 'snapshot') return taskResult(task, 'Mutations require a disposable verification snapshot.', true)
       if (expectedFailure !== undefined && (scope !== 'snapshot' || !mutations?.length || !validText(expectedFailure))) {
         return taskResult(task, 'A comparison requires a snapshot, at least one mutation, and a literal failure diagnostic.', true)
-      }
-      if (params.check !== undefined && (scope !== 'workspace' || task?.status !== 'active' ||
-        check?.command !== command || (check.shell ?? 'bash') !== shell)) {
-        return taskResult(task, 'Use the exact command and shell of a recorded check in the active task workspace.', true)
       }
       if (!ctx.tools.some(tool => tool.name === shell)) return taskResult(task, 'The selected shell is not enabled for this session.', true)
       if (check) engaged = true
@@ -265,7 +288,7 @@ export default function delivery(pi: ExtensionAPI) {
         save(ctx, { ...task, checks: task.checks.map((item, i) => i === index ? { ...item, evidence } : item) })
       }
       const run = async () => {
-        const before = check ? await workspaceSourceState(ctx.cwd, executionSignal) : undefined
+        const before = check && scope === 'workspace' ? await workspaceSourceState(ctx.cwd, executionSignal) : undefined
         const entryChanges = before ? await watchWorkspaceEntries(before, executionSignal) : undefined
         const execute = async (snapshotCwd?: string) => {
           executionSignal.throwIfAborted()
@@ -305,7 +328,8 @@ export default function delivery(pi: ExtensionAPI) {
         }
         try {
           if (comparison && mutations) {
-            await withVerificationPair(ctx.cwd, executionSignal, async (baselineCwd, mutationCwd) => {
+            await withVerificationPair(ctx.cwd, executionSignal, async (baselineCwd, mutationCwd, snapshot) => {
+              const checkedFingerprint = declaredMutation ? await verificationSnapshotFingerprint(snapshot, executionSignal) : undefined
               await applyVerificationMutations(mutationCwd, mutations, executionSignal)
               mutationsApplied = mutations.length
               comparison.stage = 'baseline'
@@ -341,11 +365,20 @@ export default function delivery(pi: ExtensionAPI) {
                 return
               }
               // Shell launch errors and signal exits are outside the regular test failure range.
-              const testFailure = mutation.exitCode !== null && mutation.exitCode > 0 && mutation.exitCode < 126
-              if (diagnostic && testFailure) {
+              const mutationExitCode = mutation.exitCode
+              if (diagnostic && mutationExitCode !== null && mutationExitCode > 0 && mutationExitCode < 126) {
                 comparison.outcome = 'detected'
                 status = 'passed'
                 note = 'The baseline passed. The mutated run reported ' + JSON.stringify(comparison.expectedFailure) + '.'
+                if (checkedFingerprint !== undefined) {
+                  if (await workspaceFingerprint(ctx.cwd, executionSignal) === checkedFingerprint) {
+                    proof = { fingerprint: checkedFingerprint, toolCallId, at: new Date().toISOString(),
+                      mutation: { baselineExitCode: 0, mutationExitCode } }
+                  } else {
+                    status = 'stale'
+                    note += ' The workspace no longer matches the tested source. Rerun the numbered check on current sources.'
+                  }
+                }
               } else {
                 comparison.outcome = 'unexpected_failure'
                 status = 'failed'

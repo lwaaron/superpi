@@ -79,6 +79,12 @@ export async function workspaceSourceState(cwd, signal, includeFileVersions = tr
   return { ...state, root, files }
 }
 
+/** Identify the captured bytes in the source workspace's namespace. */
+export async function verificationSnapshotFingerprint(snapshot, signal) {
+  const { fingerprint } = await fingerprintFiles(snapshot.root, snapshot.files, snapshot.source, signal)
+  return fingerprint
+}
+
 async function fingerprintFiles(root, files, identity, signal, includeFileVersions = false) {
   const hash = createHash('sha256').update(identity.root).update('\0').update(identity.cwd).update('\0')
   const fileVersions = new Map()
@@ -260,7 +266,7 @@ async function withSnapshotFiles(root, files, workdir, signal, run) {
 export async function withVerificationPair(cwd, signal, compare) {
   return withVerificationSnapshot(cwd, signal, (baselineCwd, snapshot) =>
     withSnapshotFiles(snapshot.root, snapshot.files, path.relative(snapshot.root, baselineCwd), signal,
-      mutationCwd => compare(baselineCwd, mutationCwd)))
+      mutationCwd => compare(baselineCwd, mutationCwd, snapshot)))
 }
 
 /** Use the shell transcript, including its spool if needed, to match a literal test diagnostic. */
@@ -295,12 +301,12 @@ export async function withReviewSnapshot(cwd, base, paths, signal, inspect) {
       git(source.root, [...diff, '--name-only', '-z', revision, '--'], signal),
       git(source.root, [...untracked, '--'], signal),
     ]) : []
-    const [patch, stats, newFiles, deletions, { fingerprint }, all] = await Promise.all([
+    const [patch, stats, newFiles, deletions, fingerprint, all] = await Promise.all([
       git(source.root, [...diff, revision, ...where], signal),
       git(source.root, [...diff, '--numstat', '-z', revision, ...where], signal),
       git(source.root, [...untracked, ...where], signal),
       git(source.root, [...diff, '--name-only', '--diff-filter=D', '-z', revision, ...where], signal),
-      fingerprintFiles(snapshot.root, snapshot.files, source, signal),
+      verificationSnapshotFingerprint(snapshot, signal),
       allPaths,
     ])
     const changes = records(stats).map(line => {

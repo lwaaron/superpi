@@ -35,7 +35,7 @@ DSH（DeepSeek Runtime）插件：把 pi 编码 agent 装进 DSH 的侧栏面板
 | `extensions/superpi-turn-verdict.mjs` | **「这一轮交付了吗」的唯一判据**。按结构识别三种 DSML 形态（见 §5.0.1）、空转、坏字节、输出截断、未闭合推理正文及上游提前断流。`detectTurnVerdict()` 返回 `kind`、`bytes` 与中英文案。`VERDICT_KINDS` 和 `TURN_VERDICT_NOTICE` 描述完整类型。host 对每条 `message_end` 判定一次（`src/event-verdict.mjs`），面板渲染结果，命令行在同进程使用判定器。门禁 `test/turn-verdict.mjs`。 |
 | `extensions/superpi-turn-recovery.ts` | `turn_end` 移出不可用的请求投影，会话树保留原记录。无待处理输入时，`agent_before_settle` 为输出异常和明确未被 Pi 识别的断流最多补充续跑一次。断流从已完成的工具结果继续，尊重 Pi 的重试设置。TUI 和 RPC 共用。 |
 | `extensions/superpi-ask-user.ts` | Agent 需要关键信息或决定时，通过原生 `ask_user` 工具等待用户。`select` 和 `input` 在 TUI 与 RPC 共用，可选项和自由输入都回原回合。关闭、超时、停止和非交互模式都有明确结果。 |
-| `extensions/superpi-delivery.ts` | `verify`、`review_changes` 和 `task_progress` 共用 Pi 的工具链与会话分支。重跑编号验收命令前保存该项的待验收状态，成功退出且源码内容和文件版本均一致后写入新证据。完成任务时重新核对源码指纹。`/superpi-task` 查看当前分支的验收记录。 |
+| `extensions/superpi-delivery.ts` | `verify`、`review_changes` 和 `task_progress` 共用 Pi 的工具链与会话分支。重跑编号验收前保存该项的待验收状态。工作区命令成功且源码内容和文件版本均一致后写入新证据。编号变异验收由任务声明替换与诊断，原始快照通过且变异快照报告预期诊断后，还要核对工作区与受测快照的指纹。完成任务时重新核对源码指纹。`/superpi-task` 查看当前分支的验收记录。 |
 | `extensions/superpi-verification.mjs` | Git 普通文件快照、源码指纹、命令运行期的文件版本校验、精确变异和 Shell 截止时间。文件版本包含设备、文件标识和状态时间，与持久化的源码指纹分开使用。编号验收使用文件系统通知捕获短暂出现的工作区路径，沿用 Git 的跟踪和忽略规则。观察明确失败时保留命令结果与待验收状态。带对照的变异验证从同一次采集建立两个独立副本，使用 Shell 原始记录匹配诊断。 |
 | `extensions/superpi-review.mjs` | 正确性和测试覆盖使用同一 Git 快照，在独立的 Pi 上下文中并行审查。符合预算的源码快照首轮提供当前完整源文件和 Git 差异。差异装不下时可用改动文件的基准内容，其他范围按需查阅。评审取得源码后遇到可识别的断流，可从完成的读取恢复一次，沿用原时限、请求预算和会话重试设置。评审进行中把已读路径、行号和已提交的有效报告通过 Pi 写入会话分支，重开时从匹配的快照重建源码摘录。已有最终结果的评审以最终结果为准。静态缺口须给出快照路径。基准、源码、有效范围、验收目标与模型相同才复用证据。会话恢复时，当前用户请求对同一份证据最多发起两轮。只有完整且无阻塞项的结果可用于交付验收。模型请求边界记录计数，超时仍保留已发请求和可判定的失败类型。 |
 | `src/runtime-extensions.mjs` | 共享扩展清单及幂等同步。面板启动和 TUI 安装器同步同一套文件，Pi 按官方路径加载。 |

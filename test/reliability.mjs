@@ -427,6 +427,38 @@ try {
     await fs.readFile(path.join(workspace, 'origin.txt'), 'utf8') === 'dirty working copy',
   'the panel receives both labeled shell output streams and the completed comparison cleans up both snapshots')
 
+  const newSource = path.join(workspace, 'concurrent-source.txt')
+  const encodedSourcePath = Buffer.from(newSource).toString('base64')
+  const numberedComparison = 'node -e "' + [
+    "const fs = require('node:fs');",
+    "if (fs.readFileSync('origin.txt', 'utf8') === 'experiment') {",
+    `fs.writeFileSync(Buffer.from('${encodedSourcePath}', 'base64').toString(), 'added during the check');`,
+    "console.error('assertion failed'); process.exitCode = 7; }",
+  ].join(' ') + '"'
+  const changedDuringComparison = await run('reject proof from a comparison when new source appears during the run', [
+    useTool('task_progress', { action: 'start', goal: 'Verify the current tree', checks: [{
+      description: 'Detect the experiment regression', command: numberedComparison,
+      mutation: { mutations: [{ path: 'origin.txt', oldText: 'dirty working copy', newText: 'experiment' }],
+        expectedFailure: 'assertion failed' },
+    }] }, 'numbered_comparison_start'),
+    useTool('verify', { command: numberedComparison, timeout: 8, check: 1 }, 'numbered_comparison_run'),
+    useTool('task_progress', { action: 'finish' }, 'numbered_comparison_finish'),
+    useTool('task_progress', { action: 'block', reason: 'Waiting for a stable working tree.' }, 'numbered_comparison_block'),
+    { delta: 'The comparison ran before the working tree changed.' },
+  ])
+  const changedComparison = toolResult(changedDuringComparison, 'numbered_comparison_run')
+  check(changedComparison?.details?.verification?.status === 'stale' && changedComparison.isError &&
+    changedComparison.details.verification.comparison?.outcome === 'detected' &&
+    changedComparison.details.verification.comparison.mutationExitCode === 7 &&
+    changedComparison.details.verification.recorded === false,
+  'the panel receives the observed assertion failure even though its snapshot no longer matches the workspace')
+  check(toolResult(changedDuringComparison, 'numbered_comparison_finish')?.isError &&
+    changedDuringComparison.records.some(record => record.type === 'extension_ui_request' && record.method === 'setWidget' &&
+      record.widgetKey === 'superpi-task' && record.widgetLines?.some(line => line.includes('0/1'))),
+  'a comparison of stale source leaves the panel task pending')
+  await fs.rm(newSource, { force: true })
+  await command({ type: 'new_session' })
+
   const acceptanceCommand = 'node -e "console.log(123)"'
   const tracked = await run('deliver with an explicit acceptance check', [
     useTool('task_progress', { action: 'start', goal: 'Deliver a tested change',

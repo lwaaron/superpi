@@ -204,6 +204,38 @@ try {
   check(experiments.result('no-mutation')?.isError && experiments.result('no-mutation').content[0].text.includes('at least one mutation'),
     'a comparison requires a deliberate mutation')
 
+  const numbered = await run('Require a test that detects the stated source regression',
+    task('mutation-start', 'start', { goal: 'Prove the test detects the regression', checks: [{
+      description: 'Detect a broken source invariant', command: mutationTest, shell,
+      mutation: { mutations: [mutation], expectedFailure },
+    }] }),
+    task('mutation-pending', 'finish'),
+    verification('wrong-scope', { command: mutationTest, check: 1, scope: 'workspace' }),
+    verification('override-diagnostic', { command: mutationTest, check: 1, expectedFailure: 'an arbitrary error' }),
+    verification('mutation-proof', { command: mutationTest, check: 1 }),
+    tool('change-mutation-source', 'write', { path: 'source.txt', content: 'changed' }),
+    task('stale-mutation-proof', 'finish'),
+    tool('restore-mutation-source', 'write', { path: 'source.txt', content: 'current' }),
+    verification('new-mutation-proof', { command: mutationTest, check: 1 }),
+    task('mutation-finish', 'finish'), 'The test detects the regression on the current sources.')
+  check(numbered.result('mutation-start')?.details?.task?.checks?.[0]?.mutation?.expectedFailure === expectedFailure,
+    'the declared mutation and assertion are persisted by the native task tool')
+  check(numbered.result('mutation-pending')?.isError && numbered.result('wrong-scope')?.isError &&
+    numbered.result('override-diagnostic')?.isError,
+  'a numbered mutation check cannot be skipped, substituted by one live run, or have its assertion overridden')
+  const numberedProof = numbered.result('mutation-proof')?.details?.verification
+  check(numberedProof?.recorded === true && numberedProof.scope === 'snapshot' &&
+    numberedProof.comparison?.baselineExitCode === 0 && numberedProof.comparison?.mutationExitCode === 7,
+  'the terminal records evidence from the passing control and the expected failure')
+  check(numbered.result('stale-mutation-proof')?.isError,
+    'editing the source after the comparison invalidates the numbered evidence at delivery')
+  check(numbered.result('new-mutation-proof')?.details?.verification?.recorded === true &&
+    numbered.result('mutation-finish')?.details?.task?.status === 'complete',
+  'the task can complete after collecting fresh evidence for the current source')
+  await session.prompt('/superpi-task')
+  check(taskDialog?.text?.includes('[mutation detected] Detect a broken source invariant') &&
+    taskDialog.text.includes(expectedFailure), 'the terminal task report shows what the test detected')
+
   const command = 'node -e "process.exit(require(\'node:fs\').readFileSync(\'source.txt\',\'utf8\')===\'current\' ? 0 : 2)"'
   const plan = { goal: 'Have evidence for the source content', checks: [{ description: 'Test the cache input', command, shell }] }
   const delivery = await run('Check then deliver the change',
