@@ -4,8 +4,9 @@ import { execFileSync } from 'node:child_process'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
+import { setTimeout as delay } from 'node:timers/promises'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { waitForVerification } from '../extensions/superpi-verification.mjs'
+import { verificationSnapshotFingerprint, waitForVerification, withVerificationSnapshot, workspaceSourceState } from '../extensions/superpi-verification.mjs'
 import { PiProcess } from '../src/pi-rpc.mjs'
 import { requireRuntime } from './preflight.mjs'
 
@@ -86,6 +87,65 @@ async function run(prompt, ...replies) {
 }
 
 try {
+  const sourceFixture = await fs.mkdtemp(path.join(await fs.realpath(temp), 'source-io-'))
+  const names = Array.from({ length: 25 }, (_, index) => 'file-' + String(index).padStart(2, '0') + '.txt')
+  await Promise.all(names.map(name => fs.writeFile(path.join(sourceFixture, name), name + '\n')))
+  execFileSync('git', ['init', '--quiet'], { cwd: sourceFixture, timeout: 8000, windowsHide: true })
+  const sourceSignal = AbortSignal.timeout(8000)
+  const originalStat = fs.lstat
+  let pending = 0
+  let peak = 0
+  fs.lstat = async function (file, ...args) {
+    if (path.dirname(file) !== sourceFixture) return originalStat(file, ...args)
+    pending += 1
+    peak = Math.max(peak, pending)
+    try { return await originalStat(file, ...args) }
+    finally { pending -= 1 }
+  }
+  try {
+    const source = await workspaceSourceState(sourceFixture, sourceSignal)
+    check(peak > 1 && peak <= 8, 'source fingerprinting overlaps a bounded number of files, observed ' + peak)
+    check([...source.fileVersions.keys()].join() === names.join(), 'source versions retain Git path order')
+    peak = 0
+    await withVerificationSnapshot(sourceFixture, sourceSignal, async (_cwd, copied) => {
+      check(peak > 1 && peak <= 8, 'snapshot copy overlaps a bounded number of files, observed ' + peak)
+      check(copied.files.join() === names.join() && await verificationSnapshotFingerprint(copied, sourceSignal) === source.fingerprint,
+        'snapshot capture carries identical bytes, ordering and fingerprint across batches')
+    })
+  } finally {
+    fs.lstat = originalStat
+  }
+
+  const originalCopy = fs.copyFile
+  const originalRemove = fs.rm
+  let failedSnapshot, copyFinished, removedAfterCopy
+  fs.copyFile = async function (source, target, ...args) {
+    if (source === path.join(sourceFixture, names[0])) {
+      failedSnapshot = path.dirname(target)
+      throw new Error('Expected snapshot copy failure')
+    }
+    if (source === path.join(sourceFixture, names[1])) {
+      await delay(40)
+      await originalCopy(source, target, ...args)
+      copyFinished = true
+      return
+    }
+    return originalCopy(source, target, ...args)
+  }
+  fs.rm = async function (target, ...args) {
+    if (target === failedSnapshot) removedAfterCopy = copyFinished
+    return originalRemove(target, ...args)
+  }
+  try {
+    await assert.rejects(withVerificationSnapshot(sourceFixture, sourceSignal, () => assert.fail('incomplete snapshot reached verification')),
+      /Expected snapshot copy failure/)
+    check(removedAfterCopy === true && await fs.stat(failedSnapshot).catch(error => error.code) === 'ENOENT',
+      'snapshot cleanup waits for the other copy and removes the failed snapshot')
+  } finally {
+    fs.copyFile = originalCopy
+    fs.rm = originalRemove
+  }
+
   const extensionDir = path.join(agentDir, 'extensions')
   await fs.mkdir(extensionDir, { recursive: true })
   await fs.mkdir(workspace, { recursive: true })

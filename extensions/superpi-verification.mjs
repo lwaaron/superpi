@@ -11,6 +11,7 @@ import { scanTextBytes } from './superpi-text-bytes.mjs'
 const exec = promisify(execFile)
 const utf8 = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true })
 const MAX_OBSERVED_PATH_BYTES = 8 * 1024 * 1024
+const SOURCE_FILES_PER_BATCH = 8
 
 async function git(cwd, args, signal, maxBuffer = 32 * 1024 * 1024, input) {
   const operation = exec('git', ['--no-optional-locks', '-c', 'core.fsmonitor=false', ...args], {
@@ -64,6 +65,26 @@ async function sourceFiles(root, signal) {
   return [...new Set(records(list))].sort()
 }
 
+async function* processSourceFiles(root, files, signal, operation) {
+  for (let offset = 0; offset < files.length; offset += SOURCE_FILES_PER_BATCH) {
+    signal.throwIfAborted()
+    const batch = files.slice(offset, offset + SOURCE_FILES_PER_BATCH)
+    // Join every started operation before the caller can clean up a snapshot.
+    const settled = await Promise.allSettled(batch.map(async name => {
+      const source = await fileAt(root, name)
+      // A deleted path contributes nothing even if it is still in the Git index.
+      if (!source) return
+      signal.throwIfAborted()
+      return operation(name, source)
+    }))
+    signal.throwIfAborted()
+    for (const result of settled) {
+      if (result.status === 'rejected') throw result.reason
+      if (result.value !== undefined) yield result.value
+    }
+  }
+}
+
 /** Identify working bytes, including untracked source. Staging alone does not change the result. */
 export async function workspaceFingerprint(cwd, signal) {
   const { fingerprint } = await workspaceSourceState(cwd, signal, false)
@@ -88,18 +109,17 @@ export async function verificationSnapshotFingerprint(snapshot, signal) {
 async function fingerprintFiles(root, files, identity, signal, includeFileVersions = false) {
   const hash = createHash('sha256').update(identity.root).update('\0').update(identity.cwd).update('\0')
   const fileVersions = new Map()
-  for (const name of files) {
-    signal.throwIfAborted()
-    const source = await fileAt(root, name)
-    // A path absent from the working tree contributes nothing even if it is still staged.
-    if (!source) continue
+  const read = async (name, { file, stat }) => {
+    const contentHash = createHash('sha256')
+    for await (const chunk of createReadStream(file, { signal })) contentHash.update(chunk)
+    return { name, stat, digest: contentHash.digest() }
+  }
+  for await (const { name, stat, digest } of processSourceFiles(root, files, signal, read)) {
     if (includeFileVersions) {
-      const { dev, ino, mtimeNs, ctimeNs } = source.stat
+      const { dev, ino, mtimeNs, ctimeNs } = stat
       fileVersions.set(name, `${dev}:${ino}:${mtimeNs}:${ctimeNs}`)
     }
-    const contentHash = createHash('sha256')
-    for await (const chunk of createReadStream(source.file, { signal })) contentHash.update(chunk)
-    hash.update(name).update('\0').update(String(source.stat.mode)).update('\0').update(contentHash.digest())
+    hash.update(name).update('\0').update(String(stat.mode)).update('\0').update(digest)
   }
   return { fingerprint: hash.digest('hex'), fileVersions }
 }
@@ -234,16 +254,15 @@ async function withSnapshotFiles(root, files, workdir, signal, run) {
   const tempParent = await fs.realpath(os.tmpdir())
   const snapshot = await fs.mkdtemp(path.join(tempParent, 'superpi-verify-'))
   try {
-    const captured = []
-    for (const name of files) {
-      signal.throwIfAborted()
-      const source = await fileAt(root, name)
-      if (!source) continue
+    const copy = async (name, { file }) => {
       const target = path.join(snapshot, name)
       await fs.mkdir(path.dirname(target), { recursive: true })
-      await fs.copyFile(source.file, target)
-      captured.push(name)
+      signal.throwIfAborted()
+      await fs.copyFile(file, target)
+      return name
     }
+    const captured = []
+    for await (const name of processSourceFiles(root, files, signal, copy)) captured.push(name)
     const snapshotCwd = path.join(snapshot, workdir)
     await fs.mkdir(snapshotCwd, { recursive: true })
     signal.throwIfAborted()
