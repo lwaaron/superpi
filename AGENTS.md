@@ -475,7 +475,7 @@ npm run test:rules                              # 只跑用户自定义规则门
 npm run test:verdict                            # 只跑回合判据门禁（异常形态 + 真渲染）
 npm run test:delivery                           # 真 Pi SDK：隔离验证、证据、恢复与模型输入
 npm run test:reliability                        # 真 Pi RPC + 本地流式故障场景
-npm run test:engineering                        # 工程基准评分器；每个场景验证缺陷起点与参考解
+npm run test:engineering                        # 工程评分与对照运行；离线验证同一起点、完成事件和进程时限
 npm run test:integrity                          # 只跑写入闸门禁（含 pi 真 ExtensionRunner 跑 block 链路）
 npm run test:tui                                # 只跑输入框扩展门禁（jiti 加载真 .ts + pi 真 CustomEditor + 真按键序列）
 npm run superpi:editor                               # 把 extensions/superpi-editor.ts 装进 pi（<piAgentDir>/extensions/）

@@ -1,6 +1,7 @@
 /** Prepare equivalent workspaces and grade candidates outside the files given to the agent. */
 import assert from 'node:assert/strict'
-import { execFile, execFileSync } from 'node:child_process'
+import { execFile, execFileSync, spawn } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { createReadStream } from 'node:fs'
 import fs from 'node:fs/promises'
 import os from 'node:os'
@@ -11,8 +12,10 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
 import { cases } from './fixtures/engineering-cases.mjs'
 import { detectTurnVerdict } from '../extensions/superpi-turn-verdict.mjs'
+import { EXTENSION_FILES } from '../src/runtime-extensions.mjs'
 
 const self = fileURLToPath(import.meta.url)
+const root = fileURLToPath(new URL('../', import.meta.url))
 const execute = promisify(execFile)
 
 function scenario(name) {
@@ -31,11 +34,18 @@ function baselineCommit(cwd) {
   git('add', '--all')
   git('-c', 'user.name=SuperPi Benchmark', '-c', 'user.email=benchmark@example.invalid',
     '-c', 'commit.gpgsign=false', 'commit', '--quiet', '-m', 'Benchmark starting point')
+  return git('rev-parse', 'HEAD^{tree}').toString('ascii').trim()
 }
 
 async function score(name, folder) {
   const selected = scenario(name)
-  const candidate = await import(pathToFileURL(path.join(folder, selected.entry)))
+  let candidate
+  try {
+    candidate = await import(pathToFileURL(path.join(folder, selected.entry)))
+  } catch (error) {
+    const reason = 'Could not load the candidate. ' + String(error?.message ?? error).slice(0, 350)
+    return Object.keys(selected.checks).map(label => ({ label, pass: false, reason }))
+  }
   const temp = await fs.mkdtemp(path.join(os.tmpdir(), 'superpi-grading-'))
   try {
     const checks = []
@@ -77,21 +87,18 @@ async function grade(name, folder) {
 
 function runOutcome(process, trace, task, assistant, settlement) {
   if (process.deadline === true) return 'deadline'
+  if (process.interrupted === true || settlement?.aborted) return 'aborted'
+  if (assistant?.stopReason === 'error' && !trace.malformedLines && trace.settlements <= 1) return 'model_error'
   if (process.exit !== 0 || process.signal) return 'process_error'
   if (trace.malformedLines || trace.settlements > 1) return 'invalid_trace'
   if (!settlement) return 'no_settlement'
-  if (settlement.aborted) return 'aborted'
-  if (assistant?.stopReason === 'error') return 'model_error'
   if (task?.status === 'blocked') return 'blocked'
   if (task?.status === 'active') return 'pending_checks'
   if (assistant?.stopReason !== 'stop' || !detectTurnVerdict(assistant).delivered) return 'missing_final_answer'
   return 'finished'
 }
 
-async function runMetrics(events, receipt) {
-  const observed = JSON.parse(await fs.readFile(receipt, 'utf8'))
-  assert.ok(observed.exit === null || Number.isInteger(observed.exit), 'Expected the observed process exit status.')
-  assert.ok(Number.isFinite(observed.seconds) && observed.seconds >= 0, 'Expected elapsed seconds from the process runner.')
+async function runMetrics(events, observed) {
   const trace = { settlements: 0, assistantResponses: 0, toolResults: 0, reviewerRequests: 0, reviewReplays: 0, malformedLines: 0 }
   const requestCounts = new Map()
   const reviewCalls = new Set()
@@ -135,7 +142,190 @@ async function runMetrics(events, receipt) {
   for (const count of requestCounts.values()) trace.reviewerRequests += count
   const unmeteredReviews = [...reviewCalls].filter(id => !knownCounts.has(id)).length
   return { outcome: runOutcome(observed, trace, task, assistant, settlement), seconds: observed.seconds,
-    task: task?.status ?? null, model: assistant?.model ?? null, ...trace, unmeteredReviews }
+    task: task?.status ?? null, model: assistant?.model ?? null, ...trace, unmeteredReviews,
+    ...(assistant?.errorMessage ? { reason: String(assistant.errorMessage).slice(0, 350) } : {}) }
+}
+
+function comparisonAgents() {
+  const extensionArgs = EXTENSION_FILES.filter(file => file.label !== 'editor' && file.name.endsWith('.ts'))
+    .flatMap(file => ['--extension', path.join(root, file.source)])
+  const windowsSandbox = process.platform === 'win32' ? ['-c', 'windows.sandbox="unelevated"'] : []
+  return [
+    { id: 'superpi', program: process.execPath, args: [path.join(root, 'src', 'superpi-cli.mjs'),
+      '--mode', 'json', '--print', '--no-session', '--no-context-files', '--no-skills', '--no-mcp', '--no-prompt-templates',
+      '--no-extensions', ...extensionArgs] },
+    { id: 'codex', program: 'codex', args: ['-a', 'never', ...windowsSandbox,
+      'exec', '--json', '--ephemeral', '--ignore-user-config', '--sandbox', 'workspace-write', '-'] },
+    { id: 'claude-code', program: 'claude', args: ['--print', '--output-format', 'stream-json', '--verbose', '--no-session-persistence',
+      '--permission-mode', 'acceptEdits', '--setting-sources', 'project', '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}',
+      '--allowedTools', 'Bash(node --test*)'] },
+  ]
+}
+
+async function inTime(operation, milliseconds) {
+  let timer
+  try {
+    return await Promise.race([operation, new Promise(resolve => { timer = setTimeout(resolve, milliseconds) })])
+  } finally { clearTimeout(timer) }
+}
+
+async function stopBenchmarkProcess(child) {
+  if (!child.pid || child.exitCode !== null || child.signalCode !== null) return
+  if (process.platform === 'win32') {
+    try {
+      await execute('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'], { timeout: 4000, windowsHide: true })
+      return
+    } catch { /* Retain the process exit observation below even if the tree stop fails. */ }
+  } else {
+    try { process.kill(-child.pid, 'SIGKILL'); return } catch { /* The group may have already exited. */ }
+  }
+  child.kill('SIGKILL')
+}
+
+async function captureRun(agent, workspace, prompt, directory, seconds) {
+  const events = path.join(directory, 'events.jsonl')
+  const stderrFile = path.join(directory, 'stderr.log')
+  const stdout = await fs.open(events, 'wx', 0o600)
+  let stderr
+  try {
+    stderr = await fs.open(stderrFile, 'wx', 0o600)
+    const started = performance.now()
+    const child = spawn(agent.program, agent.args, { cwd: workspace, stdio: ['pipe', stdout.fd, stderr.fd],
+      detached: process.platform !== 'win32', windowsHide: true })
+    const exit = new Promise(resolve => {
+      child.once('close', (exit, signal) => resolve({ exit, signal }))
+      child.once('error', error => resolve({ exit: null, signal: null, launchError: { code: error.code, message: error.message } }))
+    })
+    let stop
+    const interrupt = new Promise(resolve => { stop = () => resolve('interrupted') })
+    process.once('SIGINT', stop)
+    process.once('SIGTERM', stop)
+    try {
+      child.stdin.on('error', () => {})
+      child.stdin.end(prompt, 'utf8')
+      const first = await inTime(Promise.race([exit, interrupt]), seconds * 1000)
+      const elapsed = Number(((performance.now() - started) / 1000).toFixed(3))
+      const deadline = first === undefined
+      const interrupted = first === 'interrupted'
+      let result = first
+      if (deadline || interrupted) {
+        await stopBenchmarkProcess(child)
+        result = await inTime(exit, 2000)
+        if (!result) child.unref()
+      }
+      return { events, stderrFile, receipt: { ...(result ?? { exit: null, signal: null }), seconds: elapsed,
+        deadline, interrupted, terminationConfirmed: result !== undefined } }
+    } finally {
+      process.removeListener('SIGINT', stop)
+      process.removeListener('SIGTERM', stop)
+    }
+  } finally {
+    await stdout.close()
+    await stderr?.close()
+  }
+}
+
+async function thirdPartyMetrics(format, events, receipt) {
+  const trace = { malformedLines: 0, settlements: 0 }
+  let answer
+  let failure
+  let error
+  let model = null
+  let usage = null
+  const lines = createInterface({ input: createReadStream(events), crlfDelay: Infinity })
+  for await (const line of lines) {
+    if (line.trim() === '') continue
+    let record
+    try { record = JSON.parse(line) } catch { trace.malformedLines += 1; continue }
+    if (typeof record?.type !== 'string') { trace.malformedLines += 1; continue }
+    if (format === 'codex') {
+      if (record.type === 'item.completed' && record.item?.type === 'agent_message') answer = record.item.text
+      if (record.type === 'turn.completed') { trace.settlements += 1; usage = record.usage ?? null }
+      if (record.type === 'turn.failed') { trace.settlements += 1; failure = record.error?.message ?? 'Codex reported a failed turn.' }
+      if (record.type === 'error') error = record.message
+    } else {
+      if (record.type === 'system' && record.subtype === 'init') model = record.model ?? null
+      if (record.type !== 'result') continue
+      trace.settlements += 1
+      usage = record.usage ?? null
+      if (record.subtype === 'success' && record.is_error === false) answer = record.result
+      else failure = record.errors?.join?.(' ') || record.result || record.subtype || 'Claude Code reported a failed run.'
+    }
+  }
+  let outcome
+  if (receipt.deadline) outcome = 'deadline'
+  else if (receipt.interrupted) outcome = 'aborted'
+  else if (trace.malformedLines || trace.settlements > 1) outcome = 'invalid_trace'
+  else if (failure) outcome = 'agent_error'
+  else if (receipt.exit !== 0 || receipt.signal) outcome = 'process_error'
+  else if (!trace.settlements) outcome = 'no_settlement'
+  else if (typeof answer !== 'string' || !detectTurnVerdict({ role: 'assistant', stopReason: 'stop',
+    content: [{ type: 'text', text: answer }] }).delivered) outcome = 'missing_final_answer'
+  else outcome = 'finished'
+  const reason = failure ?? (outcome !== 'finished' ? error : undefined)
+  return { outcome, seconds: receipt.seconds, model, usage, ...trace, ...(reason ? { reason: String(reason).slice(0, 350) } : {}) }
+}
+
+async function capturedMetrics(format, events, receiptFile) {
+  if (!['superpi', 'codex', 'claude-code'].includes(format)) throw new Error('Choose superpi, codex, or claude-code for the event format.')
+  const observed = JSON.parse(await fs.readFile(receiptFile, 'utf8'))
+  assert.ok(observed.exit === null || Number.isInteger(observed.exit), 'Expected the observed process exit status.')
+  assert.ok(Number.isFinite(observed.seconds) && observed.seconds >= 0, 'Expected elapsed seconds from the process runner.')
+  if (observed.launchError) return { outcome: observed.launchError.code === 'ENOENT' ? 'unavailable' : 'launch_error',
+    seconds: observed.seconds, reason: observed.launchError.message }
+  if (observed.terminationConfirmed === false) return { outcome: observed.deadline ? 'deadline' : 'aborted',
+    seconds: observed.seconds, reason: 'Process termination could not be confirmed.' }
+  return format === 'superpi' ? runMetrics(events, observed) : thirdPartyMetrics(format, events, observed)
+}
+
+async function compareCase(name, destination, seconds, agents = comparisonAgents(), workspaceParent = os.tmpdir()) {
+  const selected = scenario(name)
+  if (!Number.isSafeInteger(seconds) || seconds < 1 || seconds > 2_147_483) throw new Error('Supply a positive whole-second deadline per agent.')
+  await fs.mkdir(destination, { mode: 0o700 })
+  const workspaceRoot = await fs.mkdtemp(path.join(workspaceParent, 'superpi-comparison-'))
+  const promptFile = path.join(destination, 'prompt.txt')
+  const reportFile = path.join(destination, 'comparison.json')
+  const suite = JSON.parse(await fs.readFile(path.join(root, 'package.json'), 'utf8')).version
+  const report = { case: name, suite, secondsPerAgent: seconds, platform: process.platform, arch: process.arch, node: process.version,
+    workspaceRoot, promptFile, promptSha256: createHash('sha256').update(selected.prompt).digest('hex'), startingTree: null, runs: [] }
+  const save = async () => {
+    const pending = reportFile + '.tmp'
+    await fs.writeFile(pending, JSON.stringify(report, null, 2), { mode: 0o600 })
+    await fs.rename(pending, reportFile)
+  }
+  await fs.writeFile(promptFile, selected.prompt, { mode: 0o600 })
+  await save()
+  for (const agent of agents) {
+    const workspace = path.join(workspaceRoot, agent.id)
+    const directory = path.join(destination, agent.id)
+    await prepare(workspace, selected.files)
+    const startingTree = baselineCommit(workspace)
+    report.startingTree ??= startingTree
+    assert.equal(startingTree, report.startingTree, 'Agent workspaces must have identical starting Git trees.')
+    await fs.mkdir(directory)
+    const { events, stderrFile, receipt } = await captureRun(agent, workspace, selected.prompt, directory, seconds)
+    const processFile = path.join(directory, 'process.json')
+    await fs.writeFile(processFile, JSON.stringify(receipt, null, 2), { mode: 0o600 })
+    const format = agent.format ?? agent.id
+    const metrics = await capturedMetrics(format, events, processFile)
+    let score = null
+    let gradingError
+    if (!receipt.launchError && receipt.terminationConfirmed) {
+      try { score = await grade(name, workspace) } catch (error) { gradingError = String(error?.message ?? error).slice(0, 350) }
+    }
+    const delivered = metrics.outcome === 'finished' && score !== null && score.passed === score.total
+    let version = format === 'superpi' ? suite : null
+    if (!receipt.launchError && format !== 'superpi') {
+      const result = await execute(agent.program, ['--version'], { cwd: workspace, timeout: 5000, windowsHide: true }).catch(() => null)
+      version = result?.stdout.trim().slice(0, 120) || null
+    }
+    report.runs.push({ agent: agent.id, version, invocation: [agent.program, ...agent.args], workspace, startingTree, processFile, events,
+      stderrFile, metrics, score, delivered,
+      ...(gradingError ? { gradingError } : {}) })
+    await save()
+    if (receipt.interrupted) break
+  }
+  return report
 }
 
 async function selfTest() {
@@ -154,6 +344,14 @@ async function selfTest() {
       count += 2
       console.log(name + ' baseline ' + before.passed + '/' + before.total + ' reference ' + after.passed + '/' + after.total)
     }
+    const invalid = path.join(temp, 'invalid-implementation')
+    const firstCase = Object.keys(cases)[0]
+    const selected = scenario(firstCase)
+    await prepare(invalid, { ...selected.files, [selected.entry]: 'export const = invalid syntax' })
+    const failedImport = await grade(firstCase, invalid).catch(error => ({ infrastructureError: error.message }))
+    assert.equal(failedImport.passed, 0, 'an invalid candidate must receive a failed grade without crashing the comparison')
+    assert.equal(failedImport.checks.length, Object.keys(selected.checks).length, 'a load error retains the common grading denominator')
+    count += 2
     const traceFile = path.join(temp, 'run.jsonl')
     const receiptFile = path.join(temp, 'process.json')
     const trace = [
@@ -199,19 +397,64 @@ async function selfTest() {
     trace[3].message.stopReason = 'error'
     await writeTrace(trace)
     assert.equal((await metrics(0)).outcome, 'model_error', 'native settlement preserves provider failure')
-    count += 9
+    assert.equal((await metrics(1)).outcome, 'model_error', 'a documented model failure survives the CLI nonzero exit')
+    count += 10
+
+    const codexTrace = [{ type: 'item.completed', item: { type: 'agent_message', text: 'The requested result is ready.' } },
+      { type: 'turn.completed', usage: { input_tokens: 25, output_tokens: 10 } }]
+    const claudeTrace = [{ type: 'system', subtype: 'init', model: 'fixture-model' },
+      { type: 'result', subtype: 'success', is_error: false, result: 'The requested result is ready.' }]
+    const fixture = (id, format, records, changes = {}, hang = false) => ({ id, format, program: process.execPath, args: ['-e', [
+      "const fs = require('node:fs');",
+      'if (fs.readFileSync(0, "utf8") !== ' + JSON.stringify(selected.prompt) + ') process.exit(11);',
+      'for (const [file, text] of Object.entries(' + JSON.stringify(selected.files) + '))',
+      '  if (fs.readFileSync(file, "utf8") !== text) process.exit(12);',
+      'for (const [file, text] of Object.entries(' + JSON.stringify(changes) + ')) fs.writeFileSync(file, text);',
+      'for (const event of ' + JSON.stringify(records) + ') console.log(JSON.stringify(event));',
+      hang ? 'setInterval(() => {}, 1000);' : '',
+    ].join('\n')] })
+    const comparisonFolder = path.join(temp, 'comparison-report')
+    const report = await compareCase(firstCase, comparisonFolder, 2, [
+      fixture('superpi', 'superpi', [
+        { type: 'message_end', message: { role: 'assistant', stopReason: 'stop', content: [{ type: 'text', text: 'Finished.' }] } },
+        { type: 'agent_settled', aborted: false },
+      ], selected.reference),
+      fixture('codex', 'codex', codexTrace),
+      fixture('claude-code', 'claude-code', claudeTrace, selected.reference),
+      fixture('stopped', 'codex', [...codexTrace, { type: 'error', message: 'The upstream request timed out.' }], selected.reference, true),
+      { id: 'missing', format: 'claude-code', program: path.join(temp, 'missing-candidate'), args: [] },
+    ], temp)
+    const [superpi, codex, claude, stopped, missing] = report.runs
+    assert.equal(await fs.readFile(report.promptFile, 'utf8'), selected.prompt, 'the report retains the exact prompt delivered to each process')
+    assert.ok(report.runs.every(run => run.startingTree === report.startingTree) &&
+      new Set(report.runs.map(run => run.workspace)).size === 5, 'all engines start with the same Git tree in separate workspaces')
+    assert.ok(superpi.delivered && superpi.metrics.outcome === 'finished', 'the independent score and terminal result both support delivery')
+    assert.ok(codex.metrics.outcome === 'finished' && !codex.delivered && codex.score.passed < codex.score.total,
+      'a successful exit and final reply cannot compensate for failed external assertions')
+    assert.ok(claude.delivered && claude.metrics.model === 'fixture-model', 'a Claude result uses the same grader with its observed model')
+    assert.ok(stopped.metrics.outcome === 'deadline' && !stopped.delivered && stopped.score?.passed === stopped.score?.total &&
+      stopped.metrics.reason === 'The upstream request timed out.',
+      'a timed-out process preserves the last error and stays interrupted even when its code is correct')
+    assert.ok(missing.metrics.outcome === 'unavailable' && missing.score === null && !missing.delivered,
+      'a missing executable is recorded without assigning a benchmark score')
+    assert.deepEqual(JSON.parse(await fs.readFile(path.join(comparisonFolder, 'comparison.json'), 'utf8')), report,
+      'the comparison report matches the captured process results and scores')
+    count += 8
     console.log('PASS (' + count + ' checks)')
   } finally {
     await fs.rm(temp, { recursive: true, force: true, maxRetries: 3 })
   }
 }
 
-const [action, name, location] = process.argv.slice(2)
+const [action, name, location, option] = process.argv.slice(2)
 if (!action) await selfTest()
 else if (action === 'list') console.log(Object.keys(cases).join('\n'))
 else if (action === 'metrics') {
-  if (!name || !location) throw new Error('Supply the captured Pi JSONL events and process receipt.')
-  console.log(JSON.stringify(await runMetrics(name, location), null, 2))
+  if (!name || !location) throw new Error('Supply the captured JSONL events and process receipt.')
+  console.log(JSON.stringify(await capturedMetrics(option ?? 'superpi', name, location), null, 2))
+} else if (action === 'compare') {
+  if (!name || !location || !option) throw new Error('Use compare <case> <new-report-directory> <seconds-per-agent>.')
+  console.log(JSON.stringify(await compareCase(name, path.resolve(location), Number(option)), null, 2))
 }
 else {
   const selected = scenario(name)
@@ -228,6 +471,6 @@ else {
   } else if (action === 'worker') {
     console.log(JSON.stringify(await score(name, folder)))
   } else {
-    throw new Error('Use list, prepare <case> <new-directory>, grade <case> <workspace>, or metrics <events.jsonl> <process.json>.')
+    throw new Error('Use list, prepare <case> <new-directory>, grade <case> <workspace>, metrics <events.jsonl> <process.json>, or compare <case> <new-report-directory> <seconds-per-agent>.')
   }
 }

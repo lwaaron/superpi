@@ -1,6 +1,6 @@
 {
   "name": "superpi",
-  "version": "0.32.0",
+  "version": "0.33.0",
   "type": "module",
   "description": "SuperPi 编码助手，支持 DSH 聊天面板与命令行，复用 Pi 的运行时和 JSONL RPC 协议。",
   "icon": "./assets/icon.svg",
