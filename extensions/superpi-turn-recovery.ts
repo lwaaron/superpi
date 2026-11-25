@@ -17,7 +17,6 @@ export default function turnRecovery(pi: any) {
   const settingsCache = { path: '', mtimeMs: 0, size: 0, settings: null }
   let lastAutoRetryAt = 0
   let attempted = false
-  let hadToolCall = false
   let candidate: { kind: string; entryId: string; keepPrefix: boolean } | null = null
 
   pi.on('before_agent_start', (event: any) => {
@@ -27,23 +26,21 @@ export default function turnRecovery(pi: any) {
 
   pi.on('turn_end', (event: any) => {
     candidate = null
-    const { message, messageEntryId, entries, outcome } = event
-    if (message?.role !== 'assistant') return
-    const hasToolCall = message.content.some((block: any) => block?.type === 'toolCall')
-    hadToolCall ||= (outcome === 'completed' && hasToolCall) || event.toolResults.length > 0
-    if (!messageEntryId) return
+    const { message, messageEntryId, entries, outcome, toolResults } = event
+    // Pi reports the results of this reply here. Keep its calls paired with their results.
+    if (message?.role !== 'assistant' || !messageEntryId || toolResults.length > 0) return
     if (entries.some((entry: any) => entry.type === 'context_edit' && entry.targetId === messageEntryId)) return
 
     const verdict = detectTurnVerdict(message)
     if (verdict.delivered) return
     if (verdict.kind === 'stream-interrupted') {
       // An error turn cannot dispatch its partial tool proposals. Pi handles the errors it recognizes.
-      if (outcome !== 'error' || event.toolResults.length || isRetryableAssistantError(message)) return
-    } else if (outcome !== 'completed' || hasToolCall) return
+      if (outcome !== 'error' || isRetryableAssistantError(message)) return
+    } else if (outcome !== 'completed' || message.content.some((block: any) => block?.type === 'toolCall')) return
     const keepPrefix = verdict.kind === 'truncated' && detectTurnVerdict({ ...message, stopReason: 'stop' }).delivered
     candidate = { kind: verdict.kind, entryId: messageEntryId, keepPrefix }
     if (!keepPrefix) {
-      // Pi retains the original entry for inspection. Only the provider-facing projection changes.
+      // Project out only this reply. Earlier tool calls and their results remain available to Pi.
       return { entries: [...entries, { type: 'context_edit', targetId: messageEntryId, replacement: null }] }
     }
   })
@@ -59,7 +56,7 @@ export default function turnRecovery(pi: any) {
     } else {
       if (event.outcome !== 'completed') return
       const settings = readGuardSettingsSync({ cache: settingsCache })
-      if (!shouldAutoRetryOnMalformed(settings, { hadToolCall, lastAutoRetryAt }).retry) return
+      if (!shouldAutoRetryOnMalformed(settings, { lastAutoRetryAt }).retry) return
     }
     if (keepPrefix) {
       // Pi may already have omitted this attempt during its native compact-and-retry path.
@@ -87,6 +84,5 @@ export default function turnRecovery(pi: any) {
   pi.on('agent_settled', () => {
     candidate = null
     attempted = false
-    hadToolCall = false
   })
 }

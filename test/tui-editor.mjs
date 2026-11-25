@@ -627,13 +627,13 @@ ok(FRAME_INTERVAL_MS <= 250, '帧间隔 <= 250ms（再慢看起来是卡顿）')
   eq(settings.autoRetryOnMalformed, true, '自动恢复默认开启')
   eq(settings.autoRetryCooldownMs, 30000, '共享冷却默认 30 秒')
   const cases = [
-    [{}, { hadToolCall: false, now: 100000 }, true, 'ok'],
-    [{}, { hadToolCall: true, now: 100000 }, false, 'had-tool-call'],
+    [{}, { now: 100000 }, true, 'ok'],
+    [{ autoRetryCooldownMs: 5000 }, { lastAutoRetryAt: 100000, now: 104999 }, false, 'cooldown'],
     [{}, { lastAutoRetryAt: 90000, now: 100000 }, false, 'cooldown'],
     [{}, { lastAutoRetryAt: 10000, now: 100000 }, true, 'ok'],
     [{ autoRetryOnMalformed: false }, {}, false, 'disabled'],
-    [{ autoRetryOnMalformed: false, autoRetryCooldownMs: 0 }, { hadToolCall: true }, false, 'disabled'],
-    [{ autoRetryCooldownMs: 0 }, { hadToolCall: true }, false, 'had-tool-call'],
+    [{ autoRetryOnMalformed: false, autoRetryCooldownMs: 0 }, {}, false, 'disabled'],
+    [{ autoRetryCooldownMs: 5000 }, { lastAutoRetryAt: 100000, now: 105000 }, true, 'ok'],
     [{ autoRetryCooldownMs: 0 }, { lastAutoRetryAt: 100000, now: 100001 }, true, 'ok'],
     [{}, { lastAutoRetryAt: 100000, now: 129999 }, false, 'cooldown'],
     [{}, { lastAutoRetryAt: 100000, now: 130000 }, true, 'ok'],

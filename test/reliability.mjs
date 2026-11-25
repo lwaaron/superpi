@@ -254,15 +254,39 @@ try {
   check(truncated.requests.length === 2, 'truncation can continue through the shared lifecycle')
   check(requestText(truncated.requests.at(-1)).includes('Valid prefix'), 'truncation recovery retains the valid prefix')
 
-  const toolTurn = await run('write once', [{ delta: writeCall('once.txt', largeWrite), finish: 'tool_calls' }, { delta: 'invalid ' + bad }])
+  const toolTurn = await run('write the file, then verify it', [
+    useTool('write', { path: 'once.txt', content: largeWrite }, 'completed_write'),
+    { delta: { reasoning_content: 'I will verify the file.</｜｜DSML｜｜ parameter>\n</｜｜DSML｜｜ invoke>\n</｜｜DSML｜｜ calls>' } },
+    useTool('read', { path: 'once.txt' }, 'verify_saved_file'),
+    { delta: 'Saved and verified.' },
+  ])
+  check(toolTurn.requests.length === 4 && lastAssistant(toolTurn)?.message.content[0]?.text === 'Saved and verified.' &&
+    toolTurn.records.filter(record => record.type === 'agent_settled').length === 1,
+  'a malformed reply after a completed write resumes and verifies the file in the same user activity')
+  check(toolTurn.records.some(record => record.type === 'message_end' && record.verdict?.kind === 'dsml-thinking'),
+    'the malformed reply is identified before it is removed from the provider context')
+  const resumedRequest = toolTurn.requests[2]
+  check(resumedRequest?.messages.some(message => message.role === 'tool' && message.tool_call_id === 'completed_write') &&
+    !requestText(resumedRequest).includes('DSML'), 'recovery retains the write result and omits the malformed tool fragment')
   check(await fs.readFile(path.join(workspace, 'once.txt'), 'utf8') === largeWrite, 'successful file contains every original character')
-  check(toolTurn.requests.length === 2, 'tool activity does not start an automatic replay')
-  check(toolTurn.records.filter(entry => entry.type === 'tool_execution_end').length === 1, 'write is executed only once')
-  check(!requestText(toolTurn.requests.at(-1)).includes(largeWrite) && requestText(toolTurn.requests.at(-1)).includes('once.txt'),
+  check(toolTurn.records.filter(record => record.type === 'tool_execution_end' && record.toolName === 'write').length === 1 &&
+    toolResult(toolTurn, 'verify_saved_file')?.isError === false, 'recovery executes only the new tool and preserves the completed write')
+  check(!requestText(toolTurn.requests[1]).includes(largeWrite) && requestText(toolTurn.requests[1]).includes('once.txt'),
     'completed write body is replaced by a file reference before the next request')
   check(toolTurn.records.some(entry => entry.type === 'entry_appended' && entry.entry?.type === 'context_edit' &&
     entry.entry.replacement?.content.some(block => block.arguments?._omitted === true)),
     'successful write projection is recorded in native session history')
+
+  const truncatedCall = await run('handle a cutoff in the tool reply itself', [
+    { delta: writeCall('cutoff.txt', 'incomplete write', 'cutoff_write'), finish: 'length' },
+    { delta: 'The truncated write was rejected.' },
+  ])
+  check(toolResult(truncatedCall, 'cutoff_write')?.isError === true && !(await fs.readdir(workspace)).includes('cutoff.txt'),
+    'Pi rejects the tool from the truncated reply before it changes the workspace')
+  check(truncatedCall.requests.length === 2 && truncatedCall.requests[1].messages.some(message =>
+    message.role === 'tool' && message.tool_call_id === 'cutoff_write') &&
+    !truncatedCall.records.some(record => record.entry?.customType === 'superpi-recovery'),
+  'SuperPi preserves the rejection and leaves continuation of that tool reply to Pi')
 
   const earlyClose = 'Upstream response stream ended before completion'
   const interrupted = await run('recover after the gateway interrupts a tool proposal', [

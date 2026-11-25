@@ -406,12 +406,12 @@ pi 只提供 `SYSTEM.md`（整份替换）、`APPEND_SYSTEM.md`（静态文件�
 | --- | --- | --- | --- |
 | 六类异常和健康短回复 | host 在 `message_end` 使用共享判据，视图消费结果 | Working 行使用同一判据和文案 | `test/turn-verdict.mjs`、`test/tui-editor.mjs` |
 | 手动继续 | 告警里的「继续」按钮 | 底栏的「继续」入口 | 告警 SSR、终端命中和发送、`test/reliability.mjs` |
-| 自动续跑 | Pi 的 `agent_before_settle` | 同一扩展、同一配置、同一条件 | `test/reliability.mjs`、Pi 扩展加载门禁 |
+| 自动续跑 | Pi 在 `agent_before_settle` 从已保存的工具结果继续未交付的回复 | 同一扩展、同一配置、同一条件 | `test/reliability.mjs` 覆盖成功写入后遇到 DSML、续跑后验证文件，以及截断回复的工具处理 |
 | 写入保护和诊断 | 在 Pi 的 `tool_call` 执行，`/superpi-integrity` 查询 | 同一钩子和命令 | `test/text-integrity.mjs`、`test/reliability.mjs` |
 | 长任务上下文 | 对成功写入的长正文做会话投影，压缩摘要参与预算 | 同一投影和预算 | `test/context-guard.mjs`、`test/reliability.mjs` |
 | 取消和会话进度 | 主动停止后清理继续提示，重连时从快照恢复未解决的提示 | 主动停止后返回空闲，未解决的原因显示在 Working 行 | `test/turn-verdict.mjs`、`test/tui-editor.mjs`、`test/reliability.mjs` |
 
-自动续跑在 Pi 原生重试和压缩之后判断。已有工具调用、用户队列或主动停止时保留相应的运行状态，连续异常最多补一次请求。干净的截断前缀参与续写，畸形响应只留在原始会话记录中。面板和终端都允许在同一会话换模型后继续。
+自动续跑在 Pi 原生重试和压缩之后判断。0.39.0 起，畸形回复的续跑条件以该条回复的工具调用和执行结果为准。此前已完成的工具结果供下一次请求使用。若失败回复自身有工具结果，保留它们交给 Pi 处理。待处理的用户输入优先，主动停止立即生效，连续异常最多补一次请求。干净的截断前缀参与续写，畸形响应只留在原始会话记录中。面板和终端都允许在同一会话换模型后继续。
 
 `test/reliability.mjs` 使用真实 Pi RPC 子进程和回环 SSE 服务，覆盖字符跨包、真实坏字节、工具拦截、正常结束、连续故障和手动停止。第三方网关的偶发故障和实际任务是否完成需要独立证据。见 [输出完整性](output-integrity.md)。
 

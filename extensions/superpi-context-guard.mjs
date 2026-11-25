@@ -152,7 +152,7 @@ export const DEFAULT_GUARD_SETTINGS = {
   windowTokens: 0,
   /** 是否把「图片用完即弃」这类行为准则注入系统提示（让模型自己不再制造大块内容）。 */
   hygiene: true,
-  /** 畸形输出时自动重发一次（默认开启；安全判据仍是硬拦截，见 normalizeGuardSettings）。 */
+  /** 可恢复的畸形回复默认自动续跑一次。 */
   autoRetryOnMalformed: true,
   /** 两次自动重发的最小间隔（毫秒）。 */
   autoRetryCooldownMs: 30000,
@@ -573,25 +573,15 @@ export function resetMeterMemo() {
 }
 
 /**
- * 畸形输出后该不该自动重发（0.15.9）。
- *
- * ---------------------------------------------------------------------------
- * **判据顺序不能换，安全的那条必须是硬拦截。**
- *
- * 1. `settings.autoRetryOnMalformed` 为真 —— 否则不重发（用户关掉了）
- * 2. **上一轮完全没有 toolCall** —— 这是安全边界，不是可配置项：
- *    畸形输出时无法确定工具到底执行了没有；若已有 toolCall，重发可能让它**再执行一遍**
- *    （`write` / `git push` / `rm` 都可能重复生效）。那种情况下宁可让用户自己决定。
- * 3. 距上次自动重发已超过 `autoRetryCooldownMs` —— 防止模型持续故障时快速循环烧钱。
+ * 对已由 Pi 回合边界确认可恢复的回复，按用户设置和冷却时间决定是否自动续跑。
  *
  * @param {{ autoRetryOnMalformed?: boolean, autoRetryCooldownMs?: number }} settings
- * @param {{ hadToolCall?: boolean, lastAutoRetryAt?: number, now?: number }} state
+ * @param {{ lastAutoRetryAt?: number, now?: number }} state
  * @returns {{ retry: boolean, reason: string }}
  */
 export function shouldAutoRetryOnMalformed(settings = DEFAULT_GUARD_SETTINGS, state = {}) {
   const normalized = normalizeGuardSettings(settings)
   if (normalized.autoRetryOnMalformed !== true) return { retry: false, reason: 'disabled' }
-  if (state.hadToolCall === true) return { retry: false, reason: 'had-tool-call' }
   const now = Number.isFinite(state.now) ? state.now : Date.now()
   const last = Number.isFinite(state.lastAutoRetryAt) ? state.lastAutoRetryAt : 0
   const cooldown = normalized.autoRetryCooldownMs
@@ -642,29 +632,7 @@ export function normalizeGuardSettings(raw) {
   imageTokens: Math.round(clamp(source.imageTokens, 500, 200000, base.imageTokens)),
   windowTokens: Math.round(clamp(source.windowTokens, 0, 100000000, base.windowTokens)),
   hygiene: source.hygiene === undefined ? base.hygiene : source.hygiene === true,
-  /**
-   * 畸形输出时是否自动重发一次「继续」（0.15.9，**默认开启**）。
-   *
-   * ---------------------------------------------------------------------------
-   * 为什么默认开启
-   *
-   * 用户实测：模型吐 DSML → 本轮工具调用丢失 → 屏幕上只有一段独白，然后会话结束。
-   * 虽然 0.15.7 把它变成了明确提示（「本轮未执行，重发即可」），但**任务仍然是断的**，
-   * 用户得自己敲「继续」。目标不是"让故障可见"，而是"让任务跑完"。
-   *
-   * ---------------------------------------------------------------------------
-   * 但"自动重发"有一个真实危险，所以安全判据是**硬拦截**，不是开关能绕过的：
-   *
-   * 畸形输出发生时，**无法确定上一轮的工具调用到底执行了没有**。
-   * 若模型其实已经跑了 `write` / `git push` / `rm`，只是输出格式坏了，
-   * 那么重发就可能让它**再执行一遍** —— 在编码 agent 里这比中断危险得多。
-   *
-   * 因此自动重发只在一个条件下发生：**上一轮确实没有产生任何 toolCall**。
-   * 那种情况下「重复执行」的风险严格为零（根本没有执行过任何工具）。
-   *
-   * 判据顺序（`shouldAutoRetryOnMalformed`）：开关 → 无 toolCall → 冷却。
-   * 开关只是"是否启用"，**不能**把"有 toolCall 时也重发"打开 —— 门禁锁死这一点。
-   */
+  /** 自动续跑开关。恢复扩展先按失败回复的调用和结果判断是否具备续跑条件。 */
   autoRetryOnMalformed: source.autoRetryOnMalformed === undefined ? base.autoRetryOnMalformed : source.autoRetryOnMalformed === true,
   /**
    * 自动重发的冷却（毫秒）：同一会话内两次自动重发至少间隔这么久。
