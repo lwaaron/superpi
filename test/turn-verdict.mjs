@@ -41,6 +41,7 @@ import path from 'node:path'
 import { createRequire } from 'node:module'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { listRuntimeFiles } from '../src/runtime-files.mjs'
+import { requireReact } from './preflight.mjs'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const root = path.dirname(here)
@@ -61,33 +62,7 @@ function section(title) {
   console.log('── ' + title + ' ' + '─'.repeat(Math.max(0, 62 - title.length)))
 }
 
-/* ───────────────────────── 依赖前置断言（不许静默跳过）───────────────────────── */
-/**
- * 本门禁需要 react 才能跑「面板真的渲染了 verdict」那一段（client.js 只 require('react')）。
- *
- * **缺了就是失败，不是跳过。** 这是 AGENTS.md §5.0 那条硬约束：
- * 0.16.0 实测隐藏 `.runtime/` 后 6 套门禁整段跳过并 exit 0，`npm test` 仍是绿的 ——
- * 而 `.runtime/` 是 gitignore 的，**新机器 clone 下来必然命中**。
- * 「无法验证」不等于「验证通过」。
- */
-function findReactHome() {
-  const candidates = [
-    path.join(root, '.runtime', 'node_modules'),
-    path.join(path.dirname(root), 'pi-main', 'node_modules'),
-  ]
-  for (const homeDir of candidates) {
-    if (fs.existsSync(path.join(homeDir, 'react', 'package.json'))) return homeDir
-  }
-  return null
-}
-
-const reactHome = findReactHome()
-if (reactHome === null) {
-  console.error('FAIL: 找不到 react —— 面板侧接线断言无法执行。')
-  console.error('      装法：npm install（会在 .runtime/ 下就位），或把 react 放到同级 pi-main/node_modules。')
-  console.error('      本门禁**不会**在缺依赖时 exit 0：跳过等于把这条保障删掉。')
-  process.exit(1)
-}
+const reactHome = requireReact()
 
 /* ───────────────────────────── 判据模块 ───────────────────────────── */
 

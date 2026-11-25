@@ -15,6 +15,9 @@
 *.ps1 text eol=lf
 *.ts text eol=lf
 
+# 安装器按字节核对技能副本，Windows 克隆也使用相同的源字节。
+skills/*/SKILL.md text eol=lf
+
 # git 钩子没有扩展名，必须显式钉 LF：CRLF 的 sh 脚本会报 "bad interpreter"。
 tools/git-hooks/* text eol=lf
 

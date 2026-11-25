@@ -1,6 +1,6 @@
 {
   "name": "superpi",
-  "version": "0.40.0",
+  "version": "0.41.0",
   "type": "module",
   "description": "SuperPi 编码助手，支持 DSH 聊天面板与命令行，复用 Pi 的运行时和 JSONL RPC 协议。",
   "icon": "./assets/icon.svg",
@@ -26,7 +26,7 @@
     "LICENSE"
   ],
   "scripts": {
-    "test": "node test/preflight.mjs && node tools/check-carriers.mjs && node test/selfcheck.mjs && node test/client-render.mjs && node test/css-tokens.mjs && node test/runtime-resolve.mjs && node test/config-hot.mjs && node test/host-parity.mjs && node test/session-projects.mjs && node test/session-lifecycle.mjs && node test/timeout.mjs && node test/rules.mjs && node test/context-guard.mjs && node test/modalities.mjs && node test/turn-verdict.mjs && node test/text-integrity.mjs && node test/delivery.mjs && node test/reliability.mjs && node test/engineering-bench.mjs && node test/parity.mjs && node test/tui-editor.mjs && node test/brand-pi-runtime.mjs && node test/restart-lib.mjs && node test/github-sync.mjs && node test/version.mjs && node test/gate-inventory.mjs",
+    "test": "node test/preflight.mjs && node test/selfcheck.mjs && node test/client-render.mjs && node test/css-tokens.mjs && node test/runtime-resolve.mjs && node test/config-hot.mjs && node test/host-parity.mjs && node test/session-projects.mjs && node test/session-lifecycle.mjs && node test/timeout.mjs && node test/rules.mjs && node test/context-guard.mjs && node test/modalities.mjs && node test/turn-verdict.mjs && node test/text-integrity.mjs && node test/delivery.mjs && node test/reliability.mjs && node test/engineering-bench.mjs && node test/parity.mjs && node test/tui-editor.mjs && node test/brand-pi-runtime.mjs && node test/restart-lib.mjs && node test/github-sync.mjs && node test/version.mjs && node test/gate-inventory.mjs",
     "test:preflight": "node test/preflight.mjs",
     "test:inventory": "node test/gate-inventory.mjs",
     "test:lifecycle": "node test/session-lifecycle.mjs",
@@ -106,6 +106,10 @@
       "platform": "web",
       "inject": []
     }
+  },
+  "devDependencies": {
+    "react": "19.3.0",
+    "react-dom": "19.3.0"
   },
   "optionalDependencies": {
     "@earendil-works/pi-coding-agent": "1.5.2"

@@ -1981,12 +1981,21 @@ const guardLogModule = await import(pathToFileURL(path.join(root, 'extensions', 
     eq(fs.readFileSync(target, 'utf8'), fs.readFileSync(path.join(skillsRoot, name, 'SKILL.md'), 'utf8'), name + ' 装出的内容与源逐字节一致')
   }
   eq(status({ dir: fakeExtDir, env: { USERPROFILE: fakeHome } }).complete, true, '装完 complete=true')
+  const { loadSkills } = await import(pathToFileURL(path.join(pi.packageDir, 'dist', 'index.js')).href)
+  const discoverSkills = () => loadSkills({
+    cwd: fakeHome,
+    agentDir: path.join(fakeHome, '.pi', 'agent'),
+    includeDefaults: false,
+    skillPaths: [resolveUserSkillsDir({ USERPROFILE: fakeHome })],
+  }).skills.map(skill => skill.name).sort()
+  eq(discoverSkills().join(','), names.join(','), 'Pi 的加载器能从临时用户目录发现两个已安装的技能')
   // 卸载要把 skill 一起清掉，否则「卸了还有」是最难排查的一种残留。
   const removedSkills = remove({ dir: fakeExtDir, env: { USERPROFILE: fakeHome } })
   eq(removedSkills.code, 0, 'remove 成功（含 skill）')
   for (const name of names) {
     ok(!fs.existsSync(path.join(fakeHome, '.agents', 'skills', name, 'SKILL.md')), '卸载后 ' + name + ' 的 SKILL.md 消失')
   }
+  eq(discoverSkills().length, 0, '卸载后 Pi 的加载器也找不到已移除的技能')
   fs.rmSync(fakeHome, { recursive: true, force: true })
   fs.rmSync(fakeExtDir, { recursive: true, force: true })
 }

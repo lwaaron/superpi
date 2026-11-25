@@ -7,9 +7,7 @@
  *  1. 组件抛异常（读 undefined 的属性、拼错 props）；
  *  2. 文案键缺失 / 中英文键集不一致。
  *
- * 依赖位置：react 与 react-dom 从 pi 的 node_modules 借（superpi 自己刻意不带 node_modules）。
- * **借不到就失败，不 SKIP**（0.16.1 起）：本文件是「面板能不能画出来」的唯一机器保障，
- * 跳过它等于把界面正确性退回人肉承诺。修法见缺失时的诊断输出。
+ * React 和 React DOM 由仓库的锁定依赖安装，共用 preflight 的依赖检查。
  *
  * 跑法：node test/client-render.mjs
  */
@@ -17,42 +15,12 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { createRequire } from 'node:module'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import { requireReact } from './preflight.mjs'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const root = path.dirname(here)
 
-const REACT_HOMES = [
-  path.join(root, 'node_modules'),
-  path.join(root, '..', 'pi-main', 'node_modules'),
-  path.join(process.env.USERPROFILE ?? '', 'Documents', 'pi-local', 'pi-main', 'node_modules'),
-]
-
-function findReactHome() {
-  for (const home of REACT_HOMES) {
-    if (home === '' ) continue
-    if (fs.existsSync(path.join(home, 'react', 'package.json')) && fs.existsSync(path.join(home, 'react-dom', 'package.json'))) return home
-  }
-  return null
-}
-
-const reactHome = findReactHome()
-if (reactHome === null) {
-  /**
-   * 曾经是 SKIP + exit 0（0.16.1 修）。
-   *
-   * 本文件是「面板能不能画出来」的**唯一**机器保障（1013 条断言），
-   * 缺 react 就整段不跑却报绿，等于把「界面正确」退回人肉承诺。
-   * react 是可直接安装的（npm install），不是不可得的外部资源，
-   * 所以「缺」这件事本身就是环境没配好，应当失败并把修法说清楚。
-   */
-  console.error('')
-  console.error('FAIL[preflight] 找不到 react / react-dom')
-  console.error('  试过：' + REACT_HOMES.filter(home => home !== '').join(', '))
-  console.error('  本文件是面板渲染的唯一机器保障（1013 条断言），不能跳过。')
-  console.error('  修法：在仓库根 npm install（或把 react/react-dom 放到上面任一路径）')
-  console.error('')
-  process.exit(1)
-}
+const reactHome = requireReact()
 console.log('react home =', reactHome)
 
 const req = createRequire(path.join(reactHome, 'noop.js'))

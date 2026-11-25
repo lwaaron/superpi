@@ -452,7 +452,7 @@ return sections ? { role: "system", content: "", sections } : undefined
 ```powershell
 npm test                                        # 离线门禁（顺序即依赖顺序）：
                                                 # preflight（依赖前置断言，缺 pi/react 直接红）
-                                                # → check-carriers → selfcheck → client-render
+                                                # → selfcheck → client-render
                                                 # → css-tokens → runtime-resolve → config-hot
                                                 # → host-parity → session-projects → session-lifecycle
                                                 # → timeout → rules → context-guard → modalities
@@ -469,6 +469,7 @@ npm test                                        # 离线门禁（顺序即依赖
                                                 # gate-inventory（把所有门禁再跑一遍做对账，约 40 s）
 npm run test:all                                # 全量离线门禁，加真实模型冒烟和图片写入验证
 npm run test:preflight                          # 只做依赖探测（缺什么、怎么装）
+npm run check:carriers                          # 巡检本机已配置的个人技能、工具和记忆
 npm run test:inventory                          # 只做门禁规模对账（--print 打印实测值）
 npm run test:lifecycle                          # 只跑会话池生命周期门禁
 npm run test:rules                              # 只跑用户自定义规则门禁（含真 .ts 扩展层）

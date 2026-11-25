@@ -95,7 +95,7 @@ eq('pick 忽略 --no-session 的空串', pick([{ cwd: 'C:/work', sessionFile: ''
 // displayPath（host 端 shortenHomePath 的产物）。这两件事都不能让浏览器自己算：
 // 路径归一/大小写规则抄第二份就会与 groupSessionsByProject 分叉。
 const identity = (cwd, snapshot) => mod.withProjectIdentity(snapshot, cwd)
-const ident = identity('C:\\Users\\PC\\pi-workspace', { id: 's1', cwd: 'C:\\spawn-dir' })
+const ident = identity(path.join(os.homedir(), 'pi-workspace'), { id: 's1', cwd: 'C:\\spawn-dir' })
 check('withProjectIdentity 保留原快照字段', ident.id === 's1' && ident.cwd === 'C:\\spawn-dir')
 check('withProjectIdentity 不因 projectCwd 改写 cwd', ident.cwd === 'C:\\spawn-dir')
 check('displayPath 是 home 缩写的短路径', ident.displayPath === '~' + path.sep + 'pi-workspace', JSON.stringify(ident.displayPath))

@@ -25,6 +25,7 @@
  * 跑法：node test/parity.mjs
  */
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
@@ -481,11 +482,11 @@ const HYGIENE_ROOTS = ['src', 'extensions', 'skills', 'docs', 'tools', 'test']
  * 而当时的 HYGIENE_ROOTS 不含 `.workbuddy/`，**门禁完全没有报**。
  * 是我手工 node -e 扫出来的 —— 又一次「靠人肉检查」。
  */
-const HYGIENE_EXTRA_ROOTS = [path.join('.workbuddy', 'memory')]
-const HYGIENE_TOP = ['client.js', 'index.js', 'AGENTS.md', 'README.md', 'package.json']
+const HYGIENE_MEMORY = path.join('.workbuddy', 'memory')
+const HYGIENE_TOP = ['client.js', 'index.js', 'AGENTS.md', 'README.md', 'package.json', 'package-lock.json']
 const HYGIENE_EXT = /\.(c|m)?js$|\.ts$|\.md$|\.json$|\.ps1$|\.ya?ml$|\.sh$|\.html$/
-function listHygieneFiles() {
-  const files = HYGIENE_TOP.filter((rel) => fs.existsSync(path.join(root, rel)))
+function listHygieneFiles(base) {
+  const files = HYGIENE_TOP.filter((rel) => fs.existsSync(path.join(base, rel)))
   const walk = (dir) => {
     let entries = []
     try { entries = fs.readdirSync(dir, { withFileTypes: true }) } catch { return }
@@ -494,15 +495,14 @@ function listHygieneFiles() {
       const abs = path.join(dir, entry.name)
       if (entry.isDirectory()) { walk(abs); continue }
       // 钩子没有扩展名，但它是 sh 脚本，同样不许带坏字节。
-      if (HYGIENE_EXT.test(entry.name) || entry.name === 'post-commit') files.push(path.relative(root, abs))
+      if (HYGIENE_EXT.test(entry.name) || entry.name === 'post-commit') files.push(path.relative(base, abs))
     }
   }
-  for (const dir of HYGIENE_ROOTS) walk(path.join(root, dir))
-  // 记忆目录：不存在时 walk 内部 try/catch 会静默跳过（新 clone 还没有记忆文件）
-  for (const dir of HYGIENE_EXTRA_ROOTS) walk(path.join(root, dir))
+  for (const dir of HYGIENE_ROOTS) walk(path.join(base, dir))
+  walk(path.join(base, HYGIENE_MEMORY))
   return files
 }
-const hygieneFiles = listHygieneFiles()
+const hygieneFiles = listHygieneFiles(root)
 // 反空转：扫不到文件时「零坏字节」是假的，必须自己验一次覆盖量。
 // 阈值取 60：实测当前 94 个文件（src 7 / extensions 7 / skills 2 / docs 8 /
 // tools 28 / test 25 + 顶层 5 + .workbuddy/memory 4）。
@@ -510,22 +510,6 @@ const hygieneFiles = listHygieneFiles()
 // 门槛的作用是「抓扫描器坏掉」，不是「要求仓库膨胀」。
 check('文本卫生：扫描清单非空（否则「零坏字节」无意义）', hygieneFiles.length > 60, 'files=' + String(hygieneFiles.length))
 check('文本卫生：清单里真的含 client.js / AGENTS.md / docs/parity.md', ['client.js', 'AGENTS.md', path.join('docs', 'parity.md')].every((rel) => hygieneFiles.includes(rel) === true))
-/**
- * 反空转（0.17.2）：记忆目录必须在清单里。
- *
- * 这一条是「扫描器坏掉」的第二道判据。`HYGIENE_EXTRA_ROOTS` 若被误删、
- * 或路径写错（`walk` 内部 catch 会静默跳过不存在的目录），
- * 上一条仍会通过 —— 因为其它目录的文件数足够 >60。
- * 所以必须**直接断言记忆文件在清单里**，否则「记忆不许有坏字节」这条等于没生效。
- *
- * 只在记忆目录存在时断言：新 clone 下来的仓库还没有 .workbuddy/memory，
- * 此时不该红（那是「还没有记忆」，不是「检查失效」）。
- */
-if (fs.existsSync(path.join(root, '.workbuddy', 'memory'))) {
-  const memoryFiles = hygieneFiles.filter(rel => rel.startsWith(path.join('.workbuddy', 'memory')))
-  check('文本卫生：记忆文件已纳入扫描（否则记忆写坏不会被发现）', memoryFiles.length > 0, 'memoryFiles=' + String(memoryFiles.length))
-}
-
 let hygieneFffd = 0
 let hygieneCtrl = 0
 let hygieneSurrogate = 0
@@ -539,6 +523,21 @@ const hygieneOffenders = []
  * 现在定义只有一处：`extensions/superpi-text-bytes.mjs` 的 `scanTextBytes`。
  */
 const { scanTextBytes } = await import(pathToFileURL(path.join(root, 'extensions', 'superpi-text-bytes.mjs')).href)
+// 记忆目录是本地状态。每次都用含坏字符的已知样本验证遍历与判据。
+const memoryFixture = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'superpi-memory-gate-'))
+try {
+  const relative = path.join('.workbuddy', 'memory', 'sample.md')
+  const file = path.join(memoryFixture, relative)
+  fs.mkdirSync(path.dirname(file), { recursive: true })
+  fs.writeFileSync(file, 'sample ' + String.fromCodePoint(0xfffd), 'utf8')
+  const detected = listHygieneFiles(memoryFixture).includes(relative) &&
+    scanTextBytes(fs.readFileSync(file, 'utf8')).counts.replacement === 1
+  const localCoverage = !fs.existsSync(path.join(root, HYGIENE_MEMORY)) ||
+    hygieneFiles.some(rel => rel.startsWith(HYGIENE_MEMORY + path.sep))
+  check('文本卫生：新副本能发现受控记忆样本中的坏字符，已有本地记忆也被纳入扫描', detected && localCoverage)
+} finally {
+  fs.rmSync(memoryFixture, { recursive: true, force: true })
+}
 for (const rel of hygieneFiles) {
   let raw = ''
   try { raw = fs.readFileSync(path.join(root, rel), 'utf8') } catch { continue }

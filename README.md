@@ -229,10 +229,10 @@ New-Item -ItemType Junction `
 ### 方式三：手工 pnpm add（不想跑脚本时）
 
 ```powershell
-npm pack                                        # 得到 superpi-0.40.0.tgz
+npm pack                                        # 得到 superpi-0.41.0.tgz
 cd "$env:USERPROFILE\.dsh\profiles\desktop"
 node "$env:USERPROFILE\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\pnpm\bin\pnpm.cjs" `
-  add "file:C:\path\to\superpi-0.40.0.tgz" --ignore-scripts
+  add "file:C:\path\to\superpi-0.41.0.tgz" --ignore-scripts
 ```
 
 不要在 profile 里用 `npm install`：npm 会另写一份 `package-lock.json`，而宿主插件管理器用的是 pnpm，两套锁文件互相看不见，下次插件安装就会把 node_modules 重建成 pnpm 理解的样子。
@@ -465,10 +465,13 @@ npm install --prefix <插件>/.runtime --save-exact --no-audit --no-fund --logle
 
 ## 测试
 
+在新克隆的仓库中，使用 Node.js 22.19 或更新版本和 Git。先运行 `npm ci` 安装锁定的 Pi 和 React 开发依赖，再运行离线门禁。技能安装与加载使用临时用户目录。本机已配置的个人技能、工具和记忆可通过 `npm run check:carriers` 单独巡检。
+
 ```powershell
+npm ci              # 按 package-lock.json 安装验收依赖
 npm test            # 离线门禁（顺序即依赖顺序）：
                     # preflight（依赖前置断言，缺 pi/react 直接红）
-                    # → check-carriers → selfcheck → client-render + css-tokens
+                    # → selfcheck → client-render + css-tokens
                     # → runtime-resolve + config-hot + host-parity
                     # → session-projects + session-lifecycle + timeout
                     # → rules + context-guard + modalities

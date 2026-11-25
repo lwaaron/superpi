@@ -90,6 +90,10 @@ const cleanPkg = fs.readFileSync(pkgPath)
 
 let failed = 0
 try {
+  const lock = JSON.parse(fs.readFileSync(path.join(root, 'package-lock.json'), 'utf8'))
+  assert(lock.version === realVersion && lock.packages?.['']?.version === realVersion,
+    'package-lock.json 的两处根版本须与 package.json 一致')
+
   // ── 1. 报的版本 === package.json 的版本 ──────────────────────────────
   const A = await boot(tempDir, 'a')
   try {

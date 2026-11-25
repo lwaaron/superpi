@@ -13,8 +13,7 @@
  * 被删了**两次**。第一次靠手动 `ls` 发现，第二次靠本文件的前身发现。
  * 两次都不是因为"不知道要保留"，而是因为**没有任何东西会因为它的消失而报警**。
  *
- * 修法：给它一个归属者（本文件）、一条会红的判据（下面每一条 check），
- * 并挂进 SuperPi 的 `npm test`。这样它就是有主之物，不再是可被顺手的荒地。
+ * 本脚本巡检已配置的个人技能、工具和记忆。仓库门禁在临时用户目录运行技能安装和加载。
  *
  * 跑法：node tools/check-carriers.mjs
  * 退出码：0 全部在位 / 1 有缺失（会打印修复命令）
@@ -23,15 +22,16 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { execFileSync } from 'node:child_process'
-import { pathToFileURL } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
+import { resolvePiRuntime } from '../src/pi-runtime.mjs'
+import { resolveUserSkillsDir, SKILL_NAMES } from './install-pi-extension.mjs'
 
+const pluginRoot = fileURLToPath(new URL('../', import.meta.url))
 const HOME = process.env.USERPROFILE || os.homedir()
-const SKILLS_DIR = path.join(HOME, '.agents', 'skills')
+const SKILLS_DIR = resolveUserSkillsDir()
 const TOOLKIT_DIR = path.join(HOME, '.agents', 'toolkit', 'bin')
 const MEMORY_DIR = path.join(HOME, '.pi', 'agent', 'memory')
 
-/** 必须存在的 skill（与 tools/install-pi-extension.mjs 的 SKILL_NAMES 一致）。 */
-const REQUIRED_SKILLS = ['verified-delivery', 'change-scope']
 /** 必须存在的通用工具。 */
 const REQUIRED_TOOLS = ['teeth.mjs', 'condense.mjs', 'check-memory.mjs']
 /** 记忆索引里必须登记的笔记数下限。 */
@@ -46,7 +46,7 @@ function fail(msg, fix) {
 }
 
 /* ── ① skill ── */
-for (const name of REQUIRED_SKILLS) {
+for (const name of SKILL_NAMES) {
   const f = path.join(SKILLS_DIR, name, 'SKILL.md')
   if (!fs.existsSync(f)) {
     fail(`skill 缺失：${name}`, 'node tools/install-pi-extension.mjs --install')
@@ -55,7 +55,7 @@ for (const name of REQUIRED_SKILLS) {
   const t = fs.readFileSync(f, 'utf8')
   if (!/^---\r?\n[\s\S]*?^name:\s*\S+/m.test(t)) fail(`skill 的 frontmatter 损坏：${name}`, 'node tools/install-pi-extension.mjs --install')
   // 与仓库源逐字节比对：防"装的是旧版本"
-  const src = path.join(process.cwd(), 'skills', name, 'SKILL.md')
+  const src = path.join(pluginRoot, 'skills', name, 'SKILL.md')
   if (fs.existsSync(src) && fs.readFileSync(src, 'utf8') !== t) {
     fail(`skill 与仓库源不一致（装的是旧版）：${name}`, 'node tools/install-pi-extension.mjs --install')
   }
@@ -86,8 +86,9 @@ if (fs.existsSync(path.join(TOOLKIT_DIR, 'check-memory.mjs'))) {
 /* ── ④ 载体是否真被运行时加载（唯一能证明"装上了"的判据）── */
 let loaded = []
 try {
-  const piDir = path.join(process.cwd(), '.runtime/node_modules/@earendil-works/pi-coding-agent')
-  const skillsMod = await import(pathToFileURL(path.join(piDir, 'dist/core/skills.js')).href)
+  const { packageDir } = resolvePiRuntime({ pluginRoot })
+  if (!packageDir) throw new Error('Pi runtime unavailable')
+  const skillsMod = await import(pathToFileURL(path.join(packageDir, 'dist', 'index.js')).href)
   const r = skillsMod.loadSkills({
     cwd: process.cwd(),
     agentDir: path.join(HOME, '.pi', 'agent'),
@@ -95,7 +96,7 @@ try {
     skillPaths: [SKILLS_DIR],
   })
   loaded = r.skills.map((s) => s.name)
-  for (const name of REQUIRED_SKILLS) {
+  for (const name of SKILL_NAMES) {
     if (loaded.includes(name)) continue
     // 报警必须区分**两种不同的故障**，否则会把人引导到错的排查方向：
     //   ① 文件不在 → 重装就行；
@@ -115,7 +116,7 @@ try {
     }
   }
 } catch (error) {
-  fail(`无法验证运行时加载（${String(error?.message ?? error).slice(0, 80)}）`, '确认 .runtime 下 pi 已安装')
+  fail(`无法验证运行时加载（${String(error?.message ?? error).slice(0, 80)}）`, '在仓库根执行 npm ci，或确认 Pi 运行时已安装')
 }
 
 /* ── 输出 ── */
@@ -124,7 +125,7 @@ console.log(`skill 目录 : ${SKILLS_DIR}`)
 console.log(`工具目录   : ${TOOLKIT_DIR}`)
 console.log(`记忆目录   : ${MEMORY_DIR}`)
 console.log('')
-console.log(`skill 在位 : ${REQUIRED_SKILLS.filter((n) => fs.existsSync(path.join(SKILLS_DIR, n, 'SKILL.md'))).join(', ') || '(无)'}`)
+console.log(`skill 在位 : ${SKILL_NAMES.filter((n) => fs.existsSync(path.join(SKILLS_DIR, n, 'SKILL.md'))).join(', ') || '(无)'}`)
 console.log(`SuperPi 加载到 : ${loaded.join(', ') || '(无)'}`)
 console.log(`工具在位   : ${REQUIRED_TOOLS.filter((t) => fs.existsSync(path.join(TOOLKIT_DIR, t))).join(', ') || '(无)'}`)
 
@@ -151,7 +152,7 @@ if (problems.length > 0) {
     console.error('')
     console.error('=== --fix：从仓库源恢复 ===')
     try {
-      execFileSync(process.execPath, [path.join(process.cwd(), 'tools/install-pi-extension.mjs'), '--install'], {
+      execFileSync(process.execPath, [path.join(pluginRoot, 'tools/install-pi-extension.mjs'), '--install'], {
         cwd: process.cwd(), stdio: 'inherit', timeout: 180000,
       })
     } catch (error) {

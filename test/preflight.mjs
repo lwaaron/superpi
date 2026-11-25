@@ -65,7 +65,7 @@ export const DEPENDENCIES = [
     id: 'pi',
     required: true,
     layer: '与 pi 对账（命令面 / 事件面 / 扩展 UI / 真 .ts 扩展加载）',
-    hint: 'npm run test:runtime（装到 .runtime/）或设 PI_PACKAGE_DIR 指向 pi 源码树',
+    hint: '在仓库根执行 npm ci，或使用同版本的 Pi 运行时',
   },
   {
     id: 'jiti',
@@ -76,8 +76,8 @@ export const DEPENDENCIES = [
   {
     id: 'react',
     required: true,
-    layer: 'client.js 的 SSR 渲染门禁（test/client-render.mjs）',
-    hint: 'npm install（本仓库刻意不带 node_modules，需借宿主的 react）',
+    layer: '面板渲染与异常提示的 React SSR 测试',
+    hint: '在仓库根执行 npm ci',
   },
   {
     id: 'typebox',
@@ -175,11 +175,12 @@ export function probeTypeBox(piProbe = probeRuntime()) {
   }
 }
 
-/** 探测 react（SSR 门禁需要；本仓库刻意不带 node_modules）。 */
+/** 两套 SSR 门禁都从这里解析 React 和 React DOM，优先使用 npm ci 安装的版本。 */
 export function probeReact(options = {}) {
   const root = typeof options.root === 'string' ? options.root : PLUGIN_ROOT
   const homes = [
     path.join(root, 'node_modules'),
+    path.join(root, '.runtime', 'node_modules'),
     path.join(root, '..', 'pi-main', 'node_modules'),
     path.join(options.home ?? (process.env.USERPROFILE || ''), 'Documents', 'pi-local', 'pi-main', 'node_modules'),
   ].filter(home => home !== '')
@@ -250,7 +251,7 @@ export function requireReact(options = {}) {
   if (probe.ok === true) return probe.home
   console.error('')
   console.error('FAIL[preflight] react 不可用 —— ' + probe.reason)
-  console.error('  修法：npm install（本仓库刻意不带 node_modules，需借宿主的 react）')
+  console.error('  修法：在仓库根执行 npm ci')
   console.error('')
   process.exit(1)
 }
