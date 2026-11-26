@@ -370,13 +370,14 @@ export default function delivery(pi: ExtensionAPI) {
     const review = await reviewChanges(ctx, {
       goal: task && item ? task.goal + '\n' + item.description : goal ?? task?.goal ?? 'Review the changed behavior.',
       criteria: task && item ? task.checks.filter(criterion => !criterion.review).map(criterion => criterion.description) : undefined,
-      paths, base, timeout, taskCheck: check !== undefined, retry,
-    }, signal, (count, requests, { recovering, retrying, repairingReport } = {}) => update?.({
+      paths, base, timeout, taskCheck: check !== undefined, retry, thinkingLevel: pi.getThinkingLevel(),
+    }, signal, (count, requests, { recovering, retrying, repairingReport, scope } = {}) => update?.({
       content: [{ type: 'text', text: 'Independent reviewers returned ' + count + '/2' +
         (recovering ? ' · Resuming ' + recovering + ' from captured source' : '') +
         (retrying ? ' · Retrying ' + retrying + ' after a temporary provider error' : '') +
-        (repairingReport ? ' · Recovering a truncated report from ' + repairingReport : '') }],
-      details: { reviewProgress: { completed: count, requests, recovering, retrying, repairingReport } },
+        (repairingReport ? ' · Recovering a truncated report from ' + repairingReport : '') +
+        (scope ? ' · ' + scope.focus + ' ' + scope.id + ' · ' + (scope.total - scope.remaining) + '/' + scope.total + ' scopes' : '') }],
+      details: { reviewProgress: { completed: count, requests, recovering, retrying, repairingReport, scope } },
     }), appendCheckpoint)
     let recorded = false
     let savedNewEvidence = false
@@ -408,7 +409,7 @@ export default function delivery(pi: ExtensionAPI) {
       review.uncoveredCount ? 'Scope excludes ' + review.uncoveredCount + ' changed file(s): ' + review.uncovered.join(', ') : '']
     for (const reviewer of review.reviewers) {
       lines.push(reviewer.focus + ' · ' + reviewer.status + (reviewer.summary ? ' · ' + reviewer.summary : ''))
-      if (reviewer.fallback) lines.push('File discovery resumed · ' + reviewer.fallback)
+      if (reviewer.fallback) lines.push((reviewer.pendingScopes ? 'Scoped review started · ' : 'File discovery resumed · ') + reviewer.fallback)
       if (reviewer.recovery) lines.push('Review resumed from captured source · request ' + reviewer.recovery.request)
       if (reviewer.providerRetry) lines.push('Temporary provider error retried · request ' + reviewer.providerRetry.request)
       if (reviewer.outputRetry) lines.push('Truncated report retried on the same evidence · request ' + reviewer.outputRetry.request)
@@ -418,6 +419,16 @@ export default function delivery(pi: ExtensionAPI) {
       if (reviewer.failure) lines.push('Model result · ' + reviewer.failure)
       if (reviewer.limitation) lines.push('Coverage limitation · ' + reviewer.limitation)
       if (reviewer.notes) lines.push('Notes · ' + reviewer.notes)
+      for (const scopeReport of reviewer.scopeReports ?? []) {
+        lines.push(scopeReport.id + ' · ' + scopeReport.status + ' · ' + scopeReport.summary)
+        for (const conclusion of scopeReport.coverage ?? []) lines.push(
+          conclusion.path + ':' + conclusion.line + ' · ' + conclusion.observation + '\n  ' + conclusion.quote)
+      }
+      if (reviewer.scopeReports?.length) {
+        const integrationStarted = reviewer.scopeReports.some(report => report.id === 'integration')
+        const gaps = integrationStarted ? [] : reviewer.scopeReports.flatMap(report => report.integrationGaps ?? [])
+        for (const gap of [...(reviewer.gaps ?? []), ...gaps]) lines.push('Open · ' + gap.path + ' · ' + gap.reason)
+      }
       for (const finding of reviewer.findings ?? []) lines.push(
         finding.severity + ' · ' + finding.path + ':' + finding.line + ' · ' + finding.problem +
         (finding.quote ? '\n  ' + finding.quote : ''))

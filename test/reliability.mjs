@@ -160,7 +160,9 @@ try {
   await fs.writeFile(path.join(agentDir, 'models.json'), JSON.stringify({ providers: { loopback: {
     baseUrl: `http://127.0.0.1:${provider.address().port}/v1`, api: 'openai-completions', apiKey: 'fixture',
     models: ['fixture', 'replacement', 'fixture-wide'].map(id => ({ id,
-      contextWindow: id === 'fixture-wide' ? 160000 : 24000, maxTokens: 2048, input: ['text', 'image'] })),
+      contextWindow: id === 'fixture-wide' ? 160000 : 24000, maxTokens: 2048, input: ['text', 'image'],
+      ...(id === 'fixture-wide' ? { reasoning: true, thinkingLevelMap: { max: 'max' },
+        compat: { thinkingFormat: 'deepseek', supportsReasoningEffort: true, supportsDeveloperRole: false } } : {}) })),
   } } }))
   apply({
     effect(fn) { const dispose = fn(); if (typeof dispose === 'function') disposers.push(dispose); return () => {} },
@@ -1905,6 +1907,95 @@ try {
       requestText(payload).includes('Cover the existing caller.') && !requestText(payload).includes(contractDoc.trim()) &&
       payload.tools.map(tool => tool.function.name).join(',') === 'submit_review'),
   'complete explicitly scoped source and acceptance material can report immediately without sending an excluded README')
+
+  await fs.writeFile(path.join(completeSource, 'catalog.mjs'), changedSource.replace('() => undefined', '() => "kept"'))
+  const scopedPlan = useTool('task_progress', { action: 'start', replace: true, finishWhenVerified: true,
+    goal: 'Keep the lookup and its existing consumer compatible while changing the catalog.',
+    checks: [{ description: 'Independently review all changed code and test coverage', review: true }] }, 'scoped_plan')
+  const reviewReply = ({ rejectNew = false, deferIntegration = false } = {}) => {
+    let checkedCitation = false
+    return payload => {
+      const { reviewScope: scope, openItems = [] } = packetOf(payload)
+      const callerQuestion = { path: 'existing.test.mjs', reason: 'Check the unchanged caller against the revised catalog.' }
+      if (!scope) return { delta: 'I need a smaller review scope.' }
+      if (rejectNew && scope.id === 'source-2') return useTool('submit_review', {
+        decision: 'needs_evidence', summary: 'The source range still needs a dependency check.', findings: [], coverage: [],
+        gaps: [callerQuestion],
+      }, 'scope_needs_evidence')
+      if (rejectNew && scope.id !== 'source-1') return { delta: 'No conclusions about this scope yet.' }
+      const coverage = scope.kind === 'integration' ? [...new Map(scope.reports.flatMap(item =>
+        item.coverage).map(anchor => [anchor.path, anchor])).values()].slice(0, 2) : scope.ranges.map(range => {
+        const lines = range.source.split('\n')
+        const line = lines.findIndex(value => value.trim() !== '')
+        return { path: range.path, line: range.start + line, quote: lines[line].trim().slice(0, 80),
+          observation: 'The assigned source preserves the visible lookup contract.' }
+      })
+      if (rejectNew && !checkedCitation) {
+        checkedCitation = true
+        return useTool('submit_review', { decision: 'reviewed', summary: 'Cited text from outside the assigned source.', findings: [],
+          coverage: [{ path: 'README.md', line: 1, quote: '# Visible engineering contract', observation: 'The README describes the lookup.' }] }, 'unrelated_scope')
+      }
+      const extra = {}
+      if (rejectNew) extra.gaps = [callerQuestion]
+      if (scope.kind === 'integration' && !deferIntegration) extra.resolutions = openItems.map(item => ({ item: item.id,
+        path: 'existing.test.mjs', line: 1, quote: 'export const originalValue = "kept"', reason: 'The unchanged caller still expects the exported value.' }))
+      return useTool('submit_review', { decision: 'reviewed', summary: 'Checked the requested scope against the lookup contract.', findings: [], coverage, ...extra },
+        'scope_' + scope.id)
+    }
+  }
+  const initialScopeReplies = () => Array(13).fill(reviewReply({ rejectNew: true }))
+  assert.equal((await command({ type: 'set_thinking_level', level: 'max' })).ok, true)
+  reviewReplies = { correctness: initialScopeReplies(), tests: initialScopeReplies() }
+  const unfinishedScopes = await run('persist completed scope conclusions before another scope fails', [
+    scopedPlan, requestReview({ check: 1, timeout: 6 }, 'scoped_review_first'),
+    { delta: 'The remaining scopes are pending.' }, { delta: 'Saved the conclusions.' },
+  ])
+  const unfinishedScopeReport = toolResult(unfinishedScopes, 'scoped_review_first')?.details?.review
+  const scopedRequests = reviewRequests(unfinishedScopes)
+  check(scopedRequests.length > 1 && scopedRequests.every(payload => payload.thinking?.type === 'enabled' &&
+    payload.reasoning_effort === 'max'), 'both independent reviews use the effective Pi thinking level from the session')
+  check(unfinishedScopeReport?.status === 'partial' && unfinishedScopeReport.reviewers.every(lane =>
+    lane.scopeReports?.some(item => item.id === 'source-1' && item.status === 'complete' &&
+      item.integrationGaps?.[0]?.path === 'existing.test.mjs') && lane.pendingScopes.includes('integration') &&
+    lane.scopeReports.some(item => item.id === 'source-2' && item.decision === 'needs_evidence' && item.status === 'incomplete')) &&
+    unfinishedScopes.records.some(event => event.type === 'entry_appended' && event.entry.customType === 'superpi-review-checkpoint' &&
+      event.entry.data.scopeReport?.status === 'complete') && !unfinishedScopes.records.some(event => isReceipt(event.entry)) &&
+    scopedRequests.some(payload => requestText(payload).includes('Cite the current source in each assigned range')),
+  'a source-cited scope is committed while the missing scope and integration check keep delivery open')
+
+  const retainedScopeSession = (await command({ type: 'get_state' })).data.sessionFile
+  await request(session(), undefined, 'DELETE')
+  sessionId = (await request('/sessions', { cwd: completeSource, continue: false })).session.id
+  assert.equal((await command({ type: 'switch_session', sessionPath: retainedScopeSession })).ok, true)
+  assert.equal((await command({ type: 'set_model', provider: 'loopback', modelId: 'fixture-wide' })).ok, true)
+  assert.equal((await command({ type: 'set_thinking_level', level: 'max' })).ok, true)
+  reviewReplies = { correctness: Array(13).fill(reviewReply({ deferIntegration: true })), tests: Array(13).fill(reviewReply()) }
+  const remainingScopes = await run('review only the missing scopes and integration after reopening', [
+    requestReview({ check: 1, timeout: 6 }, 'scoped_review_resume'), { delta: 'Awaiting the receipt.' },
+  ])
+  const resumedScopes = toolResult(remainingScopes, 'scoped_review_resume')?.details?.review
+  const continuedPackets = reviewRequests(remainingScopes).map(packetOf)
+  check(resumedScopes?.status === 'partial' && continuedPackets.length >= 4 &&
+    continuedPackets.every(({ reviewScope }) => reviewScope && reviewScope.id !== 'source-1') &&
+    continuedPackets.filter(({ reviewScope, openItems }) => reviewScope.kind === 'integration' &&
+      openItems?.some(item => item.path === 'existing.test.mjs')).length === 2 &&
+    resumedScopes.pendingReviewers.join() === 'correctness' &&
+    toolResult(remainingScopes, 'scoped_review_resume')?.content[0]?.text.includes('Open · existing.test.mjs') &&
+    !remainingScopes.records.some(event => isReceipt(event.entry)),
+  'reopening reuses accepted source conclusions and preserves an unaddressed caller question in the integration check')
+
+  reviewReplies = { correctness: [reviewReply()], tests: [] }
+  const resolvedScopes = await run('finish only the pending integration question', [
+    requestReview({ check: 1, timeout: 6 }, 'scoped_review_finish'), { delta: 'Awaiting the receipt.' },
+  ])
+  const finishedScopes = toolResult(resolvedScopes, 'scoped_review_finish')?.details?.review
+  const finalPackets = reviewRequests(resolvedScopes).map(packetOf)
+  check(finishedScopes?.status === 'clear' && finishedScopes.recorded && finalPackets.length === 1 &&
+    finalPackets[0].reviewScope?.kind === 'integration' && finalPackets[0].openItems?.[0]?.path === 'existing.test.mjs' &&
+    finishedScopes.reused.join() === 'tests' && resolvedScopes.records.some(event => event.type === 'entry_appended' && isReceipt(event.entry)),
+  'delivery receives a verified receipt after the missing integration question is resolved with source evidence (' +
+    JSON.stringify({ status: finishedScopes?.status, scopes: finalPackets.map(packet => packet.reviewScope?.id),
+      notes: toolResult(resolvedScopes, 'scoped_review_finish')?.content[0]?.text?.slice(0, 800) }) + ')')
 } finally {
   if (sessionId) await request(session(), undefined, 'DELETE').catch(() => {})
   for (const dispose of disposers.reverse()) dispose()
