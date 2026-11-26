@@ -236,6 +236,40 @@ export async function watchWorkspaceEntries(before, signal) {
   }
 }
 
+/** Compare the filesystem before and after a command that serves as acceptance evidence. */
+export async function observeWorkspaceCommand(cwd, signal) {
+  const before = await workspaceSourceState(cwd, signal)
+  const entries = await watchWorkspaceEntries(before, signal)
+  return {
+    close: entries.close,
+    async inspect() {
+      const after = await workspaceSourceState(cwd, signal)
+      signal.throwIfAborted()
+      const sameBytes = after.fingerprint === before.fingerprint
+      const changedFile = firstChangedSource(before, after) ?? (sameBytes ? await entries.firstChangedEntry() : undefined)
+      return { fingerprint: sameBytes && !changedFile ? after.fingerprint : undefined, changedFile }
+    },
+  }
+}
+
+/** A registered command can keep its exit status while a Bash tail displays its output. */
+export function acceptanceInvocation(command, declared, shell, cwd) {
+  if (command === declared) return command
+  if (shell !== 'bash' || /[;&|<>\r\n]/.test(declared)) return
+  const pipefail = /^set -o pipefail\r?\n/
+  let invocation = command.replace(pipefail, '').trim()
+  const directory = cwd.replaceAll('\\', '/')
+  const prefixes = []
+  if (!directory.includes("'")) prefixes.push("cd '" + directory + "' && ")
+  if (!/["$\x60]/.test(directory)) prefixes.push('cd "' + directory + '" && ')
+  if (/^[a-zA-Z0-9_./:-]+$/.test(directory)) prefixes.push('cd ' + directory + ' && ')
+  const prefix = prefixes.find(value => invocation.startsWith(value))
+  if (prefix) invocation = invocation.slice(prefix.length)
+  if (invocation === declared) return command
+  if (!invocation.startsWith(declared) || !/^ +2>&1 +\| +tail +-(?:n +)?[1-9]\d{0,5}$/.test(invocation.slice(declared.length))) return
+  return pipefail.test(command) ? command : 'set -o pipefail\n' + command
+}
+
 /** Copy current tracked and non-ignored untracked files. No Git metadata or linked files are shared. */
 export async function withVerificationSnapshot(cwd, signal, run) {
   const root = await repositoryRoot(cwd, signal)

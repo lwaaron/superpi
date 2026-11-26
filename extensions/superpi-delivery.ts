@@ -1,14 +1,16 @@
 import { isDeepStrictEqual } from 'node:util'
+import type { AgentToolResult, AgentToolUpdateCallback } from '@earendil-works/pi-agent-core'
 import { SettingsManager, type ExtensionAPI, type ExtensionContext } from '@earendil-works/pi-coding-agent'
 import { Type, type Static } from 'typebox'
 import { scanTextBytes } from './superpi-text-bytes.mjs'
-import { applyVerificationMutations, firstChangedSource, verificationCommand, verificationOutputContains, verificationSnapshotFingerprint,
-  waitForVerification, watchWorkspaceEntries, withVerificationPair, withVerificationSnapshot,
-  workspaceFingerprint, workspaceSourceState } from './superpi-verification.mjs'
+import { acceptanceInvocation, applyVerificationMutations, observeWorkspaceCommand, verificationCommand, verificationOutputContains,
+  verificationSnapshotFingerprint, waitForVerification, withVerificationPair, withVerificationSnapshot,
+  workspaceFingerprint } from './superpi-verification.mjs'
 import { REVIEW_CHECKPOINT, REVIEW_RESULT, reviewChanges } from './superpi-review.mjs'
 
 const TASK = 'superpi-task'
 const RECEIPT = 'superpi-task-receipt'
+const AUTOMATIC_REVIEW_TIMEOUT = 180
 const shells = Type.Union([Type.Literal('bash'), Type.Literal('powershell')])
 const commandText = Type.String({ minLength: 1, maxLength: 32_768 })
 const checklistText = Type.String({ minLength: 1, maxLength: 400 })
@@ -24,6 +26,14 @@ const statusActions = Type.Union([
   Type.Literal('start'), Type.Literal('status'), Type.Literal('observe'),
   Type.Literal('block'), Type.Literal('resume'), Type.Literal('run_checks'), Type.Literal('finish'),
 ])
+const reviewParameters = Type.Object({
+  goal: Type.Optional(Type.String({ minLength: 1, maxLength: 2000, description: 'Review goal for a standalone request. A numbered check uses the recorded task and criterion.' })),
+  timeout: Type.Integer({ minimum: 1, maximum: 2_147_483, description: 'Total seconds for capture and both reviewers.' }),
+  check: Type.Optional(Type.Integer({ minimum: 1, maximum: 12 })),
+  paths: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 1024 }), { minItems: 1, maxItems: 30 })),
+  base: Type.Optional(Type.String({ minLength: 1, maxLength: 200, description: 'Git revision to compare with. Defaults to HEAD.' })),
+}, { additionalProperties: false })
+type ReviewInput = Static<typeof reviewParameters>
 
 type Check = {
   description: string
@@ -44,12 +54,14 @@ type Task = {
   checks: Check[]
   blocker?: string
   finishWhenVerified?: boolean
+  acceptanceTimeout?: number
   run?: AcceptanceRun
 }
 
 type AcceptanceRun = {
   state: 'running' | 'pending' | 'verified' | 'interrupted'
   timeout: number
+  trigger?: 'verified_command'
   startedAt: string
   check?: number
   reason?: string
@@ -60,6 +72,14 @@ type AcceptanceRun = {
 type NestedCheckDetails = {
   review?: Awaited<ReturnType<typeof reviewChanges>> & { repeated?: boolean; check?: number; remaining: string }
   verification?: { status: string; terminationConfirmed?: boolean }
+}
+type ExecuteCheck = (check: Check, number: number, timeout: number, signal: AbortSignal, onUpdate: AgentToolUpdateCallback) =>
+  Promise<{ result: AgentToolResult<unknown>; isError: boolean }>
+type CommandObservation = {
+  check: Check
+  command: string
+  watcher?: Awaited<ReturnType<typeof observeWorkspaceCommand>>
+  proof?: Check['evidence']
 }
 
 type VerificationStatus = 'passed' | 'failed' | 'timed_out' | 'aborted' | 'unavailable' | 'stale'
@@ -106,6 +126,12 @@ function taskResult(task: Task | undefined, note?: string, isError = false) {
 
 function hasAllEvidence(task: Task) {
   return task.checks.length > 0 && task.checks.every(check => Boolean(check.evidence))
+}
+
+function needsInterruptedCommandCheck(task: Task) {
+  const previous = task.run
+  const unfinished = previous?.check ? task.checks[previous.check - 1] : undefined
+  return (previous?.state === 'running' || previous?.uncertainCommand) && unfinished?.command && !unfinished.mutation && !unfinished.evidence
 }
 
 function receiptText(task: Task) {
@@ -178,6 +204,8 @@ export default function delivery(pi: ExtensionAPI) {
   let completedHere = false
   let automaticFinishPending = false
   let runningChecks = false
+  const observedCommands = new Map<string, CommandObservation>()
+  const automaticReviews = new Set<string>()
 
   const save = (ctx: ExtensionContext, task: Task) => {
     pi.appendEntry(TASK, task)
@@ -202,6 +230,9 @@ export default function delivery(pi: ExtensionAPI) {
     completedHere = false
     automaticFinishPending = false
     runningChecks = false
+    for (const observation of observedCommands.values()) observation.watcher?.close()
+    observedCommands.clear()
+    automaticReviews.clear()
   }
   const restore = (_event: unknown, ctx: ExtensionContext) => {
     resetActivity()
@@ -214,9 +245,195 @@ export default function delivery(pi: ExtensionAPI) {
   pi.on('message_start', event => {
     if (event.message.role === 'user') automaticFinishPending = false
   })
-  pi.on('tool_result', event => {
-    if (event.toolName === 'ask_user') waitingForUser = (event.details as { status?: string })?.status !== 'answered'
+  const allowsAutomaticReview = (task: Task | undefined, ctx: ExtensionContext): task is Task =>
+    Boolean(task?.finishWhenVerified && task.status === 'active' && task.checks.some(item => item.review && !item.evidence) &&
+      !runningChecks && !needsInterruptedCommandCheck(task) && canFinish(ctx) && ctx.isProjectTrusted() &&
+      pi.getActiveTools().includes('review_changes'))
+  pi.on('tool_call', async (event, ctx) => {
+    const { toolName, toolCallId, parentToolCallId } = event
+    if (parentToolCallId || (toolName !== 'bash' && toolName !== 'powershell') || !ctx.signal || ctx.signal.aborted) return
+    const task = currentTask(ctx)
+    if (!allowsAutomaticReview(task, ctx) || typeof event.input.command !== 'string') return
+    for (const [index, check] of task.checks.entries()) {
+      if (!check.command || check.mutation || (check.shell ?? 'bash') !== toolName) continue
+      const command = acceptanceInvocation(event.input.command, check.command, toolName, ctx.cwd)
+      if (command === undefined) continue
+      event.input.command = command
+      const pending = check.evidence ? saveEvidence(ctx, task, index, undefined).checks[index] : check
+      const observation: CommandObservation = { check: pending, command }
+      observedCommands.set(toolCallId, observation)
+      try {
+        observation.watcher = await observeWorkspaceCommand(ctx.cwd, ctx.signal)
+      } catch { /* The command can execute normally without verifiable task evidence. */ }
+      break
+    }
   })
+  pi.on('tool_result', async (event, ctx) => {
+    if (event.toolName === 'ask_user') waitingForUser = (event.details as { status?: string })?.status !== 'answered'
+    const observation = observedCommands.get(event.toolCallId)
+    if (!observation?.watcher) return
+    try {
+      const result = event.structuredContent as { exit_code?: number } | undefined
+      if (event.isError || result?.exit_code !== 0 || event.input.command !== observation.command || ctx.signal?.aborted) return
+      const { fingerprint } = await observation.watcher.inspect()
+      if (fingerprint) observation.proof = { at: new Date().toISOString(), toolCallId: event.toolCallId, fingerprint }
+    } catch { /* A read or notification failure leaves the criterion pending. */ }
+    finally { observation.watcher.close() }
+  })
+
+  const runAcceptance = async (task: Task, timeoutSeconds: number, ctx: ExtensionContext,
+    signal: AbortSignal | undefined, update: AgentToolUpdateCallback | undefined, executeCheck: ExecuteCheck,
+    trigger?: 'verified_command') => {
+    const cutoff = performance.now() + timeoutSeconds * 1000
+    const deadline = AbortSignal.timeout(timeoutSeconds * 1000)
+    const active = signal ? AbortSignal.any([signal, deadline]) : deadline
+    const deadlineExpired = () => active.aborted && active.reason === deadline.reason
+    const run: AcceptanceRun = { ...(trigger ? { trigger } : {}), state: 'running', startedAt: new Date().toISOString(), timeout: timeoutSeconds, steps: [] }
+    const saveRun = () => {
+      task = { ...currentTask(ctx)!, run: { ...run, steps: run.steps.slice() } }
+      save(ctx, task)
+    }
+    let details: NestedCheckDetails | undefined
+    let failure: string[] = []
+    engaged = true
+    runningChecks = true
+    try {
+      const checked = await refreshSourceEvidence(task, ctx.cwd, active)
+      if (checked !== task) save(ctx, checked)
+      if (trigger && checked.checks.some(item => !item.review && !item.evidence)) {
+        return taskResult(checked, 'The tested source changed. Pending command checks must run again.', true)
+      }
+      for (const [index, check] of checked.checks.entries()) {
+        if (active.aborted || !canFinish(ctx)) break
+        if (check.evidence || !(check.command || check.review)) continue
+        run.check = index + 1
+        saveRun()
+        const started = performance.now()
+        const timeout = Math.max(1, Math.ceil((cutoff - started) / 1000))
+        const outcome = await executeCheck(check, run.check, timeout, active, partial => update?.({
+          content: [{ type: 'text', text: 'Acceptance ' + run.check + '/' + checked.checks.length + ' · ' + check.description }, ...partial.content],
+          details: { run },
+        }))
+        details = outcome.result.details as NestedCheckDetails | undefined
+        const review = details?.review
+        if (review?.key) pi.appendEntry(REVIEW_RESULT, trigger ? { ...review, trigger } : review)
+        const passed = !outcome.isError && Boolean(currentTask(ctx)?.checks[index].evidence)
+        const status = passed ? 'passed' : deadlineExpired() ? 'timed_out' : active.aborted ? 'aborted' :
+          details?.verification?.status ?? review?.status ?? 'unavailable'
+        run.steps.push({ check: run.check,
+          status, milliseconds: Math.round(performance.now() - started), ...(review ? { requests: review.newRequests } : {}) })
+        run.uncertainCommand = details?.verification?.terminationConfirmed === false && !check.mutation
+        if (!passed) {
+          failure = outcome.result.content.flatMap(block => block.type === 'text' ? [block.text] : [])
+          run.reason = 'Check ' + run.check + ' · ' + check.description + ' · ' + run.steps.at(-1)!.status
+          break
+        }
+      }
+      if (!active.aborted && canFinish(ctx)) {
+        const current = currentTask(ctx)!
+        const checked = await refreshSourceEvidence(current, ctx.cwd, active)
+        if (checked !== current) save(ctx, checked)
+      }
+    } catch (error) {
+      if (!active.aborted) run.reason = 'Acceptance could not continue. ' + String((error as Error)?.message ?? error)
+    } finally {
+      runningChecks = false
+    }
+    const ready = !active.aborted && !run.reason && canFinish(ctx) && hasAllEvidence(currentTask(ctx)!)
+    run.state = active.aborted ? 'interrupted' : ready ? 'verified' : 'pending'
+    if (active.aborted) {
+      const interruption = deadlineExpired() ? '验收超时 / Acceptance deadline reached.' : '已停止验收 / Acceptance stopped.'
+      run.reason = [interruption, run.reason].filter(Boolean).join(' ')
+    } else if (!ready) {
+      run.reason ??= canFinish(ctx) ? 'Acceptance still needs evidence.' : 'Acceptance paused for pending input or a workspace command.'
+    }
+    saveRun()
+    const result = taskResult(task, [run.reason, ...failure].filter(Boolean).join('\n\n'), !ready)
+    return { ...result, details: { ...result.details, ...(details?.review ? { review: details.review } : {}) },
+      terminate: details?.review?.repeated === true || (ready && stopAfterEvidence(ctx, task)) }
+  }
+
+  async function executeReview(id: string, { goal, check, paths, base, timeout }: ReviewInput,
+    signal: AbortSignal | undefined, update: AgentToolUpdateCallback | undefined, ctx: ExtensionContext) {
+    const task = currentTask(ctx)
+    const index = (check ?? 0) - 1
+    const item = task?.checks[index]
+    if (check !== undefined && (task?.status !== 'active' || !item?.review || (base !== undefined && base !== 'HEAD'))) {
+      return taskResult(task, 'Use a numbered independent review check on the active task with HEAD as the base.', true)
+    }
+    if (check !== undefined) engaged = true
+    if ((goal !== undefined && !validText(goal)) || paths?.some(path => !validText(path)) || (base && !validText(base))) {
+      return taskResult(task, 'Use valid review scope and goal text.', true)
+    }
+    const retry = SettingsManager.inMemory({ retry: pi.getSettings().retry }).getRetrySettings()
+    const appendCheckpoint = (checkpoint: unknown) => pi.appendEntry(REVIEW_CHECKPOINT, checkpoint)
+    const review = await reviewChanges(ctx, {
+      goal: task && item ? task.goal + '\n' + item.description : goal ?? task?.goal ?? 'Review the changed behavior.',
+      criteria: task && item ? task.checks.filter(criterion => !criterion.review).map(criterion => criterion.description) : undefined,
+      paths, base, timeout, taskCheck: check !== undefined, retry,
+    }, signal, (count, requests, { recovering, retrying, repairingReport } = {}) => update?.({
+      content: [{ type: 'text', text: 'Independent reviewers returned ' + count + '/2' +
+        (recovering ? ' · Resuming ' + recovering + ' from captured source' : '') +
+        (retrying ? ' · Retrying ' + retrying + ' after a temporary provider error' : '') +
+        (repairingReport ? ' · Recovering a truncated report from ' + repairingReport : '') }],
+      details: { reviewProgress: { completed: count, requests, recovering, retrying, repairingReport } },
+    }), appendCheckpoint)
+    let recorded = false
+    let savedNewEvidence = false
+    let reviewedTask = task
+    if (task && item && review.status !== 'aborted') {
+      const previous = item.evidence
+      const sameSource = previous && 'fingerprint' in previous && previous.fingerprint === review.fingerprint
+      const accepted = review.status === 'clear' && review.uncoveredCount === 0
+      const evidence = accepted ? (sameSource ? previous : {
+        fingerprint: review.fingerprint, at: new Date().toISOString(), toolCallId: id,
+      }) : undefined
+      recorded = evidence !== undefined
+      if (evidence !== previous) {
+        reviewedTask = saveEvidence(ctx, task, index, evidence)
+        savedNewEvidence = recorded
+      }
+    }
+    const blocking = review.reviewers.some(reviewer => reviewer.findings?.some(finding => finding.severity === 'blocking'))
+    let remaining = 'The recorded review can be used for delivery checks.'
+    if (blocking) remaining = 'Independent review has blocking findings on this source. Address the cited findings before reviewing again.'
+    else if (review.uncoveredCount) remaining = 'Independent review still needs the changed files outside the selected paths.'
+    else if (review.omitted.length) remaining = 'Independent review still needs evidence for the files outside text coverage.'
+    else if (review.pendingReviewers.length) remaining = 'Independent review still needs complete reports from ' + review.pendingReviewers.join(' and ') + '.'
+    const repeated = review.repeated && review.status !== 'stale' && !savedNewEvidence
+    const lines = ['Independent review ' + review.status, review.message, review.checkpointWarning,
+      blocking && review.pendingReviewers.length ? 'Pending static coverage · ' + review.pendingReviewers.join(', ') : '',
+      review.reused.length ? 'Reports carried forward: ' + review.reused.join(', ') : '',
+      review.omitted.length ? 'Outside text coverage: ' + review.omitted.join(', ') : '',
+      review.uncoveredCount ? 'Scope excludes ' + review.uncoveredCount + ' changed file(s): ' + review.uncovered.join(', ') : '']
+    for (const reviewer of review.reviewers) {
+      lines.push(reviewer.focus + ' · ' + reviewer.status + (reviewer.summary ? ' · ' + reviewer.summary : ''))
+      if (reviewer.fallback) lines.push('File discovery resumed · ' + reviewer.fallback)
+      if (reviewer.recovery) lines.push('Review resumed from captured source · request ' + reviewer.recovery.request)
+      if (reviewer.providerRetry) lines.push('Temporary provider error retried · request ' + reviewer.providerRetry.request)
+      if (reviewer.outputRetry) lines.push('Truncated report retried on the same evidence · request ' + reviewer.outputRetry.request)
+      if (reviewer.restoredReads) lines.push('Source excerpts restored · ' + reviewer.restoredReads)
+      if (reviewer.sourceRanges?.length) lines.push('Source ranges saved · ' + reviewer.sourceRanges.length)
+      if (reviewer.acceptedEvidence?.length) lines.push('Review observations checkpointed · ' + reviewer.acceptedEvidence.length)
+      if (reviewer.failure) lines.push('Model result · ' + reviewer.failure)
+      if (reviewer.limitation) lines.push('Coverage limitation · ' + reviewer.limitation)
+      if (reviewer.notes) lines.push('Notes · ' + reviewer.notes)
+      for (const finding of reviewer.findings ?? []) lines.push(
+        finding.severity + ' · ' + finding.path + ':' + finding.line + ' · ' + finding.problem +
+        (finding.quote ? '\n  ' + finding.quote : ''))
+      for (const resolution of reviewer.resolutions ?? []) lines.push(
+        'Resolved · ' + resolution.issue + ' · ' + resolution.path + ':' + resolution.line + ' · ' + resolution.reason + '\n  ' + resolution.quote)
+    }
+    if (review.execution === 'reused') lines.push(remaining, 'The source and effective review scope are unchanged. This result uses the existing reports.')
+    else if (review.pendingReviewers.length && !blocking && (review.execution === 'new' || review.execution === 'resumed')) lines.push(remaining)
+    return {
+      content: [{ type: 'text', text: lines.filter(Boolean).join('\n') }],
+      details: { review: { ...review, recorded, check, repeated, remaining } },
+      isError: !['clear', 'findings', 'no_changes'].includes(review.status) ||
+        (check !== undefined && review.uncoveredCount > 0),
+      terminate: repeated || (recorded && stopAfterEvidence(ctx, reviewedTask)),
+    }
+  }
 
   pi.registerCommand(TASK, {
     description: 'Inspect this session’s task and verification evidence',
@@ -232,7 +449,7 @@ export default function delivery(pi: ExtensionAPI) {
     promptSnippet: 'Track acceptance checks and actual evidence for multi-step work.',
     promptGuidelines: [
       'Use task_progress for multi-step coding work and read its status when resuming. Tie checks to the user request. Exercise regressions and compatibility, including overlapping operations on the same resource and partial failures when relevant.',
-      'Record actual observations with file, test, or artifact references. List repeatable command checks before required independent review checks. Once the changes are ready, use run_checks with a total timeout to execute the outstanding checks and inspect any failure.',
+      'Record actual observations with file, test, or artifact references. List repeatable command checks before required independent review checks. Use the registered command unchanged. On tasks with finishWhenVerified, current command evidence can start independent review automatically. Use run_checks to execute remaining checks explicitly.',
       'Set finishWhenVerified on start when the checks cover the full requested delivery. Run run_checks on its own for a receipt when all evidence is current. Use finish when the task requires a separate completion decision.',
       'If acceptance requires proving a test detects a specific regression, declare mutation with exact replacements and an expectedFailure diagnostic on its command check. Run verify with that check number.',
       'To correct a command or failure diagnostic in an existing plan, use start with replace: true and the same goal. Preserve the acceptance criteria. Unchanged command checks keep evidence for the current source.',
@@ -253,7 +470,7 @@ export default function delivery(pi: ExtensionAPI) {
       check: Type.Optional(Type.Integer({ minimum: 1, maximum: 12 })),
       observation: Type.Optional(checklistText),
       reason: Type.Optional(checklistText),
-      timeout: Type.Optional(Type.Integer({ minimum: 1, maximum: 2_147_483, description: 'Total seconds for run_checks.' })),
+      timeout: Type.Optional(Type.Integer({ minimum: 1, maximum: 2_147_483, description: 'Total seconds for run_checks, or automatic review on start.' })),
       replace: Type.Optional(Type.Boolean({ description: 'Set when the user changes scope or to correct the verification for an existing criterion.' })),
       finishWhenVerified: Type.Optional(Type.Boolean({ description: 'On start, allow checked evidence for the full task to complete it and publish a receipt automatically.' })),
     }, { additionalProperties: false }),
@@ -262,80 +479,17 @@ export default function delivery(pi: ExtensionAPI) {
       if (params.action === 'status') return taskResult(task)
       if (params.action === 'run_checks') {
         if (task?.status !== 'active' || params.timeout === undefined) return taskResult(task, 'Run checks on an active task with a total timeout.', true)
-        const previous = task.run
-        const unfinished = previous?.check ? task.checks[previous.check - 1] : undefined
-        if ((previous?.state === 'running' || previous?.uncertainCommand) && unfinished?.command && !unfinished.mutation && !unfinished.evidence) {
+        if (needsInterruptedCommandCheck(task)) {
           return taskResult(task, 'Confirm the interrupted workspace command has stopped, then verify that numbered check before running the rest.', true)
         }
         if (!canFinish(ctx)) return taskResult(task, 'The pending user input or workspace command must settle before verification.', true)
 
-        const cutoff = performance.now() + params.timeout * 1000
-        const deadline = AbortSignal.timeout(params.timeout * 1000)
-        const active = signal ? AbortSignal.any([signal, deadline]) : deadline
-        const deadlineExpired = () => active.aborted && active.reason === deadline.reason
-        const run: AcceptanceRun = { state: 'running', startedAt: new Date().toISOString(), timeout: params.timeout, steps: [] }
-        const saveRun = () => {
-          task = { ...currentTask(ctx)!, run: { ...run, steps: run.steps.slice() } }
-          save(ctx, task)
-        }
-        let details: NestedCheckDetails | undefined
-        let failure: string[] = []
-        engaged = true
-        runningChecks = true
-        try {
-          const checked = await refreshSourceEvidence(task, ctx.cwd, active)
-          if (checked !== task) save(ctx, checked)
-          for (const [index, check] of checked.checks.entries()) {
-            if (active.aborted || !canFinish(ctx)) break
-            if (check.evidence || !(check.command || check.review)) continue
-            run.check = index + 1
-            saveRun()
-            const started = performance.now()
-            const timeout = Math.max(1, Math.ceil((cutoff - started) / 1000))
-            const command = check.command
-            const outcome = await ctx.executeTool(command ? 'verify' : 'review_changes',
-              command ? { check: run.check, timeout, command, shell: check.shell ?? 'bash' } : { check: run.check, timeout },
-              { signal: active, onUpdate: partial => update?.({
-                content: [{ type: 'text', text: 'Acceptance ' + run.check + '/' + checked.checks.length + ' · ' + check.description }, ...partial.content],
-                details: { run },
-              }) })
-            details = outcome.result.details as NestedCheckDetails | undefined
-            const review = details?.review
-            if (review?.key) pi.appendEntry(REVIEW_RESULT, review)
-            const passed = !outcome.isError && Boolean(currentTask(ctx)?.checks[index].evidence)
-            const status = passed ? 'passed' : deadlineExpired() ? 'timed_out' : active.aborted ? 'aborted' :
-              details?.verification?.status ?? review?.status ?? 'unavailable'
-            run.steps.push({ check: run.check,
-              status, milliseconds: Math.round(performance.now() - started), ...(review ? { requests: review.newRequests } : {}) })
-            run.uncertainCommand = details?.verification?.terminationConfirmed === false && !check.mutation
-            if (!passed) {
-              failure = outcome.result.content.flatMap(block => block.type === 'text' ? [block.text] : [])
-              run.reason = 'Check ' + run.check + ' · ' + check.description + ' · ' + run.steps.at(-1)!.status
-              break
-            }
-          }
-          if (!active.aborted && canFinish(ctx)) {
-            const current = currentTask(ctx)!
-            const checked = await refreshSourceEvidence(current, ctx.cwd, active)
-            if (checked !== current) save(ctx, checked)
-          }
-        } catch (error) {
-          if (!active.aborted) run.reason = 'Acceptance could not continue. ' + String((error as Error)?.message ?? error)
-        } finally {
-          runningChecks = false
-        }
-        const ready = !active.aborted && !run.reason && canFinish(ctx) && hasAllEvidence(currentTask(ctx)!)
-        run.state = active.aborted ? 'interrupted' : ready ? 'verified' : 'pending'
-        if (active.aborted) {
-          const interruption = deadlineExpired() ? '验收超时 / Acceptance deadline reached.' : '已停止验收 / Acceptance stopped.'
-          run.reason = [interruption, run.reason].filter(Boolean).join(' ')
-        } else if (!ready) {
-          run.reason ??= canFinish(ctx) ? 'Acceptance still needs evidence.' : 'Acceptance paused for pending input or a workspace command.'
-        }
-        saveRun()
-        const result = taskResult(task, [run.reason, ...failure].filter(Boolean).join('\n\n'), !ready)
-        return { ...result, details: { ...result.details, ...(details?.review ? { review: details.review } : {}) },
-          terminate: details?.review?.repeated === true || (ready && stopAfterEvidence(ctx, task)) }
+        return runAcceptance(task, params.timeout, ctx, signal, update, (check, number, timeout, active, onUpdate) => {
+          const command = check.command
+          return ctx.executeTool(command ? 'verify' : 'review_changes', command ?
+            { check: number, timeout, command, shell: check.shell ?? 'bash' } : { check: number, timeout },
+          { signal: active, onUpdate })
+        })
       }
       if (params.action === 'start') {
         if (task && task.status !== 'complete' && !params.replace) return taskResult(task, 'A task already exists. Resume it or explicitly revise the plan with replace: true.', true)
@@ -345,7 +499,7 @@ export default function delivery(pi: ExtensionAPI) {
           return taskResult(task, 'Provide a goal and at least one specific acceptance check with valid text.', true)
         }
         const next: Task = { version: 1, status: 'active', goal: params.goal!.trim(), checks: params.checks,
-          ...(params.finishWhenVerified ? { finishWhenVerified: true } : {}) }
+          ...(params.finishWhenVerified ? { finishWhenVerified: true, ...(params.timeout ? { acceptanceTimeout: params.timeout } : {}) } : {}) }
         task = await refreshSourceEvidence(retainVerifiedCommands(task, next), ctx.cwd, signal)
         automaticFinishPending = false
         engaged = true
@@ -452,8 +606,7 @@ export default function delivery(pi: ExtensionAPI) {
         return saveEvidence(ctx, task, index, evidence)
       }
       const run = async () => {
-        const before = check && scope === 'workspace' ? await workspaceSourceState(ctx.cwd, executionSignal) : undefined
-        const entryChanges = before ? await watchWorkspaceEntries(before, executionSignal) : undefined
+        const observation = check && scope === 'workspace' ? await observeWorkspaceCommand(ctx.cwd, executionSignal) : undefined
         const execute = async (snapshotCwd?: string) => {
           executionSignal.throwIfAborted()
           const phase = comparison?.stage === 'baseline' ? 'Baseline command' : comparison ? 'Mutation command' : undefined
@@ -475,13 +628,10 @@ export default function delivery(pi: ExtensionAPI) {
           if (comparison?.stage === 'baseline') comparison.baselineExitCode = exitCode
           if (comparison?.stage === 'mutation') comparison.mutationExitCode = exitCode
           executionSignal.throwIfAborted()
-          if (before && passed) {
-            const after = await workspaceSourceState(ctx.cwd, executionSignal)
-            executionSignal.throwIfAborted()
-            const sameBytes = after.fingerprint === before.fingerprint
-            const changedFile = firstChangedSource(before, after) ?? (sameBytes ? await entryChanges?.firstChangedEntry() : undefined)
-            if (!changedFile && sameBytes) {
-              proof = { fingerprint: after.fingerprint, toolCallId, at: new Date().toISOString() }
+          if (observation && passed) {
+            const { fingerprint, changedFile } = await observation.inspect()
+            if (fingerprint) {
+              proof = { fingerprint, toolCallId, at: new Date().toISOString() }
             } else {
               status = 'stale'
               note = 'Workspace sources changed during this command' + (changedFile ? ' (' + JSON.stringify(changedFile) + ')' : '') +
@@ -561,7 +711,7 @@ export default function delivery(pi: ExtensionAPI) {
             await execute()
           }
         } finally {
-          entryChanges?.close()
+          observation?.close()
         }
       }
       try {
@@ -609,93 +759,42 @@ export default function delivery(pi: ExtensionAPI) {
     description: 'Review Git changes independently with two read-only Pi reviewers. Both inspect the same captured source. Optional paths narrow the review. A numbered task check requires coverage of all changes against HEAD and no blocking findings.',
     promptSnippet: 'Review significant code changes independently for correctness and test gaps.',
     executionMode: 'sequential',
-    parameters: Type.Object({
-      goal: Type.Optional(Type.String({ minLength: 1, maxLength: 2000, description: 'Review goal for a standalone request. A numbered check uses the recorded task and criterion.' })),
-      timeout: Type.Integer({ minimum: 1, maximum: 2_147_483, description: 'Total seconds for capture and both review requests.' }),
-      check: Type.Optional(Type.Integer({ minimum: 1, maximum: 12 })),
-      paths: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 1024 }), { minItems: 1, maxItems: 30 })),
-      base: Type.Optional(Type.String({ minLength: 1, maxLength: 200, description: 'Git revision to compare with. Defaults to HEAD.' })),
-    }, { additionalProperties: false }),
-    async execute(id, { goal, check, paths, base, timeout }, signal, update, ctx) {
-      const task = currentTask(ctx)
-      const index = (check ?? 0) - 1
-      const item = task?.checks[index]
-      if (check !== undefined && (task?.status !== 'active' || !item?.review || (base !== undefined && base !== 'HEAD'))) {
-        return taskResult(task, 'Use a numbered independent review check on the active task with HEAD as the base.', true)
-      }
-      if (check !== undefined) engaged = true
-      if ((goal !== undefined && !validText(goal)) || paths?.some(path => !validText(path)) || (base && !validText(base))) {
-        return taskResult(task, 'Use valid review scope and goal text.', true)
-      }
-      const retry = SettingsManager.inMemory({ retry: pi.getSettings().retry }).getRetrySettings()
-      const appendCheckpoint = (checkpoint: unknown) => pi.appendEntry(REVIEW_CHECKPOINT, checkpoint)
-      const review = await reviewChanges(ctx, {
-        goal: task && item ? task.goal + '\n' + item.description : goal ?? task?.goal ?? 'Review the changed behavior.',
-        criteria: task && item ? task.checks.filter(criterion => !criterion.review).map(criterion => criterion.description) : undefined,
-        paths, base, timeout, taskCheck: check !== undefined, retry,
-      }, signal, (count, requests, { recovering, retrying, repairingReport } = {}) => update?.({
-        content: [{ type: 'text', text: 'Independent reviewers returned ' + count + '/2' +
-          (recovering ? ' · Resuming ' + recovering + ' from captured source' : '') +
-          (retrying ? ' · Retrying ' + retrying + ' after a temporary provider error' : '') +
-          (repairingReport ? ' · Recovering a truncated report from ' + repairingReport : '') }],
-        details: { reviewProgress: { completed: count, requests, recovering, retrying, repairingReport } },
-      }), appendCheckpoint)
-      let recorded = false
-      let savedNewEvidence = false
-      let reviewedTask = task
-      if (task && item && review.status !== 'aborted') {
-        const previous = item.evidence
-        const sameSource = previous && 'fingerprint' in previous && previous.fingerprint === review.fingerprint
-        const accepted = review.status === 'clear' && review.uncoveredCount === 0
-        const evidence = accepted ? (sameSource ? previous : {
-          fingerprint: review.fingerprint, at: new Date().toISOString(), toolCallId: id,
-        }) : undefined
-        recorded = evidence !== undefined
-        if (evidence !== previous) {
-          reviewedTask = saveEvidence(ctx, task, index, evidence)
-          savedNewEvidence = recorded
-        }
-      }
-      const blocking = review.reviewers.some(reviewer => reviewer.findings?.some(finding => finding.severity === 'blocking'))
-      let remaining = 'The recorded review can be used for delivery checks.'
-      if (blocking) remaining = 'Independent review has blocking findings on this source. Address the cited findings before reviewing again.'
-      else if (review.uncoveredCount) remaining = 'Independent review still needs the changed files outside the selected paths.'
-      else if (review.omitted.length) remaining = 'Independent review still needs evidence for the files outside text coverage.'
-      else if (review.pendingReviewers.length) remaining = 'Independent review still needs complete reports from ' + review.pendingReviewers.join(' and ') + '.'
-      const repeated = review.repeated && review.status !== 'stale' && !savedNewEvidence
-      const lines = ['Independent review ' + review.status, review.message, review.checkpointWarning,
-        blocking && review.pendingReviewers.length ? 'Pending static coverage · ' + review.pendingReviewers.join(', ') : '',
-        review.reused.length ? 'Reports carried forward: ' + review.reused.join(', ') : '',
-        review.omitted.length ? 'Outside text coverage: ' + review.omitted.join(', ') : '',
-        review.uncoveredCount ? 'Scope excludes ' + review.uncoveredCount + ' changed file(s): ' + review.uncovered.join(', ') : '']
-      for (const reviewer of review.reviewers) {
-        lines.push(reviewer.focus + ' · ' + reviewer.status + (reviewer.summary ? ' · ' + reviewer.summary : ''))
-        if (reviewer.fallback) lines.push('File discovery resumed · ' + reviewer.fallback)
-        if (reviewer.recovery) lines.push('Review resumed from captured source · request ' + reviewer.recovery.request)
-        if (reviewer.providerRetry) lines.push('Temporary provider error retried · request ' + reviewer.providerRetry.request)
-        if (reviewer.outputRetry) lines.push('Truncated report retried on the same evidence · request ' + reviewer.outputRetry.request)
-        if (reviewer.restoredReads) lines.push('Source excerpts restored · ' + reviewer.restoredReads)
-        if (reviewer.sourceRanges?.length) lines.push('Source ranges saved · ' + reviewer.sourceRanges.length)
-        if (reviewer.acceptedEvidence?.length) lines.push('Review observations checkpointed · ' + reviewer.acceptedEvidence.length)
-        if (reviewer.failure) lines.push('Model result · ' + reviewer.failure)
-        if (reviewer.limitation) lines.push('Coverage limitation · ' + reviewer.limitation)
-        if (reviewer.notes) lines.push('Notes · ' + reviewer.notes)
-        for (const finding of reviewer.findings ?? []) lines.push(
-          finding.severity + ' · ' + finding.path + ':' + finding.line + ' · ' + finding.problem +
-          (finding.quote ? '\n  ' + finding.quote : ''))
-        for (const resolution of reviewer.resolutions ?? []) lines.push(
-          'Resolved · ' + resolution.issue + ' · ' + resolution.path + ':' + resolution.line + ' · ' + resolution.reason + '\n  ' + resolution.quote)
-      }
-      if (review.execution === 'reused') lines.push(remaining, 'The source and effective review scope are unchanged. This result uses the existing reports.')
-      else if (review.pendingReviewers.length && !blocking && (review.execution === 'new' || review.execution === 'resumed')) lines.push(remaining)
-      return {
-        content: [{ type: 'text', text: lines.filter(Boolean).join('\n') }],
-        details: { review: { ...review, recorded, check, repeated, remaining } },
-        isError: !['clear', 'findings', 'no_changes'].includes(review.status) ||
-          (check !== undefined && review.uncoveredCount > 0),
-        terminate: repeated || (recorded && stopAfterEvidence(ctx, reviewedTask)),
-      }
-    },
+    parameters: reviewParameters,
+    execute: executeReview,
+  })
+
+  pi.on('turn_end', async (event, ctx) => {
+    const observations = [...observedCommands.values()]
+    for (const observation of observations) observation.watcher?.close()
+    observedCommands.clear()
+    let task = currentTask(ctx)
+    if (task?.status !== 'active' || !task.finishWhenVerified || event.outcome !== 'completed' || ctx.signal?.aborted) return
+
+    const successful = new Set(event.toolResults.filter(result => !result.isError).map(result => result.toolCallId))
+    for (const [index, check] of task.checks.entries()) {
+      const attempts = observations.filter(observation => observation.check === check)
+      if (attempts.length !== 1) continue
+      const proof = attempts[0].proof
+      if (proof && 'toolCallId' in proof && successful.has(proof.toolCallId)) task = saveEvidence(ctx, task, index, proof)
+    }
+    if (!allowsAutomaticReview(task, ctx) || event.context.pendingMessages.length) return
+    const firstCommand = task.checks.find(check => check.command && check.evidence && 'fingerprint' in check.evidence)
+    if (!firstCommand || !task.checks.some(check => check.command && check.evidence && 'toolCallId' in check.evidence &&
+      successful.has(check.evidence.toolCallId)) || task.checks.some(check => !check.review && !check.evidence)) return
+    const fingerprint = firstCommand.evidence && 'fingerprint' in firstCommand.evidence ? firstCommand.evidence.fingerprint : undefined
+    const key = JSON.stringify([fingerprint, task.goal, task.checks.map(({ evidence: _evidence, ...item }) => item)])
+    if (automaticReviews.has(key)) return
+    automaticReviews.add(key)
+    const outcome = await runAcceptance(task, task.acceptanceTimeout ?? AUTOMATIC_REVIEW_TIMEOUT, ctx, ctx.signal, undefined,
+      async (_check, number, timeout, signal) => {
+        const result = await executeReview('auto-review:' + event.messageEntryId + ':' + number, { check: number, timeout }, signal, undefined, ctx)
+        return { result, isError: Boolean(result.isError) }
+      }, 'verified_command')
+    if (ctx.signal?.aborted) return
+    const note = outcome.isError ? 'Automatic verification ran the remaining independent review. Inspect the evidence and address any concrete gaps.' :
+      'All declared checks are evidenced for the current source. Conclude the task using these verified results.'
+    return { entries: [...event.entries, { type: 'custom_message', customType: TASK, display: false,
+      content: note + '\n\n' + outcome.content.map(block => block.text).join('\n') }] }
   })
 
   pi.on('agent_before_settle', async (event, ctx) => {

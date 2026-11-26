@@ -67,6 +67,11 @@ const provider = http.createServer(async (req, res) => {
     res.write(chunk({ content }, null))
     await delay(350)
   }
+  for (const reasoning_content of reply.reasoningProgress ?? []) {
+    if (res.destroyed) return
+    res.write(chunk({ reasoning_content }, null))
+    await delay(350)
+  }
   if (reply.delayMs) await delay(reply.delayMs)
   const frame = chunk(typeof reply.delta === 'string' ? { content: reply.delta } : reply.delta, null)
   if (reply.badUtf8) {
@@ -978,6 +983,40 @@ try {
     checklistRun.records.some(record => record.method === 'setWidget' && record.widgetLines?.some(line => line.includes('Review all changed source'))),
   'the acceptance run persists step timing and real reviewer requests while the panel displays the current criterion')
 
+  const displayCommand = command => 'cd ' + JSON.stringify(workspace.replaceAll('\\', '/')) + ' && ' + command + ' 2>&1 | tail -20'
+  reviewReplies = { correctness: [clean('correctness')], tests: [clean('tests')] }
+  const normalTest = 'git diff --check'
+  const commandPlan = { action: 'start', goal: 'Deliver after the normal project test passes', finishWhenVerified: true, checks: [
+    { description: 'Run the registered project test', command: normalTest },
+    { description: 'Independently review source after tests pass', review: true },
+  ] }
+  const testDriven = await run('transfer completed shell evidence to acceptance', [
+    useTool('task_progress', commandPlan, 'test_driven_plan'),
+    useTool('bash', { command: displayCommand(normalTest) }, 'test_driven_shell'),
+    { delta: 'The project check is done.' }, { delta: 'Finished the activity.' },
+  ])
+  const testDrivenTask = testDriven.records.findLast(record => record.type === 'entry_appended' &&
+    record.entry.customType === 'superpi-task')?.entry.data
+  check(testDrivenTask?.status === 'complete' && testDrivenTask.checks[0]?.evidence?.toolCallId === 'test_driven_shell' &&
+    testDriven.records.some(record => record.type === 'entry_appended' && isReceipt(record.entry)) &&
+    testDriven.requests.filter(payload => payload.messages[0]?.content?.startsWith('You are the independent ')).length === 2,
+  'a real passing shell command with a display wrapper advances the registered reviews and receipt without a model-issued acceptance call')
+
+  assert.equal((await command({ type: 'new_session' })).ok, true)
+  reviewReplies = { correctness: [], tests: [] }
+  const failedCommand = 'node missing-acceptance-command.mjs'
+  const maskedFailure = await run('keep a display-piped failure pending', [
+    useTool('task_progress', { ...commandPlan, checks: [{ ...commandPlan.checks[0], command: failedCommand }, commandPlan.checks[1]] }, 'masked_plan'),
+    useTool('bash', { command: displayCommand(failedCommand) }, 'masked_shell'),
+    { delta: 'The command output is available.' }, { delta: 'The failed test remains pending.' },
+  ])
+  check(toolResult(maskedFailure, 'masked_shell')?.isError &&
+    !maskedFailure.records.some(record => record.type === 'entry_appended' &&
+      (isReceipt(record.entry) || record.entry.data?.checks?.some(check => check.evidence))) &&
+    !maskedFailure.requests.some(payload => payload.messages[0]?.content?.startsWith('You are the independent ')),
+  'a zero exit from the display pipeline cannot hide a failing registered command or start review')
+  assert.equal((await command({ type: 'new_session' })).ok, true)
+
   reviewReplies = {
     correctness: [publish('Found a concrete regression.', [{ severity: 'blocking', path: 'origin.txt', line: 1, quote: 'NEW reviewed line',
       problem: 'This changed line breaks the fixture contract.' }], 'found')],
@@ -1773,6 +1812,41 @@ try {
     reviewRequests(expanded).every(payload => hasSource(payload, 'catalog.mjs', extendedCatalog) &&
       hasSource(payload, 'public.test.mjs', extendedTest) && payload.tools.map(tool => tool.function.name).join(',') === 'submit_review'),
   'a large diff can fund complete first-request evidence beyond the default packet size without losing the blocker')
+
+  const indexedTest = 'new-assertion.mjs'
+  const indexedContent = '// A new caller still requires the public lookup value.\n'
+  await fs.writeFile(path.join(compact, indexedTest), indexedContent)
+  reviewReplies = { correctness: [{ ...seedFinding, reasoningProgress: Array(8).fill('Still analyzing the complete source packet.\n') },
+    useTool('read_review_sources', { ranges: [{ path: 'catalog.mjs', start: 1, count: 1 },
+      { path: indexedTest, start: 1, count: 1 }] }, 'review_from_index'), seedFinding], tests: [clean('tests')] }
+  const thoughtStream = await run('preserve discovery time when a large prompt streams reasoning only', [
+    requestReview({}, 'compact_reasoning_only'), { delta: 'Review evidence is available.' },
+  ])
+  const thoughtProof = toolResult(thoughtStream, 'compact_reasoning_only')?.details?.review
+  const thoughtLane = reviewRequests(thoughtStream).filter(payload => laneOf(payload) === 'correctness')
+  check(thoughtProof?.status === 'findings' && thoughtProof.reviewers.some(lane => lane.fallback === 'snapshot-reasoning-only') &&
+    thoughtLane.length === 3 && evidenceBytes(thoughtLane[1]) < evidenceBytes(thoughtLane[0]) &&
+    packetOf(thoughtLane[1]).newFilePaths.includes(indexedTest) &&
+    thoughtLane[1].tools.some(tool => tool.function.name === 'read_review_sources') &&
+    requestText(thoughtLane[2]).includes('A new caller still requires the public lookup value') &&
+    requestText(thoughtLane[2]).includes('lookup = () => undefined') &&
+    reviewRequests(thoughtStream).filter(payload => laneOf(payload) === 'tests').length === 1,
+  'reasoning-only activity cannot hold the large report probe while the other completed reviewer is reused (' + JSON.stringify({
+    status: thoughtProof?.status, lanes: thoughtProof?.reviewers.map(lane => [lane.focus, lane.status, lane.fallback, lane.requests, lane.failure]),
+    calls: thoughtLane.map(payload => [evidenceBytes(payload), packetOf(payload).newFilePaths, payload.tools?.map(tool => tool.function.name)]),
+  }) + ')')
+
+  reviewReplies = { correctness: [{ ...seedFinding, delayMs: 3000 }, seedFinding], tests: [clean('tests')] }
+  const silentPacket = await run('start indexed discovery after an idle large snapshot request', [
+    requestReview({}, 'large_snapshot_idle'), { delta: 'Fallback evidence is available.' },
+  ])
+  const silentProof = toolResult(silentPacket, 'large_snapshot_idle')?.details?.review
+  const silentLane = reviewRequests(silentPacket).filter(payload => laneOf(payload) === 'correctness')
+  check(silentProof?.status === 'findings' && silentProof.reviewers.some(lane => lane.fallback === 'snapshot-timeout' && lane.indexedDiscovery) &&
+    silentLane.length === 2 && packetOf(silentLane[1]).newFilePaths.includes(indexedTest) &&
+    silentLane[1].tools.some(tool => tool.function.name === 'read_review_sources'),
+  'an idle large snapshot uses the same indexed discovery while retaining idle as the actual failure cause')
+  await fs.unlink(path.join(compact, indexedTest))
 
   const largeText = '// Unchanged file beyond the compact evidence budget.\n// ' + '\\'.repeat(7_000)
   await fs.writeFile(path.join(compact, 'large.mjs'), largeText)

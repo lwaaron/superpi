@@ -158,6 +158,7 @@ async function runMetrics(events, observed) {
   const recordReviewUsage = review => {
     if (!review || countedReports.has(review.attemptId)) return
     if (review.attemptId) countedReports.add(review.attemptId)
+    if (review.trigger === 'verified_command' && validCount(review.newRequests)) trace.reviewerRequests += review.newRequests
     if (review.execution === 'reused') trace.reviewReplays += 1
     for (const lane of review.reviewers ?? []) {
       if (!review.reused?.includes(lane.focus)) countTokens(observedUsage.reviewers, lane.usage)
@@ -519,7 +520,8 @@ async function selfTest() {
       { type: 'message_end', message: { role: 'user' } },
       { type: 'message_end', message: { role: 'assistant', usage: { input: 16, output: 4, cacheRead: 30, cacheWrite: 2 } } },
       { type: 'entry_appended', entry: { type: 'custom', customType: 'superpi-review-result', data: {
-        attemptId: 'batch-review', reviewers: [{ focus: 'tests', usage: { inputTokens: 90, outputTokens: 99 } },
+        attemptId: 'automatic-review', trigger: 'verified_command', newRequests: 2,
+        reviewers: [{ focus: 'tests', usage: { inputTokens: 90, outputTokens: 99 } },
           { focus: 'correctness', usage: { inputTokens: 11, outputTokens: 7, cacheReadTokens: 5, cacheWriteTokens: 3 } }], reused: ['tests'],
       } } },
       { type: 'entry_appended', entry: { type: 'custom', customType: 'superpi-task', data: { status: 'active', run: {
@@ -531,8 +533,8 @@ async function selfTest() {
       primary: { records: 1, inputTokens: 16, outputTokens: 4, cacheReadTokens: 30, cacheWriteTokens: 2 },
       reviewers: { records: 1, inputTokens: 11, outputTokens: 7, cacheReadTokens: 5, cacheWriteTokens: 3 },
     }, 'the measured review and main-model tokens exclude reused evidence')
-    assert.deepEqual([recorded.userMessages, recorded.acceptance?.state, recorded.acceptance?.steps[0].milliseconds], [1, 'pending', 8],
-      'deadline reports retain user activity and the recorded acceptance step timing')
+    assert.deepEqual([recorded.userMessages, recorded.acceptance?.state, recorded.acceptance?.steps[0].milliseconds, recorded.reviewerRequests],
+      [1, 'pending', 8, 2], 'deadline reports retain user activity, acceptance timing, and automatically invoked reviewer requests')
     count += 2
     await writeTrace(trace.slice(0, -1))
     assert.equal((await metrics(0)).outcome, 'no_settlement', 'process exit alone cannot finish a run')
