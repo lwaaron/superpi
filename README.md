@@ -40,7 +40,7 @@ npm run pack:offline -- .\artifacts
 
 ```powershell
 node "$env:USERPROFILE\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\pnpm\bin\pnpm.cjs" `
-  add "file:C:\path\to\superpi-0.46.0-offline-win32-x64.tgz" --offline --ignore-scripts
+  add "file:C:\path\to\superpi-0.47.0-offline-win32-x64.tgz" --offline --ignore-scripts
 ```
 
 归档包含当前平台的 Pi 和生产依赖。使用远程模型时仍需连通模型服务。已经安装 Pi 时，也可在配置中用 `cliPath` 指定运行时。
@@ -232,10 +232,10 @@ New-Item -ItemType Junction `
 ### 使用 pnpm 手工安装
 
 ```powershell
-npm pack                                        # 得到 superpi-0.46.0.tgz
+npm pack                                        # 得到 superpi-0.47.0.tgz
 cd "$env:USERPROFILE\.dsh\profiles\desktop"
 node "$env:USERPROFILE\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\pnpm\bin\pnpm.cjs" `
-  add "file:C:\path\to\superpi-0.46.0.tgz" --ignore-scripts
+  add "file:C:\path\to\superpi-0.47.0.tgz" --ignore-scripts
 ```
 
 不要在 profile 里用 `npm install`：npm 会另写一份 `package-lock.json`，而宿主插件管理器用的是 pnpm，两套锁文件互相看不见，下次插件安装就会把 node_modules 重建成 pnpm 理解的样子。
@@ -519,6 +519,7 @@ npm install --prefix <插件>/.runtime --save-exact --no-audit --no-fund --logle
 - 0.23.1 在发起审查请求时记录计数，支持回看超时或强制停止前的请求量。`metrics` 对复用报告去重，并标出旧日志中缺失计数的审查。评审自身的断流与其他模型错误可在报告中查阅。
 - 独立评审对最多 12 个常规源文件和项目清单提供当前完整源码，加 Git 差异或改动文件的基准内容。0.36.1 从差异材料与实际查阅工具定义的序列化大小计算首轮证据预算，保留基础 12 KB 额度，并受模型上下文预算约束。首轮的空闲窗口取剩余时限的三分之一，最长 15 秒。收到模型内容会重开空闲窗口，整次评审仍以原时限为准。空闲超时或可恢复的输出失败时，该路评审改为按需查阅。显式路径、删文件、混合仓库和超预算快照从 Git 差异开始。按需查阅会引用已经提供过的大段源码，短范围仍返回精确的带行号原文。评审和验收计划会检查重叠操作与部分失败等涉及的边界。
 - 第三方网关报告 `upstream aborted (gateway closed stream)` 时，面板和命令行会显示断流。开启重试时主回合从已完成的工具结果继续，未完成的模型草稿保留在会话记录中供排查。
+- 独立审查通过 Pi 的错误分类识别暂时性上游故障。会话允许自动重试时，受影响的一路在原时限和请求预算内补发一次，沿用已提交的源码与读取结果。两端显示重试或最终失败，另一路已提交的报告继续有效。
 - 0.26.0 独立评审成功读取源码后遇到网关断流，可以用一次请求提交已有证据支持的报告。该请求使用任务目标及带行号的源码摘录，最多 12 KB 且遵循模型预算。恢复遵循原时限、请求预算和会话重试设置。已有发现进入报告，全量评审仍待验收，另一份报告照常保留。
 - 0.27.0 未完成的评审会在会话里保存最近读取成功的文件路径和行号，最多 64 段。重新打开会话后，续审从同一指纹的 Git 快照重建带行号的摘录，按原输入预算送给待补审的一路。评审结果显示保存和恢复的数量。源码变化会启动新评审，完整报告仍是验收条件。
 - 0.28.0 会在每次有新源码读取结果、一路评审提交有效报告时写入 Pi 会话。若进程在 `review_changes` 回传前退出，重新打开会话后发起同一项评审即可恢复已读范围和已提交的报告。源码指纹仍须匹配。记录只保存路径、行号和已验证的报告，续审时从快照恢复源码。

@@ -1,5 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
+import { setTimeout as delay } from 'node:timers/promises'
 import { Agent } from '@earendil-works/pi-agent-core'
+import { isRetryableAssistantError, retryDelayMs } from '@earendil-works/pi-ai/compat'
 import { Type } from 'typebox'
 import { scanTextBytes } from './superpi-text-bytes.mjs'
 import { detectTurnVerdict } from './superpi-turn-verdict.mjs'
@@ -158,7 +160,7 @@ function restoreCheckpoints(previous, checkpoints) {
 
 function laneReceipt(meter, saveReads = true) {
   return { requests: meter.requests, usage: { ...meter.usage }, failure: meter.failure, fallback: meter.fallback,
-    recovery: meter.recovery, restoredReads: meter.restoredReads,
+    recovery: meter.recovery, providerRetry: meter.providerRetry, restoredReads: meter.restoredReads,
     ...(saveReads && meter.sourceRanges.size ? { sourceRanges: [...meter.sourceRanges.values()] } : {}) }
 }
 
@@ -294,10 +296,12 @@ async function citedLine(snapshot, { path, line, quote }, required) {
     '. Cite a verbatim fragment of the current line. Use read_review_file for numbered lines.')
 }
 
-async function reviewPass({ focus, goal, input, inputLimit, model, registry, snapshot, signal, readAllowance, resuming, suppliedSources, retryStreams,
+async function reviewPass({ focus, goal, input, inputLimit, model, registry, snapshot, signal, readAllowance, resuming, suppliedSources, retry,
   inline = false, prior, meter, onRequest, onCheckpoint, onOutput }) {
   let report
   let resumingStream = false
+  let replayProviderRequest = false
+  const retryEnabled = retry?.enabled && retry.maxRetries > 0
   let bytesLeft = readAllowance
   const readRanges = new Map()
   const openItems = [...(prior?.findings ?? []).filter(item => item.severity === 'blocking'), ...(prior?.gaps ?? [])]
@@ -432,19 +436,23 @@ async function reviewPass({ focus, goal, input, inputLimit, model, registry, sna
       signal.throwIfAborted()
       if (meter.requests >= REQUEST_LIMIT) throw new Error('Review reached its request budget.')
       meter.requests += 1
+      const providerReplay = replayProviderRequest
+      replayProviderRequest = false
+      if (providerReplay) meter.providerRetry = { request: meter.requests }
       if (meter.requests === 1 && restored) meter.restoredReads = restored.reads.length
       if (resumingStream) {
         meter.recovery = { kind: 'stream-interrupted', request: meter.requests }
         meter.failure = undefined
       }
-      const reportOnly = meter.requests === REQUEST_LIMIT || (inline && meter.requests === 1)
+      const originalRequest = meter.requests - (providerReplay ? 1 : 0)
+      const reportOnly = meter.requests === REQUEST_LIMIT || (inline && originalRequest === 1)
       if (reportOnly) {
         context = { messages: [...context.messages, {
           role: 'system', timestamp: Date.now(), toolsRemoved: discoveryTools,
           content: 'Submit the report using the supplied evidence. Record only material gaps within the requested static review.',
         }] }
       }
-      onRequest(resumingStream ? focus : undefined)
+      onRequest(resumingStream ? focus : undefined, providerReplay ? focus : undefined)
       return registry.streamSimple(selected, context, { ...options, maxTokens })
     },
   })
@@ -463,7 +471,7 @@ async function reviewPass({ focus, goal, input, inputLimit, model, registry, sna
     if (signal.aborted) return
     const verdict = detectTurnVerdict(message)
     if (!verdict.delivered) meter.failure = verdict.kind
-    else if (message.stopReason === 'error') meter.failure = 'model-error'
+    else if (message.stopReason === 'error') meter.failure = isRetryableAssistantError(message) ? 'provider-unavailable' : 'model-error'
   })
   const stop = () => agent.abort()
   signal.addEventListener('abort', stop, { once: true })
@@ -471,7 +479,20 @@ async function reviewPass({ focus, goal, input, inputLimit, model, registry, sna
     signal.throwIfAborted()
     await agent.prompt(restored?.input ?? input)
     signal.throwIfAborted()
-    if (!report && !inline && retryStreams && meter.failure === 'stream-interrupted' && meter.requests < REQUEST_LIMIT) {
+    if (!report && retryEnabled && meter.failure === 'provider-unavailable' && !meter.providerRetry && meter.requests < REQUEST_LIMIT) {
+      const failed = agent.state.messages.at(-1)
+      if (failed?.role === 'assistant' && failed.stopReason === 'error') {
+        await delay(retryDelayMs(retry, 1), undefined, { signal })
+        signal.throwIfAborted()
+        // Replay the same request from its last completed input. The failed draft cannot be evidence.
+        agent.state.messages = agent.state.messages.slice(0, -1)
+        meter.failure = undefined
+        replayProviderRequest = true
+        await agent.continue()
+        signal.throwIfAborted()
+      }
+    }
+    if (!report && !inline && retryEnabled && meter.failure === 'stream-interrupted' && meter.requests < REQUEST_LIMIT) {
       const checkpoint = recoveryInput(goal, agent.state.messages, restored?.reads ?? [],
         Math.min(SNAPSHOT_INLINE_BYTES, Math.floor(model.contextWindow / 2)), presented)
       if (checkpoint) {
@@ -514,7 +535,7 @@ async function reviewLane(options, bundle, deadlineAt) {
     clearTimeout(timer)
   }
   signal.throwIfAborted()
-  if (report?.summary || report?.failure === 'model-error') return report
+  if (report?.summary || report?.failure === 'model-error' || report?.failure === 'provider-unavailable') return report
   if (meter.requests >= REQUEST_LIMIT) return incompleteLane(options.focus, meter)
   meter.fallback = idle.signal.aborted ? 'snapshot-timeout' : report?.failure ?? 'no-report'
   meter.failure = undefined
@@ -529,7 +550,9 @@ export async function reviewChanges(ctx, params, signal, onProgress, appendCheck
   const meters = new Map()
   const known = new Map()
   const totalRequests = () => [...meters.values()].reduce((sum, meter) => sum + meter.requests, 0)
-  const publishProgress = recovering => { if (!active.aborted) onProgress(reviewers.length, totalRequests(), recovering) }
+  const publishProgress = (recovering, retrying) => {
+    if (!active.aborted) onProgress(reviewers.length, totalRequests(), recovering, retrying)
+  }
   const result = { status: 'unavailable', reviewers, omitted: [], scope: params.paths ?? [],
     uncovered: [], uncoveredCount: 0, revision: '', fingerprint: '', key: '',
     inputMode: 'diff', execution: 'not_started', attempts: 0, newRequests: 0, reused: [], repeated: false, pendingReviewers: Object.keys(focuses) }
@@ -627,7 +650,7 @@ export async function reviewChanges(ctx, params, signal, onProgress, appendCheck
           sourceRanges: savedSourceRanges(prior) }
         meters.set(focus, meter)
         let outcome = await reviewLane({ focus, goal: params.goal, input: reviewInput, inputLimit, model, registry: ctx.modelRegistry, snapshot,
-          signal: active, readAllowance, resuming: Boolean(previous), suppliedSources, retryStreams: params.retryStreams,
+          signal: active, readAllowance, resuming: Boolean(previous), suppliedSources, retry: params.retry,
           prior, meter, onRequest: publishProgress, onCheckpoint: saveCheckpoint }, bundle, deadlineAt)
           .catch(() => ({ focus, status: active.aborted ? 'cancelled' : 'incomplete', ...laneReceipt(meter) }))
         outcome = retainUnanswered(outcome, prior)

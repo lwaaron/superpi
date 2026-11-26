@@ -1,5 +1,5 @@
 import { isDeepStrictEqual } from 'node:util'
-import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent'
+import { SettingsManager, type ExtensionAPI, type ExtensionContext } from '@earendil-works/pi-coding-agent'
 import { Type, type Static } from 'typebox'
 import { scanTextBytes } from './superpi-text-bytes.mjs'
 import { applyVerificationMutations, firstChangedSource, verificationCommand, verificationOutputContains, verificationSnapshotFingerprint,
@@ -517,16 +517,17 @@ export default function delivery(pi: ExtensionAPI) {
       if ((goal !== undefined && !validText(goal)) || paths?.some(path => !validText(path)) || (base && !validText(base))) {
         return taskResult(task, 'Use valid review scope and goal text.', true)
       }
-      const retry = pi.getSettings().retry
+      const retry = SettingsManager.inMemory({ retry: pi.getSettings().retry }).getRetrySettings()
       const appendCheckpoint = ctx.sessionManager.getSessionFile() ?
         (checkpoint: unknown) => pi.appendEntry(REVIEW_CHECKPOINT, checkpoint) : undefined
       const review = await reviewChanges(ctx, {
         goal: task && item ? task.goal + '\n' + item.description : goal ?? task?.goal ?? 'Review the changed behavior.',
-        paths, base, timeout, taskCheck: check !== undefined, retryStreams: retry?.enabled !== false && retry?.maxRetries !== 0,
-      }, signal, (count, requests, recovering) => update?.({
+        paths, base, timeout, taskCheck: check !== undefined, retry,
+      }, signal, (count, requests, recovering, retrying) => update?.({
         content: [{ type: 'text', text: 'Independent reviewers returned ' + count + '/2' +
-          (recovering ? ' · Resuming ' + recovering + ' from captured source' : '') }],
-        details: { reviewProgress: { completed: count, requests, recovering } },
+          (recovering ? ' · Resuming ' + recovering + ' from captured source' : '') +
+          (retrying ? ' · Retrying ' + retrying + ' after a temporary provider error' : '') }],
+        details: { reviewProgress: { completed: count, requests, recovering, retrying } },
       }), appendCheckpoint)
       let recorded = false
       let savedNewEvidence = false
@@ -560,6 +561,7 @@ export default function delivery(pi: ExtensionAPI) {
         lines.push(reviewer.focus + ' · ' + reviewer.status + (reviewer.summary ? ' · ' + reviewer.summary : ''))
         if (reviewer.fallback) lines.push('File discovery resumed · ' + reviewer.fallback)
         if (reviewer.recovery) lines.push('Review resumed from captured source · request ' + reviewer.recovery.request)
+        if (reviewer.providerRetry) lines.push('Temporary provider error retried · request ' + reviewer.providerRetry.request)
         if (reviewer.restoredReads) lines.push('Source excerpts restored · ' + reviewer.restoredReads)
         if (reviewer.sourceRanges?.length) lines.push('Source ranges saved · ' + reviewer.sourceRanges.length)
         if (reviewer.failure) lines.push('Model result · ' + reviewer.failure)

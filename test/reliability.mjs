@@ -1350,7 +1350,7 @@ try {
   await request(session(), undefined, 'DELETE')
   sessionId = undefined
   await fs.writeFile(path.join(agentDir, 'settings.json'), JSON.stringify({
-    compaction: { enabled: false }, retry: { enabled: false }, lastChangelogVersion: '1.5.2',
+    compaction: { enabled: false }, retry: { enabled: false, maxRetries: 1, baseDelayMs: 20 }, lastChangelogVersion: '1.5.2',
   }))
   sessionId = (await request('/sessions', {})).session.id
   const retryOff = await run('report the interruption with native retry disabled', [{ delta: 'Incomplete', streamError: earlyClose }])
@@ -1382,6 +1382,52 @@ try {
   const visibleTest = 'The existing public test expects 恒定结果.'
   const seedFinding = publish('The public result regressed.', [{ severity: 'blocking', path: 'catalog.mjs', line: 1,
     quote: 'lookup = () => undefined', problem: 'lookup returns undefined instead of its public value.' }], 'compact_defect')
+  const temporarilyUnavailable = { delta: 'Unfinished reviewer draft.', streamError: 'Service temporarily unavailable, please retry later' }
+  const recoverProvider = async (prompt, id, first, args = {}) => {
+    reviewReplies = { correctness: first, tests: [clean('tests')] }
+    const activity = await run(prompt, [requestReview(args, id), { delta: 'Reviewed the returned evidence.' }])
+    return { activity, proof: toolResult(activity, id)?.details?.review }
+  }
+  const withoutRetry = await recoverProvider('respect disabled retry for a transient reviewer failure', 'review_provider_off',
+    [temporarilyUnavailable, seedFinding])
+  check(withoutRetry.proof?.status === 'partial' && withoutRetry.proof.newRequests === 2 &&
+    withoutRetry.proof.reviewers.some(lane => lane.focus === 'correctness' && lane.failure === 'provider-unavailable' && !lane.providerRetry),
+  'a transient provider error remains visible when automatic retry is disabled')
+  assert.equal((await request(session() + '/controls/retry', { enabled: true })).enabled, true)
+  const recoveredProvider = await recoverProvider('retry one temporary provider failure on the complete snapshot', 'review_provider_retry',
+    [temporarilyUnavailable, seedFinding])
+  const retriedLane = reviewRequests(recoveredProvider.activity).filter(payload => laneOf(payload) === 'correctness')
+  check(recoveredProvider.proof?.status === 'findings' && recoveredProvider.proof.newRequests === 3 &&
+    recoveredProvider.proof.reviewers.some(lane => lane.focus === 'correctness' && lane.providerRetry?.request === 2 && !lane.failure) &&
+    retriedLane.length === 2 && requestText(retriedLane[0]) === requestText(retriedLane[1]) &&
+    retriedLane.every(payload => payload.tools.map(tool => tool.function.name).join(',') === 'submit_review'),
+  'only the affected reviewer gets one retry of the same complete evidence and tool contract, without the failed draft')
+  check(recoveredProvider.activity.records.some(record => record.type === 'tool_execution_update' &&
+    record.partialResult?.details?.reviewProgress?.retrying === 'correctness' &&
+    record.partialResult?.content[0]?.text.includes('Retrying correctness')),
+  'the panel receives the affected reviewer and reason during automatic retry')
+  const exhaustedProvider = await recoverProvider('bound repeated provider failures', 'review_provider_exhausted',
+    [temporarilyUnavailable, temporarilyUnavailable, seedFinding])
+  check(exhaustedProvider.proof?.status === 'partial' && exhaustedProvider.proof.newRequests === 3 &&
+    exhaustedProvider.proof.reviewers.some(lane => lane.focus === 'correctness' && lane.failure === 'provider-unavailable' &&
+      lane.providerRetry?.request === 2 && !lane.fallback),
+  'a second temporary failure leaves the original review pending without switching to file discovery')
+  const permanentProvider = await recoverProvider('keep terminal provider errors terminal', 'review_provider_terminal',
+    [{ delta: 'Unavailable.', streamError: 'Invalid API key' }, seedFinding])
+  check(permanentProvider.proof?.status === 'partial' && permanentProvider.proof.newRequests === 2 &&
+    permanentProvider.proof.reviewers.some(lane => lane.focus === 'correctness' && lane.failure === 'model-error' && !lane.providerRetry),
+  'a permanent provider error never spends a retry')
+  const reviewedLine = useTool('read_review_file', { path: 'catalog.mjs', count: 1 }, 'provider_before_error')
+  const boundedProvider = await recoverProvider('keep the original deadline and completed read during provider retry', 'review_provider_deadline',
+    [reviewedLine, temporarilyUnavailable, { hold: true }], { paths: ['catalog.mjs'], timeout: 1 })
+  const deadlineRequests = reviewRequests(boundedProvider.activity).filter(payload => laneOf(payload) === 'correctness')
+  check(boundedProvider.proof?.status === 'timed_out' && boundedProvider.proof.newRequests === 4 &&
+    boundedProvider.proof.reviewers.some(lane => lane.focus === 'tests' && lane.status === 'complete') &&
+    deadlineRequests.length === 3 && requestText(deadlineRequests[1]) === requestText(deadlineRequests[2]) &&
+    deadlineRequests[2].messages.some(message => message.role === 'tool' && String(message.content).includes('lookup = () => undefined')),
+  'a retry retains completed tool results and a stalled request still ends at the original deadline')
+  assert.equal((await request(session() + '/controls/retry', { enabled: false })).enabled, false)
+
   reviewReplies = { correctness: [publish('Incorrect reading of the current source.', [{ severity: 'blocking', path: 'catalog.mjs',
     line: 1, quote: 'return otherFields', problem: 'An old field overrides the return value.' }], 'imaginary_source'),
     seedFinding], tests: [clean('tests')] }
