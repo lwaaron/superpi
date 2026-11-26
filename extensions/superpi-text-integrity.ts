@@ -51,7 +51,7 @@ import { projectTurnToolEvidence } from './superpi-context-guard.mjs'
 import { describeBytes, scanTextBytes, summarizeCounts } from './superpi-text-bytes.mjs'
 
 /** 与 package.json / CONTRACT_VERSION 同步推进。 */
-export const INTEGRITY_VERSION = '0.45.0'
+export const INTEGRITY_VERSION = '0.46.0'
 
 /** TUI 命令名（`/superpi-integrity`）。 */
 export const INTEGRITY_COMMAND = 'superpi-integrity'

@@ -663,6 +663,19 @@ try {
   check((await snapshot()).taskWidget?.widgetLines?.some(line => line.includes('1/1')) &&
     (await snapshot()).eventSeq === 0, 'resuming a session restores its task progress beyond the reset event ring')
 
+  const milestones = await run('continue independently after newly verified milestones', [
+    useTool('task_progress', { action: 'start', goal: 'Verify and inspect the change', checks: [
+      { description: 'Run the command', command: acceptanceCommand }, { description: 'Inspect the result' },
+    ] }, 'milestone_plan'), { delta: 'I will start.' },
+    useTool('verify', { command: acceptanceCommand, check: 1, timeout: 3 }, 'milestone_check'), { delta: 'The command passed.' },
+    useTool('task_progress', { action: 'observe', check: 2, observation: 'Inspected origin.txt.' }, 'milestone_read'),
+    { delta: 'Both items were checked.' }, useTool('task_progress', { action: 'finish' }, 'milestone_finish'), { delta: 'Delivered.' },
+  ])
+  check(milestones.requests.length === 8 && toolResult(milestones, 'milestone_finish')?.details?.task?.status === 'complete' &&
+    milestones.records.filter(record => record.type === 'agent_settled').length === 1 &&
+    (await snapshot()).taskWidget?.widgetLines?.some(line => line.includes('2/2') && line.includes('已完成')),
+  'the panel receives a completed two-check task after three early stops in the same user request')
+
   const automaticPlan = { action: 'start', goal: 'Deliver a fully verified result', finishWhenVerified: true,
     checks: [{ description: 'Run the final acceptance command', command: acceptanceCommand }] }
   const automatic = await run('finish when the declared verification passes', [
@@ -682,6 +695,24 @@ try {
     (await command({ type: 'get_messages' })).data.messages.some(message => message.role === 'custom' &&
       message.customType === 'superpi-task-receipt' && message.display === true),
   'receipt and completion can be retrieved from the Pi session after the live event')
+
+  const revisedCommand = 'node -e "console.log(456)"'
+  const revisePlan = { ...automaticPlan, goal: 'Deliver after correcting one check',
+    checks: [automaticPlan.checks[0], { description: 'Run the second command', command: acceptanceCommand }] }
+  const revisedPlan = await run('deliver after revising only the pending command', [
+    useTool('task_progress', revisePlan, 'revise_start'),
+    useTool('verify', { command: acceptanceCommand, check: 1, timeout: 3 }, 'revise_first'),
+    useTool('task_progress', { ...revisePlan, replace: true,
+      checks: [revisePlan.checks[0], { ...revisePlan.checks[1], command: revisedCommand }] }, 'revise_update'),
+    useTool('verify', { command: revisedCommand, check: 2, timeout: 3 }, 'revise_second'),
+    { delta: 'The first verification should still count.' },
+    { delta: 'The first verification should still count.' },
+  ])
+  check(revisedPlan.requests.length === 4 &&
+    toolResult(revisedPlan, 'revise_update')?.details?.task?.checks[0].evidence?.toolCallId === 'revise_first' &&
+    revisedPlan.records.some(record => record.type === 'entry_appended' && isReceipt(record.entry)) &&
+    (await snapshot()).taskWidget?.widgetLines?.some(line => line.includes('2/2') && line.includes('已完成')),
+  'the panel receives a receipt after the revised check without rerunning the unchanged command')
 
   const mixedVerification = useTool('verify', { command: acceptanceCommand, check: 1, timeout: 3 }, 'automatic_verify_before_edit')
   mixedVerification.delta.tool_calls.push({ ...writeCall('origin.txt', 'Changed after automatic verification').tool_calls[0],
@@ -929,13 +960,23 @@ try {
   'automatic completion waits for both independent reports and then uses the same visible receipt')
 
   reviewReplies = {
-    correctness: [publish('Found a concrete regression.', [{ severity: 'blocking', path: 'origin.txt', line: 1,
+    correctness: [publish('Found a concrete regression.', [{ severity: 'blocking', path: 'origin.txt', line: 1, quote: 'NEW reviewed line',
       problem: 'This changed line breaks the fixture contract.' }], 'found')],
     tests: [clean('tests')],
   }
   const defects = await run('surface findings to the parent', [requestReview({}, 'review_findings'), { delta: 'Regression recorded.' }])
   check(toolResult(defects, 'review_findings')?.details?.review?.status === 'findings' &&
     requestText(defects.requests.at(-1)).includes('breaks the fixture contract'), 'blocking defects survive the provider and panel transport')
+  const cite = (line, quote) => publish('Review the exact changed text.', [
+    { severity: 'blocking', path: 'origin.txt', line, quote, problem: 'The changed line violates the fixture contract.' },
+  ], 'quote_' + line)
+  reviewReplies = { correctness: [cite(3, 'line'), cite(2, 'NEW reviewed line')], tests: [clean('tests')] }
+  const located = await run('locate an unambiguous current source quote', [requestReview({}, 'located_quote'), { delta: 'Reported the actual line.' }])
+  const locatedReview = toolResult(located, 'located_quote')?.details?.review
+  check(locatedReview?.newRequests === 3 && locatedReview.reviewers.some(report =>
+    report.findings?.some(item => item.line === 1 && item.quote === 'NEW reviewed line')) &&
+    requestText(located.requests.at(-1)).includes('origin.txt:1'),
+  'an ambiguous quote at a wrong line is rejected, and a unique verbatim quote resolves to the real line in the parent report')
   reviewReplies = { correctness: [{ hold: true }], tests: [clean('tests')] }
   const partial = await run('bound a stalled review lane', [requestReview({ timeout: 1 }, 'review_timeout'), { delta: 'Review incomplete.' }])
   check(toolResult(partial, 'review_timeout')?.details?.review?.status === 'timed_out' &&
@@ -1063,7 +1104,7 @@ try {
     name: 'submit_review', arguments: '{"summary":"' + abandonedReport,
   } }] }, streamError: gatewayClosed }
   reviewReplies = { correctness: [resumeSource, lostReport, publish('Completed from the captured source.', [{
-    severity: 'blocking', path: 'origin.txt', line: 1, problem: 'The line conflicts with the fixture contract.',
+    severity: 'blocking', path: 'origin.txt', line: 1, quote: readLine, problem: 'The line conflicts with the fixture contract.',
   }], 'resumed_report')], tests: [clean('tests')] }
   const recoveredReview = await run('continue an interrupted review using its finished source read', [
     requestReview({ paths: ['origin.txt'] }, 'review_transport_resume'), { delta: 'The interrupted report recovered.' },
@@ -1340,7 +1381,18 @@ try {
   sessionId = (await request('/sessions', { cwd: compact })).session.id
   const visibleTest = 'The existing public test expects 恒定结果.'
   const seedFinding = publish('The public result regressed.', [{ severity: 'blocking', path: 'catalog.mjs', line: 1,
-    problem: 'lookup returns undefined instead of its public value.' }], 'compact_defect')
+    quote: 'lookup = () => undefined', problem: 'lookup returns undefined instead of its public value.' }], 'compact_defect')
+  reviewReplies = { correctness: [publish('Incorrect reading of the current source.', [{ severity: 'blocking', path: 'catalog.mjs',
+    line: 1, quote: 'return otherFields', problem: 'An old field overrides the return value.' }], 'imaginary_source'),
+    seedFinding], tests: [clean('tests')] }
+  const corrected = await run('ground a blocking claim in the exact current line', [
+    requestReview({}, 'grounded_blocker'), { delta: 'The cited source was checked.' },
+  ])
+  const grounded = toolResult(corrected, 'grounded_blocker')?.details?.review
+  check(reviewRequests(corrected).some(payload => requestText(payload).includes('does not match the captured source')) &&
+    grounded?.status === 'findings' && grounded.reviewers.some(report => report.findings?.some(item =>
+      item.quote === 'lookup = () => undefined')) && !JSON.stringify(grounded).includes('An old field overrides'),
+  'an existing line number alone cannot make a fabricated source claim a blocking finding')
   reviewReplies = {
     correctness: [seedFinding],
     tests: [payload => requestText(payload).includes(visibleTest) ? clean('tests') :
@@ -1433,13 +1485,54 @@ try {
 
   reviewReplies = { correctness: [useTool('submit_review', {
     summary: 'Lookup returned an invalid value. Test coverage needs more analysis.', gaps: [{ path: 'public.test.mjs', reason: 'Audit the unchanged expectations.' }],
-    findings: [{ severity: 'blocking', path: 'catalog.mjs', line: 1, problem: 'Lookup returned undefined instead of the required value.' }],
+    findings: [{ severity: 'blocking', path: 'catalog.mjs', line: 1, quote: 'lookup = () => undefined', problem: 'Lookup returned undefined instead of the required value.' }],
   }, 'blocking_and_gap')], tests: [clean('tests')] }
   const blocker = await run('show a blocker even with pending coverage', [requestReview({}, 'compact_blocker'), { delta: 'The blocker and gap were recorded.' }])
   const blockerProof = toolResult(blocker, 'compact_blocker')?.details?.review
   check(blockerProof?.status === 'findings' && !blockerProof.recorded && blockerProof.pendingReviewers.includes('correctness') &&
     blockerProof.reviewers.some(reviewer => reviewer.findings?.some(finding => finding.path === 'catalog.mjs' && finding.line === 1)),
   'a verified source anchor can surface a blocker immediately while incomplete coverage remains explicit')
+
+  const disputed = { severity: 'blocking', path: 'catalog.mjs', line: 1, quote: 'lookup = () => undefined',
+    problem: 'lookup throws by calling a missing function.' }
+  const openGap = { path: 'public.test.mjs', reason: 'Inspect the existing expectation before deciding the contract.' }
+  const initialReport = useTool('submit_review', { summary: 'Contract needs follow-up.', findings: [disputed], gaps: [openGap] }, 'open_contract')
+  const reviewTwice = async (goal, next, second = {}) => {
+    reviewReplies = { correctness: [initialReport, ...next], tests: [clean('tests')] }
+    return run(goal, [beginReview(goal, 'contract_plan'), requestReview({ check: 1 }, 'first_contract'),
+      requestReview({ check: 1, ...second }, 'second_contract'), { delta: 'Review state recorded.' }, { delta: 'Review state recorded.' }])
+  }
+  const forgotten = await reviewTwice('Keep unresolved review evidence across two attempts', [clean('correctness')])
+  const stillOpen = toolResult(forgotten, 'second_contract')?.details?.review
+  const openItems = packetOf(reviewRequests(forgotten).filter(payload => laneOf(payload) === 'correctness').at(-1)).openItems
+  check(openItems?.some(item => item.problem === disputed.problem) && openItems.some(item => item.reason === openGap.reason) &&
+    stillOpen?.status === 'findings' && !stillOpen.recorded && stillOpen.reviewers.some(report =>
+      report.findings?.some(item => item.problem === disputed.problem) && report.gaps?.some(item => item.reason === openGap.reason)),
+  'a reviewer sees its previous unresolved findings and gaps and a generic clear report cannot erase either')
+
+  const expired = await reviewTwice('Retain outstanding issues when resumed review times out', [{ hold: true }], { timeout: 1 })
+  const expiredProof = toolResult(expired, 'second_contract')?.details?.review
+  check(expiredProof?.status === 'timed_out' && expiredProof.newRequests === 1 && !expiredProof.recorded &&
+    expiredProof.reviewers.some(report => report.focus === 'correctness' && report.status !== 'complete' &&
+      report.findings?.some(item => item.problem === disputed.problem) && report.gaps?.some(item => item.reason === openGap.reason)),
+  'a deadline before the next report preserves earlier blockers and open source questions in the returned and persisted result')
+
+  const resolveIssues = (payload, quote) => useTool('submit_review', {
+    summary: 'Checked each outstanding issue against the current contract.', findings: [],
+    resolutions: (packetOf(payload).openItems ?? []).map(item => item.severity ?
+      { item: item.id, reason: 'lookup returns the undefined literal without calling a function.',
+        path: 'catalog.mjs', line: 1, quote: 'lookup = () => undefined' } :
+      { item: item.id, reason: 'The public test states the expected behavior.', path: 'public.test.mjs', line: 1, quote }),
+  }, 'resolve_issues')
+  const resolved = await reviewTwice('Require matching source before closing each review issue', [
+    payload => resolveIssues(payload, 'a fabricated source line'),
+    payload => resolveIssues(payload, visibleTest),
+  ])
+  const resolvedProof = toolResult(resolved, 'second_contract')?.details?.review
+  check(reviewRequests(resolved).some(payload => requestText(payload).includes('does not match the captured source')) &&
+    resolvedProof?.status === 'clear' && resolvedProof.recorded && resolvedProof.newRequests === 2 &&
+    resolvedProof.reviewers.some(report => report.resolutions?.length === 2),
+  'a false counter-citation is rejected and a later grounded resolution of every issue can earn numbered review evidence')
 
   reviewReplies = { correctness: [useTool('submit_review', {
     summary: 'An outside file might be relevant.', findings: [],

@@ -320,6 +320,59 @@ try {
   await session.prompt('/superpi-task')
   check(taskDialog?.text?.includes('[command passed] Test the cache input'), 'the restored task command shows the recorded proof')
 
+  const milestones = { goal: 'Deliver the verified source and inspect its public behavior', checks: [
+    { description: 'Verify the source', command, shell }, { description: 'Inspect the public entry point' },
+  ] }
+  const continued = await run('Finish both milestones without another user prompt',
+    task('milestones', 'start', milestones), 'I will start verification.',
+    verification('first-milestone', { command, check: 1 }), 'The command passed.',
+    task('second-milestone', 'observe', { check: 2, observation: 'Read the public entry point in source.txt.' }),
+    'Both checks have evidence.', task('milestones-finish', 'finish'), 'Delivered both checks.')
+  check(continued.result('milestones-finish')?.details.task.status === 'complete' &&
+    continued.modelCalls.length === 8 && continued.events.filter(event => event.type === 'agent_settled').length === 1,
+  'each newly evidenced criterion permits continuation through a premature stop to explicit completion in one activity')
+  const duplicate = await run('Keep repeated verification bounded',
+    task('same-plan', 'start', milestones), verification('first-proof', { command, check: 1 }), 'One check is done.',
+    verification('duplicate-proof', { command, check: 1 }), 'The same check passed again.')
+  check(duplicate.modelCalls.length === 5 && duplicate.result('duplicate-proof')?.details.verification.recorded &&
+    outputWidget.get('superpi-task')?.[0]?.includes('1/2'),
+  'repeating an evidenced check cannot buy another continuation or certify the pending check')
+
+  const mutationCriterion = { description: 'Detect an invalid source value', command: mutationTest, shell,
+    mutation: { mutations: [mutation], expectedFailure } }
+  const revision = { goal: 'Run the normal and mutation checks', replace: true, checks: [plan.checks[0], mutationCriterion] }
+  const revisedCriterion = { ...mutationCriterion, mutation: { ...mutationCriterion.mutation, expectedFailure: 'invariant rejected' } }
+  const revised = await run('Correct the literal failure diagnostic without repeating the normal check',
+    task('revision-start', 'start', revision), verification('revision-normal', { command, check: 1 }),
+    verification('revision-original-mutation', { command: mutationTest, check: 2 }),
+    task('revision-update', 'start', { ...revision, checks: [revisedCriterion, plan.checks[0]] }),
+    verification('revision-corrected-mutation', { command: mutationTest, check: 1 }),
+    'The revised plan is ready.', 'The revised plan is ready.')
+  const updatedChecks = revised.result('revision-update')?.details.task.checks
+  check(revised.result('revision-original-mutation')?.details.verification.recorded &&
+    updatedChecks?.[0].evidence === undefined && updatedChecks?.[1].evidence?.toolCallId === 'revision-normal',
+  'correcting and moving one criterion invalidates its old proof and carries the unchanged command proof to its new number')
+  check(revised.result('revision-corrected-mutation')?.details.verification.recorded &&
+    outputWidget.get('superpi-task')?.[0]?.includes('2/2'),
+  'rerunning just the amended check makes both verified items visible in the terminal')
+
+  const staleRevision = await run('Keep prior results scoped to their verified source and goal',
+    task('revision-next-start', 'start', revision), verification('revision-next-proof', { command, check: 1 }),
+    tool('revision-edit', 'write', { path: 'source.txt', content: 'changed after verification' }),
+    task('revision-with-edit', 'start', revision),
+    tool('revision-restore', 'write', { path: 'source.txt', content: 'current' }),
+    verification('revision-new-proof', { command, check: 1 }),
+    task('revision-duplicate', 'start', { ...revision, checks: [plan.checks[0], plan.checks[0]] }),
+    task('revision-new-goal', 'start', { ...revision, goal: 'Verify a different delivery' }),
+    'The new goal still needs verification.', 'The new goal still needs verification.')
+  check(!staleRevision.result('revision-with-edit')?.details.task.checks[0].evidence &&
+    staleRevision.result('revision-new-proof')?.details.verification.recorded &&
+    !staleRevision.result('revision-new-goal')?.details.task.checks[0].evidence,
+  'a source edit or goal change discards old proof even when the command and criterion match')
+  const duplicateChecks = staleRevision.result('revision-duplicate')?.details.task.checks
+  check(duplicateChecks?.[0].evidence?.toolCallId === 'revision-new-proof' && !duplicateChecks?.[1].evidence,
+  'duplicating a criterion cannot duplicate its recorded verification')
+
   const sourceFile = path.join(workspace, 'source.txt')
   const sourceTime = new Date('2020-01-01T00:00:00Z')
   await fs.utimes(sourceFile, sourceTime, sourceTime)
@@ -339,7 +392,7 @@ try {
     '}',
   ].join(' ') + '"'
   const concurrentEdit = await run('Verify the source version actually read by the command',
-    task('start-alternate', 'start', { ...plan, checks: [{ description: 'Verify the delivered source', command: changeDuringCheck, shell }] }),
+    task('start-alternate', 'start', { ...plan, replace: true, checks: [{ description: 'Verify the delivered source', command: changeDuringCheck, shell }] }),
     verification('alternate-source', { command: changeDuringCheck, check: 1 }),
     task('finish-alternate', 'finish'),
     tool('use-final-source', 'write', { path: 'ignored.txt', content: 'stable run' }),

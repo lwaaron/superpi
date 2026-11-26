@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from 'node:util'
 import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent'
 import { Type, type Static } from 'typebox'
 import { scanTextBytes } from './superpi-text-bytes.mjs'
@@ -109,6 +110,21 @@ function validText(value: string | undefined) {
   return typeof value === 'string' && value.trim() !== '' && scanTextBytes(value).clean
 }
 
+function retainVerifiedCommands(previous: Task | undefined, next: Task): Task {
+  if (!previous || previous.status === 'complete' || previous.goal !== next.goal) return next
+  const available = previous.checks.filter(check => check.command && check.evidence && 'fingerprint' in check.evidence)
+  const checks = next.checks.map(check => {
+    if (!check.command) return check
+    const index = available.findIndex(prior => prior.description === check.description && prior.command === check.command &&
+      (prior.shell ?? 'bash') === (check.shell ?? 'bash') && isDeepStrictEqual(prior.mutation, check.mutation))
+    if (index === -1) return check
+    // One verified invocation can carry forward to only one matching criterion.
+    const [prior] = available.splice(index, 1)
+    return { ...check, evidence: prior.evidence }
+  })
+  return { ...next, checks }
+}
+
 async function refreshSourceEvidence(task: Task, cwd: string, signal?: AbortSignal) {
   const bound = task.checks.some(check => check.evidence && 'fingerprint' in check.evidence)
   if (!bound) return task
@@ -127,7 +143,7 @@ async function refreshSourceEvidence(task: Task, cwd: string, signal?: AbortSign
 
 export default function delivery(pi: ExtensionAPI) {
   let engaged = false
-  let nudged = false
+  let continuedChecks: Set<number> | undefined
   let waitingForUser = false
   let shellStillRunning = false
   let completedHere = false
@@ -150,7 +166,7 @@ export default function delivery(pi: ExtensionAPI) {
   }
   const resetActivity = () => {
     engaged = false
-    nudged = false
+    continuedChecks = undefined
     waitingForUser = false
     shellStillRunning = false
     completedHere = false
@@ -188,6 +204,7 @@ export default function delivery(pi: ExtensionAPI) {
       'Record actual observations with file, test, or artifact references. Run the final verification command using verify with its check number. For a required independent review, declare a separate check with description and review: true, then pass that check number to review_changes. Call finish for tasks that require a separate completion decision.',
       'Set finishWhenVerified on start when the declared checks cover the entire requested delivery, including any required independent review. Run the last check on its own for an automatic receipt as soon as all evidence is current.',
       'If acceptance requires proving a test detects a specific regression, declare mutation with exact replacements and an expectedFailure diagnostic on its command check. Run verify with that check number.',
+      'To correct a command or failure diagnostic in an existing plan, use start with replace: true and the same goal. Preserve the acceptance criteria. Unchanged command checks keep evidence for the current source.',
       'For changes where independent review is part of acceptance, mark a check review:true. Review the tested source, address concrete findings, and review again after edits. If reports stay incomplete, finish other checks and report the exact evidence still missing.',
     ],
     executionMode: 'sequential',
@@ -204,21 +221,22 @@ export default function delivery(pi: ExtensionAPI) {
       check: Type.Optional(Type.Integer({ minimum: 1, maximum: 12 })),
       observation: Type.Optional(checklistText),
       reason: Type.Optional(checklistText),
-      replace: Type.Optional(Type.Boolean({ description: 'Use only when the user changes the goal or acceptance criteria of a task in progress.' })),
+      replace: Type.Optional(Type.Boolean({ description: 'Set when the user changes scope or to correct the verification for an existing criterion.' })),
       finishWhenVerified: Type.Optional(Type.Boolean({ description: 'On start, allow checked evidence for the full task to complete it and publish a receipt automatically.' })),
     }, { additionalProperties: false }),
     async execute(_id, params, signal, _update, ctx) {
       let task = currentTask(ctx)
       if (params.action === 'status') return taskResult(task)
       if (params.action === 'start') {
-        if (task && task.status !== 'complete' && !params.replace) return taskResult(task, 'A task already exists. Resume it or explicitly replace it when the user changes scope.', true)
+        if (task && task.status !== 'complete' && !params.replace) return taskResult(task, 'A task already exists. Resume it or explicitly revise the plan with replace: true.', true)
         if (!validText(params.goal) || !params.checks?.length || params.checks.some(check =>
           !validText(check.description) || (check.command !== undefined && (!validText(check.command) || check.review)) ||
           (check.mutation && (!check.command || !validText(check.mutation.expectedFailure))))) {
           return taskResult(task, 'Provide a goal and at least one specific acceptance check with valid text.', true)
         }
-        task = { version: 1, status: 'active', goal: params.goal!.trim(), checks: params.checks,
+        const next: Task = { version: 1, status: 'active', goal: params.goal!.trim(), checks: params.checks,
           ...(params.finishWhenVerified ? { finishWhenVerified: true } : {}) }
+        task = await refreshSourceEvidence(retainVerifiedCommands(task, next), ctx.cwd, signal)
         automaticFinishPending = false
         engaged = true
       } else {
@@ -268,7 +286,7 @@ export default function delivery(pi: ExtensionAPI) {
     promptGuidelines: [
       'Use verify for builds and tests, with a deadline appropriate to the command. Declare deliberate mutations as exact replacements in a snapshot and invoke tests there using relative paths.',
       'To confirm a test catches a specific regression, use expectedFailure with stable, literal output from the failing assertion. The comparison confirms a passing baseline and that exact diagnostic from the mutated run.',
-      'For numbered checks use the declared command and shell. Normal checks run in the workspace. A numbered mutation check runs the declared comparison in snapshots and records evidence on detection if the workspace still matches.',
+      'For numbered checks pass check, the declared command, timeout, and the declared shell when needed. The saved plan supplies any mutations and expectedFailure and runs that comparison in snapshots.',
     ],
     reachesTools: ['bash', 'powershell'],
     executionMode: 'sequential',
@@ -296,7 +314,7 @@ export default function delivery(pi: ExtensionAPI) {
         return taskResult(task, 'Use the exact command and shell of a recorded check in the active task.', true)
       }
       if (declaredMutation && (scope !== 'snapshot' || params.mutations !== undefined || params.expectedFailure !== undefined)) {
-        return taskResult(task, 'Use the declared snapshot mutations and failure diagnostic for this numbered check.', true)
+        return taskResult(task, 'Pass check, command, timeout, and the declared shell when needed. This check reads mutations and expectedFailure from the saved plan.', true)
       }
       if (check && scope !== requiredScope) return taskResult(task, 'This numbered check runs in the workspace.', true)
       if (mutations && scope !== 'snapshot') return taskResult(task, 'Mutations require a disposable verification snapshot.', true)
@@ -548,7 +566,10 @@ export default function delivery(pi: ExtensionAPI) {
         if (reviewer.limitation) lines.push('Coverage limitation · ' + reviewer.limitation)
         if (reviewer.notes) lines.push('Notes · ' + reviewer.notes)
         for (const finding of reviewer.findings ?? []) lines.push(
-          finding.severity + ' · ' + finding.path + ':' + finding.line + ' · ' + finding.problem)
+          finding.severity + ' · ' + finding.path + ':' + finding.line + ' · ' + finding.problem +
+          (finding.quote ? '\n  ' + finding.quote : ''))
+        for (const resolution of reviewer.resolutions ?? []) lines.push(
+          'Resolved · ' + resolution.issue + ' · ' + resolution.path + ':' + resolution.line + ' · ' + resolution.reason + '\n  ' + resolution.quote)
       }
       if (review.execution === 'reused') lines.push(remaining, 'The source and effective review scope are unchanged. This result uses the existing reports.')
       else if (review.pendingReviewers.length && !blocking && (review.execution === 'new' || review.execution === 'resumed')) lines.push(remaining)
@@ -600,9 +621,12 @@ export default function delivery(pi: ExtensionAPI) {
         return settlement
       }
     }
-    if (nudged) return settlement
     if (!task || task.status !== 'active') return settlement
-    nudged = true
+    const evidenced = task.checks.flatMap((check, index) => check.evidence ? [index] : [])
+    // Each criterion can justify one more continuation in this activity. Timestamps and reruns cannot.
+    if (continuedChecks && evidenced.every(index => continuedChecks?.has(index))) return settlement
+    continuedChecks ??= new Set()
+    for (const index of evidenced) continuedChecks.add(index)
     const content = 'This task still needs an explicit delivery decision. Continue from the current workspace. ' +
       'Complete the pending checks, inspect recorded evidence and finish, or record the concrete blocker.\n\n' + taskSummary(task)
     return {
