@@ -1426,6 +1426,41 @@ try {
     deadlineRequests.length === 3 && requestText(deadlineRequests[1]) === requestText(deadlineRequests[2]) &&
     deadlineRequests[2].messages.some(message => message.role === 'tool' && String(message.content).includes('lookup = () => undefined')),
   'a retry retains completed tool results and a stalled request still ends at the original deadline')
+
+  const cutReview = { ...publish('Unfinished draft with no findings.', [], 'incomplete_review_draft'), finish: 'length' }
+  const repairedReview = await recoverProvider('request a report again on the original complete evidence after truncation', 'review_length_repair', [
+    cutReview, payload => payload.tools.map(tool => tool.function.name).join(',') === 'submit_review' ?
+      seedFinding : useTool('read_review_file', { path: 'public.test.mjs', count: 1 }, 'rediscovered_contract'), seedFinding,
+  ])
+  const repairedLane = reviewRequests(repairedReview.activity).filter(payload => laneOf(payload) === 'correctness')
+  check(repairedReview.proof?.status === 'findings' && repairedReview.proof.newRequests === 3 &&
+    repairedReview.proof.reviewers.some(lane => lane.focus === 'correctness' && lane.status === 'complete' &&
+      lane.outputRetry?.request === 2 && !lane.fallback && !lane.failure) &&
+    repairedLane.length === 2 && requestText(repairedLane[0]) === requestText(repairedLane[1]) &&
+    repairedLane[1].tools.map(tool => tool.function.name).join(',') === 'submit_review' &&
+    !JSON.stringify(repairedReview.proof).includes('Unfinished draft with no findings'),
+  'a truncated structured draft is discarded and the next request uses all the original source to produce a report')
+  check(repairedReview.activity.records.some(record => record.type === 'tool_execution_update' &&
+    record.partialResult?.details?.reviewProgress?.repairingReport === 'correctness'),
+  'report recovery identifies the affected lane in progress events')
+
+  const interruptedDiscovery = await recoverProvider('retain completed reads without adding apparent coverage', 'review_length_diff', [
+    reviewedLine, cutReview,
+    useTool('submit_review', { summary: 'One essential test remains to inspect.', findings: [],
+      gaps: [{ path: 'public.test.mjs', reason: 'The unchanged contract still needs examination.' }] }, 'still_pending'),
+  ], { paths: ['catalog.mjs'] })
+  const repairedDiff = reviewRequests(interruptedDiscovery.activity).filter(payload => laneOf(payload) === 'correctness')
+  check(interruptedDiscovery.proof?.status === 'partial' && interruptedDiscovery.proof.newRequests === 4 &&
+    interruptedDiscovery.proof.reviewers.some(lane => lane.outputRetry?.request === 3 && lane.gaps?.length === 1) &&
+    requestText(repairedDiff[1]) === requestText(repairedDiff[2]) && repairedDiff[2].tools.map(tool => tool.function.name).join(',') === 'submit_review',
+  'repair uses the original finished source reads and an explicitly incomplete report still cannot certify delivery')
+
+  const exhaustedReport = await recoverProvider('bound output recovery when three reports truncate', 'review_length_exhausted',
+    [cutReview, cutReview, cutReview, seedFinding])
+  check(exhaustedReport.proof?.status === 'partial' && exhaustedReport.proof.newRequests === 4 &&
+    exhaustedReport.proof.reviewers.some(lane => lane.focus === 'correctness' && lane.status === 'incomplete' &&
+      lane.failure === 'truncated' && lane.outputRetry?.request === 2 && lane.fallback === 'truncated'),
+  'one report repair and one change of evidence strategy stay bounded when the provider keeps truncating')
   assert.equal((await request(session() + '/controls/retry', { enabled: false })).enabled, false)
 
   reviewReplies = { correctness: [publish('Incorrect reading of the current source.', [{ severity: 'blocking', path: 'catalog.mjs',
@@ -1555,6 +1590,13 @@ try {
     stillOpen?.status === 'findings' && !stillOpen.recorded && stillOpen.reviewers.some(report =>
       report.findings?.some(item => item.problem === disputed.problem) && report.gaps?.some(item => item.reason === openGap.reason)),
   'a reviewer sees its previous unresolved findings and gaps and a generic clear report cannot erase either')
+  const resumedEvidence = reviewRequests(forgotten).filter(payload => laneOf(payload) === 'correctness').at(-1)
+  const resumedFiles = packetOf(resumedEvidence).workspaceFiles
+  check(stillOpen?.inputMode === 'snapshot' && stillOpen.reused.join(',') === 'tests' &&
+    resumedFiles?.some(file => file.path === 'catalog.mjs' && file.source.includes('lookup = () => undefined')) &&
+    resumedFiles.some(file => file.path === 'public.test.mjs' && file.source.includes(visibleTest)) &&
+    resumedEvidence.tools.map(tool => tool.function.name).join(',') === 'submit_review',
+  'a same-source follow-up carries both the complete source and the open issues, with no need to read already supplied files')
 
   const expired = await reviewTwice('Retain outstanding issues when resumed review times out', [{ hold: true }], { timeout: 1 })
   const expiredProof = toolResult(expired, 'second_contract')?.details?.review

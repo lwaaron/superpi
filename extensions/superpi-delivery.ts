@@ -523,11 +523,12 @@ export default function delivery(pi: ExtensionAPI) {
       const review = await reviewChanges(ctx, {
         goal: task && item ? task.goal + '\n' + item.description : goal ?? task?.goal ?? 'Review the changed behavior.',
         paths, base, timeout, taskCheck: check !== undefined, retry,
-      }, signal, (count, requests, recovering, retrying) => update?.({
+      }, signal, (count, requests, { recovering, retrying, repairingReport } = {}) => update?.({
         content: [{ type: 'text', text: 'Independent reviewers returned ' + count + '/2' +
           (recovering ? ' · Resuming ' + recovering + ' from captured source' : '') +
-          (retrying ? ' · Retrying ' + retrying + ' after a temporary provider error' : '') }],
-        details: { reviewProgress: { completed: count, requests, recovering, retrying } },
+          (retrying ? ' · Retrying ' + retrying + ' after a temporary provider error' : '') +
+          (repairingReport ? ' · Recovering a truncated report from ' + repairingReport : '') }],
+        details: { reviewProgress: { completed: count, requests, recovering, retrying, repairingReport } },
       }), appendCheckpoint)
       let recorded = false
       let savedNewEvidence = false
@@ -562,6 +563,7 @@ export default function delivery(pi: ExtensionAPI) {
         if (reviewer.fallback) lines.push('File discovery resumed · ' + reviewer.fallback)
         if (reviewer.recovery) lines.push('Review resumed from captured source · request ' + reviewer.recovery.request)
         if (reviewer.providerRetry) lines.push('Temporary provider error retried · request ' + reviewer.providerRetry.request)
+        if (reviewer.outputRetry) lines.push('Truncated report retried on the same evidence · request ' + reviewer.outputRetry.request)
         if (reviewer.restoredReads) lines.push('Source excerpts restored · ' + reviewer.restoredReads)
         if (reviewer.sourceRanges?.length) lines.push('Source ranges saved · ' + reviewer.sourceRanges.length)
         if (reviewer.failure) lines.push('Model result · ' + reviewer.failure)

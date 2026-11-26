@@ -160,7 +160,7 @@ function restoreCheckpoints(previous, checkpoints) {
 
 function laneReceipt(meter, saveReads = true) {
   return { requests: meter.requests, usage: { ...meter.usage }, failure: meter.failure, fallback: meter.fallback,
-    recovery: meter.recovery, providerRetry: meter.providerRetry, restoredReads: meter.restoredReads,
+    recovery: meter.recovery, providerRetry: meter.providerRetry, outputRetry: meter.outputRetry, restoredReads: meter.restoredReads,
     ...(saveReads && meter.sourceRanges.size ? { sourceRanges: [...meter.sourceRanges.values()] } : {}) }
 }
 
@@ -266,10 +266,16 @@ function recoveryInput(goal, messages, restored, limit, openItems) {
   return sourcePacket(openItems.length ? { goal, openItems } : { goal }, [...restored, ...reads], limit)?.input
 }
 
-function reviewFollowup(input, goal, items, limit) {
+function openReviewItems(prior) {
+  return [...(prior?.findings ?? []).filter(item => item.severity === 'blocking'), ...(prior?.gaps ?? [])]
+    .map((item, index) => ({ ...item, id: index + 1 }))
+}
+
+function reviewFollowup(input, goal, items, limit, keepSource = false) {
   if (!items.length) return input
   const full = JSON.stringify({ ...JSON.parse(input), openItems: items })
   if (Buffer.byteLength(full) <= limit) return full
+  if (keepSource) return
   // Keep discovery available when the diff and outstanding questions cannot travel together.
   const openItems = []
   let bytes = Buffer.byteLength(JSON.stringify({ goal, openItems }))
@@ -297,18 +303,17 @@ async function citedLine(snapshot, { path, line, quote }, required) {
 }
 
 async function reviewPass({ focus, goal, input, inputLimit, model, registry, snapshot, signal, readAllowance, resuming, suppliedSources, retry,
-  inline = false, prior, meter, onRequest, onCheckpoint, onOutput }) {
+  inline = false, openItems, meter, onRequest, onCheckpoint, onOutput }) {
   let report
   let resumingStream = false
   let replayProviderRequest = false
+  let repairingOutput = false
   const retryEnabled = retry?.enabled && retry.maxRetries > 0
   let bytesLeft = readAllowance
   const readRanges = new Map()
-  const openItems = [...(prior?.findings ?? []).filter(item => item.severity === 'blocking'), ...(prior?.gaps ?? [])]
-    .map((item, index) => ({ ...item, id: index + 1 }))
-  input = reviewFollowup(input, goal, openItems, inputLimit)
+  if (!inline) input = reviewFollowup(input, goal, openItems, inputLimit)
   const presented = openItems.length ? JSON.parse(input).openItems : []
-  const restored = resuming && meter.sourceRanges.size ? sourcePacket(JSON.parse(input),
+  const restored = !inline && resuming && meter.sourceRanges.size ? sourcePacket(JSON.parse(input),
     await restoreSourceReads(snapshot, meter.sourceRanges, signal), inputLimit) : undefined
   for (const { path, start, end } of restored?.reads ?? []) {
     const ranges = readRanges.get(path) ?? []
@@ -431,7 +436,11 @@ async function reviewPass({ focus, goal, input, inputLimit, model, registry, sna
         },
       }],
     },
-    finishTurn: () => resumingStream ? { action: 'end' } : undefined,
+    finishTurn: ({ message }) => {
+      // Pi rejects all calls from a truncated reply. Stop before their synthetic errors
+      // can become another discovery turn, so the transcript can resume from its last valid input.
+      if (resumingStream || repairingOutput || (retryEnabled && message.stopReason === 'length')) return { action: 'end' }
+    },
     streamFn: (selected, context, options) => {
       signal.throwIfAborted()
       if (meter.requests >= REQUEST_LIMIT) throw new Error('Review reached its request budget.')
@@ -439,20 +448,27 @@ async function reviewPass({ focus, goal, input, inputLimit, model, registry, sna
       const providerReplay = replayProviderRequest
       replayProviderRequest = false
       if (providerReplay) meter.providerRetry = { request: meter.requests }
+      if (repairingOutput) meter.outputRetry = { request: meter.requests }
       if (meter.requests === 1 && restored) meter.restoredReads = restored.reads.length
       if (resumingStream) {
         meter.recovery = { kind: 'stream-interrupted', request: meter.requests }
         meter.failure = undefined
       }
       const originalRequest = meter.requests - (providerReplay ? 1 : 0)
-      const reportOnly = meter.requests === REQUEST_LIMIT || (inline && originalRequest === 1)
+      const reportOnly = repairingOutput || meter.requests === REQUEST_LIMIT || (inline && originalRequest === 1)
       if (reportOnly) {
         context = { messages: [...context.messages, {
           role: 'system', timestamp: Date.now(), toolsRemoved: discoveryTools,
-          content: 'Submit the report using the supplied evidence. Record only material gaps within the requested static review.',
+          content: repairingOutput ?
+            'The previous response was cut off. Submit one concise structured report from the evidence already supplied. Include concrete blockers and any material static coverage still pending.' :
+            'Submit the report using the supplied evidence. Record only material gaps within the requested static review.',
         }] }
       }
-      onRequest(resumingStream ? focus : undefined, providerReplay ? focus : undefined)
+      onRequest({
+        recovering: resumingStream ? focus : undefined,
+        retrying: providerReplay ? focus : undefined,
+        repairingReport: repairingOutput ? focus : undefined,
+      })
       return registry.streamSimple(selected, context, { ...options, maxTokens })
     },
   })
@@ -479,16 +495,21 @@ async function reviewPass({ focus, goal, input, inputLimit, model, registry, sna
     signal.throwIfAborted()
     await agent.prompt(restored?.input ?? input)
     signal.throwIfAborted()
-    if (!report && retryEnabled && meter.failure === 'provider-unavailable' && !meter.providerRetry && meter.requests < REQUEST_LIMIT) {
-      const failed = agent.state.messages.at(-1)
-      if (failed?.role === 'assistant' && failed.stopReason === 'error') {
-        await delay(retryDelayMs(retry, 1), undefined, { signal })
+    const retryProvider = meter.failure === 'provider-unavailable' && !meter.providerRetry
+    const retryOutput = meter.failure === 'truncated' && !meter.outputRetry
+    if (!report && retryEnabled && (retryProvider || retryOutput) && meter.requests < REQUEST_LIMIT) {
+      const messages = agent.state.messages
+      const failedIndex = messages.findLastIndex(message => message.role === 'assistant')
+      if (messages[failedIndex]?.stopReason === (retryOutput ? 'length' : 'error')) {
+        if (retryProvider) await delay(retryDelayMs(retry, 1), undefined, { signal })
         signal.throwIfAborted()
-        // Replay the same request from its last completed input. The failed draft cannot be evidence.
-        agent.state.messages = agent.state.messages.slice(0, -1)
+        agent.state.messages = messages.slice(0, failedIndex)
         meter.failure = undefined
-        replayProviderRequest = true
+        replayProviderRequest = retryProvider
+        repairingOutput = retryOutput
+        if (repairingOutput) agent.state.tools = agent.state.tools.filter(tool => tool.name === 'submit_review')
         await agent.continue()
+        repairingOutput = false
         signal.throwIfAborted()
       }
     }
@@ -517,6 +538,9 @@ async function reviewPass({ focus, goal, input, inputLimit, model, registry, sna
 
 async function reviewLane(options, bundle, deadlineAt) {
   if (!bundle) return reviewPass(options)
+  // An earlier report proved this packet usable. Continue directly within the original
+  // review deadline, like the existing continuation from a saved set of source reads.
+  if (options.openItems.length) return reviewPass({ ...options, input: bundle.input, inline: bundle.format })
   const { signal, meter } = options
   const idleMs = Math.floor(Math.min(SNAPSHOT_PROBE_MS, (deadlineAt - performance.now()) / 3))
   if (idleMs < 1) return reviewPass(options)
@@ -550,8 +574,8 @@ export async function reviewChanges(ctx, params, signal, onProgress, appendCheck
   const meters = new Map()
   const known = new Map()
   const totalRequests = () => [...meters.values()].reduce((sum, meter) => sum + meter.requests, 0)
-  const publishProgress = (recovering, retrying) => {
-    if (!active.aborted) onProgress(reviewers.length, totalRequests(), recovering, retrying)
+  const publishProgress = activity => {
+    if (!active.aborted) onProgress(reviewers.length, totalRequests(), activity)
   }
   const result = { status: 'unavailable', reviewers, omitted: [], scope: params.paths ?? [],
     uncovered: [], uncoveredCount: 0, revision: '', fingerprint: '', key: '',
@@ -627,11 +651,25 @@ export async function reviewChanges(ctx, params, signal, onProgress, appendCheck
       // One extra discovery turn carries the initial packet again. Spend up to that cost once on
       // complete before/after source, without using the extra room to duplicate the patch.
       const discoveryBytes = Buffer.byteLength(reviewInput) + DISCOVERY_TOOL_BYTES
-      const bundle = !previous && packetFiles && !result.omitted.length ? await bundledEvidence(snapshot, packetFiles, payload, {
+      const packetPaths = new Set(packetFiles)
+      const pendingLanes = missing.map(focus => {
+        const prior = known.get(focus)
+        const ranges = savedSourceRanges(prior)
+        const resumeComplete = previous?.inputMode === 'snapshot' && prior?.gaps?.length && !prior.fallback &&
+          [...ranges.values()].every(range => packetPaths.has(range.path))
+        return { focus, prior, ranges, usePacket: !prior || resumeComplete }
+      })
+      const bundle = packetFiles && !result.omitted.length && pendingLanes.some(lane => lane.usePacket) ? await bundledEvidence(snapshot, packetFiles, payload, {
         limit: Math.min(inputBytes, Math.max(SNAPSHOT_INLINE_BYTES, 2 * discoveryBytes)),
         patchLimit: Math.min(inputBytes, Math.max(SNAPSHOT_INLINE_BYTES, discoveryBytes)),
       }, active) : undefined
-      result.inputMode = bundle ? 'snapshot' : 'diff'
+      const inputLimit = Math.min(inputBytes, Buffer.byteLength(reviewInput) + SNAPSHOT_INLINE_BYTES)
+      const dispatches = pendingLanes.map(lane => {
+        const openItems = openReviewItems(lane.prior)
+        const compactInput = bundle && lane.usePacket ? reviewFollowup(bundle.input, params.goal, openItems, inputLimit, true) : undefined
+        return { ...lane, openItems, packet: compactInput ? { input: compactInput, format: bundle.format } : undefined }
+      })
+      result.inputMode = dispatches.some(lane => lane.packet) ? 'snapshot' : 'diff'
       result.execution = previous ? 'resumed' : 'new'
       result.attempts += 1
       result.attemptId = randomUUID()
@@ -643,15 +681,13 @@ export async function reviewChanges(ctx, params, signal, onProgress, appendCheck
       if (reviewers.length) publishProgress()
       const readAllowance = Math.min(24_000, Math.floor(model.contextWindow / 5))
       const suppliedSources = new Map(newFiles.map(file => [file.path, file.source]))
-      const inputLimit = Math.min(inputBytes, Buffer.byteLength(reviewInput) + SNAPSHOT_INLINE_BYTES)
-      await Promise.all(missing.map(async focus => {
-        const prior = known.get(focus)
+      await Promise.all(dispatches.map(async ({ focus, prior, ranges, openItems, packet }) => {
         const meter = { requests: 0, usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
-          sourceRanges: savedSourceRanges(prior) }
+          sourceRanges: ranges }
         meters.set(focus, meter)
         let outcome = await reviewLane({ focus, goal: params.goal, input: reviewInput, inputLimit, model, registry: ctx.modelRegistry, snapshot,
           signal: active, readAllowance, resuming: Boolean(previous), suppliedSources, retry: params.retry,
-          prior, meter, onRequest: publishProgress, onCheckpoint: saveCheckpoint }, bundle, deadlineAt)
+          openItems, meter, onRequest: publishProgress, onCheckpoint: saveCheckpoint }, packet, deadlineAt)
           .catch(() => ({ focus, status: active.aborted ? 'cancelled' : 'incomplete', ...laneReceipt(meter) }))
         outcome = retainUnanswered(outcome, prior)
         if (outcome.summary) saveCheckpoint({ focus, report: outcome })
