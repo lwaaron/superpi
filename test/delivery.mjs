@@ -475,6 +475,32 @@ try {
     event.entry.display === true && event.entry.content.includes('Test the cache input')) &&
     outputWidget.get('superpi-task')?.[0]?.includes('已完成'), 'the TUI receives the persisted visible receipt and completed widget')
 
+  const condition = 'node -e "process.exit(require(\'node:fs\').readFileSync(\'ignored.txt\',\'utf8\')===\'ready\' ? 0 : 3)"'
+  await fs.writeFile(path.join(workspace, 'ignored.txt'), 'wait')
+  const batchPlan = { goal: 'Verify both acceptance criteria', finishWhenVerified: true, checks: [
+    plan.checks[0], { description: 'Verify configuration readiness', command: condition, shell },
+  ] }
+  const batch = await run('retain successful checks when a later command fails',
+    task('batch-start', 'start', batchPlan), task('batch-pending', 'run_checks', { timeout: 8 }),
+    'The second check is pending.', 'The second check needs attention.')
+  const partialBatch = batch.result('batch-pending')?.details.task
+  const firstProofId = partialBatch?.checks[0].evidence?.toolCallId
+  check(batch.result('batch-pending')?.isError && firstProofId && !partialBatch.checks[1].evidence &&
+    partialBatch.run?.steps.map(step => step.status).join(',') === 'passed,failed',
+  'a failed numbered command leaves its earlier verified sibling available for a later activity')
+  const unfinishedPath = session.sessionFile
+  session.dispose()
+  session = await attach(SessionManager.open(unfinishedPath, sessionDir))
+  check(outputWidget.get('superpi-task')?.some(line => line.includes('Verify configuration readiness')) &&
+    outputWidget.get('superpi-task')?.[0]?.includes('1/2'), 'the reopened terminal shows the precise remaining check')
+  await fs.writeFile(path.join(workspace, 'ignored.txt'), 'ready')
+  const resumedBatch = await run('finish the remaining command after reopen', task('batch-resumed', 'run_checks', { timeout: 8 }))
+  const finishedBatch = resumedBatch.result('batch-resumed')?.details.task
+  check(resumedBatch.modelCalls.length === 1 && finishedBatch?.checks[0].evidence?.toolCallId === firstProofId &&
+    finishedBatch.run?.steps.map(step => step.check).join(',') === '2' &&
+    resumedBatch.events.some(event => event.type === 'entry_appended' && event.entry.customType === 'superpi-task-receipt'),
+  'a reopened branch resumes the outstanding command, reuses existing proof, and delivers without another model turn')
+
   const textLeak = '<thinking>Review passed.\nHere is the final answer.'
   const recovered = await run('Check malformed final output', textLeak, 'Clean final answer.')
   check(recovered.modelCalls.length === 2 &&

@@ -40,7 +40,7 @@ npm run pack:offline -- .\artifacts
 
 ```powershell
 node "$env:USERPROFILE\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\pnpm\bin\pnpm.cjs" `
-  add "file:C:\path\to\superpi-0.48.0-offline-win32-x64.tgz" --offline --ignore-scripts
+  add "file:C:\path\to\superpi-0.49.0-offline-win32-x64.tgz" --offline --ignore-scripts
 ```
 
 归档包含当前平台的 Pi 和生产依赖。使用远程模型时仍需连通模型服务。已经安装 Pi 时，也可在配置中用 `cliPath` 指定运行时。
@@ -232,10 +232,10 @@ New-Item -ItemType Junction `
 ### 使用 pnpm 手工安装
 
 ```powershell
-npm pack                                        # 得到 superpi-0.48.0.tgz
+npm pack                                        # 得到 superpi-0.49.0.tgz
 cd "$env:USERPROFILE\.dsh\profiles\desktop"
 node "$env:USERPROFILE\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\pnpm\bin\pnpm.cjs" `
-  add "file:C:\path\to\superpi-0.48.0.tgz" --ignore-scripts
+  add "file:C:\path\to\superpi-0.49.0.tgz" --ignore-scripts
 ```
 
 不要在 profile 里用 `npm install`：npm 会另写一份 `package-lock.json`，而宿主插件管理器用的是 pnpm，两套锁文件互相看不见，下次插件安装就会把 node_modules 重建成 pnpm 理解的样子。
@@ -485,9 +485,11 @@ npm install --prefix <插件>/.runtime --save-exact --no-audit --no-fund --logle
 
 每个弹窗最多等待 5 分钟。关闭弹窗、留空或超时会返回「未回答」。停止这轮任务会同时关闭询问。面板发送失败时会保留输入，以便重试。新开的 `superpi` 命令行与面板会自动同步该扩展。
 
-## 任务验收与恢复（0.21.0）
+## 多步任务的验收、恢复与回执
 
 - 多步任务可用 `task_progress` 记录目标与验收项。命令验收通过 `verify` 关联实际退出结果与 Git 工作区文件内容。后续源码变化会让对应证据回到待验证。人工或 Agent 的现场观察独立标记为已观察。两端输入 `/superpi-task` 可看当前会话分支的记录。
+- 开发完成后，Agent 可调用 `task_progress.run_checks`，按计划依次执行尚无有效证据的测试与独立审查，共用一个总时限。开启 `finishWhenVerified` 的任务在证据齐备后生成可见回执。中途停止或关闭会话时，已核对的证据保留。对无法确认已停止的工作区命令，确认其退出后再执行对应的编号验收。
+- 面板和命令行会显示当前验收项、总时限和失败原因。重开会话后可查看下一项及上次是否中断。用户可以停止本轮，收到询问时可在两端直接回答。
 - `verify` 为每次运行要求秒级截止时间，并保留失败退出码与已读到的输出。需要故意改错代码来验证测试时，使用 `scope: "snapshot"` 和 `mutations` 提交精确替换。副本包含当前跟踪文件和未忽略的未跟踪文件。依赖安装按项目要求在副本内完成。执行进程仍使用当前系统账户的权限。
 - 指定 `expectedFailure` 可做带对照的变异验证。SuperPi 从同一次源码采集建立两个独立副本，在总截止时间内运行同一条命令。原始副本须通过，指定的字面诊断须只在变异后的失败输出中出现。工具保留两个实际退出码与各自输出，从完整 Shell 记录核对长日志中的诊断。
 - 重跑编号验收命令时，SuperPi 会在同一会话中先将这一项恢复为待验收。即使主动停止或进程退出，重新打开会话仍会显示待验收。新命令成功退出且源码指纹一致后才记录新的通过证据。
@@ -504,14 +506,16 @@ npm install --prefix <插件>/.runtime --save-exact --no-audit --no-fund --logle
 - 多步骤任务提前收尾时，SuperPi 会把待办的验收项交回模型。此后每取得一项新的验收证据，都能在下次提前收尾时接着执行。重复验证同一项不会触发额外续跑。手动停止、排队的用户输入和明确登记的阻塞仍然优先。
 - 同一目标下修订验收计划时，SuperPi 核对当前源码，保留仍匹配的编号命令证据。变动过的测试命令和变异条件须重新执行，原先的证据随次序调整移到对应的验收项。两端都能查看修订后的验收进度。
 - 审查员报告阻塞问题时须引用当前源码原文。同一份代码的续审会收到上次的阻塞问题和待查项。逐项写出原因并引用能核对的源码，才能关闭对应问题。两端的审查结果都显示问题、原文和关闭依据。
+- 审查员可以在最终报告前，按验收项提交已核对的观察和相关问题。SuperPi 在同一份源码快照上核对引文，即时写入会话。模型断流或重新打开会话时，续审复用这些观察，保留还未关闭的问题。验收通过仍要求完整报告。
 
-## 审查恢复与交付度量（0.23.0）
+## 工程基准与评分
 
 - 审查员可列出和检索快照内的文件，定位未改动的调用方与既有测试。报告的覆盖限制只记录仓库内仍缺失的审查证据，测试执行由 `verify` 单独记录。面板和命令行沿用同一份报告。
 - 同一份源码、基准、有效范围和验收目标，可从当前会话分支复用已完成报告，只补跑缺席的审查。代码变化会触发新的审查。一次用户请求内同一份证据最多发起两轮。持续无进展的重复调用会结束本轮，并保留具体待验收项。
-- `npm run test:engineering` 校验评分与运行记录。`node test/engineering-bench.mjs list` 列出场景，`prepare <场景> <新目录>` 生成等价的 Git 起点和任务描述，`grade <场景> <工作区>` 独立检查代码。`metrics <events.jsonl> <process.json>` 根据 Pi 的 JSONL 事件和进程记录（`exit`、`seconds`、可选 `deadline`）统计实际收尾状态、耗时和审查请求。当前场景覆盖并发缓存与持久化迁移。
+- `npm run test:engineering` 校验评分与运行记录。`node test/engineering-bench.mjs list` 列出场景，`prepare <场景> <新目录>` 生成对应的 Git 起点和任务描述，`grade <场景> <工作区>` 独立检查代码。场景覆盖并发缓存、状态迁移和持久队列。持久队列验证多进程争抢、异常退出后的租约恢复、旧令牌失效、原有消费者兼容及输入校验。
+- `metrics <events.jsonl> <process.json>` 根据事件和进程记录汇总实际收尾状态、耗时、用户消息、审查请求与验收项运行记录。输入、输出和缓存用量按观测到的模型响应与新审查报告计数。旧日志或进程强制停止可能缺少部分用量。
 - 在仓库中用 `node test/engineering-bench.mjs compare async-cache _scratch/cache-run 120` 可运行一个三方对照。报告目录必须是新目录。SuperPi、Codex 和 Claude Code 串行接收同一份提示词，分别在相同 Git 树的临时工作区上运行，每个有独立的 120 秒时限。外部 CLI 从 `PATH` 查找并沿用已有授权。不同产品实际使用的模型与工具权限可能不同。
-- 本机 `compare` 的工作目录共享宿主文件系统。要测盲测交付，把 Agent 放进只能接触公开起点的独立环境，等它退出后，再用单独的评分进程检查产物。
+- 本机 `compare` 的工作目录共享宿主文件系统。做盲测时，只把公开起点交给 Agent 容器，等它退出后再评分。用 `node test/engineering-sandbox.mjs probe` 实测 Pi 读写、Shell 和子进程的权限边界，用 `node test/engineering-sandbox.mjs grade durable-jobs <工作区>` 在独立容器内对只读快照评分。需要本地 Linux Docker 引擎，构建镜像可能需要访问 npm。日常 TUI 与面板仍沿用当前系统账户权限。
 - `comparison.json` 保留提示词指纹、起点树、原始日志路径、进程退出和独立断言评分。对照工具在同一份交付快照上检查功能与源码完整性。成功收尾、所有断言通过且源码检查通过时记为已交付。`sourceIntegrity` 检查 Git 跟踪及未忽略的 JavaScript、TypeScript 和 JSON 普通文件，分别记录非法 UTF-8 与坏字符。超时保留已产生的代码和可判定分数。缺少可执行文件时记录原因，评分和源码检查留空。报告保留工作区路径，便于复核代码改动。
 - 0.38.0 支持以 `task_progress.start` 的 `finishWhenVerified` 声明由完整验收证据完成任务。最后一项验收单独执行并通过后，运行时在正常收尾时重验源码并写入可见回执。命令行及面板可在历史消息中查看回执。排队的用户消息正常进入模型，同批后续改动会撤回过期证据。工程对照认可任务状态一致且回合正常结束的回执。
 - 0.37.0 的状态迁移题自带可运行的并发保存回归。用例让首次异步替换保持进行中，再启动同一目标文件的其余保存，模拟短暂的 `EPERM` 占用冲突。公开测试与独立评分使用同一受控场景和不同样本，同时保留实际文件系统的并发断言。变更后的起点、提示词和评分分母随报告版本记录。

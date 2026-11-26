@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { withBusyReplacement } from './busy-replacement.mjs'
+import { durableJobs } from './durable-jobs.mjs'
 
 function deferred() {
   let resolve
@@ -57,6 +58,7 @@ await withBusyReplacement(async check => {
 const busyReplacementSource = readFileSync(new URL('./busy-replacement.mjs', import.meta.url), 'utf8')
 
 export const cases = {
+  'durable-jobs': durableJobs,
   'async-cache': {
     prompt: 'Fix the asynchronous cache while preserving createCatalog and the lookup/refresh API. ' +
       'Concurrent lookups of the same key share one in-flight load. Other keys load independently. TTL starts when a load succeeds. ' +

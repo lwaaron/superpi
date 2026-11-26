@@ -959,6 +959,25 @@ try {
     automaticReview.records.some(record => record.type === 'entry_appended' && isReceipt(record.entry)),
   'automatic completion waits for both independent reports and then uses the same visible receipt')
 
+  reviewReplies = { correctness: [clean('correctness')], tests: [clean('tests')] }
+  const checklistRun = await run('finish command and review in one acceptance call', [
+    useTool('task_progress', { action: 'start', goal: 'Deliver the tested and reviewed source', finishWhenVerified: true,
+      checks: [{ description: 'Run the acceptance assertion', command: acceptanceCommand },
+        { description: 'Review all changed source', review: true }] }, 'checklist_start'),
+    useTool('task_progress', { action: 'run_checks', timeout: 8 }, 'checklist_run'),
+    { delta: 'The independent review still needs to run.' }, { delta: 'The checklist is still pending.' },
+  ])
+  const checksResult = toolResult(checklistRun, 'checklist_run')?.details
+  const nestedChecks = checklistRun.records.filter(record => record.type === 'tool_execution_start' && record.parentToolCallId === 'checklist_run')
+  check(checklistRun.requests.length === 4 && nestedChecks.map(record => record.toolName).join(',') === 'verify,review_changes' &&
+    checksResult?.task?.checks.every(check => check.evidence) &&
+    checklistRun.records.some(record => record.type === 'entry_appended' && isReceipt(record.entry)),
+  'a single acceptance call runs both checks through Pi and the panel receives a completion receipt without another parent request')
+  check(checksResult?.task.run?.steps?.map(step => step.status).join(',') === 'passed,passed' &&
+    checksResult.task.run.steps[1].requests === 2 && checksResult.task.run.steps.every(step => Number.isFinite(step.milliseconds)) &&
+    checklistRun.records.some(record => record.method === 'setWidget' && record.widgetLines?.some(line => line.includes('Review all changed source'))),
+  'the acceptance run persists step timing and real reviewer requests while the panel displays the current criterion')
+
   reviewReplies = {
     correctness: [publish('Found a concrete regression.', [{ severity: 'blocking', path: 'origin.txt', line: 1, quote: 'NEW reviewed line',
       problem: 'This changed line breaks the fixture contract.' }], 'found')],
@@ -1461,6 +1480,36 @@ try {
     exhaustedReport.proof.reviewers.some(lane => lane.focus === 'correctness' && lane.status === 'incomplete' &&
       lane.failure === 'truncated' && lane.outputRetry?.request === 2 && lane.fallback === 'truncated'),
   'one report repair and one change of evidence strategy stay bounded when the provider keeps truncating')
+
+  const verifiedFact = { criterion: 1, path: 'catalog.mjs', line: 1, quote: 'lookup = () => undefined',
+    observation: 'The changed function returns undefined even when the caller expects a value.' }
+  const saveFact = useTool('submit_review', {
+    checkpoint: verifiedFact, summary: 'The return value conflicts with the existing contract.',
+    findings: [{ severity: 'blocking', path: verifiedFact.path, line: verifiedFact.line, quote: verifiedFact.quote,
+      problem: verifiedFact.observation }],
+    gaps: [{ path: 'public.test.mjs', reason: 'The unchanged caller expectation still needs examination.' }],
+  }, 'save_review_fact')
+  reviewReplies = { correctness: [saveFact, cutReview, cutReview, cutReview], tests: [clean('tests')] }
+  const partialFacts = await run('preserve the validated review result when the next report truncates', [
+    beginReview('Review the lookup contract and test evidence', 'fact_plan'), requestReview({ check: 1 }, 'checkpoint_facts'),
+    { delta: 'Some review criteria remain pending.' }, { delta: 'The pending coverage remains.' },
+  ])
+  const factsResult = toolResult(partialFacts, 'checkpoint_facts')?.details?.review
+  check(factsResult?.status === 'findings' && factsResult.pendingReviewers.includes('correctness') &&
+    factsResult.reviewers.some(lane => lane.acceptedEvidence?.some(item => item.observation === verifiedFact.observation) &&
+      lane.findings?.some(item => item.problem === verifiedFact.observation)) &&
+    partialFacts.records.some(record => record.type === 'entry_appended' && record.entry.customType === 'superpi-review-checkpoint' &&
+      record.entry.data.report?.acceptedEvidence?.length),
+  'a validated partial finding is durably recorded before a later truncated draft, with full coverage still pending')
+  reviewReplies = { correctness: [clean('correctness')], tests: [clean('tests')] }
+  const carryFacts = await run('reuse the accepted source fact on the same snapshot', [
+    requestReview({ check: 1 }, 'resume_checkpoint_facts'), { delta: 'The earlier blocker is still open.' }, { delta: 'Review state recorded.' },
+  ])
+  const resumedFacts = toolResult(carryFacts, 'resume_checkpoint_facts')?.details?.review
+  const carryRequest = reviewRequests(carryFacts).find(payload => laneOf(payload) === 'correctness')
+  check(carryRequest && packetOf(carryRequest).acceptedEvidence?.[0]?.quote === verifiedFact.quote &&
+    resumedFacts?.status === 'findings' && !resumedFacts.recorded && resumedFacts.reused.join(',') === 'tests',
+  'a missing final report does not discard validated facts or let a later generic clear response erase the recorded blocker')
   assert.equal((await request(session() + '/controls/retry', { enabled: false })).enabled, false)
 
   reviewReplies = { correctness: [publish('Incorrect reading of the current source.', [{ severity: 'blocking', path: 'catalog.mjs',
@@ -1789,7 +1838,7 @@ try {
     server.closeAllConnections()
     await new Promise(resolve => server.close(resolve))
   }
-  await fs.rm(temp, { recursive: true, force: true })
+  await fs.rm(temp, { recursive: true, force: true, maxRetries: 3 })
 }
 
 for (const item of checks) if (!item.condition) console.error('FAIL: ' + item.label)

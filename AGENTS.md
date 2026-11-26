@@ -39,6 +39,7 @@ DSH（DeepSeek Runtime）插件：把 pi 编码 agent 装进 DSH 的侧栏面板
 | `extensions/superpi-verification.mjs` | Git 普通文件快照、源码指纹、命令运行期的文件版本校验、精确变异和 Shell 截止时间。文件版本包含设备、文件标识和状态时间，与持久化的源码指纹分开使用。编号验收使用文件系统通知捕获短暂出现的工作区路径，沿用 Git 的跟踪和忽略规则。观察明确失败时保留命令结果与待验收状态。带对照的变异验证从同一次采集建立两个独立副本，使用 Shell 原始记录匹配诊断。 |
 | `extensions/superpi-review.mjs` | 正确性和测试覆盖使用同一 Git 快照，在独立的 Pi 上下文中并行审查。源码齐备且符合字节预算时，首轮提供当前源码及差异或精确基准，无需先查文件。显式范围由 Git 路径匹配，缺少相关源码时使用按需查阅。持续输出重开空闲窗口，整次评审遵循总时限。可识别的断流可从已读源码恢复一次，沿用原时限、请求预算和会话重试设置。暂时性上游错误沿用 Pi 的分类和退避设置，失败的一路保留原输入和已读源码并补发一次。审查输出截断后保留原证据并单独补交一次报告。完整快照的报告存在待查项时，续审在预算允许下同送源码与待查项。Pi 保存已读范围和已提交报告，基准、源码、有效范围、验收目标与模型相同时复用。阻塞意见引用当前源码原文，同一快照中未解决的阻塞项和覆盖缺口随续审保留，逐项给出理由与可核对的引文后关闭。当前用户请求对同一份证据最多发起两轮。完整且无阻塞项的结果用于交付验收。模型请求边界记录计数，超时保留已知失败类型。 |
 | `src/runtime-extensions.mjs` | 共享扩展清单及幂等同步。面板启动和 TUI 安装器同步同一套文件，Pi 按官方路径加载。 |
+| 0.49.0 验收与审查 | `task_progress.run_checks` 用 Pi 的 `executeTool` 在一个总时限内执行已登记且缺少证据的检查。分支记录保留当前项、上次中断和实际用时。`submit_review.checkpoint` 先核对验收项与源码引文，再即时保存观察与待处理问题。两端显示同一状态和回执。 |
 | `extensions/superpi-session-controls.ts` | 使用 Pi 的扩展 API 读取有效重试设置，按当前可用模型范围反向切换。面板通过 host 的会话控制接口访问，TUI 保留原生选模键位并提供 `/superpi-retry`。 |
 | `src/event-verdict.mjs` | 把上面那份判读**挂到 pi 的 `message_end` 上**（0.18.0）：`decoratePiEvent(record)` 只加一个 `verdict` 字段，不改 pi 的任何字段，**永不抛**。它解决了两个结构问题：① 面板不再需要一份孪生判据（0.16.2~0.17.3 的「表在契约、算法在面板」，共同盲区测不出）；② 面板不再依赖 `/contract` 先到（0.17.3 那个「契约晚到 → 提示永久丢失」的竞态随依赖一起消失，而不是靠启动顺序绕开）。装饰发生在 `PiProcess.pushEvent` 里 —— 那是**唯一**同时喂 SSE 与环形缓冲回放的地方。 |
 | `extensions/superpi-text-bytes.mjs` | **「什么是坏字节」的唯一判据**（0.18.0）：`scanTextBytes()` 三类 —— `replacement`（U+FFFD，字符的字节已经丢了、不可逆）、`control`（C0 除 `\t\n\r`，外加 DEL）、`surrogate`（孤立代理项：JSON 合法、落盘必坏）。计数全量、位置截断（前 20 处，带行列号）。四个消费者共用：回合判据、写入闸、`test/parity.mjs` §9、`test/host-parity.mjs` 3.98。**为什么必须收成一处**：这三处原本各写一份，而运行时**一份也没有** —— 实测 7 次 `write` 的 content 含 U+FFFD、7 次全部落盘。 |
@@ -477,6 +478,8 @@ npm run test:verdict                            # 只跑回合判据门禁（异
 npm run test:delivery                           # 真 Pi SDK：隔离验证、证据、恢复与模型输入
 npm run test:reliability                        # 真 Pi RPC + 本地流式故障场景
 npm run test:engineering                        # 工程评分与对照运行；离线验证同一起点、完成事件和进程时限
+node test/engineering-sandbox.mjs probe          # 用本地 Linux Docker 实测 Pi 项目读写、Shell 与子进程边界
+node test/engineering-sandbox.mjs grade durable-jobs <workspace> # 无网容器对只读工作快照独立评分
 npm run test:integrity                          # 只跑写入闸门禁（含 pi 真 ExtensionRunner 跑 block 链路）
 npm run test:tui                                # 只跑输入框扩展门禁（jiti 加载真 .ts + pi 真 CustomEditor + 真按键序列）
 npm run superpi:editor                               # 把 extensions/superpi-editor.ts 装进 pi（<piAgentDir>/extensions/）

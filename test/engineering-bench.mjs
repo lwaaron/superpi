@@ -29,7 +29,11 @@ function scenario(name) {
 
 async function prepare(folder, files) {
   await fs.mkdir(folder)
-  for (const [name, text] of Object.entries(files)) await fs.writeFile(path.join(folder, name), text)
+  for (const [name, text] of Object.entries(files)) {
+    const target = path.join(folder, name)
+    await fs.mkdir(path.dirname(target), { recursive: true })
+    await fs.writeFile(target, text)
+  }
 }
 
 function baselineCommit(cwd) {
@@ -61,9 +65,11 @@ async function scoreCandidate(selected, folder, check) {
     for (const [label, verify] of Object.entries(selected.checks)) {
       let timer
       try {
-        const deadline = new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('Assertion timed out')), 1800) })
+        const deadline = new Promise((_, reject) => {
+          timer = setTimeout(() => reject(new Error('Assertion timed out')), selected.checkTimeoutMs ?? 1800)
+        })
         const sample = await fs.mkdtemp(path.join(temp, 'sample-'))
-        await Promise.race([verify(candidate, path.join(sample, 'settings.json'), check), deadline])
+        await Promise.race([verify(candidate, path.join(sample, 'settings.json'), check, folder), deadline])
         checks.push({ label, pass: true })
       } catch (error) {
         checks.push({ label, pass: false, reason: String(error?.message ?? error).slice(0, 350) })
@@ -83,7 +89,7 @@ async function grade(name, folder) {
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) =>
     /^(PATH|PATHEXT|SYSTEMROOT|WINDIR|TEMP|TMP|TMPDIR|LANG|LC_ALL)$/i.test(key)))
   const started = performance.now()
-  const { stdout } = await execute(process.execPath, [self, 'worker', name, folder], {
+  const { stdout } = await execute(process.execPath, [...(selected.nodeFlags ?? []), self, 'worker', name, folder], {
     cwd: folder, env, timeout: GRADING_TIMEOUT_MS, windowsHide: true, maxBuffer: 512 * 1024,
   })
   const checks = JSON.parse(stdout.trim().split('\n').at(-1))
@@ -133,11 +139,30 @@ function runOutcome(process, trace, task, assistant, settlement, receipt) {
 }
 
 async function runMetrics(events, observed) {
-  const trace = { settlements: 0, assistantResponses: 0, toolResults: 0, reviewerRequests: 0, reviewReplays: 0, malformedLines: 0 }
+  const trace = { settlements: 0, userMessages: 0, assistantResponses: 0, toolResults: 0, reviewerRequests: 0, reviewReplays: 0, malformedLines: 0 }
   const requestCounts = new Map()
   const reviewCalls = new Set()
   const knownCounts = new Set()
+  const countedReports = new Set()
   const validCount = n => Number.isSafeInteger(n) && n >= 0
+  const tokenCounts = () => ({ records: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 })
+  const observedUsage = { primary: tokenCounts(), reviewers: tokenCounts() }
+  const countTokens = (total, sample) => {
+    if (!validCount(sample?.inputTokens) || !validCount(sample?.outputTokens)) return
+    total.records += 1
+    total.inputTokens += sample.inputTokens
+    total.outputTokens += sample.outputTokens
+    total.cacheReadTokens += validCount(sample.cacheReadTokens) ? sample.cacheReadTokens : 0
+    total.cacheWriteTokens += validCount(sample.cacheWriteTokens) ? sample.cacheWriteTokens : 0
+  }
+  const recordReviewUsage = review => {
+    if (!review || countedReports.has(review.attemptId)) return
+    if (review.attemptId) countedReports.add(review.attemptId)
+    if (review.execution === 'reused') trace.reviewReplays += 1
+    for (const lane of review.reviewers ?? []) {
+      if (!review.reused?.includes(lane.focus)) countTokens(observedUsage.reviewers, lane.usage)
+    }
+  }
   const countReview = (id, requests, complete) => {
     if (!validCount(requests)) return
     if (typeof id !== 'string' || !id) { trace.reviewerRequests += requests; return }
@@ -162,17 +187,27 @@ async function runMetrics(events, observed) {
         task = record.entry.data
         receipt = undefined
       } else if (record.entry?.customType === 'superpi-task-receipt') receipt = record.entry
+      else if (record.entry?.customType === 'superpi-review-result') recordReviewUsage(record.entry.data)
     }
     if (record?.type === 'agent_settled') { settlement = record; trace.settlements += 1 }
     if (record?.type !== 'message_end') continue
     const message = record.message
-    if (message?.role === 'user') receipt = undefined
-    if (message?.role === 'assistant') { assistant = message; trace.assistantResponses += 1 }
+    if (message?.role === 'user') {
+      receipt = undefined
+      trace.userMessages += 1
+    }
+    if (message?.role === 'assistant') {
+      assistant = message
+      trace.assistantResponses += 1
+      const usage = message.usage
+      if (usage) countTokens(observedUsage.primary, { inputTokens: usage.input, outputTokens: usage.output,
+        cacheReadTokens: usage.cacheRead, cacheWriteTokens: usage.cacheWrite })
+    }
     if (message?.role !== 'toolResult') continue
     trace.toolResults += 1
     const review = message.toolName === 'review_changes' ? message.details?.review : undefined
     if (!review) continue
-    if (review.execution === 'reused') trace.reviewReplays += 1
+    recordReviewUsage(review)
     const reused = new Set(review.reused ?? [])
     const lanes = review.reviewers ?? []
     const reportedRequests = lanes.reduce((sum, lane) => !reused.has(lane.focus) && validCount(lane.requests) ? sum + lane.requests : sum, 0)
@@ -185,6 +220,7 @@ async function runMetrics(events, observed) {
   const outcome = runOutcome(observed, trace, task, assistant, settlement, receipt)
   return { outcome, seconds: observed.seconds,
     task: task?.status ?? null, model: assistant?.model ?? null, ...trace, unmeteredReviews,
+    observedUsage, ...(task?.run ? { acceptance: task.run } : {}),
     ...(outcome === 'finished' ? { completion: assistant.stopReason === 'stop' ? 'assistant' : 'verification_receipt' } : {}),
     ...(assistant?.errorMessage ? { reason: String(assistant.errorMessage).slice(0, 350) } : {}) }
 }
@@ -397,6 +433,18 @@ async function selfTest() {
       count += 2
       console.log(name + ' baseline ' + before.passed + '/' + before.total + ' reference ' + after.passed + '/' + after.total)
     }
+    const queue = scenario('durable-jobs')
+    const leaseImplementation = queue.reference['lib/sqlite-queue.mjs']
+    const inclusiveExpiry = leaseImplementation.replaceAll('expires > ?', 'expires >= ?')
+    assert.notEqual(inclusiveExpiry, leaseImplementation)
+    const queueMutant = path.join(temp, 'queue-accepts-stale-lease')
+    await prepare(queueMutant, { ...queue.files, ...queue.reference, 'lib/sqlite-queue.mjs': inclusiveExpiry })
+    const leaseScore = await grade('durable-jobs', queueMutant)
+    assert.ok(leaseScore.checks.some(check => check.label === 'expired tokens fail at the exact boundary' && !check.pass),
+      'the independent queue grader catches an exact-boundary lease regression')
+    assert.ok(leaseScore.checks.some(check => check.label === 'concurrent workers claim a single persisted job exactly once' && check.pass),
+      'the mutation reproduces the intended regression while other independent queue checks still run')
+    count += 2
     const migration = scenario('state-migration')
     const serialized = migration.reference['settings.mjs']
     const withoutQueue = serialized.replace('(writes.get(file) ?? Promise.resolve()).catch(() => {})', 'Promise.resolve()')
@@ -418,7 +466,7 @@ async function selfTest() {
       'the visible project test catches the same regression before delivery')
     count += 3
     const invalid = path.join(temp, 'invalid-implementation')
-    const firstCase = Object.keys(cases)[0]
+    const firstCase = 'async-cache'
     const selected = scenario(firstCase)
     await prepare(invalid, { ...selected.files, [selected.entry]: 'export const = invalid syntax' })
     const failedImport = await grade(firstCase, invalid).catch(error => ({ infrastructureError: error.message }))
@@ -459,6 +507,25 @@ async function selfTest() {
         review: { status: 'timed_out', reviewers: [{ focus: 'tests', status: 'cancelled' }] },
       } } }])
     assert.equal((await metrics(null, true)).unmeteredReviews, 1, 'an uncounted legacy timeout is identified separately')
+    await writeTrace([
+      { type: 'message_end', message: { role: 'user' } },
+      { type: 'message_end', message: { role: 'assistant', usage: { input: 16, output: 4, cacheRead: 30, cacheWrite: 2 } } },
+      { type: 'entry_appended', entry: { type: 'custom', customType: 'superpi-review-result', data: {
+        attemptId: 'batch-review', reviewers: [{ focus: 'tests', usage: { inputTokens: 90, outputTokens: 99 } },
+          { focus: 'correctness', usage: { inputTokens: 11, outputTokens: 7, cacheReadTokens: 5, cacheWriteTokens: 3 } }], reused: ['tests'],
+      } } },
+      { type: 'entry_appended', entry: { type: 'custom', customType: 'superpi-task', data: { status: 'active', run: {
+        state: 'pending', check: 2, timeout: 60, steps: [{ check: 1, status: 'passed', milliseconds: 8 }],
+      } } } },
+    ])
+    const recorded = await metrics(null, true)
+    assert.deepEqual(recorded.observedUsage, {
+      primary: { records: 1, inputTokens: 16, outputTokens: 4, cacheReadTokens: 30, cacheWriteTokens: 2 },
+      reviewers: { records: 1, inputTokens: 11, outputTokens: 7, cacheReadTokens: 5, cacheWriteTokens: 3 },
+    }, 'the measured review and main-model tokens exclude reused evidence')
+    assert.deepEqual([recorded.userMessages, recorded.acceptance?.state, recorded.acceptance?.steps[0].milliseconds], [1, 'pending', 8],
+      'deadline reports retain user activity and the recorded acceptance step timing')
+    count += 2
     await writeTrace(trace.slice(0, -1))
     assert.equal((await metrics(0)).outcome, 'no_settlement', 'process exit alone cannot finish a run')
     trace[2].entry.data.status = 'blocked'
