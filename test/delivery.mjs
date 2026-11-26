@@ -501,6 +501,15 @@ try {
     resumedBatch.events.some(event => event.type === 'entry_appended' && event.entry.customType === 'superpi-task-receipt'),
   'a reopened branch resumes the outstanding command, reuses existing proof, and delivers without another model turn')
 
+  const timeoutBatch = await run('check the shared deadline while a registered command is running',
+    task('deadline-plan', 'start', { goal: 'Run a wait-bound acceptance check', checks: [{
+      description: 'Wait for the test runner', command: 'node -e "setTimeout(() => {}, 6000)"', shell,
+    }] }), task('deadline-batch', 'run_checks', { timeout: 1 }), 'The command is still pending.', 'The deadline remains visible.')
+  const timedOut = timeoutBatch.result('deadline-batch')?.details?.task?.run
+  check(timedOut?.state === 'interrupted' && timedOut.steps[0]?.status === 'timed_out' &&
+    outputWidget.get('superpi-task')?.some(line => line.includes('验收超时 / Acceptance deadline reached')),
+  'the elapsed deadline is visible even if the cancelled nested tool reports an abort')
+
   const textLeak = '<thinking>Review passed.\nHere is the final answer.'
   const recovered = await run('Check malformed final output', textLeak, 'Clean final answer.')
   check(recovered.modelCalls.length === 2 &&

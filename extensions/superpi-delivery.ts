@@ -272,6 +272,7 @@ export default function delivery(pi: ExtensionAPI) {
         const cutoff = performance.now() + params.timeout * 1000
         const deadline = AbortSignal.timeout(params.timeout * 1000)
         const active = signal ? AbortSignal.any([signal, deadline]) : deadline
+        const deadlineExpired = () => active.aborted && active.reason === deadline.reason
         const run: AcceptanceRun = { state: 'running', startedAt: new Date().toISOString(), timeout: params.timeout, steps: [] }
         const saveRun = () => {
           task = { ...currentTask(ctx)!, run: { ...run, steps: run.steps.slice() } }
@@ -302,9 +303,10 @@ export default function delivery(pi: ExtensionAPI) {
             const review = details?.review
             if (review?.key) pi.appendEntry(REVIEW_RESULT, review)
             const passed = !outcome.isError && Boolean(currentTask(ctx)?.checks[index].evidence)
+            const status = passed ? 'passed' : deadlineExpired() ? 'timed_out' : active.aborted ? 'aborted' :
+              details?.verification?.status ?? review?.status ?? 'unavailable'
             run.steps.push({ check: run.check,
-              status: passed ? 'passed' : details?.verification?.status ?? review?.status ?? 'unavailable',
-              milliseconds: Math.round(performance.now() - started), ...(review ? { requests: review.newRequests } : {}) })
+              status, milliseconds: Math.round(performance.now() - started), ...(review ? { requests: review.newRequests } : {}) })
             run.uncertainCommand = details?.verification?.terminationConfirmed === false && !check.mutation
             if (!passed) {
               failure = outcome.result.content.flatMap(block => block.type === 'text' ? [block.text] : [])
@@ -324,8 +326,12 @@ export default function delivery(pi: ExtensionAPI) {
         }
         const ready = !active.aborted && !run.reason && canFinish(ctx) && hasAllEvidence(currentTask(ctx)!)
         run.state = active.aborted ? 'interrupted' : ready ? 'verified' : 'pending'
-        run.reason ??= deadline.aborted ? 'Acceptance deadline reached.' : signal?.aborted ? 'Acceptance stopped.' :
-          !canFinish(ctx) ? 'Acceptance paused for pending input or a workspace command.' : ready ? undefined : 'Acceptance still needs evidence.'
+        if (active.aborted) {
+          const interruption = deadlineExpired() ? '验收超时 / Acceptance deadline reached.' : '已停止验收 / Acceptance stopped.'
+          run.reason = [interruption, run.reason].filter(Boolean).join(' ')
+        } else if (!ready) {
+          run.reason ??= canFinish(ctx) ? 'Acceptance still needs evidence.' : 'Acceptance paused for pending input or a workspace command.'
+        }
         saveRun()
         const result = taskResult(task, [run.reason, ...failure].filter(Boolean).join('\n\n'), !ready)
         return { ...result, details: { ...result.details, ...(details?.review ? { review: details.review } : {}) },
