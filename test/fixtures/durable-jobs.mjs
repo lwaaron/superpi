@@ -9,8 +9,8 @@ const sqliteFlags = process.allowedNodeEnvironmentFlags.has('--experimental-sqli
 const prompt = `Implement a durable local job queue across the existing Node modules. Preserve the synchronous openQueue(file, { now = Date.now } = {}) API in queue.mjs and compatibility with consumer.mjs. Use built-in Node modules, including SQLite if useful.
 
 - enqueue(key, payload, { availableAt = now() } = {}) accepts nonempty string keys, JSON payloads and nonnegative safe integer times. Repeated keys return the original string id and keep its payload, including after completion and reopening.
-- claim(worker, leaseMs) returns null or { id, key, payload, token, attempts }. Take the earliest eligible job, then insertion order. One process can hold a live lease. At exact expiry a new claim is eligible with a new token and incremented attempts.
-- ack(id, token) completes the current live lease. retry(id, token, delayMs) clears it and reschedules for now() + delayMs. Both return false for stale or expired tokens, and completed jobs stay completed.
+- claim(worker, leaseMs) requires a nonempty string worker and a positive safe integer lease duration. Return null or { id, key, payload, token, attempts }. Take the earliest eligible job, then insertion order. One process can hold a live lease. At exact expiry a new claim is eligible with a new token and incremented attempts.
+- ack(id, token) completes the current live lease. retry(id, token, delayMs) requires a nonnegative safe integer delay and clears the lease to reschedule for now() + delayMs. Both return false for stale or expired tokens, and completed jobs stay completed.
 - Multiple processes may open, enqueue and claim concurrently. A worker can die without closing its queue. Its lease persists and can be recovered when it expires.
 - Validate bad input before changing state. Keep close() available. Add regression tests, run node --test, and leave changes uncommitted.
 `
@@ -61,6 +61,14 @@ test('processNext consumes an enqueued payload using the public API', async () =
   } finally {
     queue.close()
   }
+})
+
+test('rejecting a zero-duration lease leaves the first attempt available', t => {
+  const queue = openQueue(':memory:', { now: () => 1000 })
+  t.after(() => queue.close())
+  queue.enqueue('visible-lease', true)
+  assert.throws(() => queue.claim('worker', 0))
+  assert.equal(queue.claim('other', 10)?.attempts, 1)
 })
 `
 const schema = `export const schema = \`
@@ -293,15 +301,15 @@ export const durableJobs = {
     }),
     'invalid inputs leave queue state unchanged': (api, file) => withQueues(api, file, ({ open }) => {
       const queue = open()
-      assert.throws(() => queue.enqueue('', 1))
-      assert.throws(() => queue.enqueue('invalid-json', { value: undefined }))
-      assert.throws(() => queue.enqueue('invalid-time', 7, { availableAt: -1 }))
+      assert.throws(() => queue.enqueue('', 1), 'reject an empty job key')
+      assert.throws(() => queue.enqueue('invalid-json', { value: undefined }), 'reject values that JSON would discard')
+      assert.throws(() => queue.enqueue('invalid-time', 7, { availableAt: -1 }), 'reject a negative initial availability time')
       const id = queue.enqueue('valid', 1)
-      assert.throws(() => queue.claim('worker', 0))
+      assert.throws(() => queue.claim('worker', 0), 'reject a zero-duration lease before acquiring it')
       const job = queue.claim('worker', 10)
       assert.equal(job.id, id)
       assert.equal(job.attempts, 1)
-      assert.throws(() => queue.retry(id, job.token, -1))
+      assert.throws(() => queue.retry(id, job.token, -1), 'reject a negative retry delay before releasing the lease')
       assert.equal(queue.ack(id, job.token), true)
       assert.equal(queue.claim('worker', 10), null)
     }),

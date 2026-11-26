@@ -434,6 +434,14 @@ async function selfTest() {
       console.log(name + ' baseline ' + before.passed + '/' + before.total + ' reference ' + after.passed + '/' + after.total)
     }
     const queue = scenario('durable-jobs')
+    const publicQueueTest = folder => execute(process.execPath, [...queue.nodeFlags, '--test', '--test-reporter=tap', 'public.test.mjs'],
+      { cwd: path.join(temp, folder), timeout: 8000, windowsHide: true })
+    const validQueue = await publicQueueTest('durable-jobs-reference')
+    assert.match(validQueue.stdout, /ok \d+ - rejecting a zero-duration lease leaves the first attempt available/)
+    await assert.rejects(publicQueueTest('durable-jobs-baseline'), error => error.code === 1 &&
+      /not ok \d+ - rejecting a zero-duration lease leaves the first attempt available/.test(error.stdout),
+    'the public starting point exposes the lease constraint checked by the independent grader')
+    count += 2
     const leaseImplementation = queue.reference['lib/sqlite-queue.mjs']
     const inclusiveExpiry = leaseImplementation.replaceAll('expires > ?', 'expires >= ?')
     assert.notEqual(inclusiveExpiry, leaseImplementation)

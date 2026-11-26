@@ -1556,9 +1556,13 @@ assert(panelHtml.includes(zh('loading')), 'SuperPiPanel 首帧应是 loading 文
   }
   {
     const v = internals.createView()
-    const taskWidget = { method: 'setWidget', widgetKey: 'superpi-task', widgetLines: ['任务 · 2/3'] }
+    const taskWidget = { method: 'setWidget', widgetKey: 'superpi-task', widgetLines: [
+      '任务 / Task · 2/3 · 待验收 / Pending', '待检查 / Next 3 · 验证消费者重试', '上次验收中断 / Previous check run interrupted',
+    ] }
     hydrateFromSnapshot(v, { eventSeq: 42, events: [], taskWidget })
-    assert(v.widgets['superpi-task']?.lines[0] === '任务 · 2/3', '恢复快照时回显任务进度')
+    assert(v.widgets['superpi-task']?.lines[0] === taskWidget.widgetLines[0], '恢复快照时回显任务进度')
+    const taskHtml = renderToStaticMarkup(React.createElement(Composer, { ...composerProps, widgets: Object.values(v.widgets) }))
+    assert(taskHtml.includes('验证消费者重试') && taskHtml.includes('上次验收中断'), '面板输入区显示下一项验收和中断原因')
     hydrateFromSnapshot(v, { eventSeq: 0, events: [], taskWidget: { ...taskWidget, widgetLines: undefined } })
     assert(v.widgets['superpi-task'] === undefined, '切换到空任务会话时清除旧进度')
   }

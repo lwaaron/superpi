@@ -40,7 +40,7 @@ npm run pack:offline -- .\artifacts
 
 ```powershell
 node "$env:USERPROFILE\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\pnpm\bin\pnpm.cjs" `
-  add "file:C:\path\to\superpi-0.49.0-offline-win32-x64.tgz" --offline --ignore-scripts
+  add "file:C:\path\to\superpi-0.49.1-offline-win32-x64.tgz" --offline --ignore-scripts
 ```
 
 归档包含当前平台的 Pi 和生产依赖。使用远程模型时仍需连通模型服务。已经安装 Pi 时，也可在配置中用 `cliPath` 指定运行时。
@@ -232,10 +232,10 @@ New-Item -ItemType Junction `
 ### 使用 pnpm 手工安装
 
 ```powershell
-npm pack                                        # 得到 superpi-0.49.0.tgz
+npm pack                                        # 得到 superpi-0.49.1.tgz
 cd "$env:USERPROFILE\.dsh\profiles\desktop"
 node "$env:USERPROFILE\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\pnpm\bin\pnpm.cjs" `
-  add "file:C:\path\to\superpi-0.49.0.tgz" --ignore-scripts
+  add "file:C:\path\to\superpi-0.49.1.tgz" --ignore-scripts
 ```
 
 不要在 profile 里用 `npm install`：npm 会另写一份 `package-lock.json`，而宿主插件管理器用的是 pnpm，两套锁文件互相看不见，下次插件安装就会把 node_modules 重建成 pnpm 理解的样子。
@@ -512,7 +512,7 @@ npm install --prefix <插件>/.runtime --save-exact --no-audit --no-fund --logle
 
 - 审查员可列出和检索快照内的文件，定位未改动的调用方与既有测试。报告的覆盖限制只记录仓库内仍缺失的审查证据，测试执行由 `verify` 单独记录。面板和命令行沿用同一份报告。
 - 同一份源码、基准、有效范围和验收目标，可从当前会话分支复用已完成报告，只补跑缺席的审查。代码变化会触发新的审查。一次用户请求内同一份证据最多发起两轮。持续无进展的重复调用会结束本轮，并保留具体待验收项。
-- `npm run test:engineering` 校验评分与运行记录。`node test/engineering-bench.mjs list` 列出场景，`prepare <场景> <新目录>` 生成对应的 Git 起点和任务描述，`grade <场景> <工作区>` 独立检查代码。场景覆盖并发缓存、状态迁移和持久队列。持久队列验证多进程争抢、异常退出后的租约恢复、旧令牌失效、原有消费者兼容及输入校验。
+- `npm run test:engineering` 校验评分与运行记录。`node test/engineering-bench.mjs list` 列出场景，`prepare <场景> <新目录>` 生成对应的 Git 起点和任务描述，`grade <场景> <工作区>` 独立检查代码。场景覆盖并发缓存、状态迁移和持久队列。持久队列验证多进程争抢、异常退出后的租约恢复、旧令牌失效、原有消费者兼容及输入校验。公开任务与测试明确要求租约时长为正整数。
 - `metrics <events.jsonl> <process.json>` 根据事件和进程记录汇总实际收尾状态、耗时、用户消息、审查请求与验收项运行记录。输入、输出和缓存用量按观测到的模型响应与新审查报告计数。旧日志或进程强制停止可能缺少部分用量。
 - 在仓库中用 `node test/engineering-bench.mjs compare async-cache _scratch/cache-run 120` 可运行一个三方对照。报告目录必须是新目录。SuperPi、Codex 和 Claude Code 串行接收同一份提示词，分别在相同 Git 树的临时工作区上运行，每个有独立的 120 秒时限。外部 CLI 从 `PATH` 查找并沿用已有授权。不同产品实际使用的模型与工具权限可能不同。
 - 本机 `compare` 的工作目录共享宿主文件系统。做盲测时，只把公开起点交给 Agent 容器，等它退出后再评分。用 `node test/engineering-sandbox.mjs probe` 实测 Pi 读写、Shell 和子进程的权限边界，用 `node test/engineering-sandbox.mjs grade durable-jobs <工作区>` 在独立容器内对只读快照评分。需要本地 Linux Docker 引擎，构建镜像可能需要访问 npm。日常 TUI 与面板仍沿用当前系统账户权限。
