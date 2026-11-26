@@ -44,6 +44,7 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { scanTextBytes } from './superpi-text-bytes.mjs'
 
 export const GUARD_VERSION = 1
 
@@ -942,77 +943,145 @@ function foldToolResult(message) {
   return { ...message, content: blocks }
 }
 
-/**
- * 折叠旧的工具调用参数（write / edit / patch 类）。
- *
- * 为什么需要这一阶段：五个既有阶段（images / thinking / toolText / toolFold / replies）
- * 没有任何一个碰 `toolCall.arguments`。实测一个真实会话在裁剪后，前缀里 assistant 的
- * toolCall 参数仍有 1,377,032 字符 ≈ 459k tokens（其中 177 条 >2000 字符累计 248k）——
- * 它们全是 write / edit 的正文，也就是**已经落盘的文件内容**。上下文里留一份副本
- * 毫无价值：需要时模型可以重新 read 文件，那是唯一可信的真相。
- *
- * 只折叠「内容型」工具。`bash` 的 command 不折叠 —— 它是"当时干了什么"的唯一线索，
- * 而且通常很短（长的是它的**输出**，那是 toolFold 的职责）。
- *
- * id / name 必须原样保留：pi 按 toolCallId 把 toolResult 配回调用行，改了就是孤儿。
- */
 const ARG_FOLD_TOOLS = new Set(['write', 'edit', 'patch', 'apply_patch', 'multiedit', 'multi_edit'])
-/** 参数 JSON 短于这个长度就不折（折叠收益还不够占位文本本身）。 */
 const ARG_FOLD_MIN_CHARS = 1200
+const TOOL_EVIDENCE = 'superpi-tool-evidence'
+const LEGACY_DENIAL = 'SuperPi rejected these arguments before execution. See the tool result for the reason. Regenerate the input before retrying.'
 
-function foldToolCallArgs(message, completedWrites) {
-  if (message?.role !== 'assistant' || !Array.isArray(message.content)) return null
-  let changed = false
-  const blocks = message.content.map(block => {
-    if (block?.type !== 'toolCall') return block
-    const name = typeof block.name === 'string' ? block.name.toLowerCase() : ''
-    if (!ARG_FOLD_TOOLS.has(name)) return block
-    if (completedWrites && (!completedWrites.has(block.id) || !['write', 'edit'].includes(name))) return block
-    if (block.arguments?._omitted === true) return block
-    const size = safeJsonLength(block.arguments)
-    if (size < ARG_FOLD_MIN_CHARS) return block
-    const filePath = filePathOfCall({ name: block.name, args: block.arguments })
-    if (completedWrites && filePath === '') return block
-    changed = true
-    const where = filePath !== '' ? filePath : '(unknown path)'
-    return {
-      ...block,
-      arguments: {
-        _omitted: true,
-        path: filePath,
-        chars: size,
-        note: completedWrites
-          ? `[${name} completed: ${where}. Read the file for its current contents.]`
-          : `[${name} arguments omitted: ${where}. The original call remains in session history.]`,
-      },
-    }
+function completedFileNote(block) {
+  const file = filePathOfCall({ args: block.arguments })
+  return file !== '' && scanTextBytes(file).clean ?
+    `${block.name} completed for ${JSON.stringify(file)}. Read the file for its current contents.` :
+    `${block.name} completed. The original call is in the session record.`
+}
+
+function summarizeCompletedWrite(block, result) {
+  if (!ARG_FOLD_TOOLS.has(block.name) || result.isError !== false || safeJsonLength(block.arguments) < ARG_FOLD_MIN_CHARS) return
+  return completedFileNote(block)
+}
+
+function summarizeLegacyCall(block, result) {
+  if (!ARG_FOLD_TOOLS.has(block.name)) return
+  const denied = result.isError === true && block.arguments?.note === LEGACY_DENIAL
+  if (!denied && block.arguments?._omitted !== true) return
+  if (result.isError === false) return completedFileNote(block)
+  const diagnostic = result.content?.find(part => part.type === 'text')?.text
+  const detail = typeof diagnostic === 'string' ? (denied ? diagnostic : diagnostic.split(/\r?\n/, 1)[0]) : ''
+  return `${block.name} did not complete. ${scanTextBytes(detail).clean ? detail : ''}`.trim()
+}
+
+function projectToolBatch(content, toolResults, summarize) {
+  const byCall = new Map(toolResults.map(result => [result.toolCallId, result]))
+  const outcomes = new Map()
+  const retained = content.filter(block => {
+    if (block?.type !== 'toolCall') return true
+    const result = byCall.get(block.id)
+    if (!result || result.toolName !== block.name) return true
+    const outcome = summarize(block, result)
+    if (!outcome) return true
+    outcomes.set(block.id, outcome)
+    return false
   })
-  if (!changed) return null
-  return { ...message, content: blocks }
+  return outcomes.size ? { content: retained, outcomes } : null
 }
 
-/** Project only confirmed writes. The original call stays in Pi's session tree. */
-export function foldCompletedWriteArgs(message, toolResults) {
-  const completed = new Set(toolResults.filter(result => result.isError === false).map(result => result.toolCallId))
-  return completed.size === 0 ? null : foldToolCallArgs(message, completed)
+function evidenceText(outcomes) {
+  return 'Recorded tool outcomes.\n' + [...outcomes.values()].join('\n')
 }
 
-/** Compose assistant content edits from extensions within the same Pi turn boundary. */
-export function projectTurnAssistant(event, transform) {
-  const { message, messageEntryId, entries } = event
-  if (message?.role !== 'assistant' || !messageEntryId) return undefined
+/** Replace a proposal and its confirmed result together. Pi retains both raw session entries. */
+export function projectTurnToolEvidence(event, summarize) {
+  const { message, messageEntryId, entries, toolResults, toolResultEntryIds } = event
+  if (message?.role !== 'assistant' || !messageEntryId || toolResults.length !== toolResultEntryIds?.length) return
   const index = entries.findLastIndex(entry => entry.type === 'context_edit' && entry.targetId === messageEntryId)
   const previous = entries[index]?.replacement
-  if (previous === null) return undefined
-  const current = previous ? { ...message, content: previous.content } : message
-  if (!Array.isArray(current.content)) return undefined
-  const projected = transform(current)
-  if (!projected) return undefined
-  const draft = { type: 'context_edit', targetId: messageEntryId, replacement: { content: projected.content } }
+  if (previous === null) return
+  const content = previous?.content ?? message.content
+  if (!Array.isArray(content)) return
+  const projected = projectToolBatch(content, toolResults, summarize)
+  if (!projected) return
+  const draft = { type: 'context_edit', targetId: messageEntryId,
+    replacement: projected.content.length ? { content: projected.content } : null }
   const next = entries.slice()
   if (index < 0) next.push(draft)
   else next[index] = draft
+  for (const [i, result] of toolResults.entries()) {
+    if (projected.outcomes.has(result.toolCallId)) {
+      next.push({ type: 'context_edit', targetId: toolResultEntryIds[i], replacement: null })
+    }
+  }
+  const evidenceIndex = next.findLastIndex(entry => entry.type === 'custom_message' && entry.customType === TOOL_EVIDENCE)
+  const prior = evidenceIndex < 0 ? null : next.splice(evidenceIndex, 1)[0]
+  const evidence = prior ? prior.content + '\n' + [...projected.outcomes.values()].join('\n') : evidenceText(projected.outcomes)
+  // Pi persists the drafts one by one. Persist the evidence first so any later prefix can be replayed.
+  // In message order it still comes after the real tool results from this turn.
+  next.splice(next.indexOf(draft), 0, { type: 'custom_message', customType: TOOL_EVIDENCE, content: evidence, display: false,
+    details: { assistantTimestamp: message.timestamp, toolCallIds: [...(prior?.details?.toolCallIds ?? []), ...projected.outcomes.keys()] } })
   return { entries: next }
+}
+
+export function projectCompletedWrites(event) {
+  return projectTurnToolEvidence(event, (block, result) =>
+    block.name === 'write' || block.name === 'edit' ? summarizeCompletedWrite(block, result) : undefined)
+}
+
+function projectHistoricalToolEvidence(messages, before, summarize) {
+  const projected = []
+  let changed = 0
+  for (let i = 0; i < before;) {
+    const message = messages[i++]
+    if (message?.role !== 'assistant' || !Array.isArray(message.content) || messages[i]?.role !== 'toolResult') {
+      projected.push(message)
+      continue
+    }
+    const start = i
+    while (i < before && messages[i]?.role === 'toolResult') i += 1
+    const results = messages.slice(start, i)
+    // A batch crossing the protected boundary must stay complete.
+    const batch = messages[i]?.role === 'toolResult' ? null : projectToolBatch(message.content, results, summarize)
+    if (!batch) {
+      projected.push(message, ...results)
+      continue
+    }
+    if (batch.content.length) projected.push({ ...message, content: batch.content })
+    for (const result of results) if (!batch.outcomes.has(result.toolCallId)) projected.push(result)
+    projected.push({ role: 'custom', customType: TOOL_EVIDENCE, content: evidenceText(batch.outcomes),
+      display: false, timestamp: results.at(-1).timestamp })
+    changed += 1
+  }
+  return { messages: changed ? projected.concat(messages.slice(before)) : messages, before: projected.length, changed }
+}
+
+export function normalizeToolHistory(messages) {
+  const removed = new Set()
+  let repaired = messages
+  for (let i = 1; i < messages.length; i += 1) {
+    const receipt = messages[i]
+    if (receipt?.role !== 'custom' || receipt.customType !== TOOL_EVIDENCE) continue
+    const { assistantTimestamp, toolCallIds } = receipt.details ?? {}
+    if (!Number.isFinite(assistantTimestamp) || !Array.isArray(toolCallIds)) continue
+    const ids = new Set(toolCallIds)
+    let cursor = i - 1
+    while (messages[cursor]?.role === 'toolResult') {
+      const result = messages[cursor]
+      if (ids.has(result.toolCallId) && result.timestamp >= assistantTimestamp) removed.add(cursor)
+      cursor -= 1
+    }
+    const assistant = messages[cursor]
+    if (assistant?.role !== 'assistant' || assistant.timestamp !== assistantTimestamp || !Array.isArray(assistant.content)) continue
+    const retained = assistant.content.filter(block => block?.type !== 'toolCall' || !ids.has(block.id))
+    if (retained.length === assistant.content.length) continue
+    if (!retained.length) removed.add(cursor)
+    else {
+      if (repaired === messages) repaired = messages.slice()
+      repaired[cursor] = { ...assistant, content: retained }
+    }
+  }
+  if (removed.size) repaired = repaired.filter((_message, index) => !removed.has(index))
+  if (!repaired.some(message => message?.role === 'assistant' && Array.isArray(message.content) &&
+    message.content.some(block => block?.type === 'toolCall' &&
+      (block.arguments?._omitted === true || block.arguments?.note === LEGACY_DENIAL)))) return repaired
+  return projectHistoricalToolEvidence(repaired, repaired.length, summarizeLegacyCall).messages
 }
 
 /**
@@ -1139,7 +1208,7 @@ function foldReply(message) {
  * 面板据此提示用户，而不是假装已经解决。
  */
 export function planContextWindow(messages, options = {}) {
-  const list = Array.isArray(messages) ? messages : []
+  const list = Array.isArray(messages) ? normalizeToolHistory(messages) : []
   const settings = normalizeGuardSettings(options.settings ?? DEFAULT_GUARD_SETTINGS)
   const windowTokens = Math.round(clamp(options.windowTokens, 0, 100000000, settings.windowTokens))
   /**
@@ -1227,7 +1296,7 @@ export function planContextWindow(messages, options = {}) {
 
   // budget 必须传：保护区的 token 上限要以「预算」为基准（与裁剪同源），
   // 否则保护区会吃掉预算的 64%，一触发兜底就塌到 6%（见 protectionStartIndex 注释）。
-  const protectedFrom = protectionStartIndex(list, settings, windowTokens, budget)
+  let protectedFrom = protectionStartIndex(list, settings, windowTokens, budget)
   const callIndex = indexToolCalls(list)
 
   let current = list.slice()
@@ -1295,7 +1364,7 @@ export function planContextWindow(messages, options = {}) {
      * 预算救急类被全量执行 → 250 轮塌到预算的 6.6%（模型失去全部历史 → 吐 DSML）；
      * 无条件规则类被"达标就停" → 48 张图只裁到 25 张（超限额 6 倍）。
      */
-    const mustComplete = wholeList === true || stage === 'toolCallArgs'
+    const mustComplete = wholeList === true
     for (let start = 0; start < end; start += CHUNK) {
       const stop = Math.min(start + CHUNK, end)
       let touched = 0
@@ -1341,13 +1410,22 @@ export function planContextWindow(messages, options = {}) {
    *   5. replies      （旧回复折叠，仍有结论线索）
    *   6. thinking     （最后才动；一旦删就是彻底消失，信息损失最高）
    */
+  const projectOldWrites = () => {
+    const evidence = projectHistoricalToolEvidence(current, protectedFrom, summarizeCompletedWrite)
+    if (evidence.changed) {
+      current = evidence.messages
+      protectedFrom = evidence.before
+      stats.stages.toolCallArgs += evidence.changed
+      stats.after = estimateMessagesTokens(current, settings)
+    }
+    return stats.after <= budget
+  }
   const done = () =>
     progressApply('images', (message, index) => replaceImages(message, callIndex,
       historicalImages.get(index) ?? turnImages.get(index) ?? 0), true) ||
     progressApply('toolText', message => truncateToolText(message, settings.maxTextChars)) ||
     progressApply('toolFold', message => foldToolResult(message)) ||
-    // 参数折叠必须完整执行（无条件规则类），见 progressApply 的 mustComplete 说明。
-    progressApply('toolCallArgs', message => foldToolCallArgs(message)) ||
+    projectOldWrites() ||
     progressApply('replies', message => foldReply(message)) ||
     // thinking 放最后：信息损失最高的一类，只有前面都不够时才牺牲它。
     progressApply('thinking', message => dropThinking(message))

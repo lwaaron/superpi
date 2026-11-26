@@ -320,13 +320,14 @@ export async function withReviewSnapshot(cwd, base, paths, signal, inspect) {
       git(source.root, [...diff, '--name-only', '-z', revision, '--'], signal),
       git(source.root, [...untracked, '--'], signal),
     ]) : []
-    const [patch, stats, newFiles, deletions, fingerprint, all] = await Promise.all([
+    const [patch, stats, newFiles, deletions, fingerprint, all, scopedNames] = await Promise.all([
       git(source.root, [...diff, revision, ...where], signal),
       git(source.root, [...diff, '--numstat', '-z', revision, ...where], signal),
       git(source.root, [...untracked, ...where], signal),
       git(source.root, [...diff, '--name-only', '--diff-filter=D', '-z', revision, ...where], signal),
       verificationSnapshotFingerprint(snapshot, signal),
       allPaths,
+      paths.length ? git(source.root, [...atCopy, 'ls-files', '-z', '--cached', '--others', '--exclude-standard', ...where], signal) : null,
     ])
     const changes = records(stats).map(line => {
       const [added, removed, ...name] = line.split('\t')
@@ -368,12 +369,16 @@ export async function withReviewSnapshot(cwd, base, paths, signal, inspect) {
       if (!bytes) throw new Error('The file is absent from the review snapshot.')
       return reviewText(bytes, maxBytes)
     }
+    const files = [...new Set([...filenames, ...deleted])].sort()
+    const included = new Set(scopedNames ? records(scopedNames) : files)
     return inspect({
       patch: utf8.decode(patch),
       untracked: newNames,
       omitted: changes.filter(change => change.binary).map(change => change.name),
       uncovered,
-      files: [...new Set([...filenames, ...deleted])].sort(),
+      files,
+      scopedFiles: files.filter(name => included.has(name)),
+      changedPaths: selected,
       hasDeletions: deleted.size > 0,
       fingerprint,
       revision,

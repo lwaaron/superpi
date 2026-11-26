@@ -304,7 +304,7 @@ function turnWithWrites(index, chars) {
         { type: 'text', text: '写好了第 ' + String(index) + ' 个文件' },
       ],
     },
-    { role: 'toolResult', toolCallId: 'w' + String(index), toolName: 'write', content: [{ type: 'text', text: 'ok' }] },
+    { role: 'toolResult', toolCallId: 'w' + String(index), toolName: 'write', isError: false, content: [{ type: 'text', text: 'ok' }] },
   ]
 }
 const writeTurns = []
@@ -321,11 +321,52 @@ const argAfter = argSizeOf(writePlanned.messages)
 ok(argAfter < argBefore * 0.2, '参数体积降到原来的 20% 以下（' + argBefore + ' → ' + argAfter + '）')
 ok(writePlanned.stats.stages.toolCallArgs > 0, '发生了参数折叠（' + String(writePlanned.stats.stages.toolCallArgs) + ' 条）')
 
-const foldedCalls = writePlanned.messages.flatMap(message => (Array.isArray(message.content)
-  ? message.content.filter(block => block.type === 'toolCall' && block.arguments?._omitted === true) : []))
-ok(foldedCalls.length > 0, '折叠后的参数带 _omitted 标记（可被门禁识别）')
-ok(foldedCalls.every(block => String(block.arguments.note).includes('src/f')), '占位里带文件路径（可重新 read）')
-ok(foldedCalls.every(block => typeof block.id === 'string' && typeof block.name === 'string' && block.name.length > 0), 'id 与 name 原样保留（否则 toolResult 配不上，pi 报孤儿）')
+const historicalOutcomes = writePlanned.messages.filter(message => message.role === 'custom' && message.customType === 'superpi-tool-evidence')
+const retainedCalls = new Map(writePlanned.messages.flatMap(message => (Array.isArray(message.content)
+  ? message.content.filter(block => block.type === 'toolCall').map(block => [block.id, block]) : [])))
+ok(historicalOutcomes.length > 0, '完成的历史写入成对折成普通证据消息')
+ok(historicalOutcomes.every(message => message.content.includes('src/f') && message.content.includes('Read the file')), '证据保留可重新读取的文件路径')
+ok(writePlanned.messages.filter(message => message.role === 'toolResult').every(result => retainedCalls.get(result.toolCallId)?.name === result.toolName) &&
+  [...retainedCalls.values()].every(block => typeof block.arguments?.content === 'string' && !block.arguments._omitted),
+'保留真实调用与结果配对，折叠时移出完整的已执行调用与结果')
+
+const legacyTurn = [
+  { role: 'user', content: [{ type: 'text', text: 'Restore the prior work.' }] },
+  { role: 'assistant', content: [
+    { type: 'toolCall', id: 'old-write', name: 'write', arguments: { path: 'old.mjs', _omitted: true, note: 'Historical body omitted.' } },
+    { type: 'toolCall', id: 'old-denial', name: 'edit', arguments: { path: 'fix.mjs', note:
+      'SuperPi rejected these arguments before execution. See the tool result for the reason. Regenerate the input before retrying.' } },
+    { type: 'toolCall', id: 'real-read', name: 'read', arguments: { path: 'public.mjs' } },
+  ] },
+  { role: 'toolResult', toolCallId: 'old-write', toolName: 'write', isError: false, content: [{ type: 'text', text: 'Wrote file.' }] },
+  { role: 'toolResult', toolCallId: 'old-denial', toolName: 'edit', isError: true, content: [{ type: 'text', text: 'fix.mjs contains U+FFFD.' }] },
+  { role: 'toolResult', toolCallId: 'real-read', toolName: 'read', isError: false, content: [{ type: 'text', text: 'Public contract.' }] },
+]
+const legacy = planContextWindow(legacyTurn, { windowTokens: 100000, settings: { ...settings, enabled: false } }).messages
+ok(legacy.length === 4 && legacy[1].content.length === 1 && legacy[1].content[0] === legacyTurn[1].content[2] &&
+  legacy[2] === legacyTurn[4] && legacy[3].role === 'custom' && legacy[3].content.includes('old.mjs') && legacy[3].content.includes('U+FFFD'),
+'旧版投影始终恢复为普通证据，真实调用仍紧接原结果')
+ok(legacyTurn[1].content.length === 3 && planContextWindow(legacy, { windowTokens: 100000, settings }).messages === legacy,
+  '旧会话向后兼容，源消息原样保留且归一化幂等')
+
+const rawWrite = { type: 'toolCall', id: 'archived-write', name: 'write',
+  arguments: { path: 'archive.mjs', content: 'the persisted file body' } }
+const activeRead = legacyTurn[1].content[2]
+const confirmed = { ...legacyTurn[2], toolCallId: rawWrite.id, timestamp: 102 }
+const writeReceipt = { role: 'custom', customType: 'superpi-tool-evidence', content: 'Recorded tool outcomes.\nwrite completed for "archive.mjs".',
+  display: false, timestamp: 102, details: { assistantTimestamp: 101, toolCallIds: [rawWrite.id] } }
+const fullAssistant = { role: 'assistant', timestamp: 101, content: [rawWrite, activeRead] }
+const retainedAssistant = { ...fullAssistant, content: [activeRead] }
+for (const [description, prefix] of [
+  ['只落盘了证据', [fullAssistant, confirmed, legacyTurn[4]]],
+  ['结果投影已经落盘', [fullAssistant, legacyTurn[4]]],
+  ['调用投影已经落盘', [retainedAssistant, confirmed, legacyTurn[4]]],
+]) {
+  const recovered = planContextWindow([legacyTurn[0], ...prefix, writeReceipt], { windowTokens: 100000, settings }).messages
+  ok(recovered.length === 4 && recovered[1].content.length === 1 && recovered[1].content[0] === activeRead &&
+    recovered[2] === legacyTurn[4] && recovered[3] === writeReceipt,
+  '中断恢复保持工具帧和普通证据一致 · ' + description)
+}
 
 // bash 不折叠：它的 command 是"当时干了什么"的唯一线索，且通常很短。
 const bashTurn = [

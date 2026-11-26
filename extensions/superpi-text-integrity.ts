@@ -47,11 +47,11 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
-import { projectTurnAssistant } from './superpi-context-guard.mjs'
+import { projectTurnToolEvidence } from './superpi-context-guard.mjs'
 import { describeBytes, scanTextBytes, summarizeCounts } from './superpi-text-bytes.mjs'
 
 /** 与 package.json / CONTRACT_VERSION 同步推进。 */
-export const INTEGRITY_VERSION = '0.44.0'
+export const INTEGRITY_VERSION = '0.45.0'
 
 /** TUI 命令名（`/superpi-integrity`）。 */
 export const INTEGRITY_COMMAND = 'superpi-integrity'
@@ -286,34 +286,17 @@ export default function textIntegrity(pi: any) {
 
   pi.on('turn_end', (event: any) => {
     if (pendingBlocks.size === 0) return undefined
-    const rejected = new Map<string, ByteHit>()
+    const rejected = new Map<string, string>()
     for (const result of event.toolResults) {
       const block = pendingBlocks.get(result.toolCallId)
       if (block && result.isError === true && result.toolName === block.hit.tool && result.content[0]?.text === block.reason) {
-        rejected.set(result.toolCallId, block.hit)
+        rejected.set(result.toolCallId, block.reason)
       }
     }
     pendingBlocks.clear()
     if (rejected.size === 0) return undefined
 
-    // A denied proposal stays in the transcript. Keep its tool ID paired with Pi's error in the next request.
-    return projectTurnAssistant(event, message => {
-      let changed = false
-      const content = message.content.map(block => {
-        if (block.type !== 'toolCall') return block
-        const hit = rejected.get(block.id)
-        if (!hit || block.name !== hit.tool) return block
-        changed = true
-        return {
-          ...block,
-          arguments: {
-            ...(hit.path === '' ? {} : { path: hit.path }),
-            note: 'SuperPi rejected these arguments before execution. See the tool result for the reason. Regenerate the input before retrying.',
-          },
-        }
-      })
-      return changed ? { ...message, content } : null
-    })
+    return projectTurnToolEvidence(event, block => rejected.get(block.id))
   })
 
   pi.on('agent_settled', () => pendingBlocks.clear())

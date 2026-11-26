@@ -16,6 +16,8 @@ const READ_LINES = 180
 const SAVED_READS = 64
 const sourceExtension = /\.(?:[cm]?[jt]sx?|pyi?|go|rs|java|kts?|h|hpp|c|cc|cpp|cs|rb|php|swift|lua|sh|ps1|sql|vue|svelte|html|css)$/i
 const projectManifest = /^(?:package\.json|pyproject\.toml|Cargo\.toml|go\.(?:mod|sum)|pom\.xml|build\.gradle(?:\.kts)?)$/i
+const projectReadme = /^readme(?:\.md|\.markdown)?$/i
+const markdown = /\.(?:md|markdown)$/i
 const listReviewFilesTool = {
   name: 'list_review_files',
   description: 'Find available repository-relative paths from the same immutable snapshot. Filter by file name or path substring.',
@@ -156,18 +158,30 @@ function incompleteLane(focus, meter) {
     limitation: meter.requests >= REQUEST_LIMIT ? 'Request budget ended without a report.' : 'No structured report was submitted.' }
 }
 
-function canInlineSource(name) {
-  return name.split('/').every(segment => !segment.startsWith('.')) && (sourceExtension.test(name) || projectManifest.test(name))
+function canInlineSource(name, includedDoc) {
+  return name.split('/').every(segment => !segment.startsWith('.')) &&
+    (sourceExtension.test(name) || projectManifest.test(name) || projectReadme.test(name) || (includedDoc && markdown.test(name)))
 }
 
-async function bundledEvidence(snapshot, payload, limit, signal) {
-  if (snapshot.hasDeletions || snapshot.files.length > SNAPSHOT_INLINE_FILES || !snapshot.files.every(canInlineSource)) return
+function inlineFiles(snapshot, scoped) {
+  const files = snapshot.scopedFiles
+  if (snapshot.hasDeletions || snapshot.uncovered.length || files.length > SNAPSHOT_INLINE_FILES) return
+  if (scoped) {
+    const included = new Set(files)
+    // A limited source review still needs discovery if its slice omits source or tests.
+    if (snapshot.files.some(name => !included.has(name) && !projectReadme.test(name))) return
+  }
+  if (!files.every(name => canInlineSource(name, scoped || snapshot.changedPaths.has(name)))) return
+  return files
+}
+
+async function bundledEvidence(snapshot, files, payload, { limit, patchLimit }, signal) {
   try {
     const { goal } = payload
     const workspaceFiles = []
     let bytes = Buffer.byteLength(JSON.stringify({ goal, workspaceFiles }))
     const additions = new Map(payload.newFiles.map(file => [file.path, file.source]))
-    for (const path of snapshot.files) {
+    for (const path of files) {
       if (bytes >= limit) return
       const source = additions.get(path) ?? await snapshot.read(path, limit - bytes)
       const file = { path, source }
@@ -175,9 +189,9 @@ async function bundledEvidence(snapshot, payload, limit, signal) {
       if (bytes > limit) return
       workspaceFiles.push(file)
     }
-    if (Buffer.byteLength(snapshot.patch) <= limit - bytes) {
+    if (Buffer.byteLength(snapshot.patch) <= patchLimit - bytes) {
       const input = JSON.stringify({ goal, patch: snapshot.patch, newPaths: snapshot.untracked, workspaceFiles })
-      if (Buffer.byteLength(input) <= limit) return { input, format: 'patch' }
+      if (Buffer.byteLength(input) <= patchLimit) return { input, format: 'patch' }
     }
     const changes = await snapshot.readBaseline(limit - bytes)
     for (const path of snapshot.untracked) changes.push({ path, before: null })
@@ -498,10 +512,13 @@ export async function reviewChanges(ctx, params, signal, onProgress, appendCheck
     }
     const catalog = { files: snapshot.files.slice(0, 24), total: snapshot.files.length }
     const withCatalog = JSON.stringify({ ...payload, fileCatalog: catalog })
-    // Digest the evidence and coverage, rather than the staging state, path order, or deadline.
+    const packetFiles = inlineFiles(snapshot, result.scope.length > 0)
+    const differentSourceScope = packetFiles && packetFiles.length !== snapshot.files.length ? [packetFiles] : []
+    // Digest the evidence and coverage independently of staging state, path order and deadline.
     result.key = createHash('sha256').update(JSON.stringify([
       'review-v1', snapshot.fingerprint, snapshot.revision, snapshot.uncovered, result.omitted.slice().sort(),
       params.goal, params.taskCheck, model.provider, model.id, model.api, model.baseUrl, model.contextWindow, model.maxTokens,
+      ...differentSourceScope,
     ])).digest('hex')
     const { previous, latest, attempts } = reviewHistory(ctx, result.key, params.taskCheck)
     result.attempts = attempts
@@ -515,10 +532,13 @@ export async function reviewChanges(ctx, params, signal, onProgress, appendCheck
       result.repeated = latest?.execution === 'reused'
     } else {
       const reviewInput = Buffer.byteLength(withCatalog) <= inputBytes ? withCatalog : input
-      // A first request that can report directly needs none of the discovery tool definitions.
-      const bundleLimit = Math.min(inputBytes, Math.max(SNAPSHOT_INLINE_BYTES, Buffer.byteLength(reviewInput) + DISCOVERY_TOOL_BYTES))
-      const bundle = !previous && !result.scope.length && !result.omitted.length ?
-        await bundledEvidence(snapshot, payload, bundleLimit, active) : undefined
+      // One extra discovery turn carries the initial packet again. Spend up to that cost once on
+      // complete before/after source, without using the extra room to duplicate the patch.
+      const discoveryBytes = Buffer.byteLength(reviewInput) + DISCOVERY_TOOL_BYTES
+      const bundle = !previous && packetFiles && !result.omitted.length ? await bundledEvidence(snapshot, packetFiles, payload, {
+        limit: Math.min(inputBytes, Math.max(SNAPSHOT_INLINE_BYTES, 2 * discoveryBytes)),
+        patchLimit: Math.min(inputBytes, Math.max(SNAPSHOT_INLINE_BYTES, discoveryBytes)),
+      }, active) : undefined
       result.inputMode = bundle ? 'snapshot' : 'diff'
       result.execution = previous ? 'resumed' : 'new'
       result.attempts += 1

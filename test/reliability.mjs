@@ -315,16 +315,43 @@ try {
   check(toolTurn.records.some(record => record.type === 'message_end' && record.verdict?.kind === 'dsml-thinking'),
     'the malformed reply is identified before it is removed from the provider context')
   const resumedRequest = toolTurn.requests[2]
-  check(resumedRequest?.messages.some(message => message.role === 'tool' && message.tool_call_id === 'completed_write') &&
-    !requestText(resumedRequest).includes('DSML'), 'recovery retains the write result and omits the malformed tool fragment')
+  const hasToolFrame = (payload, id) => payload?.messages.some(message => message.tool_call_id === id ||
+    message.tool_calls?.some(call => call.id === id))
+  check(!hasToolFrame(resumedRequest, 'completed_write') && requestText(resumedRequest).includes('Recorded tool outcome'),
+    'a successful write is carried as text evidence, never as replayable synthetic arguments')
+  check(requestText(resumedRequest).includes('write completed for') && requestText(resumedRequest).includes('once.txt') &&
+    !requestText(resumedRequest).includes('DSML'), 'recovery retains the confirmed write outcome and omits the malformed tool fragment')
   check(await fs.readFile(path.join(workspace, 'once.txt'), 'utf8') === largeWrite, 'successful file contains every original character')
   check(toolTurn.records.filter(record => record.type === 'tool_execution_end' && record.toolName === 'write').length === 1 &&
     toolResult(toolTurn, 'verify_saved_file')?.isError === false, 'recovery executes only the new tool and preserves the completed write')
   check(!requestText(toolTurn.requests[1]).includes(largeWrite) && requestText(toolTurn.requests[1]).includes('once.txt'),
     'completed write body is replaced by a file reference before the next request')
-  check(toolTurn.records.some(entry => entry.type === 'entry_appended' && entry.entry?.type === 'context_edit' &&
-    entry.entry.replacement?.content.some(block => block.arguments?._omitted === true)),
-    'successful write projection is recorded in native session history')
+  const afterWrite = (await command({ type: 'get_entries' })).data.entries
+  const writtenCall = afterWrite.find(entry => entry.type === 'message' && entry.message.role === 'assistant' &&
+    entry.message.content.some(block => block.id === 'completed_write' && block.arguments?.content === largeWrite))
+  const writtenResult = afterWrite.find(entry => entry.type === 'message' && entry.message.role === 'toolResult' &&
+    entry.message.toolCallId === 'completed_write')
+  const writtenEvidence = afterWrite.find(entry => entry.type === 'custom_message' && entry.customType === 'superpi-tool-evidence' &&
+    entry.display === false && entry.content.includes('once.txt'))
+  check(writtenCall && writtenResult && writtenEvidence?.details?.toolCallIds.includes('completed_write') &&
+    [writtenCall, writtenResult].every(original => afterWrite.findIndex(entry => entry.type === 'context_edit' && entry.targetId === original.id) >
+      afterWrite.indexOf(writtenEvidence)), 'the native session saves repair evidence before editing either original tool entry')
+
+  const persistedToolSession = (await command({ type: 'get_state' })).data.sessionFile
+  const writtenLines = (await fs.readFile(persistedToolSession, 'utf8')).trimEnd().split(/\r?\n/)
+  const lastSaved = writtenLines.findIndex(line => JSON.parse(line).id === writtenEvidence?.id)
+  assert.ok(lastSaved > 0, 'locate the actual persisted proof before its two edits')
+  const prefixSession = path.join(temp, 'tool-evidence-prefix.jsonl')
+  await fs.writeFile(prefixSession, writtenLines.slice(0, lastSaved + 1).join('\n') + '\n')
+  const originalToolSession = sessionId
+  sessionId = (await request('/sessions', { cwd: workspace, continue: false })).session.id
+  assert.equal((await command({ type: 'switch_session', sessionPath: prefixSession })).ok, true)
+  const prefixRun = await run('recover a session that exited after saving the tool outcome', [{ delta: 'Recovered from recorded results.' }])
+  check(prefixRun.requests.length === 1 && !hasToolFrame(prefixRun.requests[0], 'completed_write') &&
+    requestText(prefixRun.requests[0]).includes('write completed for') && !requestText(prefixRun.requests[0]).includes(largeWrite),
+  'a fresh Pi reopens the durable prefix and reconstructs the tool context without a second write')
+  await request(session(), undefined, 'DELETE')
+  sessionId = originalToolSession
 
   const truncatedCall = await run('handle a cutoff in the tool reply itself', [
     { delta: writeCall('cutoff.txt', 'incomplete write', 'cutoff_write'), finish: 'length' },
@@ -401,14 +428,14 @@ try {
   }
   const followDamagedBody = corruptWrite.requests[1]
   const followDamagedPath = corruptWrite.requests[2]
-  check(argumentsIn(followDamagedBody, 'call_bad_body')?.path === 'bad-body.txt' &&
-    !requestText(followDamagedBody).includes(bad) && followDamagedBody.messages.some(message =>
-      message.tool_call_id === 'call_bad_body' && message.content.includes('U+FFFD')),
-  'the first request after a corrupted UTF-8 write retains a clean path and the paired diagnostic without replaying the body')
-  check(argumentsIn(followDamagedPath, 'call_path') !== undefined &&
-    !requestText(followDamagedPath).includes(bad) && followDamagedPath.messages.some(message =>
-      message.tool_call_id === 'call_path' && message.content.includes('U+FFFD')),
-  'a rejected path is omitted from the call without losing its diagnostic or tool pairing')
+  check(!hasToolFrame(followDamagedBody, 'call_bad_body') && requestText(followDamagedBody).includes('U+FFFD'),
+    'a denied write retains its real diagnostic as evidence without a synthetic tool call')
+  check(requestText(followDamagedBody).includes('bad-body.txt') && !requestText(followDamagedBody).includes(bad) &&
+    followDamagedBody.messages.some(message => message.role === 'user' && JSON.stringify(message.content).includes('U+FFFD')),
+  'the first request after a corrupted UTF-8 write retains a clean path and the diagnostic as plain evidence')
+  check(!hasToolFrame(followDamagedPath, 'call_path') && !requestText(followDamagedPath).includes(bad) &&
+    followDamagedPath.messages.some(message => message.role === 'user' && JSON.stringify(message.content).includes('U+FFFD')),
+  'a rejected path and its proposal stay out of the request, with a plain diagnostic for recovery')
 
   const originalText = 'Original contents.'
   const repairedEdit = 'Corrected contents.'
@@ -434,15 +461,16 @@ try {
     await fs.readFile(path.join(workspace, damagedEditPath), 'utf8') === repairedEdit &&
     lastAssistant(mixed)?.message.content[0]?.text === 'The corrected edit is complete.' && mixed.requests.length === 3,
   'a provider that rejects damaged history can complete the corrected edit in the same activity')
-  const batchCallIds = damagedBatch.tool_calls.map(call => call.id)
-  check(argumentsIn(mixedFollowup, 'damaged_edit')?.path === damagedEditPath &&
-    argumentsIn(mixedFollowup, 'confirmed_sibling')?._omitted === true &&
+  const retainedResult = mixedFollowup?.messages.findIndex(message => message.tool_call_id === 'ordinary_failure')
+  const combinedEvidence = mixedFollowup?.messages.findIndex(message => message.role === 'user' &&
+    JSON.stringify(message.content).includes(damagedEditPath) && JSON.stringify(message.content).includes(siblingPath))
+  check(!hasToolFrame(mixedFollowup, 'damaged_edit') && !hasToolFrame(mixedFollowup, 'confirmed_sibling') &&
     JSON.stringify(argumentsIn(mixedFollowup, 'ordinary_failure')) === JSON.stringify(cleanFailure) &&
     toolResult(mixed, 'ordinary_failure')?.isError === true &&
-    batchCallIds.every(id => mixedFollowup?.messages.some(message => message.tool_call_id === id)) &&
+    retainedResult >= 0 && combinedEvidence > retainedResult &&
     await fs.readFile(path.join(workspace, siblingPath), 'utf8') === largeWrite &&
     mixed.records.filter(record => record.type === 'tool_execution_end' && record.toolCallId === 'confirmed_sibling').length === 1,
-  'the mixed batch retains all three results, the ordinary failed input and the single successful write projection')
+  'mixed results retain genuine tool pairing, then append one evidence message with the successful write and exact refusal')
 
   const integrityHistoryFile = (await command({ type: 'get_state' })).data.sessionFile
   const closedIntegritySession = sessionId
@@ -456,9 +484,10 @@ try {
       block.arguments.edits[0].newText.endsWith(bad))), 'the original rejected payload is kept in the native session record')
   const resumedIntegrity = await run('resume with the repaired file', [{ delta: 'History reloaded.' }])
   check(!requestText(resumedIntegrity.requests[0]).includes(bad) &&
-    argumentsIn(resumedIntegrity.requests[0], 'damaged_edit')?.path === damagedEditPath &&
-    resumedIntegrity.requests[0].messages.some(message => message.tool_call_id === 'damaged_edit'),
-  'a new Pi process reloads the same clean projection with the original failure still paired')
+    !hasToolFrame(resumedIntegrity.requests[0], 'damaged_edit') &&
+    resumedIntegrity.requests[0].messages.some(message => message.role === 'user' && JSON.stringify(message.content).includes(damagedEditPath) &&
+      JSON.stringify(message.content).includes('U+FFFD')),
+  'a new Pi process reloads the same clean projection including the original refusal diagnostic')
 
   await fs.writeFile(guardPath, JSON.stringify({ autoRetryOnMalformed: false, autoRetryCooldownMs: 0 }))
   const disabled = await run('retry disabled explicitly', [{ delta: 'invalid ' + bad }])
@@ -1533,6 +1562,45 @@ try {
   check(toolResult(mixedPacket, 'compact_mixed')?.details?.review?.inputMode === 'diff' &&
     reviewRequests(mixedPacket).every(payload => !requestText(payload).includes('fixture-unrelated-private-text')),
   'automatic evidence bundling never transmits unrelated metadata in a mixed snapshot')
+
+  await request(session(), undefined, 'DELETE')
+  sessionId = undefined
+  const completeSource = path.join(temp, 'complete-review-source')
+  await fs.mkdir(completeSource)
+  const evidenceGit = (...args) => execFileSync('git', ['-c', 'core.autocrlf=false', '-c', 'user.name=Fixture',
+    '-c', 'user.email=test@example.invalid', '-c', 'commit.gpgsign=false', ...args], { cwd: completeSource })
+  const contractDoc = '# Visible engineering contract\nThe lookup must return its existing value.\n'
+  const existingCaller = 'export const originalValue = "kept"\n' + '// existing caller and checks\n'.repeat(167)
+  const changedSource = 'export const lookup = () => undefined\n' + '// historical regression test data\n'.repeat(420)
+  await Promise.all([
+    fs.writeFile(path.join(completeSource, 'catalog.mjs'), 'export const lookup = () => "kept"\n'),
+    fs.writeFile(path.join(completeSource, 'existing.test.mjs'), existingCaller),
+    fs.writeFile(path.join(completeSource, 'README.md'), contractDoc),
+  ])
+  evidenceGit('init', '--quiet')
+  evidenceGit('add', '.')
+  evidenceGit('commit', '--quiet', '-m', 'Complete review fixture')
+  await fs.writeFile(path.join(completeSource, 'catalog.mjs'), changedSource)
+  await fs.writeFile(path.join(completeSource, 'acceptance.md'), '# Usage verification\nCover the existing caller.\n')
+  sessionId = (await request('/sessions', { cwd: completeSource, continue: false })).session.id
+  assert.equal((await command({ type: 'set_model', provider: 'loopback', modelId: 'fixture-wide' })).ok, true)
+
+  const allEvidence = await observeDiscovery('use the whole reviewable snapshot in one request per reviewer', 'complete_evidence')
+  const allProof = toolResult(allEvidence, 'complete_evidence')?.details?.review
+  check(allProof?.inputMode === 'snapshot' && allProof.newRequests === 2 && allProof.status === 'findings' &&
+    reviewRequests(allEvidence).every(payload => hasSource(payload, 'catalog.mjs', changedSource) &&
+      hasSource(payload, 'existing.test.mjs', existingCaller) && hasSource(payload, 'README.md', contractDoc) &&
+      payload.tools.map(tool => tool.function.name).join(',') === 'submit_review'),
+  'a full review can up-front include a larger unchanged caller and the ordinary repository contract')
+
+  const explicit = await observeDiscovery('review explicitly selected complete source', 'complete_scope',
+    { paths: ['catalog.mjs', 'existing.test.mjs', 'acceptance.md'] })
+  const explicitProof = toolResult(explicit, 'complete_scope')?.details?.review
+  check(explicitProof?.inputMode === 'snapshot' && explicitProof.newRequests === 2 && explicitProof.uncoveredCount === 0 &&
+    reviewRequests(explicit).every(payload => hasSource(payload, 'existing.test.mjs', existingCaller) &&
+      requestText(payload).includes('Cover the existing caller.') && !requestText(payload).includes(contractDoc.trim()) &&
+      payload.tools.map(tool => tool.function.name).join(',') === 'submit_review'),
+  'complete explicitly scoped source and acceptance material can report immediately without sending an excluded README')
 } finally {
   if (sessionId) await request(session(), undefined, 'DELETE').catch(() => {})
   for (const dispose of disposers.reverse()) dispose()

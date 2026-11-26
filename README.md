@@ -40,7 +40,7 @@ npm run pack:offline -- .\artifacts
 
 ```powershell
 node "$env:USERPROFILE\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\pnpm\bin\pnpm.cjs" `
-  add "file:C:\path\to\superpi-0.44.0-offline-win32-x64.tgz" --offline --ignore-scripts
+  add "file:C:\path\to\superpi-0.45.0-offline-win32-x64.tgz" --offline --ignore-scripts
 ```
 
 归档包含当前平台的 Pi 和生产依赖。使用远程模型时仍需连通模型服务。已经安装 Pi 时，也可在配置中用 `cliPath` 指定运行时。
@@ -232,10 +232,10 @@ New-Item -ItemType Junction `
 ### 使用 pnpm 手工安装
 
 ```powershell
-npm pack                                        # 得到 superpi-0.44.0.tgz
+npm pack                                        # 得到 superpi-0.45.0.tgz
 cd "$env:USERPROFILE\.dsh\profiles\desktop"
 node "$env:USERPROFILE\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\pnpm\bin\pnpm.cjs" `
-  add "file:C:\path\to\superpi-0.44.0.tgz" --ignore-scripts
+  add "file:C:\path\to\superpi-0.45.0.tgz" --ignore-scripts
 ```
 
 不要在 profile 里用 `npm install`：npm 会另写一份 `package-lock.json`，而宿主插件管理器用的是 pnpm，两套锁文件互相看不见，下次插件安装就会把 node_modules 重建成 pnpm 理解的样子。
@@ -296,7 +296,7 @@ pwsh -NoProfile -File .\tools\standalone-verify.ps1 -Keep      # 保留临时目
 | --- | --- |
 | 项目与会话 | 面板标签栏可新建和切换运行中的会话，各自保留任务与输入草稿。按项目查看和恢复历史。模型、会话和扩展沿用 Pi 的配置目录 `~/.pi/agent`，SuperPi 的偏好和诊断存放在 `~/.superpi`。 |
 | 异常恢复 | 识别空响应、乱码、畸形工具标记、输出截断与特定上游断流。满足重试条件时从已完成的工具结果续跑一次。故障持续时提供「继续」入口。 |
-| 写入保护 | 在 `write` 和 `edit` 执行前检查路径与新文本。0.43.0 起，下一次模型请求保留错误诊断和安全路径，被拦截的参数留在原始会话记录中供排查。 |
+| 写入保护 | 在 `write` 和 `edit` 执行前检查路径和新文本。完成的大写入与明确拦截的调用转成普通文本证据，供模型依据文件路径和错误诊断接续。原始调用和结果均保存在会话记录里。 |
 | 主动询问 | Agent 通过 `ask_user` 请求必要信息或决策。选择和自由输入都能回到当前任务。 |
 | 验收与代码审查 | `verify` 记录命令退出结果及对应的源码，`review_changes` 审查正确性和测试覆盖。用 `/superpi-task` 查验收进度，用 `/superpi-integrity` 查写入拦截。 |
 
@@ -499,7 +499,7 @@ npm install --prefix <插件>/.runtime --save-exact --no-audit --no-fund --logle
 ## 断流恢复、独立审查与工程基准（0.22.0）
 
 - 对上游明确报告的 `Upstream response stream ended before completion`，在当前回合内补充恢复一次。恢复从已完成的工具结果接续，失败响应仍可在会话中查阅。恢复受 Pi 的重试开关控制，再次中断时两端显示原因和「继续」。
-- `review_changes` 并行发起正确性和测试覆盖两路审查。两路使用当前模型、独立的上下文和同一份 Git 工作区快照，仅能读取快照和提交带文件行号的报告。面板和命令行都显示进度与结果。
+- `review_changes` 并行发起正确性和测试覆盖两路审查。两路使用当前模型、独立的上下文和同一份 Git 工作区快照。完整源码和对照材料符合预算时，每路首个请求即可提交带文件行号的报告。材料超出预算或范围缺少相关源码时，审查员可按路径查阅同一份快照。面板和命令行均显示进度与结果。
 - `task_progress` 的 `review: true` 验收项要求两路审查完成，且全部改动的文本范围内没有阻塞项。选择路径时按实际改动核对范围。限期内已返回的报告会保留，超时、有遗漏或审查期间源码变化时仍待验收。正常收尾时会再次核对本轮刚确认完成的源码证据。
 
 ## 审查恢复与交付度量（0.23.0）

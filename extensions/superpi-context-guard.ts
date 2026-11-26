@@ -42,8 +42,8 @@ import {
   goalFromMessages,
   limitImagesForWrite,
   imagePlaceholder,
-  foldCompletedWriteArgs,
-  projectTurnAssistant,
+  projectCompletedWrites,
+  normalizeToolHistory,
   resetMeterMemo,
 } from './superpi-context-guard.mjs'
 import {
@@ -166,7 +166,7 @@ export default function contextGuard(pi) {
       const filtered = filterMessagesByModalities(input, allowed)
 
       // ② 窗口化（可独立停用）
-      let next = filtered
+      let next
       if (settings.enabled === true) {
         const windowTokens = resolveWindowTokens(ctx, settings)
         const planned = planContextWindow(filtered, { windowTokens, settings })
@@ -204,7 +204,7 @@ export default function contextGuard(pi) {
             appendGuardLogSync({ ...planned.stats, sessionId })
           }
         }
-      }
+      } else next = normalizeToolHistory(filtered)
 
       // 未修改内容时保留 Pi 的提示增量和缓存。
       if (next === messages) return undefined
@@ -278,7 +278,7 @@ export default function contextGuard(pi) {
     const { toolResults, outcome } = event
     if (outcome !== 'completed' || toolResults.length === 0) return undefined
     if (!readGuardSettingsSync({ cache }).enabled) return undefined
-    return projectTurnAssistant(event, message => foldCompletedWriteArgs(message, toolResults))
+    return projectCompletedWrites(event)
   })
 
   pi.on('before_agent_start', (event, _ctx) => {
