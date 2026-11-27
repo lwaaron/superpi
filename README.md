@@ -40,7 +40,7 @@ npm run pack:offline -- .\artifacts
 
 ```powershell
 node "$env:USERPROFILE\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\pnpm\bin\pnpm.cjs" `
-  add "file:C:\path\to\superpi-0.55.0-offline-win32-x64.tgz" --offline --ignore-scripts
+  add "file:C:\path\to\superpi-0.56.0-offline-win32-x64.tgz" --offline --ignore-scripts
 ```
 
 归档包含当前平台的 Pi 和生产依赖。使用远程模型时仍需连通模型服务。已经安装 Pi 时，也可在配置中用 `cliPath` 指定运行时。
@@ -232,10 +232,10 @@ New-Item -ItemType Junction `
 ### 使用 pnpm 手工安装
 
 ```powershell
-npm pack                                        # 得到 superpi-0.55.0.tgz
+npm pack                                        # 得到 superpi-0.56.0.tgz
 cd "$env:USERPROFILE\.dsh\profiles\desktop"
 node "$env:USERPROFILE\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\pnpm\bin\pnpm.cjs" `
-  add "file:C:\path\to\superpi-0.55.0.tgz" --ignore-scripts
+  add "file:C:\path\to\superpi-0.56.0.tgz" --ignore-scripts
 ```
 
 不要在 profile 里用 `npm install`：npm 会另写一份 `package-lock.json`，而宿主插件管理器用的是 pnpm，两套锁文件互相看不见，下次插件安装就会把 node_modules 重建成 pnpm 理解的样子。
@@ -489,7 +489,7 @@ npm install --prefix <插件>/.runtime --save-exact --no-audit --no-fund --logle
 
 - 多步任务可用 `task_progress` 记录目标与验收项。命令验收通过 `verify` 关联实际退出结果与 Git 工作区文件内容。后续源码变化会让对应证据回到待验证。人工或 Agent 的现场观察独立标记为已观察。两端输入 `/superpi-task` 可看当前会话分支的记录。
 - 开发完成后，Agent 可调用 `task_progress.run_checks`，按计划依次执行尚无有效证据的测试与独立审查，共用一个总时限。开启 `finishWhenVerified` 的任务在证据齐备后生成可见回执。中途停止或关闭会话时，已核对的证据保留。对无法确认已停止的工作区命令，确认其退出后再执行对应的编号验收。
-- 在受信任的项目里，开启 `finishWhenVerified` 的任务可直接复用 Pi Shell 执行已登记命令的结果。系统核对真实退出码和执行期间的源码状态。对于匹配的 Bash `tail` 显示管道，开启 `pipefail` 保留命令的失败退出。最后一项证据通过收尾复核后生成回执。若最终说明断流且此后没有新工具调用或待处理输入，回执也会标明断流。计划中还有独立审查时，前置验收通过后会自动开始已启用的只读审查。自动审查总时限默认 180 秒，计划可通过 `timeout` 指定。大型模型的分段审查按独立源码范围并行取证，共享请求预算，并为结构化报告保留有限推理输出边界。
+- 在受信任的项目里，开启 `finishWhenVerified` 的任务可直接复用 Pi Shell 执行已登记命令的结果。系统核对真实退出码和执行期间的源码状态。对于匹配的 Bash `tail` 显示管道，开启 `pipefail` 保留命令的失败退出。最后一项证据通过收尾复核后生成回执。若最终说明断流且此后没有新工具调用或待处理输入，回执也会标明断流。计划中还有独立审查时，前置验收通过后会自动开始已启用的只读审查。自动审查总时限默认 180 秒，计划可通过 `timeout` 指定。大型模型的分段审查按独立源码范围并行取证，共享请求预算，并为结构化报告保留有限推理输出边界。部分审查结果先进入保存的验收计划，模型处理具体阻塞项或记录精确待查范围后再继续。
 - 面板和命令行会显示当前验收项、总时限和失败原因。重开会话后可查看下一项及上次是否中断。验收超时和用户主动停止有各自的状态。用户收到询问时可在两端直接回答。
 - `verify` 为每次运行要求秒级截止时间，并保留失败退出码与已读到的输出。需要故意改错代码来验证测试时，使用 `scope: "snapshot"` 和 `mutations` 提交精确替换。副本包含当前跟踪文件和未忽略的未跟踪文件。依赖安装按项目要求在副本内完成。执行进程仍使用当前系统账户的权限。
 - 指定 `expectedFailure` 可做带对照的变异验证。SuperPi 从同一次源码采集建立两个独立副本，在总截止时间内运行同一条命令。原始副本须通过，指定的字面诊断须只在变异后的失败输出中出现。工具保留两个实际退出码与各自输出，从完整 Shell 记录核对长日志中的诊断。

@@ -10,6 +10,7 @@ const DELIVERY_GUIDANCE = [
   'After tests or tool calls, use their results to decide what remains. Report completion only for work actually done and verified.',
   'When verify is available, use a disposable snapshot for intentional mutations or experiments that must not change the working copy.',
   'For concurrency, migrations, or changes across lifecycle boundaries, include an independent review check when using task_progress. Address concrete review findings before delivery.',
+  'Drive a declared independent review through task_progress.run_checks. If a review returns partial coverage, address a cited blocking finding or record the exact pending scope. Do not edit unrelated files or repeat the same unchanged review.',
   'When resuming, start from the current workspace and completed tool results. Verify uncertain changes before doing them again.',
 ].join('\n')
 

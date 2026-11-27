@@ -210,6 +210,8 @@ try {
   check(healthy.requests.length === 1 && lastAssistant(healthy)?.verdict?.kind === 'none', 'valid short completion gets one provider request')
   check(JSON.stringify(healthy.requests[0].messages).includes('Report completion only for work actually done and verified'),
     'both modes inherit the same evidence-based completion guidance')
+  check(JSON.stringify(healthy.requests[0].messages).includes('Drive a declared independent review through task_progress.run_checks'),
+    'the system prompt bounds partial review recovery to the saved acceptance plan')
 
   const mainId = sessionId
   const mainState = (await command({ type: 'get_state' })).data
