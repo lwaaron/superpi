@@ -3,6 +3,7 @@ import type { AgentToolResult, AgentToolUpdateCallback } from '@earendil-works/p
 import { SettingsManager, type ExtensionAPI, type ExtensionContext } from '@earendil-works/pi-coding-agent'
 import { Type, type Static } from 'typebox'
 import { scanTextBytes } from './superpi-text-bytes.mjs'
+import { detectTurnVerdict } from './superpi-turn-verdict.mjs'
 import { acceptanceInvocation, applyVerificationMutations, observeWorkspaceCommand, verificationCommand, verificationOutputContains,
   verificationSnapshotFingerprint, waitForVerification, withVerificationPair, withVerificationSnapshot,
   workspaceFingerprint } from './superpi-verification.mjs'
@@ -203,6 +204,7 @@ export default function delivery(pi: ExtensionAPI) {
   let shellStillRunning = false
   let completedHere = false
   let automaticFinishPending = false
+  let shellCompletion: 'verified' | 'summary-interrupted' | undefined
   let runningChecks = false
   const observedCommands = new Map<string, CommandObservation>()
   const automaticReviews = new Set<string>()
@@ -229,6 +231,7 @@ export default function delivery(pi: ExtensionAPI) {
     shellStillRunning = false
     completedHere = false
     automaticFinishPending = false
+    shellCompletion = undefined
     runningChecks = false
     for (const observation of observedCommands.values()) observation.watcher?.close()
     observedCommands.clear()
@@ -243,17 +246,21 @@ export default function delivery(pi: ExtensionAPI) {
   pi.on('session_tree', restore)
   pi.on('agent_settled', resetActivity)
   pi.on('message_start', event => {
-    if (event.message.role === 'user') automaticFinishPending = false
+    if (event.message.role === 'user') {
+      automaticFinishPending = false
+      shellCompletion = undefined
+    }
   })
-  const allowsAutomaticReview = (task: Task | undefined, ctx: ExtensionContext): task is Task =>
-    Boolean(task?.finishWhenVerified && task.status === 'active' && task.checks.some(item => item.review && !item.evidence) &&
-      !runningChecks && !needsInterruptedCommandCheck(task) && canFinish(ctx) && ctx.isProjectTrusted() &&
-      pi.getActiveTools().includes('review_changes'))
+  const observesDeclaredShell = (task: Task | undefined, ctx: ExtensionContext): task is Task =>
+    Boolean(task?.finishWhenVerified && task.status === 'active' && !runningChecks &&
+      !needsInterruptedCommandCheck(task) && canFinish(ctx) && ctx.isProjectTrusted())
   pi.on('tool_call', async (event, ctx) => {
+    // A new action means a subsequent provider failure may concern work beyond the verified command.
+    shellCompletion = undefined
     const { toolName, toolCallId, parentToolCallId } = event
     if (parentToolCallId || (toolName !== 'bash' && toolName !== 'powershell') || !ctx.signal || ctx.signal.aborted) return
     const task = currentTask(ctx)
-    if (!allowsAutomaticReview(task, ctx) || typeof event.input.command !== 'string') return
+    if (!observesDeclaredShell(task, ctx) || typeof event.input.command !== 'string') return
     for (const [index, check] of task.checks.entries()) {
       if (!check.command || check.mutation || (check.shell ?? 'bash') !== toolName) continue
       const command = acceptanceInvocation(event.input.command, check.command, toolName, ctx.cwd)
@@ -776,6 +783,9 @@ export default function delivery(pi: ExtensionAPI) {
   })
 
   pi.on('turn_end', async (event, ctx) => {
+    if (shellCompletion && event.outcome === 'error') {
+      shellCompletion = detectTurnVerdict(event.message).kind === 'stream-interrupted' ? 'summary-interrupted' : undefined
+    }
     const observations = [...observedCommands.values()]
     for (const observation of observations) observation.watcher?.close()
     observedCommands.clear()
@@ -783,18 +793,26 @@ export default function delivery(pi: ExtensionAPI) {
     if (task?.status !== 'active' || !task.finishWhenVerified || event.outcome !== 'completed' || ctx.signal?.aborted) return
 
     const successful = new Set(event.toolResults.filter(result => !result.isError).map(result => result.toolCallId))
+    let recordedFingerprint: string | undefined
     for (const [index, check] of task.checks.entries()) {
       const attempts = observations.filter(observation => observation.check === check)
       if (attempts.length !== 1) continue
       const proof = attempts[0].proof
-      if (proof && 'toolCallId' in proof && successful.has(proof.toolCallId)) task = saveEvidence(ctx, task, index, proof)
+      if (proof && 'toolCallId' in proof && successful.has(proof.toolCallId)) {
+        task = saveEvidence(ctx, task, index, proof)
+        recordedFingerprint = proof.fingerprint
+      }
     }
-    if (!allowsAutomaticReview(task, ctx) || event.context.pendingMessages.length) return
-    const firstCommand = task.checks.find(check => check.command && check.evidence && 'fingerprint' in check.evidence)
-    if (!firstCommand || !task.checks.some(check => check.command && check.evidence && 'toolCallId' in check.evidence &&
-      successful.has(check.evidence.toolCallId)) || task.checks.some(check => !check.review && !check.evidence)) return
-    const fingerprint = firstCommand.evidence && 'fingerprint' in firstCommand.evidence ? firstCommand.evidence.fingerprint : undefined
-    const key = JSON.stringify([fingerprint, task.goal, task.checks.map(({ evidence: _evidence, ...item }) => item)])
+    if (!recordedFingerprint) return
+    engaged = true
+    if (event.context.pendingMessages.length) return
+    if (stopAfterEvidence(ctx, task)) {
+      shellCompletion = 'verified'
+      return
+    }
+    if (!observesDeclaredShell(task, ctx) || !pi.getActiveTools().includes('review_changes') ||
+      !task.checks.some(item => item.review && !item.evidence) || task.checks.some(item => !item.review && !item.evidence)) return
+    const key = JSON.stringify([recordedFingerprint, task.goal, task.checks.map(({ evidence: _evidence, ...item }) => item)])
     if (automaticReviews.has(key)) return
     automaticReviews.add(key)
     const outcome = await runAcceptance(task, task.acceptanceTimeout ?? AUTOMATIC_REVIEW_TIMEOUT, ctx, ctx.signal, undefined,
@@ -810,7 +828,8 @@ export default function delivery(pi: ExtensionAPI) {
   })
 
   pi.on('agent_before_settle', async (event, ctx) => {
-    if (!engaged || event.outcome !== 'completed' || ctx.signal?.aborted) return
+    const summaryInterrupted = event.outcome === 'error' && shellCompletion === 'summary-interrupted'
+    if (!engaged || ctx.signal?.aborted || (event.outcome !== 'completed' && !summaryInterrupted)) return
     let task = currentTask(ctx)
     let entries = event.entries
     const pendingInput = () => !canFinish(ctx) || event.continue || event.context.pendingMessages.length > 0
@@ -824,16 +843,17 @@ export default function delivery(pi: ExtensionAPI) {
         showTask(ctx, task)
       } else if (finishAutomatically && !pendingInput()) {
         const completed = { ...task, status: 'complete' as const }
+        const content = receiptText(completed) + (summaryInterrupted ? '\n\n最终说明断流 / Final summary stream interrupted.' : '')
         showTask(ctx, completed)
         return { entries: [...entries,
           { type: 'custom', customType: TASK, data: completed },
-          { type: 'custom_message', customType: RECEIPT, display: true, content: receiptText(completed),
+          { type: 'custom_message', customType: RECEIPT, display: true, content,
             details: { goal: completed.goal, checks: completed.checks.length } },
         ] }
       }
     }
     const settlement = entries === event.entries ? undefined : { entries }
-    if (pendingInput()) return settlement
+    if (event.outcome !== 'completed' || pendingInput()) return settlement
     const last = event.context.contextMessages.at(-1)
     if (last?.role === 'toolResult' && ['review_changes', 'task_progress'].includes(last.toolName)) {
       const { review } = (last.details ?? {}) as { review?: { repeated?: boolean; check?: number; remaining: string } }

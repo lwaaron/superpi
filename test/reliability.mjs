@@ -1008,6 +1008,48 @@ try {
   'a real passing shell command with a display wrapper advances the registered reviews and receipt without a model-issued acceptance call')
 
   assert.equal((await command({ type: 'new_session' })).ok, true)
+  const commandOnly = await run('accept the registered executable criterion through the normal shell', [
+    useTool('task_progress', { ...commandPlan, checks: [commandPlan.checks[0]] }, 'shell_only_plan'),
+    useTool('bash', { command: displayCommand(normalTest) }, 'shell_only_check'),
+    { delta: 'The registered test passed.' }, { delta: 'The test output is available.' },
+  ])
+  const commandOnlyTask = commandOnly.records.findLast(record => record.entry?.customType === 'superpi-task')?.entry.data
+  check(commandOnly.requests.length === 3 && commandOnlyTask?.status === 'complete' &&
+    commandOnlyTask.checks[0]?.evidence?.toolCallId === 'shell_only_check' &&
+    commandOnly.records.filter(record => isReceipt(record.entry)).length === 1,
+  'a command-only task receives its receipt from real shell evidence without an extra verify or finish call')
+
+  assert.equal((await command({ type: 'new_session' })).ok, true)
+  assert.equal((await request(session() + '/controls/retry', { enabled: false })).enabled, false)
+  const interruptedSummary = await run('settle verified shell evidence when the final summary stream fails', [
+    useTool('task_progress', { ...commandPlan, checks: [commandPlan.checks[0]] }, 'shell_summary_plan'),
+    useTool('bash', { command: normalTest }, 'shell_summary_check'),
+    { delta: 'The test', streamError: earlyClose },
+  ])
+  const interruptedTask = interruptedSummary.records.findLast(record => record.entry?.customType === 'superpi-task')?.entry.data
+  const interruptedReceipts = interruptedSummary.records.filter(record => isReceipt(record.entry))
+  check(interruptedSummary.requests.length === 3 && lastAssistant(interruptedSummary)?.verdict?.kind === 'stream-interrupted' &&
+    interruptedTask?.status === 'complete' && interruptedTask.checks[0]?.evidence?.toolCallId === 'shell_summary_check' &&
+    interruptedReceipts.length === 1 && interruptedReceipts[0].entry.content.includes('Final summary stream interrupted.'),
+  'a trailing stream failure remains visible and the verified task still receives its own receipt')
+
+  assert.equal((await command({ type: 'new_session' })).ok, true)
+  const sourceBeforeSummary = await fs.readFile(path.join(workspace, 'origin.txt'))
+  const interruptedAfterWrite = await run('leave stale command evidence pending after a later write and final stream failure', [
+    useTool('task_progress', { ...commandPlan, checks: [commandPlan.checks[0]] }, 'shell_stale_summary_plan'),
+    useTool('bash', { command: normalTest }, 'shell_stale_summary_check'),
+    { delta: writeCall('origin.txt', 'Later source edit\n', 'summary_write'), finish: 'tool_calls' },
+    { delta: 'The test', streamError: earlyClose },
+  ])
+  check(interruptedAfterWrite.requests.length === 4 && toolResult(interruptedAfterWrite, 'summary_write')?.isError === false &&
+    interruptedAfterWrite.records.some(record => record.entry?.data?.checks?.[0]?.evidence?.toolCallId === 'shell_stale_summary_check') &&
+    lastAssistant(interruptedAfterWrite)?.verdict?.kind === 'stream-interrupted' &&
+    !interruptedAfterWrite.records.some(record => isReceipt(record.entry)),
+  'a lost summary cannot close a task after a subsequent write')
+  await fs.writeFile(path.join(workspace, 'origin.txt'), sourceBeforeSummary)
+  assert.equal((await request(session() + '/controls/retry', { enabled: true })).enabled, true)
+
+  assert.equal((await command({ type: 'new_session' })).ok, true)
   reviewReplies = { correctness: [], tests: [] }
   const failedCommand = 'node missing-acceptance-command.mjs'
   const maskedFailure = await run('keep a display-piped failure pending', [
