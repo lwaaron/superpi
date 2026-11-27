@@ -19,7 +19,11 @@ const CITATION_LINES = 20
 const READ_LINES = 180
 const SAVED_READS = 64
 const SCOPE_BYTES = 6_800
+const LARGE_MODEL_SCOPE_BYTES = 14_000
 const MAX_SOURCE_SCOPES = 8
+const SOURCE_SCOPE_CONCURRENCY = 3
+const SCOPE_REASONING_MAX_TOKENS = 4_096
+const SCOPE_REASONING_INPUT_BYTES = 40_000
 const sourceExtension = /\.(?:[cm]?[jt]sx?|pyi?|go|rs|java|kts?|h|hpp|c|cc|cpp|cs|rb|php|swift|lua|sh|ps1|sql|vue|svelte|html|css)$/i
 const projectManifest = /^(?:package\.json|pyproject\.toml|Cargo\.toml|go\.(?:mod|sum)|pom\.xml|build\.gradle(?:\.kts)?)$/i
 const projectReadme = /^readme(?:\.md|\.markdown)?$/i
@@ -255,7 +259,7 @@ async function bundledEvidence(snapshot, files, payload, { limit, patchLimit }, 
   }
 }
 
-async function planReviewScopes(snapshot, bundle, signal) {
+async function planReviewScopes(snapshot, bundle, signal, scopeBytes = SCOPE_BYTES) {
   const packet = JSON.parse(bundle.input)
   const changed = packet.workspaceFiles.filter(file => snapshot.changedPaths.has(file.path))
   if (!changed.length || changed.length !== snapshot.changedPaths.size) return
@@ -268,7 +272,7 @@ async function planReviewScopes(snapshot, bundle, signal) {
     const append = range => {
       if (!range.source.trim()) throw new Error('A review range cannot be cited.')
       const size = Buffer.byteLength(JSON.stringify(range)) + 1
-      if (ranges.length && (bytes + size > SCOPE_BYTES || ranges.length === 6)) {
+      if (ranges.length && (bytes + size > scopeBytes || ranges.length === 6)) {
         scopes.push(ranges)
         ranges = []
         bytes = 2
@@ -286,8 +290,8 @@ async function planReviewScopes(snapshot, bundle, signal) {
       let size = overhead
       for (const [i, line] of lines.entries()) {
         const next = Buffer.byteLength(JSON.stringify(line))
-        if (overhead + next > SCOPE_BYTES) return
-        if (size + next > SCOPE_BYTES) {
+        if (overhead + next > scopeBytes) return
+        if (size + next > scopeBytes) {
           append({ ...context, start: start + 1, end: i, source: lines.slice(start, i).join('\n') })
           start = i
           size = overhead
@@ -433,7 +437,7 @@ async function validateScopeCitations(snapshot, scope, { coverage: citations, de
 }
 
 async function reviewPass({ focus, goal, input, inputLimit, model, thinkingLevel, registry, snapshot, signal, readAllowance, resuming, suppliedSources, retry,
-  inline = false, batchReads = false, openItems, criteria, meter, onRequest, onCheckpoint, onOutput, scope, onScopeReport }) {
+  inline = false, batchReads = false, openItems, criteria, meter, onRequest, onCheckpoint, onOutput, scope, scopePlan, onScopeReport }) {
   let report
   let structuredInput
   const supportsStructuredReply = scope && model.api === 'openai-completions' && model.compat?.thinkingFormat === 'deepseek'
@@ -701,6 +705,10 @@ async function reviewPass({ focus, goal, input, inputLimit, model, thinkingLevel
     streamFn: (selected, context, options) => {
       signal.throwIfAborted()
       if (meter.requests >= requestLimit) throw new Error('Review reached its request budget.')
+      if (meter.requestBudget && meter.requestBudget.used >= meter.requestBudget.limit) {
+        throw new Error('Review reached its request budget.')
+      }
+      if (meter.requestBudget) meter.requestBudget.used += 1
       meter.requests += 1
       const providerReplay = replayProviderRequest
       replayProviderRequest = false
@@ -728,7 +736,15 @@ async function reviewPass({ focus, goal, input, inputLimit, model, thinkingLevel
         repairingReport: repairingOutput ? focus : undefined,
       })
       // A thinking provider can count reasoning and the report against one output limit.
-      return registry.streamSimple(selected, context, selected.reasoning && options?.reasoning ? options : { ...options, maxTokens: reportTokens })
+      const scopedReasoning = Boolean((scope || Buffer.byteLength(input) > SCOPE_REASONING_INPUT_BYTES) &&
+        selected.reasoning && options?.reasoning)
+      const maxTokens = scopedReasoning
+        ? Math.min(SCOPE_REASONING_MAX_TOKENS, selected.maxTokens || SCOPE_REASONING_MAX_TOKENS)
+        : reportTokens
+      const streamOptions = scopedReasoning || !(selected.reasoning && options?.reasoning)
+        ? { ...options, maxTokens }
+        : options
+      return registry.streamSimple(selected, context, streamOptions)
     },
   })
   const unlisten = agent.subscribe(event => {
@@ -773,7 +789,9 @@ async function reviewPass({ focus, goal, input, inputLimit, model, thinkingLevel
       const reasoning = model.reasoning && thinkingLevel !== 'off' ? thinkingLevel : undefined
       const response = await registry.streamSimple(model, { systemPrompt: prompt,
         messages: [{ role: 'user', content: structuredInput, timestamp: Date.now() }],
-      }, { signal, reasoning, ...(reasoning ? {} : { maxTokens: reportTokens }),
+      }, { signal, reasoning, maxTokens: reasoning
+        ? Math.min(SCOPE_REASONING_MAX_TOKENS, model.maxTokens || SCOPE_REASONING_MAX_TOKENS)
+        : reportTokens,
         onPayload: payload => ({ ...payload, response_format: { type: 'json_object' } }),
       }).result()
       signal.throwIfAborted()
@@ -847,6 +865,7 @@ function newReviewMeter(sourceRanges = new Map(), acceptedEvidence = []) {
 
 async function reviewByScope(options, plan, deadlineAt) {
   const { focus, meter } = options
+  const requestBudget = { used: meter.requests, limit: REQUEST_LIMIT }
   const prior = new Map((options.scopeReports ?? []).map(report => [report.id, report]))
   const reports = new Map(plan.flatMap(scope => {
     const report = prior.get(scope.id)
@@ -874,21 +893,20 @@ async function reviewByScope(options, plan, deadlineAt) {
   }
   summarize()
   const remaining = plan.filter(scope => meter.pendingScopes.includes(scope.id))
-  for (const [index, scope] of remaining.entries()) {
+  const reviewScope = async (scope, index, remainingCount) => {
     options.signal.throwIfAborted()
-    if (meter.requests >= REQUEST_LIMIT) break
-    if (scope.kind === 'integration' && meter.pendingScopes.some(id => id !== scope.id)) break
+    if (requestBudget.used >= requestBudget.limit) return
     const available = deadlineAt - performance.now()
-    if (available < 1) break
-    const after = remaining.length - index - 1
+    if (available < 1) return
+    const after = remainingCount - index - 1
     const timeout = AbortSignal.timeout(Math.max(1, Math.floor(after ? Math.min(40_000, available * 1.5 / (after + 1)) : available)))
     const signal = AbortSignal.any([options.signal, timeout])
     const previous = reports.get(scope.id)
     const sub = newReviewMeter(savedSourceRanges(previous), previous?.acceptedEvidence ?? [])
-    sub.limit = Math.min(3, Math.max(1, REQUEST_LIMIT - meter.requests - after))
-    const started = meter.requests
+    sub.limit = Math.min(3, Math.max(1, REQUEST_LIMIT - requestBudget.used - after))
+    sub.requestBudget = requestBudget
     const sourceReports = [...reports.values()].filter(report => report.id !== scope.id)
-    const reviewScope = scope.kind === 'integration' ? { ...scope, reports: sourceReports
+    const scopeInput = scope.kind === 'integration' ? { ...scope, reports: sourceReports
       .map(({ id, summary, coverage, findings }) => ({ id, summary, coverage, findings })) } : scope
     const dependencies = []
     if (scope.kind === 'integration' && !previous) {
@@ -899,8 +917,8 @@ async function reviewByScope(options, plan, deadlineAt) {
     const progress = activity => options.onRequest({ ...activity,
       scope: { focus, id: scope.id, remaining: meter.pendingScopes.length, total: plan.length } })
     const input = JSON.stringify({ goal: options.goal, ...(options.criteria ? { criteria: options.criteria } : {}),
-      reviewScope, fileCatalog: { paths: options.snapshot.scopedFiles.slice(0, 24), total: options.snapshot.scopedFiles.length } })
-    if (Buffer.byteLength(input) > options.inputLimit) continue
+      reviewScope: scopeInput, fileCatalog: { paths: options.snapshot.scopedFiles.slice(0, 24), total: options.snapshot.scopedFiles.length } })
+    if (Buffer.byteLength(input) > options.inputLimit) return
     const save = report => {
       const scopeReport = { ...report, id: scope.id, evidenceKey: scope.evidenceKey,
         sourceRanges: [...sub.sourceRanges.values()], acceptedEvidence: sub.acceptedEvidence }
@@ -912,11 +930,12 @@ async function reviewByScope(options, plan, deadlineAt) {
     try {
       const attempt = reviewPass({ ...options, input, scope, signal, meter: sub, batchReads: true, readAllowance: 12_000,
         suppliedSources: new Map(), resuming: Boolean(previous), openItems: openReviewItems(previous ?? { gaps: dependencies }), onScopeReport: save,
+        requestBudget,
         onCheckpoint: checkpoint => {
           if (saveSourceRange(meter.sourceRanges, checkpoint.range)) options.onCheckpoint(checkpoint)
         },
         onRequest: activity => {
-          meter.requests = started + sub.requests
+          meter.requests = requestBudget.used
           progress(activity)
         } })
       await waitForVerification(attempt, signal)
@@ -928,6 +947,16 @@ async function reviewByScope(options, plan, deadlineAt) {
       if (sub.failure) meter.failure = sub.failure
     }
   }
+  const sourceScopes = remaining.filter(scope => scope.kind !== 'integration')
+  for (let offset = 0; offset < sourceScopes.length; offset += SOURCE_SCOPE_CONCURRENCY) {
+    const batch = sourceScopes.slice(offset, offset + SOURCE_SCOPE_CONCURRENCY)
+    await Promise.all(batch.map((scope, index) => reviewScope(scope, offset + index, sourceScopes.length)))
+  }
+  const integration = remaining.find(scope => scope.kind === 'integration')
+  if (integration && meter.pendingScopes.every(id => id === integration.id) && requestBudget.used < requestBudget.limit) {
+    await reviewScope(integration, sourceScopes.length, sourceScopes.length + 1)
+  }
+  meter.requests = requestBudget.used
   return { focus, status: meter.pendingScopes.length ? 'incomplete' : 'complete', ...laneReceipt(meter), ...meter.partial }
 }
 
@@ -1078,8 +1107,9 @@ export async function reviewChanges(ctx, params, signal, onProgress, appendCheck
         limit: Math.min(inputBytes, Math.max(SNAPSHOT_INLINE_BYTES, 2 * discoveryBytes)),
         patchLimit: Math.min(inputBytes, Math.max(SNAPSHOT_INLINE_BYTES, discoveryBytes)),
       }, active) : undefined
+      const scopeBytes = model.maxTokens > 32_000 ? LARGE_MODEL_SCOPE_BYTES : SCOPE_BYTES
       const scopePlan = params.taskCheck && bundle && Buffer.byteLength(bundle.input) > SNAPSHOT_INLINE_BYTES ?
-        await planReviewScopes(snapshot, bundle, active) : undefined
+        await planReviewScopes(snapshot, bundle, active, scopeBytes) : undefined
       const inputLimit = Math.min(inputBytes, Buffer.byteLength(reviewInput) + SNAPSHOT_INLINE_BYTES)
       const dispatches = pendingLanes.map(lane => {
         const openItems = openReviewItems(lane.prior)

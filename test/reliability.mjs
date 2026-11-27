@@ -2026,8 +2026,11 @@ try {
   ])
   const unfinishedScopeReport = toolResult(unfinishedScopes, 'scoped_review_first')?.details?.review
   const scopedRequests = reviewRequests(unfinishedScopes)
+  const segmentedRequests = scopedRequests.filter(payload => packetOf(payload).reviewScope?.kind)
   check(scopedRequests.length > 1 && scopedRequests.every(payload => payload.thinking?.type === 'enabled' &&
-    payload.reasoning_effort === 'max'), 'both independent reviews use the effective Pi thinking level from the session')
+    payload.reasoning_effort === 'max') && segmentedRequests.length > 0 && segmentedRequests.every(payload =>
+      (payload.max_tokens ?? payload.max_completion_tokens) <= 4096),
+  'segmented reviews retain max thinking while bounding each structured report request')
   const deepSeekWire = payload => payload.messages[0].role === 'system' && Number.isFinite(payload.max_tokens) &&
     !Object.hasOwn(payload, 'max_completion_tokens') && !Object.hasOwn(payload, 'store')
   const replayedTools = unfinishedScopes.requests.flatMap(payload => payload.messages.filter(message => message.tool_calls?.length))
