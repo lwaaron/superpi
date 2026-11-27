@@ -160,7 +160,7 @@ try {
   await fs.writeFile(path.join(agentDir, 'models.json'), JSON.stringify({ providers: { loopback: {
     baseUrl: `http://127.0.0.1:${provider.address().port}/v1`, api: 'openai-completions', apiKey: 'fixture',
     models: ['fixture', 'replacement', 'fixture-wide'].map(id => ({ id,
-      contextWindow: id === 'fixture-wide' ? 160000 : 24000, maxTokens: 2048, input: ['text', 'image'],
+      contextWindow: id === 'fixture-wide' ? 160000 : 24000, maxTokens: id === 'fixture-wide' ? 32000 : 2048, input: ['text', 'image'],
       ...(id === 'fixture-wide' ? { reasoning: true, thinkingLevelMap: { max: 'max' },
         compat: { thinkingFormat: 'deepseek', supportsReasoningEffort: true, supportsDeveloperRole: false } } : {}) })),
   } } }))
@@ -1876,7 +1876,7 @@ try {
   const evidenceGit = (...args) => execFileSync('git', ['-c', 'core.autocrlf=false', '-c', 'user.name=Fixture',
     '-c', 'user.email=test@example.invalid', '-c', 'commit.gpgsign=false', ...args], { cwd: completeSource })
   const contractDoc = '# Visible engineering contract\nThe lookup must return its existing value.\n'
-  const existingCaller = 'export const originalValue = "kept"\n' + '// existing caller and checks\n'.repeat(167)
+  const existingCaller = 'export const originalValue = "kept"\n' + '// existing caller and checks\n'.repeat(167) + '// last caller assertion\n'
   const changedSource = 'export const lookup = () => undefined\n' + '// historical regression test data\n'.repeat(420)
   await Promise.all([
     fs.writeFile(path.join(completeSource, 'catalog.mjs'), 'export const lookup = () => "kept"\n'),
@@ -1909,9 +1909,23 @@ try {
   'complete explicitly scoped source and acceptance material can report immediately without sending an excluded README')
 
   await fs.writeFile(path.join(completeSource, 'catalog.mjs'), changedSource.replace('() => undefined', '() => "kept"'))
-  const scopedPlan = useTool('task_progress', { action: 'start', replace: true, finishWhenVerified: true,
-    goal: 'Keep the lookup and its existing consumer compatible while changing the catalog.',
-    checks: [{ description: 'Independently review all changed code and test coverage', review: true }] }, 'scoped_plan')
+  const reviewPlan = (goal, id) => useTool('task_progress', { action: 'start', replace: true, finishWhenVerified: true,
+    goal, checks: [{ description: 'Independently review all changed code and test coverage', review: true }] }, id)
+  const scopedPlan = reviewPlan('Keep the lookup and its existing consumer compatible while changing the catalog.', 'scoped_plan')
+  assert.equal((await command({ type: 'set_thinking_level', level: 'max' })).ok, true)
+  const reasoningReport = focus => ({ ...clean(focus), reasoningProgress: Array(6).fill('Tracing the supplied source and its caller. ') })
+  reviewReplies = { correctness: [reasoningReport('correctness')], tests: [reasoningReport('tests')] }
+  const reasoningReview = await run('finish an active reasoning review from the full source packet', [
+    reviewPlan('Check the stable value before deploying the catalog.', 'reasoning_plan'),
+    requestReview({ check: 1, timeout: 5 }, 'reasoned_snapshot'), { delta: 'The full snapshot was reviewed.' },
+  ])
+  const reasoningProof = toolResult(reasoningReview, 'reasoned_snapshot')?.details?.review
+  const reasoningRequests = reviewRequests(reasoningReview)
+  check(reasoningProof?.status === 'clear' && reasoningProof.recorded && reasoningRequests.length === 2 &&
+    reasoningRequests.every(payload => (payload.max_tokens ?? payload.max_completion_tokens) === 32000),
+  'a reasoning-enabled numbered review finishes sustained reasoning from a full packet using the model output budget (' +
+    JSON.stringify({ status: reasoningProof?.status, budgets: reasoningRequests.map(p => p.max_tokens ?? p.max_completion_tokens) }) + ')')
+
   const reviewReply = ({ rejectNew = false, deferIntegration = false } = {}) => {
     let checkedCitation = false
     return payload => {
@@ -1922,6 +1936,10 @@ try {
         decision: 'needs_evidence', summary: 'The source range still needs a dependency check.', findings: [], coverage: [],
         gaps: [callerQuestion],
       }, 'scope_needs_evidence')
+      if (rejectNew && scope.id === 'source-3') return useTool('submit_review', {
+        decision: 'needs_evidence', summary: 'The source line is still under review.', findings: [], coverage: [],
+        gaps: [{ path: scope.ranges[0].path, line: scope.ranges[0].start, reason: 'Review the reported source line.' }],
+      }, 'scope_already_supplied')
       if (rejectNew && scope.id !== 'source-1') return { delta: 'No conclusions about this scope yet.' }
       const coverage = scope.kind === 'integration' ? [...new Map(scope.reports.flatMap(item =>
         item.coverage).map(anchor => [anchor.path, anchor])).values()].slice(0, 2) : scope.ranges.map(range => {
@@ -1937,6 +1955,13 @@ try {
       }
       const extra = {}
       if (rejectNew) extra.gaps = [callerQuestion]
+      if (!rejectNew && scope.kind === 'source') {
+        extra.resolutions = openItems.flatMap(item => {
+          const anchor = coverage.find(cite => cite.path === item.path && cite.line === item.line)
+          return anchor ? [{ item: item.id, path: anchor.path, line: anchor.line, quote: anchor.quote,
+            reason: 'The reported line was examined within its assigned source.' }] : []
+        })
+      }
       if (scope.kind === 'integration' && !deferIntegration) extra.resolutions = openItems.map(item => ({ item: item.id,
         path: 'existing.test.mjs', line: 1, quote: 'export const originalValue = "kept"', reason: 'The unchanged caller still expects the exported value.' }))
       return useTool('submit_review', { decision: 'reviewed', summary: 'Checked the requested scope against the lookup contract.', findings: [], coverage, ...extra },
@@ -1944,7 +1969,6 @@ try {
     }
   }
   const initialScopeReplies = () => Array(13).fill(reviewReply({ rejectNew: true }))
-  assert.equal((await command({ type: 'set_thinking_level', level: 'max' })).ok, true)
   reviewReplies = { correctness: initialScopeReplies(), tests: initialScopeReplies() }
   const unfinishedScopes = await run('persist completed scope conclusions before another scope fails', [
     scopedPlan, requestReview({ check: 1, timeout: 6 }, 'scoped_review_first'),
@@ -1954,6 +1978,14 @@ try {
   const scopedRequests = reviewRequests(unfinishedScopes)
   check(scopedRequests.length > 1 && scopedRequests.every(payload => payload.thinking?.type === 'enabled' &&
     payload.reasoning_effort === 'max'), 'both independent reviews use the effective Pi thinking level from the session')
+  check(['correctness', 'tests'].every(focus => {
+    const lane = scopedRequests.filter(payload => laneOf(payload) === focus)
+    const supplement = lane.filter(payload => packetOf(payload).reviewScope?.id === 'source-2')
+    const evidence = supplement[1]?.messages.filter(message => message.role === 'tool').map(message => message.content).join('\n')
+    return supplement.length === 2 && evidence?.includes('Missing source · existing.test.mjs') &&
+      evidence.includes('1\texport const originalValue') && evidence.includes('169\t// last caller assertion') &&
+      lane.filter(payload => packetOf(payload).reviewScope?.id === 'source-3').length === 1
+  }), 'a scope supplies the whole missing dependency in its next request and leaves already supplied lines pending without a replay')
   check(unfinishedScopeReport?.status === 'partial' && unfinishedScopeReport.reviewers.every(lane =>
     lane.scopeReports?.some(item => item.id === 'source-1' && item.status === 'complete' &&
       item.integrationGaps?.[0]?.path === 'existing.test.mjs') && lane.pendingScopes.includes('integration') &&
