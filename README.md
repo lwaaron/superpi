@@ -40,7 +40,7 @@ npm run pack:offline -- .\artifacts
 
 ```powershell
 node "$env:USERPROFILE\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\pnpm\bin\pnpm.cjs" `
-  add "file:C:\path\to\superpi-0.52.0-offline-win32-x64.tgz" --offline --ignore-scripts
+  add "file:C:\path\to\superpi-0.53.0-offline-win32-x64.tgz" --offline --ignore-scripts
 ```
 
 归档包含当前平台的 Pi 和生产依赖。使用远程模型时仍需连通模型服务。已经安装 Pi 时，也可在配置中用 `cliPath` 指定运行时。
@@ -232,10 +232,10 @@ New-Item -ItemType Junction `
 ### 使用 pnpm 手工安装
 
 ```powershell
-npm pack                                        # 得到 superpi-0.52.0.tgz
+npm pack                                        # 得到 superpi-0.53.0.tgz
 cd "$env:USERPROFILE\.dsh\profiles\desktop"
 node "$env:USERPROFILE\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\pnpm\bin\pnpm.cjs" `
-  add "file:C:\path\to\superpi-0.52.0.tgz" --ignore-scripts
+  add "file:C:\path\to\superpi-0.53.0.tgz" --ignore-scripts
 ```
 
 不要在 profile 里用 `npm install`：npm 会另写一份 `package-lock.json`，而宿主插件管理器用的是 pnpm，两套锁文件互相看不见，下次插件安装就会把 node_modules 重建成 pnpm 理解的样子。
@@ -506,6 +506,7 @@ npm install --prefix <插件>/.runtime --save-exact --no-audit --no-fund --logle
 - `task_progress` 的 `review: true` 验收项要求两路审查完成，且全部改动的文本范围内没有阻塞项。选择路径时按实际改动核对范围。限期内已返回的报告会保留，超时、有遗漏或审查期间源码变化时仍待验收。正常收尾时会再次核对本轮刚确认完成的源码证据。
 - 大型编号审查首轮未交回报告时，如果快照可完整分段，审查员会逐段记录带引文的结论，再检查跨文件交互。两端显示已完成的范围与待查项。断流或重开会话后，源码、范围、模型和思考强度一致时只补审剩余范围。跨范围待查项需要在集成审查中以源码证据逐项关闭。
 - 启用思考的审查沿用 Pi 为当前模型和上下文计算的输出预算。大型编号审查首轮有持续推理时可继续运行，并为后续审查保留时限。审查员可请求缺失的行或文件，下一次请求会在字节预算内直接带上同一快照中尚未提供的源码。重复读取大段已提供源码时返回引用，仍可核对简短的原文摘录。
+- 面板和命令行在 Pi 加载配置前，为显式声明 `thinkingFormat: "deepseek"` 的自定义 Chat Completions 模型补齐缺少的协议设置。模型、提供方和模型覆盖层里的显式值优先。分段审查补齐所需源码后，可以用该快照直接生成带引文的 JSON 报告。报告仍须通过相同的源码、范围和待查项校验。[DeepSeek Chat Completions](https://api-docs.deepseek.com/api/create-chat-completion/)
 - 多步骤任务提前收尾时，SuperPi 会把待办的验收项交回模型。此后每取得一项新的验收证据，都能在下次提前收尾时接着执行。重复验证同一项不会触发额外续跑。手动停止、排队的用户输入和明确登记的阻塞仍然优先。
 - 同一目标下修订验收计划时，SuperPi 核对当前源码，保留仍匹配的编号命令证据。变动过的测试命令和变异条件须重新执行，原先的证据随次序调整移到对应的验收项。两端都能查看修订后的验收进度。
 - 审查员报告阻塞问题时须引用当前源码原文。同一份代码的续审会收到上次的阻塞问题和待查项。逐项写出原因并引用能核对的源码，才能关闭对应问题。两端的审查结果都显示问题、原文和关闭依据。

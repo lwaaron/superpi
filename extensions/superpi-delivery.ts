@@ -371,13 +371,14 @@ export default function delivery(pi: ExtensionAPI) {
       goal: task && item ? task.goal + '\n' + item.description : goal ?? task?.goal ?? 'Review the changed behavior.',
       criteria: task && item ? task.checks.filter(criterion => !criterion.review).map(criterion => criterion.description) : undefined,
       paths, base, timeout, taskCheck: check !== undefined, retry, thinkingLevel: pi.getThinkingLevel(),
-    }, signal, (count, requests, { recovering, retrying, repairingReport, scope } = {}) => update?.({
+    }, signal, (count, requests, { recovering, retrying, repairingReport, reportingFromEvidence, scope } = {}) => update?.({
       content: [{ type: 'text', text: 'Independent reviewers returned ' + count + '/2' +
         (recovering ? ' · Resuming ' + recovering + ' from captured source' : '') +
         (retrying ? ' · Retrying ' + retrying + ' after a temporary provider error' : '') +
         (repairingReport ? ' · Recovering a truncated report from ' + repairingReport : '') +
+        (reportingFromEvidence ? ' · ' + reportingFromEvidence + ' is reporting from captured source' : '') +
         (scope ? ' · ' + scope.focus + ' ' + scope.id + ' · ' + (scope.total - scope.remaining) + '/' + scope.total + ' scopes' : '') }],
-      details: { reviewProgress: { completed: count, requests, recovering, retrying, repairingReport, scope } },
+      details: { reviewProgress: { completed: count, requests, recovering, retrying, repairingReport, reportingFromEvidence, scope } },
     }), appendCheckpoint)
     let recorded = false
     let savedNewEvidence = false

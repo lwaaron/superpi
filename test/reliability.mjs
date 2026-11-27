@@ -1,12 +1,13 @@
 /** Real host → pi JSONL → loopback OpenAI-compatible stream. No account or network service is needed. */
 import assert from 'node:assert/strict'
-import { execFileSync } from 'node:child_process'
+import { execFile, execFileSync } from 'node:child_process'
 import fs from 'node:fs/promises'
 import http from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
-import { pathToFileURL } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
+import { promisify } from 'node:util'
 import { requireRuntime } from './preflight.mjs'
 
 const pi = requireRuntime()
@@ -26,6 +27,7 @@ let reviewReplies = {}
 let route
 let sessionId
 const disposers = []
+const exec = promisify(execFile)
 
 function check(condition, label) {
   checks.push({ condition, label })
@@ -52,7 +54,7 @@ const provider = http.createServer(async (req, res) => {
   for await (const piece of req) raw += piece
   const payload = JSON.parse(raw)
   requests.push(payload)
-  const role = payload.messages.find(message => message.role === 'system')?.content
+  const role = payload.messages.find(message => message.role === 'system' || message.role === 'developer')?.content
     .match(/^You are the independent (correctness|tests) reviewer\./)?.[1]
   const next = (role ? reviewReplies[role] : replies)?.shift()
   const reply = typeof next === 'function' ? next(payload) : next
@@ -139,7 +141,7 @@ async function run(prompt, scripted, { abort = false, interact } = {}) {
 }
 
 const lastAssistant = result => result.records.filter(entry => entry.type === 'message_end' && entry.message.role === 'assistant').at(-1)
-const requestText = payload => JSON.stringify(payload.messages.filter(message => message.role !== 'system'))
+const requestText = payload => JSON.stringify(payload.messages.filter(message => message.role !== 'system' && message.role !== 'developer'))
 const toolResult = (activity, id) => activity.records.find(record =>
   record.type === 'message_end' && record.message?.role === 'toolResult' && record.message.toolCallId === id)?.message
 
@@ -157,13 +159,14 @@ try {
     defaultProjectTrust: 'always',
   }))
   await listen(provider)
-  await fs.writeFile(path.join(agentDir, 'models.json'), JSON.stringify({ providers: { loopback: {
+  const originalModels = JSON.stringify({ providers: { loopback: {
     baseUrl: `http://127.0.0.1:${provider.address().port}/v1`, api: 'openai-completions', apiKey: 'fixture',
     models: ['fixture', 'replacement', 'fixture-wide'].map(id => ({ id,
       contextWindow: id === 'fixture-wide' ? 160000 : 24000, maxTokens: id === 'fixture-wide' ? 32000 : 2048, input: ['text', 'image'],
       ...(id === 'fixture-wide' ? { reasoning: true, thinkingLevelMap: { max: 'max' },
-        compat: { thinkingFormat: 'deepseek', supportsReasoningEffort: true, supportsDeveloperRole: false } } : {}) })),
-  } } }))
+        compat: { thinkingFormat: 'deepseek', supportsReasoningEffort: true } } : {}) })),
+  } } })
+  await fs.writeFile(path.join(agentDir, 'models.json'), originalModels)
   apply({
     effect(fn) { const dispose = fn(); if (typeof dispose === 'function') disposers.push(dispose); return () => {} },
     inject(_services, run) { run({ webServer: { register(value) { route = value; return () => {} } } }) },
@@ -1930,9 +1933,10 @@ try {
     let checkedCitation = false
     return payload => {
       const { reviewScope: scope, openItems = [] } = packetOf(payload)
+      const jsonReport = payload.response_format?.type === 'json_object'
       const callerQuestion = { path: 'existing.test.mjs', reason: 'Check the unchanged caller against the revised catalog.' }
       if (!scope) return { delta: 'I need a smaller review scope.' }
-      if (rejectNew && scope.id === 'source-2') return useTool('submit_review', {
+      if (rejectNew && scope.id === 'source-2' && !jsonReport) return useTool('submit_review', {
         decision: 'needs_evidence', summary: 'The source range still needs a dependency check.', findings: [], coverage: [],
         gaps: [callerQuestion],
       }, 'scope_needs_evidence')
@@ -1940,7 +1944,7 @@ try {
         decision: 'needs_evidence', summary: 'The source line is still under review.', findings: [], coverage: [],
         gaps: [{ path: scope.ranges[0].path, line: scope.ranges[0].start, reason: 'Review the reported source line.' }],
       }, 'scope_already_supplied')
-      if (rejectNew && scope.id !== 'source-1') return { delta: 'No conclusions about this scope yet.' }
+      if (rejectNew && scope.id !== 'source-1' && !jsonReport) return { delta: 'No conclusions about this scope yet.' }
       const coverage = scope.kind === 'integration' ? [...new Map(scope.reports.flatMap(item =>
         item.coverage).map(anchor => [anchor.path, anchor])).values()].slice(0, 2) : scope.ranges.map(range => {
         const lines = range.source.split('\n')
@@ -1964,8 +1968,12 @@ try {
       }
       if (scope.kind === 'integration' && !deferIntegration) extra.resolutions = openItems.map(item => ({ item: item.id,
         path: 'existing.test.mjs', line: 1, quote: 'export const originalValue = "kept"', reason: 'The unchanged caller still expects the exported value.' }))
-      return useTool('submit_review', { decision: 'reviewed', summary: 'Checked the requested scope against the lookup contract.', findings: [], coverage, ...extra },
-        'scope_' + scope.id)
+      const conclusion = { decision: 'reviewed', summary: 'Checked the requested scope against the lookup contract.', findings: [], coverage, ...extra }
+      if (jsonReport) {
+        if (laneOf(payload) === 'correctness') conclusion.coverage[0].quote = 'A quote absent from the captured source'
+        return { delta: JSON.stringify(conclusion) }
+      }
+      return useTool('submit_review', conclusion, 'scope_' + scope.id)
     }
   }
   const initialScopeReplies = () => Array(13).fill(reviewReply({ rejectNew: true }))
@@ -1978,18 +1986,27 @@ try {
   const scopedRequests = reviewRequests(unfinishedScopes)
   check(scopedRequests.length > 1 && scopedRequests.every(payload => payload.thinking?.type === 'enabled' &&
     payload.reasoning_effort === 'max'), 'both independent reviews use the effective Pi thinking level from the session')
+  const deepSeekWire = payload => payload.messages[0].role === 'system' && Number.isFinite(payload.max_tokens) &&
+    !Object.hasOwn(payload, 'max_completion_tokens') && !Object.hasOwn(payload, 'store')
+  const replayedTools = unfinishedScopes.requests.flatMap(payload => payload.messages.filter(message => message.tool_calls?.length))
+  check(unfinishedScopes.requests.length > scopedRequests.length && unfinishedScopes.requests.every(deepSeekWire) &&
+    replayedTools.length > 0 && replayedTools.every(message => typeof message.reasoning_content === 'string'),
+  'the real panel session and independent reviewers send DeepSeek instructions, token limits and tool reasoning using the declared dialect')
   check(['correctness', 'tests'].every(focus => {
     const lane = scopedRequests.filter(payload => laneOf(payload) === focus)
     const supplement = lane.filter(payload => packetOf(payload).reviewScope?.id === 'source-2')
-    const evidence = supplement[1]?.messages.filter(message => message.role === 'tool').map(message => message.content).join('\n')
-    return supplement.length === 2 && evidence?.includes('Missing source · existing.test.mjs') &&
-      evidence.includes('1\texport const originalValue') && evidence.includes('169\t// last caller assertion') &&
+    const finalRequest = supplement[1]
+    const sourceReads = finalRequest ? packetOf(finalRequest).sourceReads : undefined
+    const evidence = sourceReads?.find(read => read.path === 'existing.test.mjs')?.text
+    return supplement.length === 2 && finalRequest.response_format?.type === 'json_object' && !finalRequest.tools?.length &&
+      evidence?.includes('1\texport const originalValue') && evidence.includes('169\t// last caller assertion') &&
       lane.filter(payload => packetOf(payload).reviewScope?.id === 'source-3').length === 1
-  }), 'a scope supplies the whole missing dependency in its next request and leaves already supplied lines pending without a replay')
+  }), 'a scope supplies the whole missing dependency in one tool-free JSON report request while already supplied lines do not trigger a replay')
   check(unfinishedScopeReport?.status === 'partial' && unfinishedScopeReport.reviewers.every(lane =>
     lane.scopeReports?.some(item => item.id === 'source-1' && item.status === 'complete' &&
       item.integrationGaps?.[0]?.path === 'existing.test.mjs') && lane.pendingScopes.includes('integration') &&
-    lane.scopeReports.some(item => item.id === 'source-2' && item.decision === 'needs_evidence' && item.status === 'incomplete')) &&
+    lane.scopeReports.some(item => item.id === 'source-2' && (lane.focus === 'tests' ?
+      item.decision === 'reviewed' && item.status === 'complete' : item.decision === 'needs_evidence' && item.status === 'incomplete'))) &&
     unfinishedScopes.records.some(event => event.type === 'entry_appended' && event.entry.customType === 'superpi-review-checkpoint' &&
       event.entry.data.scopeReport?.status === 'complete') && !unfinishedScopes.records.some(event => isReceipt(event.entry)) &&
     scopedRequests.some(payload => requestText(payload).includes('Cite the current source in each assigned range')),
@@ -2028,6 +2045,24 @@ try {
   'delivery receives a verified receipt after the missing integration question is resolved with source evidence (' +
     JSON.stringify({ status: finishedScopes?.status, scopes: finalPackets.map(packet => packet.reviewScope?.id),
       notes: toolResult(resolvedScopes, 'scoped_review_finish')?.content[0]?.text?.slice(0, 800) }) + ')')
+
+  const cliAgentDir = path.join(temp, 'separate-cli-profile')
+  await fs.mkdir(cliAgentDir)
+  await fs.writeFile(path.join(cliAgentDir, 'models.json'), originalModels)
+  await fs.writeFile(path.join(cliAgentDir, 'settings.json'), JSON.stringify({ defaultProjectTrust: 'always', lastChangelogVersion: '1.5.2' }))
+  const cliStart = requests.length
+  replies = [{ delta: 'The CLI request arrived.' }]
+  const cli = fileURLToPath(new URL('../src/superpi-cli.mjs', import.meta.url))
+  const invocation = exec(process.execPath, [cli, '--mode', 'json', '--print', '--no-session', '--no-extensions',
+    '--provider', 'loopback', '--model', 'fixture-wide', '--thinking', 'max', 'Check the configured model'], {
+    cwd: completeSource, timeout: 10_000, windowsHide: true,
+    env: { ...process.env, SUPERPI_CODING_AGENT_DIR: cliAgentDir, PI_CODING_AGENT_DIR: cliAgentDir },
+  })
+  invocation.child.stdin.end()
+  const printed = await invocation
+  const cliRequests = requests.slice(cliStart)
+  check(cliRequests.length === 1 && cliRequests.every(deepSeekWire) && printed.stdout.includes('The CLI request arrived.'),
+    'the standalone SuperPi CLI prepares the same native dialect in a separate untouched profile')
 } finally {
   if (sessionId) await request(session(), undefined, 'DELETE').catch(() => {})
   for (const dispose of disposers.reverse()) dispose()

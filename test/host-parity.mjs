@@ -1270,6 +1270,29 @@ try {
     }
   }
 
+  {
+    const { prepareModelCompatibility } = await import('../src/runtime-extensions.mjs')
+    const profile = fs.mkdtempSync(path.join(tmp, 'model-protocol-'))
+    const file = path.join(profile, 'models.json')
+    const generic = { id: 'generic', reasoning: true, compat: { thinkingFormat: 'openai' } }
+    const declared = { id: 'declared', reasoning: true, compat: { thinkingFormat: 'deepseek' } }
+    const overrides = { declared: { compat: { supportsDeveloperRole: true, maxTokensField: 'max_completion_tokens' } } }
+    const original = { providers: { extra: { api: 'openai-completions', compat: { supportsStore: true },
+      models: [declared, generic], modelOverrides: overrides } } }
+    fs.writeFileSync(file, JSON.stringify(original))
+    const prepared = prepareModelCompatibility(profile)
+    const after = JSON.parse(fs.readFileSync(file, 'utf8')).providers.extra
+    check('DeepSeek 补缺项并尊重模型、提供方和覆盖层的显式设置', prepared.updated === 1 &&
+      JSON.stringify(after.models[0].compat) === JSON.stringify({ thinkingFormat: 'deepseek', requiresReasoningContentOnAssistantMessages: true }) &&
+      JSON.stringify(after.models[1]) === JSON.stringify(generic) && JSON.stringify(after.modelOverrides) === JSON.stringify(overrides) &&
+      after.compat.supportsStore === true)
+    const modified = fs.statSync(file).mtimeMs
+    check('模型兼容配置第二次准备不写盘', prepareModelCompatibility(profile).updated === 0 && fs.statSync(file).mtimeMs === modified)
+    const invalid = Buffer.from([0x7b, 0xff, 0x7d])
+    fs.writeFileSync(file, invalid)
+    check('模型兼容配置诊断无效 UTF-8 且原始字节不动', Boolean(prepareModelCompatibility(profile).reason) && fs.readFileSync(file).equals(invalid))
+  }
+
   // ── 4.2 历史分页（判据 D）
 
   {

@@ -3,7 +3,7 @@ import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { BRAND_NAME } from '../extensions/superpi-brand.mjs'
 import { preparePiRuntime, resolvePiRuntime } from './pi-runtime.mjs'
-import { runtimeSessionOptions, syncExtensionFiles } from './runtime-extensions.mjs'
+import { prepareModelCompatibility, runtimeSessionOptions, syncExtensionFiles } from './runtime-extensions.mjs'
 
 const pluginRoot = fileURLToPath(new URL('../', import.meta.url))
 const runtime = resolvePiRuntime({ pluginRoot })
@@ -23,8 +23,12 @@ if (runtime.cliPath === '') {
   if (skipSync) process.argv.splice(2, 1)
   const separator = process.argv.indexOf('--', 2)
   const flags = process.argv.slice(2, separator === -1 ? undefined : separator)
-  const skipFlags = ['--no-extensions', '-ne', '--help', '-h', '--version', '-v']
-  if (!skipSync && !flags.some(flag => skipFlags.includes(flag))) {
+  const metadataOnly = flags.some(flag => ['--help', '-h', '--version', '-v'].includes(flag))
+  if (!metadataOnly) {
+    const compatibility = prepareModelCompatibility(agentDir)
+    if (compatibility.reason) console.warn(BRAND_NAME + ' could not prepare model compatibility: ' + compatibility.reason)
+  }
+  if (!skipSync && !metadataOnly && !flags.some(flag => ['--no-extensions', '-ne'].includes(flag))) {
     try { syncExtensionFiles(pluginRoot, path.join(agentDir, 'extensions')) } catch (error) {
       console.warn(BRAND_NAME + ' could not sync extensions: ' + String(error?.message ?? error))
     }

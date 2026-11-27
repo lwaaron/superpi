@@ -32,7 +32,7 @@ import {
   TUI_COMMANDS,
 } from './src/rpc-contract.mjs'
 import { decoratePiEvent } from './src/event-verdict.mjs'
-import { rpcExtensionArgs, runtimeSessionOptions } from './src/runtime-extensions.mjs'
+import { prepareModelCompatibility, rpcExtensionArgs, runtimeSessionOptions } from './src/runtime-extensions.mjs'
 import { SESSION_CONTROL } from './extensions/superpi-session-controls.mjs'
 import { BRAND_NAME } from './extensions/superpi-brand.mjs'
 import {
@@ -82,7 +82,7 @@ const API_PREFIX = '/api/' + PLUGIN_ID
 const MAX_SESSIONS = 8
 const MAX_BODY_BYTES = 4 * 1024 * 1024
 /** GET /contract 里 version 字段的取值：本插件对外的契约版本，与 package.json 解耦。 */
-const CONTRACT_VERSION = '0.52.0'
+const CONTRACT_VERSION = '0.53.0'
 /** 历史会话列表的条数窗口（与 src/session-store.mjs 的 DEFAULT_LIMIT/MAX_LIMIT 一致）。 */
 const HISTORY_DEFAULT_LIMIT = 20
 const HISTORY_MAX_LIMIT = 200
@@ -749,6 +749,8 @@ export function apply(ctx, config = {}) {
     })
     const runtime = runtimeSessionOptions({ packageDir: detected.packageDir, cwd })
     const { agentDir } = runtime
+    const compatibility = prepareModelCompatibility(agentDir)
+    if (compatibility.reason) log('warn', 'Model compatibility: ' + compatibility.reason)
     // Explicitly load the shared extensions from the same directory Pi uses for TUI discovery.
     if (!hasFlag(args, ['--no-extensions', '-ne'])) args.unshift(...rpcExtensionArgs(PLUGIN_ROOT, agentDir))
     try {
