@@ -205,6 +205,7 @@ export default function delivery(pi: ExtensionAPI) {
   let completedHere = false
   let automaticFinishPending = false
   let shellCompletion: 'verified' | 'summary-interrupted' | undefined
+  let lastPartialReview: { fingerprint: string; blocking: boolean } | undefined
   let runningChecks = false
   const observedCommands = new Map<string, CommandObservation>()
   const automaticReviews = new Set<string>()
@@ -232,6 +233,7 @@ export default function delivery(pi: ExtensionAPI) {
     completedHere = false
     automaticFinishPending = false
     shellCompletion = undefined
+    lastPartialReview = undefined
     runningChecks = false
     for (const observation of observedCommands.values()) observation.watcher?.close()
     observedCommands.clear()
@@ -409,7 +411,12 @@ export default function delivery(pi: ExtensionAPI) {
     else if (review.uncoveredCount) remaining = 'Independent review still needs the changed files outside the selected paths.'
     else if (review.omitted.length) remaining = 'Independent review still needs evidence for the files outside text coverage.'
     else if (review.pendingReviewers.length) remaining = 'Independent review still needs complete reports from ' + review.pendingReviewers.join(' and ') + '.'
-    const repeated = review.repeated && review.status !== 'stale' && !savedNewEvidence
+    const changedWithoutProgress = Boolean(lastPartialReview && review.fingerprint &&
+      lastPartialReview.fingerprint !== review.fingerprint && !lastPartialReview.blocking &&
+      review.status === 'partial' && !blocking && !savedNewEvidence)
+    const repeated = (review.repeated || changedWithoutProgress) && review.status !== 'stale' && !savedNewEvidence
+    if (review.status === 'partial') lastPartialReview = { fingerprint: review.fingerprint, blocking }
+    else if (review.status === 'clear' || blocking) lastPartialReview = undefined
     const lines = ['Independent review ' + review.status, review.message, review.checkpointWarning,
       blocking && review.pendingReviewers.length ? 'Pending static coverage · ' + review.pendingReviewers.join(', ') : '',
       review.reused.length ? 'Reports carried forward: ' + review.reused.join(', ') : '',

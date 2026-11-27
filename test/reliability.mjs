@@ -1454,6 +1454,22 @@ try {
     toolResult(repaired, 'finish_new_review')?.details?.task?.status === 'complete',
   'new source clears the repeat barrier and earns fresh independent proof')
 
+  assert.equal((await command({ type: 'new_session' })).ok, true)
+  reviewReplies = Object.fromEntries(['correctness', 'tests'].map(focus => [focus,
+    Array(12).fill({ delta: 'The report is still incomplete.' })]))
+  const unrelatedReviewEdit = await run('stop a partial review after an unrelated edit', [
+    beginReview('Review the changed source before delivery', 'fingerprint_guard_plan'),
+    requestReview({ check: 1 }, 'fingerprint_guard_first'),
+    useTool('write', { path: 'unrelated-review-note.txt', content: 'No review evidence.\n' }, 'unrelated_review_edit'),
+    requestReview({ check: 1 }, 'fingerprint_guard_second'),
+    { delta: 'The review is blocked.' },
+  ])
+  const fingerprintTask = unrelatedReviewEdit.records.findLast(record => record.entry?.customType === 'superpi-task')?.entry.data
+  check(toolResult(unrelatedReviewEdit, 'fingerprint_guard_second')?.details?.review?.repeated === true &&
+    fingerprintTask?.status === 'blocked' && /review/i.test(fingerprintTask.blocker ?? ''),
+  'an unrelated source edit cannot evade the same activity review repeat barrier')
+  await fs.rm(path.join(workspace, 'unrelated-review-note.txt'), { force: true })
+
   await request(session(), undefined, 'DELETE')
   sessionId = undefined
   await fs.writeFile(path.join(agentDir, 'settings.json'), JSON.stringify({
