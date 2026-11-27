@@ -1559,6 +1559,56 @@ const makeFooterData = () => ({
   eq(gapResult, undefined, '空隙上返回 undefined，交回 pi')
 }
 
+// ④d2b 真闭环：footer 点击 settings 后，编辑器下一帧必须出现菜单行。
+// 只测 footer 的 action 回调会漏掉 CustomEditor 外层缓存导致的「点了没展开」。
+{
+  const handlers = new Map()
+  let editorFactory
+  let footerFactory
+  const ctx = {
+    mode: 'tui',
+    model: makeExtCtx().model,
+    thinkingLevel: 'max',
+    sessionManager: makeExtCtx().sessionManager,
+    getContextUsage: () => makeExtCtx().getContextUsage(),
+    getSettings: () => makeExtCtx().getSettings(),
+    isIdle: () => true,
+    ui: {
+      setWorkingVisible() {},
+      setEditorComponent(factory) { editorFactory = factory },
+      setFooter(factory) { footerFactory = factory },
+      setTitle() {},
+      notify() {},
+      theme: { fg: (_token, text) => text },
+    },
+  }
+  defaultExport({
+    on: (name, handler) => handlers.set(name, handler),
+    sendUserMessage() {},
+  })
+  handlers.get('session_start')({}, ctx)
+  ok(typeof editorFactory === 'function', 'settings 闭环夹具安装了真实编辑器工厂')
+  ok(typeof footerFactory === 'function', 'settings 闭环夹具安装了真实 footer 工厂')
+  const tui = { renders: 0, terminal: { rows: 40, columns: 120 }, requestRender() { this.renders += 1 } }
+  const editor = editorFactory(tui, theme, { matches: () => false })
+  let invalidations = 0
+  const originalInvalidate = editor.invalidate.bind(editor)
+  editor.invalidate = () => { invalidations += 1; originalInvalidate() }
+  const footer = footerFactory(tui, { fg: (_token, text) => text }, makeFooterData())
+  const before = editor.render(100)
+  ok(!before.some(row => stripAnsi(row).includes('/settings')), '点击前没有 settings 菜单行')
+  const footerRow = stripAnsi(footer.render(100)[0])
+  const settingsAt = footerRow.indexOf('settings')
+  ok(settingsAt >= 0, '真实 footer 第一行包含 settings')
+  const click = footer.handleMouse({ type: 'click', button: 'left', x: settingsAt, y: 0 })
+  ok(click?.handled === true, '真实 footer 消费 settings 点击')
+  const after = editor.render(100).map(stripAnsi)
+  ok(after.some(row => row.includes('/settings') || row.includes('settings')), '点击后下一帧真实编辑器出现 settings 菜单')
+  ok(invalidations > 0, 'settings 点击让 CustomEditor 失效，清掉外层渲染缓存')
+  ok(tui.renders > 0, 'settings 点击请求了重绘')
+  resetRunState()
+}
+
 // ④d3 不变式：**渲染里出现的入口，必须都有命中区**
 // 这条比逐条断言更抗回归 —— 以后再加/挪入口，只要画了却没登记 hits 就会红。
 {

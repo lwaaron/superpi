@@ -812,6 +812,10 @@ export class SuperPiEditor extends CustomEditor {
   /** footer 那边点了 settings：开关子菜单（settings/home 的绘制归 footer）。 */
   toggleMenu(): void {
     this.menuOpen = !this.menuOpen
+    // CustomEditor may be wrapped in a cached TUI container. Changing only the
+    // flag and requesting a frame can leave the previous child height cached,
+    // so invalidate before asking the terminal to render.
+    this.invalidate?.()
     this.tui?.requestRender?.()
   }
 
@@ -978,6 +982,7 @@ export class SuperPiEditor extends CustomEditor {
       return
     }
     this.menuOpen = false
+    this.invalidate?.()
     const submit = (this as any).onSubmit
     if (typeof submit === 'function') {
       void submit(command)
