@@ -2947,7 +2947,7 @@ window.__ModuleLoader__.load({
       var warning = status === 'warning'
       var text = props.t(warning ? 'runEndedWithErrors' : 'runEnded')
       return h('div', { className: 'superpi-working', 'data-tone': warning ? 'warn' : 'ok', role: 'status' },
-        h('span', { 'aria-hidden': true }, warning ? '⚠\uFE0E' : '✔'),
+        h('span', { 'aria-hidden': true }, '✔'),
         h('span', { className: 'superpi-working-text', title: text }, text))
     }
 

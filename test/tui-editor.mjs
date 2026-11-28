@@ -1338,7 +1338,7 @@ const columnOf = (rows, y, needle) => stripAnsi(rows[y] ?? '').indexOf(needle)
     ['idle', () => resetRunState(), '○', '就绪'],
     ['running', () => markRunStart(Date.now() - 3000), null, 'Working · '],
     ['success', () => { markRunStart(); markRunSettled() }, '✔', '本轮已结束'],
-    ['warning', () => { markRunStart(); markToolError(); markRunSettled() }, '⚠︎', '本轮已结束 · 曾有错误'],
+    ['warning', () => { markRunStart(); markToolError(); markRunSettled() }, '✔', '本轮已结束 · 曾有错误'],
     ['error', () => {
       markRunStart()
       markUndelivered({ notice: { zh: '模型响应异常，可以继续。' } })
@@ -1680,9 +1680,9 @@ const makeFooterData = () => ({
   ok(frame().some(line => line.includes('Working · ')), '中途有错误时屏幕仍显示正在运行')
   handlers.get('message_end')({ message: { role: 'assistant', stopReason: 'stop', content: [{ type: 'text', text: '已完成。' }] } }, ctx)
   handlers.get('agent_settled')({ aborted: false }, ctx)
-  ok(frame().some(line => line.includes('⚠︎ 本轮已结束 · 曾有错误')), '成功重试后，终端屏幕用警告图标说明本轮已结束')
+  ok(frame().some(line => line.includes('✔ 本轮已结束 · 曾有错误')), '成功重试后，终端屏幕用勾号说明本轮已结束')
   const compact = stripAnsi(editor.render(22)[0])
-  ok(compact.includes('⚠︎ 本轮已结束') && tuiModule.visibleWidth(compact) === 22, '窄终端保留结束状态和警告图标，框线对齐')
+  ok(compact.includes('✔ 本轮已结束') && tuiModule.visibleWidth(compact) === 22, '窄终端保留结束状态和勾号，框线对齐')
   handlers.get('agent_start')({}, ctx)
   ok(frame().some(line => line.includes('Working · ')), '下一轮恢复运行状态')
   handlers.get('agent_settled')({ aborted: true }, ctx)

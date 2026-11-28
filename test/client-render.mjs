@@ -740,10 +740,10 @@ assert(workingJustStarted.indexOf(zh('durSec').replace('{n}', '1')) > 0, '刚起
   proc.pushEvent({ type: 'message_end', message: { role: 'assistant', stopReason: 'stop', content: [{ type: 'text', text: '已完成。' }] } })
   proc.pushEvent({ type: 'agent_settled', aborted: false })
   const warning = renderStatus()
-  assert(warning.includes('⚠︎') && warning.includes('本轮已结束 · 曾有错误') && warning.includes('data-tone="warn"'),
-    '本轮收尾后，成功重试仍保留警告图标和准确的结束文案')
+  assert(warning.includes('>✔</span>') && warning.includes('本轮已结束 · 曾有错误') && warning.includes('data-tone="warn"'),
+    '本轮收尾后，成功重试显示勾号和原有的结束文案')
   assert(warning.includes('role="status"') && !warning.includes('superpi-working-icon'), '结束文案可播报且图标停止旋转')
-  assert(cssRule('.superpi-working[data-tone="warn"]')?.includes('var(--dsw-alias-state-warn-primary)'), '警告图标和文案使用宿主警告色')
+  assert(cssRule('.superpi-working[data-tone="warn"]')?.includes('var(--dsw-alias-state-warn-primary)'), '勾号和文案使用宿主警告色')
   assert(renderStatus(view, en).includes('Turn ended · Errors occurred'), '英文界面也说明本轮已结束且曾出现错误')
 
   proc.pushEvent({ type: 'session_info_changed', name: 'Test' })

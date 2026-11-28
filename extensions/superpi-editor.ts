@@ -243,7 +243,7 @@ export function markToolError(): void {
  *
  * 与 `markToolError` 的区别在**责任归属**：工具失败是"命令跑挂了"，没交付是
  * "模型没按协议说话 / 吐了坏字节 / 被截断"。响应异常到收尾仍未解决时，
- * 保留诊断文案和继续入口。中途报过错的正常收尾使用警告图标。
+ * 保留诊断文案和继续入口。中途报过错的正常收尾显示黄色勾号。
  *
  * 存整份 verdict 而不是布尔：Working 行要按 `kind` 说六类不同的话，
  * 文案本体取自模块（与面板逐字相同），这里不复制任何一个字。
@@ -943,7 +943,7 @@ export class SuperPiEditor extends CustomEditor {
     const full = icon + sgrFg(color) + ' ' + workingLabel() + SGR_RESET
     // 退化档：只留 Working 与累计时长（去掉工具段）—— 工具名比累计值次要，
     // 但"正在跑什么"仍要尽量保留，所以它排在图标档之前。
-    // 收尾警告也有短版，保留警告图标和「本轮已结束」。
+    // 收尾警告也有短版，保留勾号和「本轮已结束」。
     const short = icon + sgrFg(color) + ' ' + workingLabel(Date.now(), false) + SGR_RESET
     const compact = icon
     // 窄面板上依次退让：完整三段 → 去掉工具段 → 只剩图标 → 只画横线。
@@ -1241,9 +1241,8 @@ export function statusIcon(phase: RunPhase, at = Date.now()): string {
       return RUN_FRAMES[index]
     }
     case 'success':
-      return '✔'
     case 'warning':
-      return '⚠\uFE0E'
+      return '✔'
     case 'error':
       return '✖'
     default:
