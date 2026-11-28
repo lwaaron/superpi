@@ -183,7 +183,7 @@ payload 取值优先级 `cancelled` → `confirmed` → `value`（`index.js:1093
 | 工具开始 | `tool_execution_start` | 渲染工具卡片 | 已实现（`client.js:1775-1778`，`toolStatus[id]={status:'running',name,partial:''}`） | `EVT-08` |
 | 工具流式输出 | `tool_execution_update` | 工具卡片追加 partialResult | 已实现（`client.js:1779` → `applyToolUpdate` `:1585`；单条 partial 截 2000 字符） | `EVT-09` |
 | 工具结束 | `tool_execution_end` | 卡片收口 + 耗时 | 已实现（`client.js:1780-1788`，`isError` → `'error'`） | `EVT-10` |
-| 彻底空闲 | `agent_settled` | 置空闲、清弹窗 | 已实现（`client.js:1730-1739`：`busy=false`、`retrying=false`、`pendingUi=[]`） | `EVT-11` |
+| 彻底空闲 | `agent_settled` | 结束工作计时，清理弹窗 | 已实现。面板应用本次收尾状态，快照提供相同结果供重连和回放使用 | `EVT-11`、`test/client-render.mjs` |
 | 队列变化 | `queue_update` | 渲染排队条目 | 已实现（`client.js:1790-1797`：存**完整** `steeringText`/`followUpText` 字符串数组，长度供状态栏 `:5816-5817`，文本供 Esc 还原 `:5038-5060`） | `EVT-12` |
 | 压缩开始 | `compaction_start` | 提示 `reason` | 已实现（`client.js:1798-1802`，`detail = reason \|\| 'manual'`） | `EVT-13` |
 | 压缩结束 | `compaction_end` | 展示结果与错误 | 已实现（`client.js:1803-1809`：`errorMessage` → err notice、`aborted` → warn） | `EVT-14` |
@@ -289,7 +289,7 @@ payload 取值优先级 `cancelled` → `confirmed` → `value`（`index.js:1093
 | Esc 清选区但不吞键 | 不适用 | 已实现：清选区后把键交回 pi（中断/取消补全照旧） | 同上：`Esc 不被扩展消费（pi 仍能中断）` |
 | 鼠标拖选复制 | 原生 | pi 自带（全屏模式 `fullscreenCopyOnSelect`，松手即复制并闪 `Copied!`）；本扩展在点击时清掉键盘选区，避免两套选区打架 | 同上：渲染反色开合成对 + 行数不变 |
 | 输入框外观 | 浏览器原生（卡面 `--dsw-specific-input-major` + 28px 圆角） | **四边闭合**的框（`╭─╮ │ │ ╰─╯`），框线 **80% 白**（`FRAME_RGB = [204,204,204]` = 255×0.8）；pi 原本只有上下两条线。滚动提示（`↑ N more`）原样保留 | `test/tui-editor.mjs`：框线色常量、上下边框色、四个角、中间每行首尾都有 `│`、**每行显示宽度必须等于渲染宽度**（错一列框就歪） |
-| Working 状态配色 | `WorkingRow`：`--dsw-alias-label-deep-diving` 蓝（0.6.4 起） | **回到 pi 原来的位置**（**上边框内侧左侧**，形如 `┌─ ◒ Working · 8s ───┐`），并**按状态换色**：正常白 `[255,255,255]` / 成功绿 `[126,211,133]` / 出错红 `[236,94,94]`，**图标与文案同色**；图标 `○`（空闲）/ `◐◓◑◒`（运行，按 250ms 取帧）/ `✔`（成功）/ `✖`（出错）。状态由 `agent_start` / `tool_execution_end.isError` / `agent_settled` 驱动；同时 `setWorkingVisible(false)` 关掉 pi 内置的 Working 行，避免两条并存 | 同上：四种状态各自的色值与图标、三色互不相同（用户报的正是「只用一种颜色」）、**位置在上边框（第 0 行）**、窄宽度下依次退让为「只剩图标 → 只画横线」 |
+| 本轮运行与收尾状态 | 过程流末尾在运行时显示蓝色旋转图标和计时。收尾后显示静态绿色「✔ 本轮已结束」或黄色「⚠︎ 本轮已结束 · 曾有错误」。重连从快照恢复当前会话的收尾状态 | 输入框上边框显示「○ 就绪」，运行时显示旋转图标和计时。收尾使用与面板相同的图标和中文文案。窄窗口保留警告图标和精简的结束文案 | `test/client-render.mjs`、`test/tui-editor.mjs` 渲染运行、顺利结束、途中报错与主动停止。响应异常仍显示具体原因与继续入口 |
 | 粘贴路径可辨识 | 0.6.0 起渲染成可点文件标签（图标 + 文件名） | 输入框里给**绝对路径加浅灰底色**（`PATH_CHIP_RGB = [104,104,104]`）。**底色只覆盖路径本身**：`trimPathToken()` 在最后一个已知扩展名（`PATH_EXT_RE`）处截断，所以「`D:<文件名>.png`然后把图改深色」不会把后面的普通文字也染色；药丸左右各吃一格底色当圆角，但**只有那一格确实是空白时**才吃（`padLeft` / `padRight`）。识别走保守正则：盘符 / UNC / POSIX 两段以上，排除 URL 与 `/settings` 这类斜杠命令 | 同上：Windows/POSIX 正例、URL 反例、相对路径反例、`/settings` 反例、渲染出现 `48;2;104;104;104` 且以 `49` 闭合、普通话不带底色、**紧贴普通文字时底色在扩展名处止住**、两侧是空白时才吃掉圆角格 |
 | settings / home 入口 | 顶栏与 `+` 菜单（`openSettings` / 回首页不存在） | 0.9.9 起移到 **footer 第一行**（与项目名同一行、右对齐）；0.9.4~0.9.8 曾在输入框框外右下角、模型信息上方，并排 `settings` `home`，**全小写**，**颜色与模型名一致**（pi footer 把模型名画成 `theme.fg('dim', …)`，这里同样用 `dim`）。点 `settings` 展开菜单（也在框外）：`settings` / `model` / `thinking` / `scoped-models` —— **全部是 pi 自己的斜杠命令**，点了等同用户敲回车（走 `onSubmit`）；**展开后键盘也能用**：`↑↓` 循环选择、`Enter` 执行当前项、`Esc` 收起，选中行是 `> ` 前缀 + accent + 下划线，其它键收起菜单后照原样输入；点 `home` 提交 `/new`（起新会话树 = 刚启动时的界面）。运行中点击只给 warning 提示、不打断 | 同上：小写断言（`!includes('Home')`）、**与项目名同一行**且在 footer 第一行右对齐、切项目图标是单列宽 `U+21C4`、用 `theme.fg('dim', …)` 上色、点 settings 展开 4 项、点菜单项提交对应命令、点 home 提交 `/new`、运行中被拦、Esc 关菜单、**并 grep pi 的 dist 断言这些斜杠命令仍然存在**（pi 删了门禁就红） |
 | 鼠标点击（footer 入口 / 菜单条目 / 继续按钮） | 浏览器原生 `click`，一次点击一次动作 | **动作只在 pi-tui 合成的 `click` 上执行**：一次真实点击是 `press → release → 合成 click` 三段（`tui-alt-screen.js` 的 `handleMouseEvent`），`press` 只记录按在哪个目标上（菜单展开会插入行，`click` 时按记录执行，不重算坐标）。只认左键 —— 右键在 Windows 下是 pi 的粘贴手势。这样点 `settings` 菜单**留在屏幕上**，点菜单条目只提交一条命令 | `test/tui-editor.mjs`：真 `TuiAltScreen` + 真 SGR 字节（`\x1b[<0;x;yM` / `m`）跑一次点击，断言恰好一次动作、菜单仍在屏幕上、点条目只提交一条 |
@@ -564,6 +564,7 @@ pi 只提供 `SYSTEM.md`（整份替换）、`APPEND_SYSTEM.md`（静态文件�
 | 2026-11-27 | 0.59.0 | 修复命令行 settings 点击后菜单被 CustomEditor 缓存遮住的问题。 |
 | 2026-11-27 | 0.60.0 | 统一命令行菜单关闭路径的缓存失效，避免旧菜单行残留。 |
 | 2026-11-27 | 0.60.2 | settings 菜单支持键盘：↑↓ 选择、Enter 执行、Esc 收起；其它键收起菜单后照原样输入。 |
+| 2026-11-28 | 0.60.3 | 面板和命令行在本轮收尾时显示静态结束状态。曾有错误时用黄色警告三角标记，并在面板重连后恢复。 |
 | 2026-11-27 | 0.60.1 | 命令行鼠标动作只在 pi-tui 合成的 click 上执行，修复 settings 展开后立即收起（一次点击触发两次 toggle）。 |
 | 2026-11-26 | 0.49.2 | 恢复实测发现总时限到期会被显示成子工具取消。验收状态现在按实际触发中断的信号记录超时或停止，保留具体待检查项。 |
 | 2026-11-26 | 0.49.1 | 公布持久队列租约时长的正整数要求，公开测试和独立评分均检查拒绝零值后仍保留第一次领取。验证面板恢复后实际渲染下一项与中断原因。 |

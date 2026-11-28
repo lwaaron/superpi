@@ -113,6 +113,8 @@ window.__ModuleLoader__.load({
       procResult: '结果',
       deepDiving: '深度求索中',
       working: '深度求索中，用时 {duration} ···',
+      runEnded: '本轮已结束',
+      runEndedWithErrors: '本轮已结束 · 曾有错误',
       // 单位自带尾随空格，靠 join('') 拼出「43分54秒」；与 DSH duration.* 一致（中文不带空格）
       durHour: '{n}小时',
       durMin: '{n}分',
@@ -397,6 +399,8 @@ window.__ModuleLoader__.load({
       procResult: 'Result',
       deepDiving: 'Deep diving',
       working: 'Deep diving, {duration} ···',
+      runEnded: 'Turn ended',
+      runEndedWithErrors: 'Turn ended · Errors occurred',
       // EN 的尾随空格就是拼接分隔符本身（DSH duration.hourUnit = 'h '），join('') 后成「2h 3m 9s」
       durHour: '{n}h ',
       durMin: '{n}m ',
@@ -748,6 +752,8 @@ window.__ModuleLoader__.load({
       // 文字是 brand 蓝 --dsw-alias-label-deep-diving（= color-mix(#4176e6 70%, #172554) = #345EBA），
       // 字号是正文 - 2px（14-2=12），行高 22px —— 都比过程行（13/24）小一号，视觉上退到过程流之后。
       '.superpi-working{display:flex;align-items:center;gap:6px;margin-top:2px;padding-top:10px;border-top:.5px solid var(--dsw-alias-border-l3);color:var(--dsw-alias-label-deep-diving);font-size:calc(var(--dsh-content-font-size,14px) - 2px);line-height:calc(22px + var(--dsh-content-font-delta,0px))}',
+      '.superpi-working[data-tone="ok"]{color:var(--dsw-alias-state-success-primary)}',
+      '.superpi-working[data-tone="warn"]{color:var(--dsw-alias-state-warn-primary)}',
       // 0.14.2：与命令行窗口对齐 —— 图标放大 14px → 18px，动效从「呼吸」改成「旋转」。
       // 端点端语义必须一致：TUI 那边是 8 帧月相在转，面板这边只闪烁就会让人觉得"这边卡住了"。
       // CSS 动画由浏览器合成线程驱动，与 SSE/重绘无关，所以天然不会"停下来静止"（这是 TUI 端最大的坑）。
@@ -1748,6 +1754,7 @@ window.__ModuleLoader__.load({
      */
     function markBusy(view) {
       view.busy = true
+      view.lastRunStatus = null
       if (!(view.busySince > 0)) view.busySince = Date.now()
     }
 
@@ -1768,6 +1775,7 @@ window.__ModuleLoader__.load({
         // 工作状态行的计时起点：busy 由谁点亮不重要，用时必须从「真正开始」那一拍算起，
         // 0 表示当前不是 busy（或还没记过点）。
         busySince: 0,
+        lastRunStatus: null,
         compacting: false,
         retrying: false,
         toolStatus: {},
@@ -2017,6 +2025,7 @@ window.__ModuleLoader__.load({
       if (type === 'agent_settled') {
         if (record.aborted === true) view.verdict = null
         markIdle(view)
+        view.lastRunStatus = record.lastRunStatus ?? null
         view.retrying = false
         view.openIndex = -1
         view.streamingIndex = -1
@@ -2255,6 +2264,7 @@ window.__ModuleLoader__.load({
       // ③ 再补水位（只前进，所以上一步应用过的位置不会被回退）。
       advanceSeq(view, snap.eventSeq)
       if (snap.lastVerdict !== undefined) view.verdict = snap.lastVerdict
+      view.lastRunStatus = snap.lastRunStatus ?? null
       if (snap.taskWidget) applyExtensionUi(view, snap.taskWidget)
       /**
        * ④ 补挂「已挂起但还没被应答」的扩展弹窗（0.16.1 修的 P1）。
@@ -2927,6 +2937,18 @@ window.__ModuleLoader__.load({
         h('span', { className: 'superpi-working-icon', key: 'icon' }, h(WhaleTailIcon, null)),
         h('span', { className: 'superpi-working-text', key: 'text' }, text),
         toolText === null ? null : h('span', { className: 'superpi-working-tool', key: 'tool', title: toolText }, toolText))
+    }
+
+    function RunStatusRow(props) {
+      var view = props.view
+      if (view.busy === true) return h(WorkingRow, { t: props.t, since: view.busySince, tool: view.activeTool })
+      var status = view.lastRunStatus
+      if (status !== 'success' && status !== 'warning') return null
+      var warning = status === 'warning'
+      var text = props.t(warning ? 'runEndedWithErrors' : 'runEnded')
+      return h('div', { className: 'superpi-working', 'data-tone': warning ? 'warn' : 'ok', role: 'status' },
+        h('span', { 'aria-hidden': true }, warning ? '⚠\uFE0E' : '✔'),
+        h('span', { className: 'superpi-working-text', title: text }, text))
     }
 
     function usageLine(usage, t) {
@@ -7307,11 +7329,7 @@ window.__ModuleLoader__.load({
         })
       })
 
-      // 工作状态行：过程流末尾那条「深度求索中，用时 43分54秒 …」。
-      // 它是唯一一处「只在忙的时候存在」的节点 —— 空闲态不占位、不留空行。
-      if (view.busy === true) {
-        rows = rows.concat([h(WorkingRow, { key: 'working', t: t, since: view.busySince, tool: view.activeTool })])
-      }
+      rows = rows.concat([h(RunStatusRow, { key: 'working', t: t, view: view })])
 
       var notices = []
       if (error !== null) notices.push(h('div', { key: 'err', className: 'superpi-alert' }, String(error)))
@@ -7685,6 +7703,7 @@ window.__ModuleLoader__.load({
       ToolResultRow: ToolResultRow,
       MessageRow: MessageRow,
       WorkingRow: WorkingRow,
+      RunStatusRow: RunStatusRow,
       ImageBlock: ImageBlock,
       ThinkingBlock: ThinkingBlock,
       parseToolArgs: parseToolArgs,

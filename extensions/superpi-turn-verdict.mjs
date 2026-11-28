@@ -159,6 +159,12 @@ export function turnVerdictNotice(kind, options = {}) {
   return text.replace('{{n}}', String(bytes))
 }
 
+/** 未解决的响应异常需要保留具体诊断。过程中已过去的错误在收尾时显示为警告。 */
+export function settledRunStatus(hadErrors, pendingVerdict) {
+  if (pendingVerdict !== null) return 'error'
+  return hadErrors ? 'warning' : 'success'
+}
+
 /**
  * 判断一条 assistant 消息是否交付了本轮。
  *

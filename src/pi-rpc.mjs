@@ -20,6 +20,7 @@ import { randomUUID } from 'node:crypto'
 import path from 'node:path'
 import { BRAND_NAME } from '../extensions/superpi-brand.mjs'
 import { SESSION_CONTROL, SESSION_CONTROL_COMMAND, SESSION_CONTROL_FILE, SESSION_CONTROL_STATUS } from '../extensions/superpi-session-controls.mjs'
+import { settledRunStatus } from '../extensions/superpi-turn-verdict.mjs'
 import { TASK_WIDGET_KEY } from './rpc-contract.mjs'
 
 /**
@@ -177,6 +178,8 @@ export class PiProcess extends EventEmitter {
     this.controlReplies = new Map()
     this.events = []
     this.lastVerdict = null
+    this.runHadErrors = false
+    this.lastRunStatus = null
     /** 与 events 等长的字节数，用于 O(1) 维护字节预算。 */
     this.eventSizes = []
     this.eventBytes = 0
@@ -331,7 +334,7 @@ export class PiProcess extends EventEmitter {
      * 装饰发生在**入环之前**：`events` 里的对象与 SSE 推出去的是同一个，
      * 所以回放与实时两条路看到的是同一份判读（见构造函数的注释）。
      */
-    const decorated = this.decorateEvent === null ? record : (() => {
+    let decorated = this.decorateEvent === null ? record : (() => {
       try {
         const next = this.decorateEvent(record)
         return next !== null && typeof next === 'object' ? next : record
@@ -339,12 +342,22 @@ export class PiProcess extends EventEmitter {
         return record
       }
     })()
-    const entry = { seq: this.eventSeq, at: Date.now(), record: decorated }
-    if (decorated.type === 'agent_start' || (decorated.type === 'agent_settled' && decorated.aborted)) {
+    if (decorated.type === 'agent_start') {
       this.lastVerdict = null
+      this.runHadErrors = false
+      this.lastRunStatus = null
+    } else if (decorated.type === 'tool_execution_end' && decorated.isError === true) {
+      this.runHadErrors = true
     } else if (decorated.type === 'message_end' && decorated.message?.role === 'assistant') {
       this.lastVerdict = decorated.verdict?.delivered === false ? decorated.verdict : null
+      if (this.lastVerdict !== null || decorated.message.stopReason === 'error') this.runHadErrors = true
+    } else if (decorated.type === 'agent_settled') {
+      if (decorated.aborted === true) this.lastVerdict = null
+      // 环形缓冲可能已经丢弃最早的工具事件，收尾结果随实时事件和快照一并提供。
+      this.lastRunStatus = decorated.aborted === true ? null : settledRunStatus(this.runHadErrors, this.lastVerdict)
+      decorated = { ...decorated, lastRunStatus: this.lastRunStatus }
     }
+    const entry = { seq: this.eventSeq, at: Date.now(), record: decorated }
     if (decorated.type === 'extension_ui_request' && decorated.method === 'setWidget' && decorated.widgetKey === TASK_WIDGET_KEY) {
       this.taskWidget = decorated
     }
@@ -655,6 +668,8 @@ export class PiProcess extends EventEmitter {
   resetEvents() {
     this.events = []
     this.lastVerdict = null
+    this.runHadErrors = false
+    this.lastRunStatus = null
     this.eventSizes = []
     this.eventBytes = 0
     this.droppedEvents = 0
@@ -683,6 +698,7 @@ export class PiProcess extends EventEmitter {
       // The extension publishes the selected branch during session replacement, before the ring is reset.
       taskWidget: this.taskWidget,
       lastVerdict: this.lastVerdict,
+      lastRunStatus: this.lastRunStatus,
       exit: this.exitInfo,
       stderr: this.stderrLines.slice(-20),
       events: includeEvents ? this.events.filter(entry => entry.seq > sinceSeq) : [],

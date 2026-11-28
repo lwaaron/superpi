@@ -45,7 +45,7 @@
  *
  * 界面
  *   - 四边闭合的框（┌─┐ │ │ └─┘），框线 80% 白（255 × 0.8）
- *   - 框内上边框：左侧 Working 状态（正常白 / 成功绿 / 出错红，图标同色）
+ *   - 框内上边框：左侧运行状态（就绪与运行白 / 顺利结束绿 / 曾有错误黄 / 响应异常红）
  *   - 框外**两行**由本扩展接管的 footer 画（0.9.9 起）：
  *       `D:\proj\SuperPi (master)  ⇄              settings  home`   ← 本扩展画
  *       `↑12k ↓3.4k 24%/1.0M (auto)    (prov) Model • max`           ← pi 自己的第 2 行
@@ -66,7 +66,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { BRAND_NAME } from './superpi-brand.mjs'
-import { detectTurnVerdict } from './superpi-turn-verdict.mjs'
+import { detectTurnVerdict, settledRunStatus } from './superpi-turn-verdict.mjs'
 
 /**
  * verdict 的形状（与 `superpi-turn-verdict.mjs` 的 `detectTurnVerdict` 逐字段一致）。
@@ -91,11 +91,12 @@ export const FRAME_RGB = [204, 204, 204] as const
 export const SWITCH_ICON = '\u21c4'
 /** 粘贴路径底色：浅灰。 */
 export const PATH_CHIP_RGB = [104, 104, 104] as const
-/** Working 状态色：正常白 / 成功绿 / 出错红。 */
+/** 上边框的文案和图标共用状态色。 */
 export const STATUS_RGB = {
   idle: [255, 255, 255],
   running: [255, 255, 255],
   success: [126, 211, 133],
+  warning: [240, 190, 92],
   error: [236, 94, 94],
 } as const
 
@@ -128,7 +129,7 @@ const ESC = '\x1b'
  * 输入来自 pi 的扩展事件（agent_start / tool_execution_end / agent_settled），
  * 消费者是编辑器渲染 —— 所以是模块级共享，不挂在某个实例上。
  */
-export type RunPhase = 'idle' | 'running' | 'success' | 'error'
+export type RunPhase = 'idle' | 'running' | 'success' | 'warning' | 'error'
 
 /**
  * 当前正在执行的那一个工具。
@@ -241,8 +242,8 @@ export function markToolError(): void {
  * 模型这一轮没交付（0.18.0；前身 `markMalformedOutput` 0.15.1）。
  *
  * 与 `markToolError` 的区别在**责任归属**：工具失败是"命令跑挂了"，没交付是
- * "模型没按协议说话 / 吐了坏字节 / 被截断"。两者都该让状态变红，但后者还需要
- * 在文案里说清原因 —— 否则用户看到红色 ✖ 却不知道"为什么这轮没执行任何工具就结束了"。
+ * "模型没按协议说话 / 吐了坏字节 / 被截断"。响应异常到收尾仍未解决时，
+ * 保留诊断文案和继续入口。中途报过错的正常收尾使用警告图标。
  *
  * 存整份 verdict 而不是布尔：Working 行要按 `kind` 说六类不同的话，
  * 文案本体取自模块（与面板逐字相同），这里不复制任何一个字。
@@ -272,7 +273,7 @@ export function verdictKindOf(message: any): string {
 }
 
 export function markRunSettled(): void {
-  runState.phase = runState.failed ? 'error' : 'success'
+  runState.phase = settledRunStatus(runState.failed, runState.verdict)
   runState.startedAt = 0
   runState.tool = null
   // 本轮结束就停表：idle 态不该继续烧 CPU（也让门禁能断言"settled 之后不转"）。
@@ -325,7 +326,7 @@ export function formatRunDuration(ms: number): string {
  *
  * 窄终端依次退让：完整三段 → 只留 Working+累计 → 只留图标（见 topBorder 的 widthOfVisible 判断）。
  */
-export function workingLabel(now = Date.now(), includeTool = true): string {
+export function workingLabel(now = Date.now(), detailed = true): string {
   const phase = runState.phase
   const startedAt = runState.startedAt
   /**
@@ -343,10 +344,14 @@ export function workingLabel(now = Date.now(), includeTool = true): string {
   if (verdict !== null && typeof verdict.notice?.zh === 'string' && verdict.notice.zh !== '') {
     return verdict.notice.zh
   }
-  if (phase !== 'running' || startedAt <= 0) return 'Working'
+  if (phase === 'idle') return '就绪'
+  if (phase === 'success') return '本轮已结束'
+  if (phase === 'warning') return detailed ? '本轮已结束 · 曾有错误' : '本轮已结束'
+  if (phase === 'error') return '本轮异常结束'
+  if (startedAt <= 0) return 'Working'
   let text = 'Working · ' + formatRunDuration(now - startedAt)
   const tool = runState.tool
-  if (includeTool === true && tool !== null) {
+  if (detailed === true && tool !== null) {
     text += ' · ' + tool.name
     if (tool.limitSeconds > 0) {
       const limitMs = tool.limitSeconds * 1000
@@ -926,7 +931,7 @@ export class SuperPiEditor extends CustomEditor {
     return this.menuOpen
   }
 
-  /** 上边框内侧：左侧 Working 状态（按状态上色），右侧补框线与滚动提示。 */
+  /** 上边框内侧显示运行状态，右侧保留框线与滚动提示。 */
   private topBorder(raw: string | undefined, inner: number): string {
     const phase: RunPhase = runState.phase
     const color = STATUS_RGB[phase] ?? STATUS_RGB.idle
@@ -938,12 +943,13 @@ export class SuperPiEditor extends CustomEditor {
     const full = icon + sgrFg(color) + ' ' + workingLabel() + SGR_RESET
     // 退化档：只留 Working 与累计时长（去掉工具段）—— 工具名比累计值次要，
     // 但"正在跑什么"仍要尽量保留，所以它排在图标档之前。
-    const noTool = icon + sgrFg(color) + ' ' + workingLabel(Date.now(), false) + SGR_RESET
+    // 收尾警告也有短版，保留警告图标和「本轮已结束」。
+    const short = icon + sgrFg(color) + ' ' + workingLabel(Date.now(), false) + SGR_RESET
     const compact = icon
     // 窄面板上依次退让：完整三段 → 去掉工具段 → 只剩图标 → 只画横线。
     let chosen = ''
     if (widthOfVisible(full) + 5 <= inner) chosen = full
-    else if (widthOfVisible(noTool) + 5 <= inner) chosen = noTool
+    else if (widthOfVisible(short) + 5 <= inner) chosen = short
     else if (widthOfVisible(compact) + 5 <= inner) chosen = compact
     if (chosen === '') return borderBody(raw, inner)
     // 行宽账目：'─ '（2 列）+ chosen（w 列）+ ' '（1 列）+ rest = inner。
@@ -1236,6 +1242,8 @@ export function statusIcon(phase: RunPhase, at = Date.now()): string {
     }
     case 'success':
       return '✔'
+    case 'warning':
+      return '⚠\uFE0E'
     case 'error':
       return '✖'
     default:
@@ -2880,8 +2888,11 @@ export default function superpiEditor(pi: any): void {
     const message = event?.message
     if (message?.role !== 'assistant') return
     const verdict = detectTurnVerdict(message)
-    if (verdict.delivered) runState.verdict = null
-    else markUndelivered(verdict)
+    if (!verdict.delivered) markUndelivered(verdict)
+    else {
+      runState.verdict = null
+      if (message.stopReason === 'error') runState.failed = true
+    }
   })
   /**
    * 工具开始/结束（0.14.1）。

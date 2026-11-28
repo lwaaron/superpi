@@ -285,7 +285,6 @@ eq(formatRunDuration(-1), '0.0s', '负数钳到 0')
 // --- Working 文案三段：累计、工具、上限
 {
   resetRunState()
-  eq(workingLabel(Date.now(), true), 'Working', 'idle 时只有 Working（不显示 0s）')
 
   markRunStart(1000000)
   eq(workingLabel(1000000 + 5000, true), 'Working · 5.0s', 'running 但无工具时只显示累计')
@@ -318,11 +317,13 @@ eq(formatRunDuration(-1), '0.0s', '负数钳到 0')
   markToolStart('bash', { timeout: 960 }, Date.now())
   markToolError()
   markRunSettled()
-  eq(runState.phase, 'error', '有工具错误时 settled → error')
+  eq(workingLabel(), '本轮已结束 · 曾有错误', '工具报错后收尾，状态文案明确表示本轮已结束')
+  eq(runState.phase, 'warning', '有工具错误但无待处理模型异常时，收尾进入警告态')
   eq(runState.tool, null, 'settled 清空工具（否则下一轮会显示上一轮的工具）')
   eq(runState.startedAt, 0, 'settled 后 startedAt 归零')
 
   resetRunState()
+  eq(workingLabel(Date.now(), true), '就绪', '空闲时显示就绪')
   eq(runState.phase, 'idle', 'reset 回到 idle')
   eq(runState.tool, null, 'reset 清空工具')
 }
@@ -1331,28 +1332,33 @@ const columnOf = (rows, y, needle) => stripAnsi(rows[y] ?? '').indexOf(needle)
   eq([...widths].join(','), '60', '框内每行显示宽度都等于渲染宽度（框线不错位）')
 }
 
-// ② Working 状态：白 / 绿 / 红，图标同色，回到上边框内侧左侧
+// ② 上边框的运行状态：图标、文案和颜色随状态变化。
 {
   const cases = [
-    ['idle', () => resetRunState(), '○'],
-    ['running', () => markRunStart(Date.now() - 3000), null],
-    ['success', () => { markRunStart(); markRunSettled() }, '✔'],
-    ['error', () => { markRunStart(); markToolError(); markRunSettled() }, '✖'],
+    ['idle', () => resetRunState(), '○', '就绪'],
+    ['running', () => markRunStart(Date.now() - 3000), null, 'Working · '],
+    ['success', () => { markRunStart(); markRunSettled() }, '✔', '本轮已结束'],
+    ['warning', () => { markRunStart(); markToolError(); markRunSettled() }, '⚠︎', '本轮已结束 · 曾有错误'],
+    ['error', () => {
+      markRunStart()
+      markUndelivered({ notice: { zh: '模型响应异常，可以继续。' } })
+      markRunSettled()
+    }, '✖', '模型响应异常，可以继续。'],
   ]
-  for (const [phase, setup, icon] of cases) {
+  for (const [phase, setup, icon, label] of cases) {
     setup()
     const { editor } = makeEditor('')
     const rows = editor.render(60)
     const topRow = stripAnsi(rows[0])
-    ok(topRow.includes('Working'), `${phase}: Working 在上边框里（pi 原来的位置）`)
-    const rgb = STATUS_RGB[phase].join(';')
-    ok(rows[0].includes(`[38;2;${rgb}m`), `${phase}: 文案与图标用该状态的颜色`)
+    ok(topRow.includes(label), `${phase}: 上边框显示 ${label}，实际 ${topRow}`)
+    const rgb = STATUS_RGB[phase]?.join(';')
+    ok(rgb !== undefined && rows[0].includes(`[38;2;${rgb}m`), `${phase}: 文案与图标用该状态的颜色`)
     if (icon) ok(topRow.includes(icon), `${phase}: 图标是 ${icon}`)
     // 0.14.2：running 改用四分之一圆旋转序列（◴◵◶◷），笔画更满、视觉更大。
     else ok(RUN_FRAMES.some(frame => topRow.includes(frame)), 'running: 图标是旋转帧之一')
   }
-  const distinct = new Set([STATUS_RGB.idle, STATUS_RGB.success, STATUS_RGB.error].map(c => c.join(',')))
-  eq(distinct.size, 3, 'idle / success / error 三色互不相同')
+  const distinct = new Set([STATUS_RGB.idle, STATUS_RGB.success, STATUS_RGB.warning, STATUS_RGB.error].map(c => c?.join(',')))
+  eq(distinct.size, 4, '空闲 / 顺利结束 / 结束带警告 / 失败四种颜色互不相同')
   resetRunState()
 }
 
@@ -1668,6 +1674,19 @@ const makeFooterData = () => ({
     realTui.renderNow(true)
     return realTui.getScreenLines().map(stripAnsi)
   }
+  handlers.get('agent_start')({}, ctx)
+  handlers.get('tool_execution_end')({ toolCallId: 'probe', isError: true }, ctx)
+  handlers.get('tool_execution_end')({ toolCallId: 'retry', isError: false }, ctx)
+  ok(frame().some(line => line.includes('Working · ')), '中途有错误时屏幕仍显示正在运行')
+  handlers.get('message_end')({ message: { role: 'assistant', stopReason: 'stop', content: [{ type: 'text', text: '已完成。' }] } }, ctx)
+  handlers.get('agent_settled')({ aborted: false }, ctx)
+  ok(frame().some(line => line.includes('⚠︎ 本轮已结束 · 曾有错误')), '成功重试后，终端屏幕用警告图标说明本轮已结束')
+  const compact = stripAnsi(editor.render(22)[0])
+  ok(compact.includes('⚠︎ 本轮已结束') && tuiModule.visibleWidth(compact) === 22, '窄终端保留结束状态和警告图标，框线对齐')
+  handlers.get('agent_start')({}, ctx)
+  ok(frame().some(line => line.includes('Working · ')), '下一轮恢复运行状态')
+  handlers.get('agent_settled')({ aborted: true }, ctx)
+  ok(frame().some(line => line.includes('○ 就绪')), '主动停止后回到就绪')
   /** 按屏幕上的文字位置，喂一次**真实**的按下 + 抬起（pi-tui 自己合成 click）。 */
   const realClick = (needle, row) => {
     const lines = frame()
@@ -1909,7 +1928,7 @@ const guardLogModule = await import(pathToFileURL(path.join(root, 'extensions', 
   // 0.9.9 起框外没有自己的行（入口搬去 footer），框本身仍然必须闭合。
   ok(rows.length >= 3, '仍然渲染出框（不是退化成无框原始行）')
   ok(stripAnsi(rows[0]).startsWith('┌'), '上边框是直角')
-  ok(stripAnsi(rows[0]).includes('Working'), 'Working 仍在上边框里')
+  ok(stripAnsi(rows[0]).includes('就绪'), '就绪状态仍在上边框里')
   ok(stripAnsi(rows.find(row => row.startsWith('[38;2;204;204;204m└')) || '').startsWith('└'), '下边框在')
   ok(stripAnsi(rows.at(-1)).startsWith('└'), '最后一行仍是不依赖取色的下边框')
   // 直接对 theme.fg 做取色也不许抛（编辑器的 theme 没有这个方法）

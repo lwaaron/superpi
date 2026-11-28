@@ -16,6 +16,8 @@ import path from 'node:path'
 import { createRequire } from 'node:module'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { requireReact } from './preflight.mjs'
+import { PiProcess } from '../src/pi-rpc.mjs'
+import { decoratePiEvent } from '../src/event-verdict.mjs'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const root = path.dirname(here)
@@ -721,6 +723,48 @@ assert(workingNoSince.indexOf('用时') < 0, '没有起点时不该编一个用�
 // （dsh-client-ui-chat/lib/client.js:6402）；不钳位的话刚发出的一瞬会闪「0秒」。
 const workingJustStarted = renderToStaticMarkup(React.createElement(WorkingRow, { t: zh, since: Date.now() }))
 assert(workingJustStarted.indexOf(zh('durSec').replace('{n}', '1')) > 0, '刚起步时该至少报「1秒」而不是「0秒」，实际 ' + workingJustStarted)
+
+{
+  const { RunStatusRow, createView, applyBatch, hydrateFromSnapshot } = internals
+  const proc = new PiProcess({ maxEvents: 1, decorateEvent: decoratePiEvent })
+  const view = createView()
+  proc.on('event', entry => applyBatch(view, [entry]))
+  const renderStatus = (state = view, t = zh) => typeof RunStatusRow === 'function'
+    ? renderToStaticMarkup(React.createElement(RunStatusRow, { view: state, t }))
+    : ''
+  assert(renderStatus() === '', '尚无本轮结果时不显示结果行')
+  proc.pushEvent({ type: 'agent_start' })
+  proc.pushEvent({ type: 'tool_execution_end', toolCallId: 'probe', toolName: 'bash', isError: true })
+  proc.pushEvent({ type: 'tool_execution_end', toolCallId: 'retry', toolName: 'bash', isError: false })
+  assert(renderStatus().includes('superpi-working-icon'), '工具报错后仍在运行时保留执行中图标')
+  proc.pushEvent({ type: 'message_end', message: { role: 'assistant', stopReason: 'stop', content: [{ type: 'text', text: '已完成。' }] } })
+  proc.pushEvent({ type: 'agent_settled', aborted: false })
+  const warning = renderStatus()
+  assert(warning.includes('⚠︎') && warning.includes('本轮已结束 · 曾有错误') && warning.includes('data-tone="warn"'),
+    '本轮收尾后，成功重试仍保留警告图标和准确的结束文案')
+  assert(warning.includes('role="status"') && !warning.includes('superpi-working-icon'), '结束文案可播报且图标停止旋转')
+  assert(cssRule('.superpi-working[data-tone="warn"]')?.includes('var(--dsw-alias-state-warn-primary)'), '警告图标和文案使用宿主警告色')
+  assert(renderStatus(view, en).includes('Turn ended · Errors occurred'), '英文界面也说明本轮已结束且曾出现错误')
+
+  proc.pushEvent({ type: 'session_info_changed', name: 'Test' })
+  const restored = hydrateFromSnapshot(createView(), proc.snapshot())
+  assert(renderStatus(restored) === warning && warning !== '', '收尾事件被淘汰后仍从快照恢复可见状态')
+  proc.resetEvents()
+  assert(renderStatus(hydrateFromSnapshot(view, proc.snapshot())) === '', '更换会话后不带出上一会话的收尾状态')
+  proc.pushEvent({ type: 'agent_start' })
+  proc.pushEvent({ type: 'agent_settled', aborted: false })
+  const complete = renderStatus()
+  assert(complete.includes('✔') && complete.includes('本轮已结束') && complete.includes('data-tone="ok"'), '下一轮顺利结束时显示勾号')
+  assert(cssRule('.superpi-working[data-tone="ok"]')?.includes('var(--dsw-alias-state-success-primary)'), '顺利结束使用宿主成功色')
+  proc.pushEvent({ type: 'agent_start' })
+  proc.pushEvent({ type: 'message_end', message: { role: 'assistant', stopReason: 'stop', content: [] } })
+  proc.pushEvent({ type: 'agent_settled', aborted: false })
+  assert(view.verdict?.kind === 'idle' && renderStatus() === '', '响应仍有异常时保留可继续的诊断')
+  proc.pushEvent({ type: 'agent_start' })
+  proc.pushEvent({ type: 'tool_execution_end', toolCallId: 'stop', isError: true })
+  proc.pushEvent({ type: 'agent_settled', aborted: true })
+  assert(renderStatus() === '', '主动停止时不显示结束或警告状态')
+}
 // ── 9.12 pathCrumbs：面包屑切分（只做字符串，不碰 fs） ─────────────────────
 const pathCrumbs = internals.pathCrumbs
 assert(typeof pathCrumbs === 'function', 'client.js 应导出 pathCrumbs 以便测试')
