@@ -40,7 +40,7 @@ npm run pack:offline -- .\artifacts
 
 ```powershell
 node "$env:USERPROFILE\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\pnpm\bin\pnpm.cjs" `
-  add "file:C:\path\to\superpi-0.60.0-offline-win32-x64.tgz" --offline --ignore-scripts
+  add "file:C:\path\to\superpi-0.60.1-offline-win32-x64.tgz" --offline --ignore-scripts
 ```
 
 归档包含当前平台的 Pi 和生产依赖。使用远程模型时仍需连通模型服务。已经安装 Pi 时，也可在配置中用 `cliPath` 指定运行时。
@@ -232,10 +232,10 @@ New-Item -ItemType Junction `
 ### 使用 pnpm 手工安装
 
 ```powershell
-npm pack                                        # 得到 superpi-0.60.0.tgz
+npm pack                                        # 得到 superpi-0.60.1.tgz
 cd "$env:USERPROFILE\.dsh\profiles\desktop"
 node "$env:USERPROFILE\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\pnpm\bin\pnpm.cjs" `
-  add "file:C:\path\to\superpi-0.60.0.tgz" --ignore-scripts
+  add "file:C:\path\to\superpi-0.60.1.tgz" --ignore-scripts
 ```
 
 不要在 profile 里用 `npm install`：npm 会另写一份 `package-lock.json`，而宿主插件管理器用的是 pnpm，两套锁文件互相看不见，下次插件安装就会把 node_modules 重建成 pnpm 理解的样子。
@@ -552,6 +552,8 @@ npm test
 
 ```powershell
 npm run test:host   # 使用已配置的模型执行一次真实往返
+npm run test:integrity-e2e  # 真机端到端：让真实模型写一个含字面 U+FFFD 的文件，断言写入闸拦住且磁盘上没有产物
+                            # （要一次真实模型调用，刻意不在 npm test 里；退出码 0 通过 / 1 没拦住 / 2 本轮未形成证据）
 npm run test:fresh  # 模拟全新机器：拷一份不带运行时的插件 → 断言 missing → 一键安装 → 能开会话
 npm run test:config # 配置热更新：宿主就地写入 volatile 引用后 /state 必须立刻反映
 npm run test:all    # 依次运行 npm test 和 npm run test:host
@@ -588,6 +590,7 @@ pwsh -NoProfile -File .\tools\standalone-verify.ps1   # 全新 DSH_HOME 里只�
 | `test/turn-verdict.mjs` | 回合判据门禁覆盖 DSML、空转、坏字节、截断、正文未闭合推理标记及合法引用。验证共用判定器、事件装饰和面板真实渲染 |
 | `test/delivery.mjs` | 用 Pi SDK 验证命令与超时、隔离变异、证据失效、会话恢复、模型收到最新图片和文本异常恢复。模型事件由本地脚本提供 |
 | `test/text-integrity.mjs` | 写入闸门禁（规模见 `test/gate-inventory.json`）：①纯函数（`write.content` / `edit.newText` 拦，`edit.oldText` 放行，`bash`/`powershell` 只提醒不拦，转义写法算干净）；②**真 `.ts` 扩展**（jiti + 假 pi）：注册表、block 理由（行号/码位/总数 + 「文件未写入」+ 「不要原样重发」）、`tool_result` 追加警告且 `structuredContent` 原样带回、同一 `toolCallId` 只提醒一次；③**pi 真 `ExtensionRunner`** 跑一遍 `emitToolCall`，断言它返回 block；④**pi 源码事实**：`beforeResult.block` 会变成 `createErrorToolResult(reason)` 且工具不执行；⑤pi 的扩展加载器装进临时 agentDir 零错误；⑥干净会话零日志零追加（不引入噪音） |
+| `test/integrity-e2e.mjs` | 真机端到端（`npm run test:integrity-e2e`，**刻意不在 `npm test` 里**：它要一次真实模型调用）：让真实模型用 `write` 写一个必须含字面 U+FFFD 的文件，断言 ① 这一轮真的发出了带坏字节、指向目标路径的调用 ② 闸拦住且理由可执行（字段名 + 「文件未写入」+ 「不要原样重发」）③ 磁盘上什么都没留下。少了 ①，剩下的判据可能被**别的原因**满足（空洞通过）。扩展按 host 同一条路径 `rpcExtensionArgs()` 加载 —— 不加这一步，pi 会去发现 `<agentDir>/extensions` 里**已安装的那份**，仓库改坏了它照样绿（实测抓到过：仓库已是新版本号，日志仍在盖旧版本号）。三种终态：0 通过 / 1 没拦住（产品缺陷）/ 2 本轮未形成证据（需重跑，**不算通过**）。 |
 | `test/tui-editor.mjs` | 输入框扩展门禁（规模见 `test/gate-inventory.json`；0.9.2 起；0.9.4 补外观与入口，0.9.8 修「改了没变化」，0.9.9 补 footer 接管 + 项目切换 + 悬停反馈，0.9.10 修「底部那行信息没了」，0.9.11 修「settings/home 点不动」）：**用 jiti 加载真 `.ts` 扩展**（与 pi 的 `core/extensions/loader.js` 同一套 alias）+ **pi 真的 `CustomEditor`** + **真终端按键序列**（直接喂原始转义字节的按键序列），断言 Ctrl+A 全选、Shift+方向扩选、Ctrl+C 复制后内容不消失、Ctrl+X 剪切、Backspace/Delete 删选区、可打印字符与括号内粘贴替换选区、Esc 不吞键、空编辑器 Ctrl+C 放行、自动补全打开时不抢方向键、渲染反色开合成对；末组用 **pi 自己的扩展加载器**（`discoverAndLoadExtensions`）把装到临时 `agentDir` 的扩展真加载一遍断言无 error —— 这一步才证明「装完 pi 真的能认」。**不 mock 编辑器**：影子实现会让「测试绿、真机不灵」|
 | `extensions/superpi-editor.ts` | 命令行会话窗口的**输入框增强**：`class SuperPiEditor extends CustomEditor` + `ctx.ui.setEditorComponent()`（pi 官方扩展点），补上 TUI 缺的那套 Windows 输入框语义（全选 / 扩选 / 复制不清空 / 剪切 / 删选区）与「剪贴板里的文件 → 绝对路径」。**不改 pi 任何文件、不打补丁**，卸载就是删一个 `.ts`（`npm run superpi:editor:remove`）|
 | `tools/install-pi-extension.mjs` | 把扩展装进 `<piAgentDir>/extensions/`（`--install` / `--remove` / 默认只读状态），`PI_CONFIG_DIR` 跟随；幂等、内容变了先留 `.bak`。**0.10.0 起一次装三个文件**（`superpi-editor.ts` + `superpi-rules.ts` + `superpi-rules.mjs`）—— 规则扩展 import 同目录的 `.mjs`，少装一个就是「装完 pi 报模块找不到、规则整个不生效」，所以 `status` 逐文件报告、`complete` 才算完整。`npm run superpi:editor` / `pi:editor:status` / `pi:editor:remove` 三个别名|

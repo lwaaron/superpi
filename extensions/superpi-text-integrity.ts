@@ -50,8 +50,15 @@ import path from 'node:path'
 import { projectTurnToolEvidence } from './superpi-context-guard.mjs'
 import { describeBytes, scanTextBytes, summarizeCounts } from './superpi-text-bytes.mjs'
 
-/** 与 package.json / CONTRACT_VERSION 同步推进。 */
-export const INTEGRITY_VERSION = '0.60.0'
+/**
+ * 本扩展写进 `integrity.log.jsonl` 的版本戳。
+ *
+ * **必须等于 package.json 的 version** —— 它唯一的作用就是让事后取证能回答
+ * 「这条拦截是哪一版拦的」。手写副本必然会漂：实测它从 0.19.0 一路停在原地，
+ * 而 package.json 已经到 0.38.x，于是 0.38 的拦截在日志里被记成 0.19（D1 类失真）。
+ * 现在由 `test/text-integrity.mjs` 断言两者相等，漂了立刻红。
+ */
+export const INTEGRITY_VERSION = '0.60.1'
 
 /** TUI 命令名（`/superpi-integrity`）。 */
 export const INTEGRITY_COMMAND = 'superpi-integrity'

@@ -1446,8 +1446,13 @@ const makeFooterData = () => ({
   handlers.get('agent_settled')({ aborted: false }, ctx)
   const column = tuiModule.visibleWidth(stripAnsi(footer.render(100)[0]).split('继续')[0])
   ok(stripAnsi(footer.render(100)[0]).includes('继续'), '失败结束后终端也有继续入口')
-  footer.handleMouse({ type: 'press', x: column, y: 0, button: 0 })
-  footer.handleMouse({ type: 'press', x: column, y: 0, button: 0 })
+  // 一次真实点击 = press → release → pi-tui 合成的 click。这里喂 press+click 两段：
+  // 只喂 press 的那版在 0.60.1 之前也能过 —— 因为它把「按下」当成了动作，
+  // 正是用户报的「点一下执行两次」的同一条缺陷。
+  for (let round = 0; round < 2; round += 1) {
+    footer.handleMouse({ type: 'press', x: column, y: 0, button: 'left' })
+    footer.handleMouse({ type: 'click', x: column, y: 0, button: 'left' })
+  }
   eq(submitted.join(','), '继续', '点击从同一会话继续，重复点击不再提交')
   resetRunState()
 }
@@ -1606,6 +1611,106 @@ const makeFooterData = () => ({
   ok(after.some(row => row.includes('/settings') || row.includes('settings')), '点击后下一帧真实编辑器出现 settings 菜单')
   ok(invalidations > 0, 'settings 点击让 CustomEditor 失效，清掉外层渲染缓存')
   ok(tui.renders > 0, 'settings 点击请求了重绘')
+  resetRunState()
+}
+
+// ④d2c 真闭环（0.60.1）：**用 pi-tui 真实的鼠标合成器**跑一次真实点击。
+//
+// 用户报的现象：点 footer 的 settings，菜单弹出又立即收起。根因是「一次点击 = 两次
+// 我们的 handleMouse」—— pi-tui 把一次点击切成 press → release → **合成 click**
+// （tui-alt-screen.js:handleMouseEvent），而两处 handleMouse 都把 press 与 click
+// 当成触发时机，于是 toggleMenu() 走了两遍（展开 → 立刻收起）。
+//
+// 以前的夹具直接喂 `{ type: 'click' }`，等于把上游的合成器换成了假动作 ——
+// 它只证明「click 能触发动作」，证明不了「真实点一下触发几次」。所以这一段喂的是
+// **SGR 原始终端字节**、走真的 TuiAltScreen、真的布局与命中区换算，中间不短路。
+{
+  const handlers = new Map()
+  let editorFactory
+  let footerFactory
+  const submitted = []
+  const ctx = {
+    mode: 'tui',
+    model: makeExtCtx().model,
+    thinkingLevel: 'max',
+    sessionManager: makeExtCtx().sessionManager,
+    getContextUsage: () => makeExtCtx().getContextUsage(),
+    getSettings: () => makeExtCtx().getSettings(),
+    isIdle: () => true,
+    ui: {
+      setWorkingVisible() {},
+      setEditorComponent(factory) { editorFactory = factory },
+      setFooter(factory) { footerFactory = factory },
+      setTitle() {},
+      notify() {},
+      theme: { fg: (_token, text) => text },
+    },
+  }
+  defaultExport({ on: (name, handler) => handlers.set(name, handler), sendUserMessage() {} })
+  handlers.get('session_start')({}, ctx)
+
+  const terminal = {
+    columns: 100, rows: 40, write() {}, restoreOnExit() {}, onInput() {},
+    showCursor() {}, hideCursor() {}, start() {}, stop() {},
+  }
+  const realTui = new tuiModule.TuiAltScreen(terminal, false, undefined, { mouse: true })
+  realTui.beforeTerminalStart()
+  const editor = editorFactory(realTui, theme, { matches: () => false })
+  editor.onSubmit = command => submitted.push(command)
+  const footer = footerFactory(realTui, { fg: (_token, text) => text }, makeFooterData())
+  const layout = new tuiModule.Container()
+  layout.addChild(new tuiModule.Text('会话历史'))
+  layout.addChild(editor)
+  layout.addChild(footer)
+  realTui.setLayoutRoot(layout)
+
+  const frame = () => {
+    realTui.renderNow(true)
+    return realTui.getScreenLines().map(stripAnsi)
+  }
+  /** 按屏幕上的文字位置，喂一次**真实**的按下 + 抬起（pi-tui 自己合成 click）。 */
+  const realClick = (needle, row) => {
+    const lines = frame()
+    const line = lines[row]
+    ok(typeof line === 'string', `第 ${row} 行存在（找 ${needle}）`)
+    const column = line.indexOf(needle)
+    ok(column >= 0, `第 ${row} 行有 ${needle}`)
+    const x = column + 1
+    const y = row + 1
+    realTui.handleTerminalInput(`\x1b[<0;${x};${y}M`)
+    realTui.handleTerminalInput(`\x1b[<0;${x};${y}m`)
+    return frame()
+  }
+  const footerRowOf = lines => {
+    const row = lines.findIndex(line => line.includes('settings') && line.includes('home'))
+    ok(row >= 0, '屏幕上有 footer 行（settings / home）')
+    return row
+  }
+  // 菜单行的形状是「两个空格 + 命令名」，footer 那行的 settings 前面是项目路径 ——
+  // 用前缀区分，才不会把 footer 上的入口误当成菜单。
+  const isMenuLine = line => line.startsWith('  ' + SETTINGS_COMMANDS[0].label)
+  const showsMenu = lines => lines.some(isMenuLine)
+
+  // ── 一次点击 → 恰好一次 toggle，菜单必须**留在**屏幕上 ──
+  const before = frame()
+  ok(!showsMenu(before), '点击前没有 settings 菜单行')
+  let lines = realClick('settings', footerRowOf(before))
+  ok(editor.isMenuOpen() === true, '一次真实点击后菜单是展开的（不是开关两次回到收起）')
+  ok(showsMenu(lines), '一次真实点击后屏幕上**留着** settings 菜单行')
+
+  // ── 再点一次 → 收起（开关语义仍然成立）──
+  lines = realClick('settings', footerRowOf(lines))
+  ok(editor.isMenuOpen() === false, '第二次真实点击把菜单收起')
+  ok(!showsMenu(lines), '收起后菜单行从屏幕消失')
+
+  // ── 点菜单条目 → pi 的斜杠命令**只提交一次** ──
+  lines = realClick('settings', footerRowOf(lines))
+  const menuLabel = SETTINGS_COMMANDS[0].label
+  const menuRow = lines.findIndex(isMenuLine)
+  ok(menuRow >= 0, '展开后屏幕上有 ' + menuLabel)
+  realClick(menuLabel, menuRow)
+  eq(submitted.join(','), SETTINGS_COMMANDS[0].command, '点一次菜单条目只提交一条命令（press 不重复提交）')
+  ok(editor.isMenuOpen() === false, '提交后菜单收起')
   resetRunState()
 }
 

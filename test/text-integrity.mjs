@@ -178,6 +178,15 @@ const jiti = createJiti(extensionFile, {
 const extensionModule = await jiti.import(extensionFile)
 const entry = extensionModule.default
 eq(typeof entry, 'function', '扩展默认导出是函数（pi 加载用）')
+/**
+ * 日志版本戳必须等于 package.json 的 version。
+ *
+ * 为什么单独立一条：`INTEGRITY_VERSION` 是同一个事实的手写副本，而它实测已经从
+ * 0.19.0 一路停在原地、package.json 早到 0.38.x —— 于是 0.38 的拦截在取证日志里
+ * 被记成 0.19（报告与实际不符，D1 类）。这类副本没有断言就必然漂。
+ */
+const pkgVersion = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).version
+eq(extensionModule.INTEGRITY_VERSION, pkgVersion, 'INTEGRITY_VERSION 与 package.json 同步（否则日志记错版本）')
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'superpi-integrity-'))
 const logFile = path.join(tmp, 'integrity.log.jsonl')

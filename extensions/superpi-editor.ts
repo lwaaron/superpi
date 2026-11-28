@@ -446,6 +446,21 @@ export function hoverStyle(text: string, fg: ((token: string, value: string) => 
   return SGR_UNDERLINE + body + SGR_NO_UNDERLINE
 }
 
+/**
+ * 只认左键。
+ *
+ * pi-tui 的 `event.button` 是 `left|middle|right|none` 字符串（数字只出现在测试夹具里），
+ * 而 Windows 终端下右键是 pi 自己的粘贴手势（`tui-alt-screen.js` 的 `handleRightClickPaste`）——
+ * 命中区把右键也吞掉，等于让用户在输入框上方右键粘贴失效。
+ */
+function isLeftButton(event: any): boolean {
+  const button = event?.button
+  return button === undefined || button === 'left' || button === 0
+}
+
+/** 编辑器里一个可点矩形（组件坐标，y 是本组件输出的行号）。 */
+export type EditorHit = { id: string; kind: 'action' | 'command'; command?: string; x: number; y: number; width: number }
+
 export class SuperPiEditor extends CustomEditor {
   /** 选区锚点；null = 没有选区。焦点就是编辑器光标。 */
   private selAnchor: Point | null = null
@@ -460,7 +475,16 @@ export class SuperPiEditor extends CustomEditor {
   /** 下边框在最近一次渲染里的行号；之下都是我们自己画的框外区域。 */
   private lastBoxBottom = -1
   /** 本次渲染里可点的矩形（组件坐标，y 是本组件输出行号）。 */
-  private hits: Array<{ id: string; kind: 'action' | 'command'; command?: string; x: number; y: number; width: number }> = []
+  private hits: EditorHit[] = []
+  /**
+   * press 落在哪个可点矩形上（等 click 再执行）。
+   *
+   * pi-tui 的一次真实点击是 **press → release → 合成 click** 三段，只有 press/release
+   * 落在同一格才合成 click。动作挂在 press 上就会执行两次（0.60.1 用户报的
+   * 「settings 展开又立即收起」）。记下 press 时的目标还有第二个理由：菜单展开/收起
+   * 会增删行，click 时重算坐标可能已经指向别处。
+   */
+  private pressedHit: EditorHit | null = null
   /** 由扩展入口注入（notify 等），测试里可不给。 */
   private hooks: {
     notify?: (text: string, level?: string) => void
@@ -506,9 +530,7 @@ export class SuperPiEditor extends CustomEditor {
     // Esc：先关菜单，再清选区，其余交给 pi（中断/取消补全）。
     if (data === ESC) {
       if (this.menuOpen) {
-        this.menuOpen = false
-        this.invalidate?.()
-        this.tui?.requestRender?.()
+        this.closeMenu()
         return true
       }
       if (this.hasSelection()) this.selAnchor = null
@@ -909,10 +931,19 @@ export class SuperPiEditor extends CustomEditor {
 
   handleMouse(event: any): any {
     if (!event) return super.handleMouse(event)
-    const isPress = event.type === 'press' || event.type === 'click'
+    /** pi-tui 合成的「真点击」；press 只是它的一半，不许在这里触发动作。 */
+    const isClick = event.type === 'click'
+    const isPress = event.type === 'press' || isClick
     const isMove = event.type === 'move' || event.type === 'drag'
+    // 右键交给 pi（Windows 下是粘贴手势），我们的命中区只认左键。
+    // 判定只作用于 press/click：**move 事件的 button 是 `none`**（pi-tui 的
+    // `createMouseEvent` 对 motion 走 decode 后的 'none'），把它也拦掉，悬停就不亮了。
+    if ((event.type === 'press' || isClick) && !isLeftButton(event)) return super.handleMouse(event)
+    // 新的一次按下：上一次没等到 click（拖到别处释放）的待触发目标就此作废。
+    if (event.type === 'press') this.pressedHit = null
 
-    // 框外（下边框之下）是我们自己的区域：只有 settings / home / 菜单可点。
+    // 框外（下边框之下）是我们自己的区域：只有 settings 展开出来的菜单可点
+    // （settings / home 两个入口由 footer 画）。
     if (typeof event.y === 'number' && event.y > this.lastBoxBottom) {
       const hit = this.hits.find(
         h => h.y === event.y && event.x >= h.x && event.x < h.x + Math.max(1, h.width),
@@ -922,15 +953,19 @@ export class SuperPiEditor extends CustomEditor {
         if (this.setHover(hit ? hit.id : null)) return { handled: true, render: true }
         return { handled: true }
       }
-      if (hit && isPress) {
-        this.activateHit(hit)
+      if (hit) {
+        if (event.type === 'press') {
+          this.pressedHit = hit
+          return { handled: true }
+        }
+        if (isClick) {
+          const target = this.pressedHit ?? hit
+          this.pressedHit = null
+          this.activateHit(target)
+        }
         return { handled: true }
       }
-      if (isPress && this.menuOpen) {
-        this.menuOpen = false
-        this.invalidate?.()
-        this.tui?.requestRender?.()
-      }
+      if (isPress) this.closeMenu()
       // 框外的空白不交给 pi（否则会按错误的行号定位光标）。
       return { handled: true }
     }
@@ -938,16 +973,25 @@ export class SuperPiEditor extends CustomEditor {
     // 离开框外区域（移到输入框上）→ 清掉悬停高亮。
     if (isMove && hoverState.id !== null) this.setHover(null)
 
-    if (isPress && this.menuOpen) {
-      this.menuOpen = false
-      this.invalidate?.()
-      this.tui?.requestRender?.()
-    }
+    if (isPress) this.closeMenu()
     // 鼠标点击（含拖选后的合成 click）会重置光标：先丢掉键盘选区，避免两套选区打架。
     if (isPress) this.selAnchor = null
     // x 减 1 跳过左侧框线，回到 super.render 的坐标系。
     const x = typeof event.x === 'number' ? Math.max(0, event.x - 1) : event.x
     return super.handleMouse(typeof event.x === 'number' ? { ...event, x } : event)
+  }
+
+  /**
+   * 收起子菜单。
+   *
+   * 四条关闭路径（Esc / 点框外空白 / 点框内 / 提交命令）共用：漏掉 `invalidate()`
+   * 会让外层 TUI 的缓存盖住「已收起」这件事（0.60.0 那个菜单关闭一致性修复）。
+   */
+  private closeMenu(): void {
+    if (!this.menuOpen) return
+    this.menuOpen = false
+    this.invalidate?.()
+    this.tui?.requestRender?.()
   }
 
   /** 更新悬停态；真的变了才要求重画（移动事件很密，不能每次都重排）。 */
@@ -959,7 +1003,7 @@ export class SuperPiEditor extends CustomEditor {
     return true
   }
 
-  private activateHit(hit: { id: string; kind: 'action' | 'command'; command?: string }): void {
+  private activateHit(hit: EditorHit): void {
     if (hit.kind === 'action' && hit.id === 'settings') {
       this.toggleMenu()
       return
@@ -969,7 +1013,7 @@ export class SuperPiEditor extends CustomEditor {
       return
     }
     if (hit.kind === 'command' && hit.command) {
-      this.menuOpen = false
+      this.closeMenu()
       this.runCommand(hit.command)
     }
   }
@@ -983,8 +1027,7 @@ export class SuperPiEditor extends CustomEditor {
       this.hooks.notify?.('运行中无法切换，先按 Esc 中断', 'warning')
       return
     }
-    this.menuOpen = false
-    this.invalidate?.()
+    this.closeMenu()
     const submit = (this as any).onSubmit
     if (typeof submit === 'function') {
       void submit(command)
@@ -2072,6 +2115,8 @@ export class SuperPiFooter {
   private footerData: any
   private ctx: any
   private hits: FooterHit[] = []
+  /** press 落在哪个入口上（等 pi-tui 合成的 click 再执行，见 handleMouse）。 */
+  private pressed: FooterHit | null = null
   /** 守卫真实占用的缓存：footer 每帧都可能渲染，不能每帧读盘。 */
   private guardCache: { at: number; value: { after: number; window: number } | null } = { at: 0, value: null }
   private lastWidth = 80
@@ -2339,16 +2384,29 @@ export class SuperPiFooter {
   }
 
   /**
-   * 鼠标事件：悬停（move）只改悬停态并重画，点击（press/click）才触发动作。
+   * 鼠标事件：悬停（move）只改悬停态并重画，动作只在 **click** 上执行。
+   *
+   * 为什么不是 press：pi-tui 把一次真实点击切成 **press → release → 合成 click** 三段
+   * （`tui-alt-screen.js` 的 `handleMouseEvent`），只把「按下」给组件，移动过就不合成。
+   * 两个阶段都触发动作，一次点击就会执行两次 —— 用户实测到的正是「settings 展开又立即
+   * 收起」（toggle 两遍）。pi 自己的 `BuiltInHeader`（只认 click）与 `SelectList`
+   * （press 只记 `mousePressedIndex`、click 才提交）都是这个语义。
+   *
    * 命不中就返回 undefined，让 pi 自己的处理继续（例如滚轮滚动聊天区）。
    */
   handleMouse(event: any): any {
     if (!event) return undefined
+    const isClick = event.type === 'click'
     const isMove = event.type === 'move' || event.type === 'drag'
-    const isPress = event.type === 'press' || event.type === 'click'
+    const isPress = event.type === 'press' || isClick
     if (!isMove && !isPress) return undefined
+    // 右键是 Windows 下 pi 自己的粘贴手势，命中区不许吞掉它。
+    // 只判 press/click：move 事件的 button 是 `none`，拦掉会让悬停失效。
+    if (!isMove && !isLeftButton(event)) return undefined
     const hit = hitAt(this.hits, event.x, event.y)
     if (!hit) {
+      // 一次 press 没命中就作废上一次没等到 click 的待触发目标。
+      if (event.type === 'press') this.pressed = null
       if (isMove && hoverState.id !== null) {
         hoverState.id = null
         this.tui?.requestRender?.()
@@ -2363,8 +2421,16 @@ export class SuperPiFooter {
       this.tui?.requestRender?.()
       return { handled: true, render: true }
     }
+    if (event.type === 'press') {
+      // 只记下按在哪个入口上：动作留到 click。布局在两步之间可能已经变了
+      // （展开菜单会插入行），所以 click 时按记录的目标执行，不再重算坐标。
+      this.pressed = hit
+      return { handled: true }
+    }
+    const target = this.pressed ?? hit
+    this.pressed = null
     try {
-      this.ctx?.onFooterAction?.(hit.kind)
+      this.ctx?.onFooterAction?.(target.kind)
     } catch {
       /* 回调失败不能崩 footer */
     }

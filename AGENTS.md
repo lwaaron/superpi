@@ -51,6 +51,7 @@ DSH（DeepSeek Runtime）插件：把 pi 编码 agent 装进 DSH 的侧栏面板
 | 0.58.0 分段报告预算回调 | 分段审查报告恢复 8k token 输出边界，给复杂源码范围保留完整引文和结构化结论空间。循环保护与共享请求预算继续生效。 |
 | 0.59.0 settings 菜单缓存失效 | 命令行 footer 点击 settings 后，编辑器先失效再重绘，确保外层 TUI 缓存不会遮住展开菜单。真闭环门禁覆盖 footer 点击、编辑器状态和菜单渲染。 |
 | 0.60.0 菜单关闭缓存一致性 | Esc、菜单外点击和命令提交都统一清理 CustomEditor 缓存，关闭菜单后不保留旧菜单行。settings action 复用同一 toggleMenu 路径。 |
+| 0.60.1 鼠标点击只触发一次 | pi-tui 把一次真实点击切成 `press → release → 合成 click` 三段（`tui-alt-screen.js` 的 `handleMouseEvent`），而编辑器和 footer 两处 `handleMouse` 都把 `press` 与 `click` 当触发时机 —— 一次点击执行两次，用户看到的就是「点 settings 弹出设置又立即收起」（`toggleMenu()` 走两遍）。动作改为只在 `click` 上执行，`press` 只记录按下的目标（布局在两步之间可能变，`click` 时按记录执行）；命中区只认左键（右键是 pi 的粘贴手势）。两处都按 pi 自己的语义对齐：`BuiltInHeader` 只认 `click`、`SelectList` 的 `press` 只记 `mousePressedIndex`。门禁不再直接喂 `{type:'click'}`，而是用真 `TuiAltScreen` + 真 SGR 鼠标字节（`\x1b[<0;x;yM` / `m`）跑 pi 自己的合成器，断言一次点击恰好一次动作、菜单真的留在屏幕上。 |
 | `extensions/superpi-session-controls.ts` | 使用 Pi 的扩展 API 读取有效重试设置，按当前可用模型范围反向切换。面板通过 host 的会话控制接口访问，TUI 保留原生选模键位并提供 `/superpi-retry`。 |
 | `src/event-verdict.mjs` | 把上面那份判读**挂到 pi 的 `message_end` 上**（0.18.0）：`decoratePiEvent(record)` 只加一个 `verdict` 字段，不改 pi 的任何字段，**永不抛**。它解决了两个结构问题：① 面板不再需要一份孪生判据（0.16.2~0.17.3 的「表在契约、算法在面板」，共同盲区测不出）；② 面板不再依赖 `/contract` 先到（0.17.3 那个「契约晚到 → 提示永久丢失」的竞态随依赖一起消失，而不是靠启动顺序绕开）。装饰发生在 `PiProcess.pushEvent` 里 —— 那是**唯一**同时喂 SSE 与环形缓冲回放的地方。 |
 | `extensions/superpi-text-bytes.mjs` | **「什么是坏字节」的唯一判据**（0.18.0）：`scanTextBytes()` 三类 —— `replacement`（U+FFFD，字符的字节已经丢了、不可逆）、`control`（C0 除 `\t\n\r`，外加 DEL）、`surrogate`（孤立代理项：JSON 合法、落盘必坏）。计数全量、位置截断（前 20 处，带行列号）。四个消费者共用：回合判据、写入闸、`test/parity.mjs` §9、`test/host-parity.mjs` 3.98。**为什么必须收成一处**：这三处原本各写一份，而运行时**一份也没有** —— 实测 7 次 `write` 的 content 含 U+FFFD、7 次全部落盘。 |
@@ -492,6 +493,7 @@ npm run test:engineering                        # 工程评分与对照运行；
 node test/engineering-sandbox.mjs probe          # 用本地 Linux Docker 实测 Pi 项目读写、Shell 与子进程边界
 node test/engineering-sandbox.mjs grade durable-jobs <workspace> # 无网容器对只读工作快照独立评分
 npm run test:integrity                          # 只跑写入闸门禁（含 pi 真 ExtensionRunner 跑 block 链路）
+npm run test:integrity-e2e                      # 真机端到端：真模型写坏字节 → 闸必须拦住（需联网 + 模型账号，不在 npm test 里）
 npm run test:tui                                # 只跑输入框扩展门禁（jiti 加载真 .ts + pi 真 CustomEditor + 真按键序列）
 npm run superpi:editor                               # 把 extensions/superpi-editor.ts 装进 pi（<piAgentDir>/extensions/）
 npm run superpi:editor:status                        # 只读：源/目标/内容是否一致/pi 版本
