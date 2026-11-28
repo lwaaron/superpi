@@ -243,7 +243,8 @@ function report(state) {
     'footer：项目名 (分支) ⇄ + settings / home 同行（鼠标移入变亮，点了就执行）\n',
   )
   process.stdout.write(
-    '键位：Ctrl+A 全选 · Shift+方向扩选 · Ctrl+C 复制（不清空）· Ctrl+X 剪切 · Backspace/Delete 删选区 · Ctrl+V 粘贴文件路径\n',
+    '键位：Ctrl+A 全选 · Shift+方向扩选 · Ctrl+C 复制（不清空）· Ctrl+X 剪切 · Backspace/Delete 删选区 · Ctrl+V 粘贴文件路径\n' +
+    '      settings 菜单：↑↓ 选择 · Enter 执行 · Esc 收起（打其它键自动收起，输入不会丢）\n',
   )
   process.stdout.write(
     '规则：settings 菜单里的 rules（= /superpi-rules）编辑「用户自定义规则」，与面板设置为同一份文件\n' +

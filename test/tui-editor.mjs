@@ -1686,9 +1686,14 @@ const makeFooterData = () => ({
     ok(row >= 0, '屏幕上有 footer 行（settings / home）')
     return row
   }
-  // 菜单行的形状是「两个空格 + 命令名」，footer 那行的 settings 前面是项目路径 ——
-  // 用前缀区分，才不会把 footer 上的入口误当成菜单。
-  const isMenuLine = line => line.startsWith('  ' + SETTINGS_COMMANDS[0].label)
+  // 菜单行的形状是「`> ` / 两空格 + 命令名」（`> ` 是当前选中项）—— footer 那行的
+  // settings 前面是项目路径，用这个前缀才不会把 footer 上的入口误当成菜单。
+  const menuLabels = new Set(SETTINGS_COMMANDS.map(item => item.label))
+  const isMenuLine = line => {
+    const head = line.slice(0, 2)
+    if (head !== '> ' && head !== '  ') return false
+    return menuLabels.has(line.slice(2).trimEnd())
+  }
   const showsMenu = lines => lines.some(isMenuLine)
 
   // ── 一次点击 → 恰好一次 toggle，菜单必须**留在**屏幕上 ──
@@ -1697,6 +1702,16 @@ const makeFooterData = () => ({
   let lines = realClick('settings', footerRowOf(before))
   ok(editor.isMenuOpen() === true, '一次真实点击后菜单是展开的（不是开关两次回到收起）')
   ok(showsMenu(lines), '一次真实点击后屏幕上**留着** settings 菜单行')
+
+  // ── 键盘：真实终端字节要真的到菜单（不是只在单测里直接调 handleInput）──
+  // 探针里必须把焦点交给编辑器，与真实 pi 的焦点位置一致；否则按键会在 TUI 层被丢掉。
+  realTui.setFocus(editor)
+  realTui.handleTerminalInput('\x1b[B')
+  lines = frame()
+  ok(lines.some(line => line.trimEnd() === '> ' + SETTINGS_COMMANDS[1].label), '真实 TUI 里 ↓ 把选中项移到第二项')
+  realTui.handleTerminalInput('\x1b[A')
+  lines = frame()
+  ok(lines.some(line => line.trimEnd() === '> ' + SETTINGS_COMMANDS[0].label), '真实 TUI 里 ↑ 移回第一项')
 
   // ── 再点一次 → 收起（开关语义仍然成立）──
   lines = realClick('settings', footerRowOf(lines))
@@ -1920,6 +1935,51 @@ const guardLogModule = await import(pathToFileURL(path.join(root, 'extensions', 
   editor.handleMouse({ type: 'click', button: 'left', x: menuX, y: menuY })
   eq(submitted.at(-1), SETTINGS_COMMANDS[0].command, '点菜单项提交对应的 pi 斜杠命令')
   ok(!stripAnsi(editor.render(60).join('\n')).includes('scoped-models'), '提交后菜单收起')
+}
+
+// ⑤b 键盘选择（0.60.2）：菜单是弹层，↑↓ 移动选中项、Enter 执行、Esc 收起，其它键不吞。
+//
+// 用户报的是「展开设置后上下键选不了」。根因不是按键没到编辑器，而是菜单当时只是
+// 一组画出来的行 + 鼠标命中区 —— 没有「当前项」这个状态，键盘就没有东西可改。
+// 这一段锁住的是那个状态本身：每一行都有 `> `/两空格前缀，选中项唯一。
+{
+  const { editor } = makeEditor('')
+  const submitted = []
+  editor.onSubmit = command => submitted.push(command)
+  const plain = () => editor.render(60).map(stripAnsi)
+  const selected = () => {
+    const line = plain().find(row => row.startsWith('> '))
+    return line ? line.slice(2).trimEnd() : null
+  }
+
+  editor.toggleMenu()
+  const menuLines = plain().filter(row => row.startsWith('> ') || row.startsWith('  '))
+  eq(menuLines.length, SETTINGS_COMMANDS.length, '菜单每项占一行（前缀统一两列）')
+  eq(selected(), SETTINGS_COMMANDS[0].label, '展开后第一项是选中项')
+
+  editor.handleInput('\x1b[B')
+  eq(selected(), SETTINGS_COMMANDS[1].label, '↓ 把选中项移到下一项')
+  editor.handleInput('\x1b[A')
+  eq(selected(), SETTINGS_COMMANDS[0].label, '↑ 移回上一项')
+  editor.handleInput('\x1b[A')
+  eq(selected(), SETTINGS_COMMANDS[SETTINGS_COMMANDS.length - 1].label, '首项再 ↑ 循环到末项（与 pi 的 SelectList 一致）')
+  eq(plain().filter(row => row.startsWith('> ')).length, 1, '任何时刻只有一个选中项')
+
+  editor.handleInput('\r')
+  eq(submitted.at(-1), SETTINGS_COMMANDS[SETTINGS_COMMANDS.length - 1].command, 'Enter 执行当前选中项的命令')
+  ok(editor.isMenuOpen() === false, 'Enter 后菜单收起')
+  ok(!plain().some(row => row.startsWith('> ')), '收起后不残留选中行')
+
+  // 菜单不能吞普通输入：收起菜单、字符照旧进输入框（否则用户会以为输入框坏了）。
+  editor.toggleMenu()
+  editor.handleInput('x')
+  ok(editor.isMenuOpen() === false, '输入普通字符时菜单收起')
+  ok(editor.getText().includes('x'), '字符仍然进入输入框')
+
+  // Esc 收起，且不往外漏
+  editor.toggleMenu()
+  editor.handleInput('\x1b')
+  ok(editor.isMenuOpen() === false, 'Esc 收起菜单')
 }
 
 // ⑥ home = /new；运行中不切（runCommand 的两条语义都还在）

@@ -40,7 +40,7 @@ npm run pack:offline -- .\artifacts
 
 ```powershell
 node "$env:USERPROFILE\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\pnpm\bin\pnpm.cjs" `
-  add "file:C:\path\to\superpi-0.60.1-offline-win32-x64.tgz" --offline --ignore-scripts
+  add "file:C:\path\to\superpi-0.60.2-offline-win32-x64.tgz" --offline --ignore-scripts
 ```
 
 归档包含当前平台的 Pi 和生产依赖。使用远程模型时仍需连通模型服务。已经安装 Pi 时，也可在配置中用 `cliPath` 指定运行时。
@@ -232,10 +232,10 @@ New-Item -ItemType Junction `
 ### 使用 pnpm 手工安装
 
 ```powershell
-npm pack                                        # 得到 superpi-0.60.1.tgz
+npm pack                                        # 得到 superpi-0.60.2.tgz
 cd "$env:USERPROFILE\.dsh\profiles\desktop"
 node "$env:USERPROFILE\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\pnpm\bin\pnpm.cjs" `
-  add "file:C:\path\to\superpi-0.60.1.tgz" --ignore-scripts
+  add "file:C:\path\to\superpi-0.60.2.tgz" --ignore-scripts
 ```
 
 不要在 profile 里用 `npm install`：npm 会另写一份 `package-lock.json`，而宿主插件管理器用的是 pnpm，两套锁文件互相看不见，下次插件安装就会把 node_modules 重建成 pnpm 理解的样子。

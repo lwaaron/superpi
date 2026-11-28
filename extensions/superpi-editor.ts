@@ -470,6 +470,13 @@ export class SuperPiEditor extends CustomEditor {
   private pasteStartedAt = 0
   /** settings 菜单是否展开。 */
   private menuOpen = false
+  /**
+   * settings 菜单里当前选中的那一项（键盘 ↑↓ 移动、Enter 执行）。
+   *
+   * 0.60.2：菜单原本只是一组「画出来的行 + 鼠标命中区」—— 没有"当前项"这个状态，
+   * 键盘就没有东西可改。弹层必须自己持有一个光标，这是它作为组件的完整定义。
+   */
+  private menuIndex = 0
   /** 鼠标悬停的入口 id（与模块级 hoverState 同步）。 */
   private hovered: string | null = null
   /** 下边框在最近一次渲染里的行号；之下都是我们自己画的框外区域。 */
@@ -527,12 +534,11 @@ export class SuperPiEditor extends CustomEditor {
 
   /** 返回 true 表示本函数已消费该按键。 */
   private handleSelectionKeys(data: string): boolean {
-    // Esc：先关菜单，再清选区，其余交给 pi（中断/取消补全）。
+    // 弹层优先：菜单打开时它先拿键盘。这一条必须排在所有编辑器语义之前。
+    if (this.menuOpen && this.handleMenuKeys(data)) return true
+
+    // Esc：清选区后交出键（菜单已由上面处理）。
     if (data === ESC) {
-      if (this.menuOpen) {
-        this.closeMenu()
-        return true
-      }
       if (this.hasSelection()) this.selAnchor = null
       return false
     }
@@ -823,9 +829,15 @@ export class SuperPiEditor extends CustomEditor {
     // 由 `SuperPiFooter` 在 footer 的坐标系里画（见文件末尾）。这里只留
     // settings 展开出来的子菜单 —— 它紧贴框底，视觉上属于输入框。
     if (this.menuOpen) {
-      for (const item of SETTINGS_COMMANDS) {
+      const cursor = this.menuCursor()
+      for (let index = 0; index < SETTINGS_COMMANDS.length; index += 1) {
+        const item = SETTINGS_COMMANDS[index]
         const y = out.length
-        out.push(padToWidth(this.dim('  ' + item.label), inner + 2))
+        // 前缀与 pi 的 SelectList 同形：`> ` 标记当前项，其余用两格空白（等宽）。
+        // 选中态复用鼠标悬停的样式（accent + 下划线）—— 终端里最稳的两个"被选中"信号。
+        const marker = index === cursor ? '> ' : '  '
+        const text = marker + item.label
+        out.push(padToWidth(index === cursor ? hoverStyle(text, (t, v) => this.fg(t, v)) : this.dim(text), inner + 2))
         this.hits.push({ id: item.label, kind: 'command', command: item.command, x: 0, y, width: inner + 2 })
       }
     }
@@ -835,11 +847,78 @@ export class SuperPiEditor extends CustomEditor {
   /** footer 那边点了 settings：开关子菜单（settings/home 的绘制归 footer）。 */
   toggleMenu(): void {
     this.menuOpen = !this.menuOpen
+    // 每次展开都从第一项开始：菜单没有"当前值"语义，保留上次位置只会让人猜。
+    if (this.menuOpen) this.menuIndex = 0
     // CustomEditor may be wrapped in a cached TUI container. Changing only the
     // flag and requesting a frame can leave the previous child height cached,
     // so invalidate before asking the terminal to render.
     this.invalidate?.()
     this.tui?.requestRender?.()
+  }
+
+  /**
+   * 菜单打开时的键盘路由（↑↓ / Enter / Esc）。返回 true 表示本次按键已被菜单消费。
+   *
+   * 为什么必须先于编辑器语义：菜单是弹层，屏幕上只有一个光标——如果 ↑↓ 同时
+   * 既移动菜单又移动输入框光标，用户看到的就会是"菜单没反应、输入框里光标乱跳"。
+   * 与 pi 自己的 SelectList 同一套键位名（`tui.select.*`），跟随用户键位配置。
+   * 其它键先把菜单收起，再**原样返回**，让输入 / 粘贴 / Ctrl+C 照旧工作。
+   */
+  private handleMenuKeys(data: string): boolean {
+    if (this.menuKeyMatches(data, 'tui.select.up', 'up')) {
+      this.moveMenu(-1)
+      return true
+    }
+    if (this.menuKeyMatches(data, 'tui.select.down', 'down')) {
+      this.moveMenu(1)
+      return true
+    }
+    if (this.menuKeyMatches(data, 'tui.select.confirm', 'enter')) {
+      this.confirmMenu()
+      return true
+    }
+    if (this.menuKeyMatches(data, 'tui.select.cancel', 'esc')) {
+      this.closeMenu()
+      return true
+    }
+    this.closeMenu()
+    return false
+  }
+
+  /** 先问用户键位配置，再退到 pi-tui 的默认键名。 */
+  private menuKeyMatches(data: string, action: string, fallback: string): boolean {
+    try {
+      if (this.keybindings?.matches?.(data, action)) return true
+    } catch {
+      /* 自定义键位读不到就用默认 */
+    }
+    return matchesKey(data, fallback)
+  }
+
+  /** 上下移动选中项（循环，与 pi 的 SelectList 一致）。 */
+  private moveMenu(delta: number): void {
+    const count = SETTINGS_COMMANDS.length
+    if (count === 0) return
+    this.menuIndex = (this.menuCursor() + delta + count) % count
+    this.invalidate?.()
+    this.tui?.requestRender?.()
+  }
+
+  /** Enter：执行当前项（与鼠标点条目同一条路径，单一执行点）。 */
+  private confirmMenu(): void {
+    const item = SETTINGS_COMMANDS[this.menuCursor()]
+    if (!item) {
+      this.closeMenu()
+      return
+    }
+    this.activateHit({ id: item.label, kind: 'command', command: item.command, x: 0, y: 0, width: 0 })
+  }
+
+  /** 选中项在合法范围内；命令表将来变短也不会让高亮整体消失。 */
+  private menuCursor(): number {
+    const count = SETTINGS_COMMANDS.length
+    if (count === 0) return 0
+    return ((this.menuIndex % count) + count) % count
   }
 
   /** settings 菜单是否展开（footer 画 settings 时要用它决定高亮）。 */
