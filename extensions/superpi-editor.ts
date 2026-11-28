@@ -62,10 +62,12 @@ import * as piPublicApi from '@earendil-works/pi-coding-agent'
 import { CustomEditor } from '@earendil-works/pi-coding-agent'
 import { getNativeClipboard, matchesKey, truncateToWidth, visibleWidth } from '@earendil-works/pi-tui'
 import { execFile } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { BRAND_NAME } from './superpi-brand.mjs'
+import { saveClipboardFile } from './superpi-clipboard.mjs'
 import { detectTurnVerdict, settledRunStatus } from './superpi-turn-verdict.mjs'
 
 /**
@@ -111,6 +113,7 @@ const sgrBg = (rgb: readonly number[]) => `\x1b[48;2;${rgb[0]};${rgb[1]};${rgb[2
 
 /** 一次 Ctrl+V 里允许的 PowerShell 读取超时（ms）。慢机器上让位给 pi 自己的粘贴。 */
 const FILE_LIST_TIMEOUT_MS = 1500
+const CLIPBOARD_READ_TIMEOUT_MS = 5000
 /** 上一次粘贴读取被卡住多久后就允许重新尝试（ms）。 */
 const PASTE_STALE_MS = 6000
 
@@ -470,7 +473,7 @@ export class SuperPiEditor extends CustomEditor {
   /** 选区锚点；null = 没有选区。焦点就是编辑器光标。 */
   private selAnchor: Point | null = null
   /** 正在异步读剪贴板，避免连按 Ctrl+V 叠多次 PowerShell。 */
-  private pasteInFlight = false
+  private pasteRequest = 0
   /** 上一次读取的开始时间：过久未结束就认为已失效，不阻塞后续粘贴。 */
   private pasteStartedAt = 0
   /** settings 菜单是否展开。 */
@@ -504,6 +507,7 @@ export class SuperPiEditor extends CustomEditor {
     dim?: (text: string) => string
     /** 任意主题色的包装（悬停高亮用 accent）；拿不到就原样返回。 */
     fg?: (token: string, text: string) => string
+    readClipboard?: typeof resolveClipboardPaste
   }
 
   constructor(tui: any, theme: any, keybindings: any, options: any = {}) {
@@ -548,10 +552,9 @@ export class SuperPiEditor extends CustomEditor {
       return false
     }
 
-    // Ctrl+V：文件路径优先。命中就自己插，否则原样交回 pi（图片/文本粘贴）。
+    // Ctrl+V 由剪贴板内容决定插入文字还是文件路径。
     if (this.isPasteKey(data)) {
-      if (this.pasteInFlight) return true
-      void this.tryPasteFilePaths()
+      void this.pasteClipboard()
       return true
     }
 
@@ -1125,47 +1128,31 @@ export class SuperPiEditor extends CustomEditor {
 
   /* ---------------------------------------------------------- Ctrl+V 文件 */
 
-  /**
-   * 剪贴板里有**文件**（资源管理器复制、Snipaste 之类）时插入绝对路径。
-   *
-   * 顺序刻意如此，为了让最常见的两种粘贴零额外开销：
-   *   有文本 → 直接交回 pi（pi 自己插文本）
-   *   有图片 → 直接交回 pi（pi 写 %TEMP%\pi-clipboard-*.png 并插路径）
-   *   两者都没有 → 才去问 Windows 的文件拖放列表（PowerShell，约 200ms，异步）
-   */
-  private async tryPasteFilePaths(): Promise<void> {
-    // 防重入，但不能被一次卡住的读取永久堵死：超过 STALE_MS 就当作上一次已失效。
-    if (this.pasteInFlight && Date.now() - this.pasteStartedAt < PASTE_STALE_MS) return
-    this.pasteInFlight = true
+  private async pasteClipboard(): Promise<void> {
+    if (this.pasteStartedAt && Date.now() - this.pasteStartedAt < PASTE_STALE_MS) return
+    const request = ++this.pasteRequest
     this.pasteStartedAt = Date.now()
-    let inserted = false
     try {
-      const content = await resolveClipboardPaste()
-      if (content.files.length > 0) {
-        if (content.files.some(file => /\p{Cc}/u.test(file))) return
-        this.insertFilePaths(content.files)
-        inserted = true
-      } else if (content.imagePath) {
-        this.insertTextAtCursor(content.imagePath)
-        inserted = true
-      } else if (content.text) {
-        this.insertTextAtCursor(content.text)
-        inserted = true
-      }
-    } catch {
-      inserted = false
+      const content = await (this.hooks.readClipboard ?? resolveClipboardPaste)()
+      if (request !== this.pasteRequest) return
+      if (content.error) throw new Error(content.error)
+      if (content.files.length === 0 && !content.text) { this.onPasteImage?.(); return }
+      if (content.files.some(file => /\p{Cc}/u.test(file))) throw new Error('剪贴板路径含有控制字符')
+      if (this.hasSelection()) this.deleteSelection()
+      this.selAnchor = null
+      if (content.files.length > 0) this.insertFilePaths(content.files)
+      else this.insertTextAtCursor(content.text)
+      this.tui?.requestRender?.()
+    } catch (error) {
+      if (request === this.pasteRequest) this.hooks.notify?.('粘贴失败：' + String((error as Error).message), 'warning')
     } finally {
-      this.pasteInFlight = false
-      if (inserted) this.tui?.requestRender?.()
+      if (request === this.pasteRequest) this.pasteStartedAt = 0
     }
-    // 什么都没插进去 → 完全交回 pi（行为与不打这个扩展时一致）。
-    if (!inserted) this.onPasteImage?.()
   }
-
   /** 与 pi 的 handleClipboardPaste 同一套插入语义（bash 模式用引号+空格，否则每行一条）。 */
   private insertFilePaths(files: string[]): void {
     const bashMode = this.getText().trimStart().startsWith('!')
-    const payload = bashMode ? files.map(quoteIfNeeded).join(' ') : files.join('\n')
+    const payload = files.map(file => bashMode || /\s/u.test(file) ? quoteIfNeeded(file) : file).join(bashMode ? ' ' : '\n')
     const cursor = this.getCursor?.()
     const line = cursor ? (this.getText().split('\n')[cursor.line] ?? '') : ''
     const before = cursor && cursor.col > 0 ? line[cursor.col - 1] : ''
@@ -1173,7 +1160,6 @@ export class SuperPiEditor extends CustomEditor {
     const leading = before && !/\s/.test(before) ? ' ' : ''
     const trailing = after && !/\s/.test(after) ? ' ' : ''
     this.insertTextAtCursor(`${leading}${payload}${trailing}`)
-    this.tui?.requestRender?.()
   }
 }
 
@@ -1428,15 +1414,16 @@ export function paintPathChips(editor: SuperPiEditor, rendered: string[], width:
     if (!line.includes('\\') && !line.includes('/')) continue
     const found: Array<{ from: number; to: number; padLeft: boolean; padRight: boolean }> = []
     for (const match of line.matchAll(PATH_TOKEN_RE)) {
-      const text = trimPathToken(match[0])
-      if (!isLikelyPath(text)) continue
+      const text = match[1] ?? trimPathToken(match[0])
+      if (!isLikelyPath(text) && !(match[1] && text.startsWith('/') && text.slice(1).includes('/'))) continue
+      const from = match.index + (match[1] ? 1 : 0)
       // 药丸左右各吃一格当「圆角」，但不能盖住相邻的普通文字：
       // 只有那一格确实是空白时才吃掉。
-      const before = match.index > 0 ? line[match.index - 1] : ''
-      const afterIndex = match.index + text.length
+      const before = from > 0 ? line[from - 1] : ''
+      const afterIndex = from + text.length
       const after = afterIndex < line.length ? line[afterIndex] : ''
       found.push({
-        from: match.index,
+        from,
         to: afterIndex,
         padLeft: before === '' || /\s/.test(before),
         padRight: after === '' || /\s/.test(after),
@@ -1481,7 +1468,7 @@ export function paintPathChips(editor: SuperPiEditor, rendered: string[], width:
  * 底色会一直铺到后面的普通文字上（用户实测的溢出）。所以再由
  * `trimPathToken()` 在**最后一个已知扩展名**处截断。
  */
-export const PATH_TOKEN_RE = /(?:[A-Za-z]:[\\/]|\\\\|\/)[^\s"'`<>|]*/g
+export const PATH_TOKEN_RE = /"((?:[A-Za-z]:[\\/]|\\\\|\/)[^"\r\n]+)"|(?:[A-Za-z]:[\\/]|\\\\|\/)[^\s"'`<>|]*/g
 
 /** 认得出来的文件扩展名（宁可少认：只有这些才拿来当路径边界）。 */
 export const PATH_EXT_RE =
@@ -1511,10 +1498,10 @@ export function isLikelyPath(text: string): boolean {
     return false
   }
   if (text.startsWith('\\\\')) return /^\\\\[^\\\s]+\\[^\\\s]+/.test(text)
-  if (/^[A-Za-z]:[\\/]/.test(text)) return /[\\/]/.test(text.slice(3))
+  if (/^[A-Za-z]:[\\/]/.test(text)) return true
   if (text.startsWith('/')) {
     // 至少两段才算路径：/settings 这类斜杠命令、/tmp 这类单段歧义词都不涂底色。
-    if (/^\/(?:[\w.@+-]+\/)+[\w.@+-]+$/.test(text)) return true
+    if (/^\/(?:[^/\s]+\/)+[^/\s]+$/u.test(text)) return true
     return false
   }
   return false
@@ -1742,132 +1729,161 @@ export async function readNativeClipboard(): Promise<{ text: string | null; imag
   return out
 }
 
-/**
- * PowerShell 一次性探针：把剪贴板里的**文件列表 / 文本 / 位图**一起看清。
- *
- * 为什么必须自己读一遍：
- *   - `getFilePaths` 在 Windows 的 pi-tui native 模块里根本没实现（只有 macOS 有）；
- *   - 某些环境下 native 的 getText / getImage 也会失败（实测截图后两者都是 null），
- *     而 PowerShell 的 [Windows.Forms.Clipboard] 能拿到。
- * 输出一律走 base64（控制台代码页会把中文路径/中文文本搞成乱码）；
- * 位图写入临时 PNG 并把路径回填，与 pi 自己 handleClipboardPaste 的做法一致。
- */
-export type ClipboardProbe = { files: string[]; text: string; imagePath: string }
+export type ClipboardProbe = { files: string[]; text: string; error?: string }
 
-/**
- * 「按 Ctrl+V 到底该插入什么」的唯一判定，按优先级：
- *   1. 剪贴板里的**文件**（资源管理器复制 / 截图工具「复制文件」）→ 绝对路径
- *   2. 剪贴板里的**位图**（截图 / 复制图片）→ 落成临时 PNG 的路径（pi 自己的做法）
- *   3. 剪贴板里的**文本** → 原样插入
- *
- * 先把 native 快路径问一遍（不 spawn 进程，文本/位图通常在这一步就命中），
- * 只有它什么都没读到时才启动 PowerShell 探头 —— 那条路要 ~200ms，
- * 不该为最常见的「粘贴文本」付这个代价。
- *
- * 这条判定必须由扩展自己拥有：pi 的 handleClipboardPaste 依赖 pi-tui 的
- * native getFilePaths（Windows 没实现），实测还会连位图一起读不到，
- * 于是「截图后 Ctrl+V」在 Windows 上就是点了没反应。
- */
+const emptyClipboard = (): ClipboardProbe => ({ files: [], text: '' })
+
 export async function resolveClipboardPaste(): Promise<ClipboardProbe> {
+  const windows = await readWindowsClipboard()
+  if (windows.files.length || windows.text) return windows
   const native = await readNativeClipboard()
-  if (native.text) return { files: [], text: native.text, imagePath: '' }
   if (native.image) {
-    const saved = saveClipboardImage(native.image)
-    if (saved) return { files: [], text: '', imagePath: saved }
+    const file = await saveClipboardImage(native.image)
+    return { files: [file], text: '' }
   }
-  return readWindowsClipboard()
+  return native.text ? { files: [], text: native.text } : windows
 }
 
-/** 把原生拿到的位图落成临时 PNG（pi 也是这么做的）；写不进去就返回空串。 */
-export function saveClipboardImage(bytes: Uint8Array): string {
-  try {
-    const file = path.join(os.tmpdir(), `superpi-paste-${process.pid}-${Date.now()}.png`)
-    fs.writeFileSync(file, Buffer.from(bytes))
-    return file
-  } catch {
-    return ''
-  }
+export function saveClipboardImage(bytes: Uint8Array, directory?: string): Promise<string> {
+  const data = Buffer.from(bytes)
+  const prefix = data.subarray(0, 8).toString('hex')
+  let format = ''
+  if (prefix === '89504e470d0a1a0a') format = 'image/png'
+  else if (prefix.startsWith('ffd8ff')) format = 'image/jpeg'
+  else if (prefix.startsWith('47494638')) format = 'image/gif'
+  else if (data.toString('ascii', 0, 4) === 'RIFF' && data.toString('ascii', 8, 12) === 'WEBP') format = 'image/webp'
+  else if (prefix.startsWith('424d')) format = 'image/bmp'
+  return saveClipboardFile([data], { format, directory })
 }
 
-export function readWindowsClipboard(): Promise<ClipboardProbe> {
-  const empty: ClipboardProbe = { files: [], text: '', imagePath: '' }
-  if (process.platform !== 'win32') return Promise.resolve(empty)
-  const imagePath = path.join(os.tmpdir(), `superpi-paste-${process.pid}-${Date.now()}.png`)
-  const quoted = imagePath.replace(/'/g, "''")
-  const script = [
+export function windowsClipboardScript(staged: string): string {
+  const quoted = staged.replace(/'/g, "''")
+  return [
+    "$ErrorActionPreference = 'Stop'",
     'Add-Type -AssemblyName System.Windows.Forms',
     'Add-Type -AssemblyName System.Drawing',
-    "$out = New-Object System.Collections.Specialized.OrderedDictionary",
-    "$list = [System.Windows.Forms.Clipboard]::GetFileDropList()",
-    "if ($list -and $list.Count -gt 0) { $out['files'] = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes([string]::Join(\"`n\", @($list)))) }",
-    'if ([System.Windows.Forms.Clipboard]::ContainsText()) {',
-    "  $t = [System.Windows.Forms.Clipboard]::GetText()",
-    "  if ($t) { $out['text'] = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($t)) }",
+    "$target = '" + quoted + "'",
+    '$data = [System.Windows.Forms.Clipboard]::GetDataObject()',
+    'if (!$data) { exit }',
+    'function Send($key, [string]$value) {',
+    '  $line = $key + "=" + [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($value))',
+    '  [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($line))',
     '}',
-    'if ([System.Windows.Forms.Clipboard]::ContainsImage()) {',
-    '  $img = [System.Windows.Forms.Clipboard]::GetImage()',
-    "  if ($img) { $img.Save('" + quoted + "', [System.Drawing.Imaging.ImageFormat]::Png); $out['image'] = 'ok' }",
+    'function Save($format) {',
+    '  try {',
+    '    $value = $data.GetData($format)',
+    '    if ($value -is [System.Drawing.Image]) {',
+    '      try { $value.Save($target, [System.Drawing.Imaging.ImageFormat]::Png) } finally { $value.Dispose() }',
+    "      return 'image/png'",
+    '    }',
+    '    if ($value -is [byte[]] -and $value.Length) { [IO.File]::WriteAllBytes($target, $value); return $format }',
+    '    if ($value -is [IO.Stream]) {',
+    '      $stream = [IO.File]::Create($target)',
+    '      try { if ($value.CanSeek) { $value.Position = 0 }; $value.CopyTo($stream) } finally { $stream.Dispose() }',
+    '      if ((Get-Item -LiteralPath $target).Length) { return $format }',
+    '    }',
+    '  } catch {}',
+    '  return $null',
     '}',
-    "$parts = foreach ($k in $out.Keys) { $k + '=' + $out[$k] }",
-    "[Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes(($parts -join \"`n\")))",
-  ].join('; ')
-  return new Promise(resolve => {
-    let done = false
-    const finish = (value: ClipboardProbe) => {
-      if (done) return
-      done = true
-      resolve(value)
-    }
-    try {
-      const child = execFile(
-        'powershell.exe',
-        ['-NoProfile', '-NonInteractive', '-STA', '-ExecutionPolicy', 'Bypass', '-Command', script],
-        { timeout: FILE_LIST_TIMEOUT_MS, windowsHide: true, maxBuffer: 8 << 20 },
-        (error, stdout) => {
-          if (error) return finish(empty)
-          finish(parseProbe(stdout, imagePath))
-        },
-      )
-      child.on('error', () => finish(empty))
-    } catch {
-      finish(empty)
-    }
-  })
+    "$files = $data.GetData('FileDrop')",
+    "if ($files -and $files.Count) { Send 'files' ([string]::Join([string][char]10, [string[]]$files)); exit }",
+    '$formats = @($data.GetFormats($false))',
+    "$media = @('PNG','Bitmap','WaveAudio','JPEG','JFIF','GIF')",
+    'foreach ($format in $media) {',
+    '  if ($data.GetDataPresent($format)) {',
+    '    $saved = Save $format',
+    "    if ($saved) { Send 'format' $saved; exit }",
+    '  }',
+    '}',
+    "$text = $data.GetData('UnicodeText')",
+    "if ($text -is [string] -and $text) { Send 'text' $text; exit }",
+    // Read other registered formats as bytes. IDataObject.GetData can deserialize an opaque object.
+    "$raw = @($formats | Where-Object { $_ -notmatch '^Ole|^DataObject|DropEffect|^FileGroupDescriptor|^Object Descriptor$|^Web Custom Format Map$' })",
+    'if ($raw.Count) {',
+    "Add-Type -TypeDefinition @'",
+    'using System;',
+    'using System.IO;',
+    'using System.Runtime.InteropServices;',
+    'public static class SuperPiClipboardBytes {',
+    '  [DllImport("user32.dll")] static extern bool OpenClipboard(IntPtr window);',
+    '  [DllImport("user32.dll")] static extern bool CloseClipboard();',
+    '  [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern uint RegisterClipboardFormat(string name);',
+    '  [DllImport("user32.dll")] static extern IntPtr GetClipboardData(uint format);',
+    '  [DllImport("kernel32.dll")] static extern UIntPtr GlobalSize(IntPtr memory);',
+    '  [DllImport("kernel32.dll")] static extern IntPtr GlobalLock(IntPtr memory);',
+    '  [DllImport("kernel32.dll")] static extern bool GlobalUnlock(IntPtr memory);',
+    '  public static string Copy(string[] formats, string target) {',
+    '    if (!OpenClipboard(IntPtr.Zero)) return null;',
+    '    try {',
+    '      foreach (var format in formats) {',
+    '        uint id = RegisterClipboardFormat(format);',
+    '        IntPtr memory = GetClipboardData(id);',
+    '        ulong size = memory == IntPtr.Zero ? 0 : GlobalSize(memory).ToUInt64();',
+    '        if (size == 0 || size > Int32.MaxValue) continue;',
+    '        IntPtr bytes = GlobalLock(memory);',
+    '        if (bytes == IntPtr.Zero) continue;',
+    '        try {',
+    '          using (var output = File.Create(target)) {',
+    '            var buffer = new byte[65536];',
+    '            int total = (int)size;',
+    '            for (int offset = 0; offset < total;) {',
+    '              int count = Math.Min(buffer.Length, total - offset);',
+    '              Marshal.Copy(IntPtr.Add(bytes, offset), buffer, 0, count);',
+    '              output.Write(buffer, 0, count);',
+    '              offset += count;',
+    '            }',
+    '          }',
+    '          return format;',
+    '        } finally { GlobalUnlock(memory); }',
+    '      }',
+    '      return null;',
+    '    } finally { CloseClipboard(); }',
+    '  }',
+    '}',
+    "'@",
+    '  $saved = [SuperPiClipboardBytes]::Copy([string[]]$raw, $target)',
+    "  if ($saved) { Send 'format' $saved; exit }",
+    '}',
+    "if ($formats.Count) { Send 'error' '剪贴板没有可读取的文件字节' }",
+  ].join('\n')
 }
 
-/** `files=` / `text=` / `image=` 三段 base64 → 结构化结果。 */
-export function parseProbe(stdout: string, imagePath: string): ClipboardProbe {
-  const empty: ClipboardProbe = { files: [], text: '', imagePath: '' }
-  const raw = typeof stdout === 'string' ? stdout.trim() : ''
-  if (raw === '') return empty
-  let decoded = ''
+/** Read one Windows clipboard data object and stage a binary payload outside the terminal stream. */
+export async function readWindowsClipboard(directory?: string): Promise<ClipboardProbe> {
+  if (process.platform !== 'win32') return emptyClipboard()
+  const staged = path.join(os.tmpdir(), 'superpi-clipboard-' + randomUUID() + '.part')
   try {
-    decoded = Buffer.from(raw, 'base64').toString('utf8')
-  } catch {
-    return empty
+    const stdout = await new Promise<string>((resolve, reject) => {
+      execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-STA',
+        '-EncodedCommand', Buffer.from(windowsClipboardScript(staged), 'utf16le').toString('base64')],
+      { timeout: CLIPBOARD_READ_TIMEOUT_MS, windowsHide: true, maxBuffer: 8 << 20 },
+      (error, output) => error ? reject(error) : resolve(output))
+    }).catch(() => '')
+    const probe = parseProbe(stdout)
+    if (!probe.format) return { files: probe.files, text: probe.text, error: probe.error }
+    const file = await saveClipboardFile(fs.createReadStream(staged), { format: probe.format, directory })
+    return { files: [file], text: '' }
+  } catch (error) {
+    return { ...emptyClipboard(), error: String((error as Error).message) }
+  } finally {
+    await fs.promises.rm(staged, { force: true }).catch(() => {})
   }
-  const out: ClipboardProbe = { files: [], text: '', imagePath: '' }
+}
+
+/** Decode the probe envelope. Payload bytes travel separately to preserve large media. */
+export function parseProbe(stdout: string): ClipboardProbe & { format?: string } {
+  const out: ClipboardProbe & { format?: string } = emptyClipboard()
+  const decoded = Buffer.from(stdout.trim(), 'base64').toString('utf8')
   for (const line of decoded.split(/\r?\n/)) {
     const eq = line.indexOf('=')
     if (eq <= 0) continue
     const key = line.slice(0, eq)
     const value = line.slice(eq + 1)
-    if (key === 'files') {
-      const files = Buffer.from(value, 'base64')
-        .toString('utf8')
-        .split(/\r?\n/)
-        .map(item => item.trim())
-        .filter(item => item !== '')
-      out.files = files
-    } else if (key === 'text') {
-      try {
-        out.text = Buffer.from(value, 'base64').toString('utf8')
-      } catch {
-        out.text = ''
-      }
-    } else if (key === 'image' && value === 'ok') {
-      out.imagePath = imagePath
-    }
+    const text = Buffer.from(value, 'base64').toString('utf8')
+    if (key === 'files') out.files = text.split(/\r?\n/).filter(file => file !== '')
+    else if (key === 'text') out.text = text
+    else if (key === 'format' && text) out.format = text
+    else if (key === 'error' && text) out.error = text
   }
   return out
 }

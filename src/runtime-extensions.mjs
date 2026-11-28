@@ -25,6 +25,7 @@ export const EXTENSION_FILES = [
   ['text-bytes-module', 'superpi-text-bytes.mjs'],
   ['turn-verdict-module', 'superpi-turn-verdict.mjs'],
   ['context-guard-module', 'superpi-context-guard.mjs'],
+  ['clipboard-module', 'superpi-clipboard.mjs'],
   ['editor', 'superpi-editor.ts'],
   ['text-integrity', 'superpi-text-integrity.ts'],
   ['rules-module', 'superpi-rules.mjs'],

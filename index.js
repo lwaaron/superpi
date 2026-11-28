@@ -35,6 +35,7 @@ import { decoratePiEvent } from './src/event-verdict.mjs'
 import { prepareModelCompatibility, rpcExtensionArgs, runtimeSessionOptions } from './src/runtime-extensions.mjs'
 import { SESSION_CONTROL } from './extensions/superpi-session-controls.mjs'
 import { BRAND_NAME } from './extensions/superpi-brand.mjs'
+import { PANEL_CLIPBOARD_LIMIT, saveClipboardFile } from './extensions/superpi-clipboard.mjs'
 import {
   expandUserPath,
   groupSessionsByProject,
@@ -82,7 +83,7 @@ const API_PREFIX = '/api/' + PLUGIN_ID
 const MAX_SESSIONS = 8
 const MAX_BODY_BYTES = 4 * 1024 * 1024
 /** GET /contract 里 version 字段的取值：本插件对外的契约版本，与 package.json 解耦。 */
-const CONTRACT_VERSION = '0.60.4'
+const CONTRACT_VERSION = '0.61.0'
 /** 历史会话列表的条数窗口（与 src/session-store.mjs 的 DEFAULT_LIMIT/MAX_LIMIT 一致）。 */
 const HISTORY_DEFAULT_LIMIT = 20
 const HISTORY_MAX_LIMIT = 200
@@ -201,6 +202,7 @@ const SELF_FILES = [
   { rel: 'src/event-verdict.mjs', runtime: true },
   { rel: 'src/runtime-extensions.mjs', runtime: true },
   { rel: 'extensions/superpi-turn-verdict.mjs', runtime: true },
+  { rel: 'extensions/superpi-clipboard.mjs', runtime: true },
   { rel: 'extensions/superpi-text-bytes.mjs', runtime: true },
   // 写入闸只活在 pi 进程里（扩展加载），host 不 import 它。
   { rel: 'extensions/superpi-text-integrity.ts', runtime: false },
@@ -1383,6 +1385,16 @@ export function createHandler(deps) {
         const id = decodeURIComponent(match[1])
         const tail = match[2] ?? ''
         const proc = deps.requireSession(id)
+
+        if (method === 'POST' && tail === '/clipboard-file') {
+          if (req.headers['content-type'] !== 'application/octet-stream') return send(415, { error: 'expected binary clipboard data' })
+          if (Number(req.headers['content-length']) > PANEL_CLIPBOARD_LIMIT) return send(413, { error: 'clipboard file exceeds the upload limit' })
+          const name = url.searchParams.get('name') ?? ''
+          const format = url.searchParams.get('format') ?? ''
+          const source = async function* () { yield* req.iterator({ destroyOnReturn: false }) }
+          const file = await saveClipboardFile(source, { name, format, directory: deps.clipboardDirectory, limit: PANEL_CLIPBOARD_LIMIT })
+          return send(200, { ok: true, path: file })
+        }
 
         if (method === 'DELETE' && tail === '') {
           deps.sessionsDelete?.(id)

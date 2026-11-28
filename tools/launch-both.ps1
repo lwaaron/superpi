@@ -36,6 +36,12 @@
   Shift+方向扩选、Ctrl+C 复制不清空、Ctrl+X 剪切、Backspace/Delete 删选区、
   以及 Windows 下「资源管理器复制文件 → Ctrl+V 得到绝对路径」。
 
+.PARAMETER SetupClipboardTerminal
+  安装 SuperPi 专用的便携 Windows Terminal，后续一键启动会选用它。
+
+.PARAMETER TerminalArchive
+  用已下载的官方 ZIP 安装专用终端。安装仍会检查官方 SHA-256。
+
 .PARAMETER Stop
   停掉由本脚本起的两个实例：web 走 start-standalone 的 -Stop；
   TUI 窗口按 .standalone/tui.json 记录的 pid 关掉（只关自己起的，不动别人）。
@@ -61,6 +67,8 @@ param(
   [switch]$Stop,
   [switch]$Status,
   [switch]$NoEditorExtension,
+  [switch]$SetupClipboardTerminal,
+  [string]$TerminalArchive = '',
   [int]$WaitSeconds = 120
 )
 
@@ -72,11 +80,60 @@ $StateDir = Join-Path $PluginRoot '.standalone'
 $TuiStateFile = Join-Path $StateDir 'tui.json'
 $WebLauncher = Join-Path $PluginRoot 'tools\start-standalone.ps1'
 $TuiLauncher = Join-Path $PluginRoot 'src\superpi-cli.mjs'
+$PortableTerminalVersion = '1.25.3131.0'
+$PortableTerminalParent = Join-Path $env:LOCALAPPDATA 'SuperPi\WindowsTerminal'
+$PortableTerminalRoot = Join-Path $PortableTerminalParent $PortableTerminalVersion
+$PortableTerminal = Join-Path $PortableTerminalRoot 'WindowsTerminal.exe'
 
 function Step([string]$t) { Write-Host ('[launch] ' + $t) }
 function Ok([string]$t) { Write-Host ('[launch]   OK   ' + $t) -ForegroundColor Green }
 function Warn2([string]$t) { Write-Host ('[launch]   WARN ' + $t) -ForegroundColor Yellow }
 function Bad([string]$t) { Write-Host ('[launch]   FAIL ' + $t) -ForegroundColor Red }
+
+if ($SetupClipboardTerminal) {
+  if ((Test-Path -LiteralPath $PortableTerminal) -and (Test-Path -LiteralPath (Join-Path $PortableTerminalRoot '.portable'))) {
+    Ok ('SuperPi clipboard terminal is ready: ' + $PortableTerminal)
+    exit 0
+  }
+  $architecture = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString().ToLowerInvariant()
+  $digest = @{
+    x64 = '273d6f1502eca1b5bd95c43f5d4d7ec72cc503df340102f8659717e5bead3437'
+    arm64 = 'b7e1d2a414e6368affd098d91a4cba441dcacd3ab634a6f39c8e6f5490deef89'
+  }[$architecture]
+  if (-not $digest) { throw ('No portable Windows Terminal package for ' + $architecture) }
+  New-Item -ItemType Directory -Path $PortableTerminalParent -Force | Out-Null
+  $parent = (Resolve-Path -LiteralPath $PortableTerminalParent).ProviderPath
+  $stage = Join-Path $parent ('.setup-' + [Guid]::NewGuid().ToString('N'))
+  New-Item -ItemType Directory -Path $stage | Out-Null
+  try {
+    $zip = $TerminalArchive
+    if (-not $zip) {
+      $zip = Join-Path $stage 'terminal.zip'
+      $asset = 'Microsoft.WindowsTerminal_' + $PortableTerminalVersion + '_' + $architecture + '.zip'
+      $uri = 'https://github.com/microsoft/terminal/releases/download/v' + $PortableTerminalVersion + '/' + $asset
+      Invoke-WebRequest -Uri $uri -UseBasicParsing -TimeoutSec 60 -OutFile $zip
+    }
+    if ((Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash -ne $digest) { throw 'Windows Terminal archive hash mismatch' }
+    Expand-Archive -LiteralPath $zip -DestinationPath $stage
+    $payload = (Resolve-Path -LiteralPath (Join-Path $stage ('terminal-' + $PortableTerminalVersion))).ProviderPath
+    if ((Split-Path -Parent $payload) -ne $stage -or (Split-Path -Parent $PortableTerminalRoot) -ne $parent -or (Test-Path -LiteralPath $PortableTerminalRoot)) {
+      throw 'Could not publish the isolated Windows Terminal directory'
+    }
+    if (-not (Test-Path -LiteralPath (Join-Path $payload 'WindowsTerminal.exe') -PathType Leaf)) { throw 'WindowsTerminal.exe missing from the archive' }
+    New-Item -ItemType File -Path (Join-Path $payload '.portable') | Out-Null
+    $settings = Join-Path $payload 'settings'
+    New-Item -ItemType Directory -Path $settings | Out-Null
+    $json = @{ keybindings = @(@{ id = 'unbound'; keys = 'ctrl+v' }) } | ConvertTo-Json -Depth 4
+    [IO.File]::WriteAllText((Join-Path $settings 'settings.json'), $json, [Text.UTF8Encoding]::new($false))
+    Move-Item -LiteralPath $payload -Destination $PortableTerminalRoot
+    Ok ('SuperPi clipboard terminal is ready: ' + $PortableTerminal)
+  } finally {
+    if ((Resolve-Path -LiteralPath $stage).ProviderPath -eq $stage -and (Split-Path -Parent $stage) -eq $parent) {
+      Remove-Item -LiteralPath $stage -Recurse -Force
+    }
+  }
+  exit 0
+}
 
 function Get-ListeningPid([int]$p) {
   $c = Get-NetTCPConnection -LocalPort $p -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -220,6 +277,7 @@ if ($NoTui) {
   $wt = Join-Path $env:LOCALAPPDATA 'Microsoft\WindowsApps\wt.exe'
   $haveWt = (Test-Path -LiteralPath $wt)
   if (-not $haveWt) { $haveWt = [bool](Get-Command wt.exe -ErrorAction SilentlyContinue) }
+  $isolatedWt = -not $NoEditorExtension -and (Test-Path -LiteralPath $PortableTerminal) -and (Test-Path -LiteralPath (Join-Path $PortableTerminalRoot '.portable'))
 
   # 记录启动前的 pi 进程集合，之后用差集找到新起的那个（wt/start 都是异步开窗，拿不到 pid）。
   $before = @(Get-CimInstance Win32_Process -Filter "Name='node.exe'" -ErrorAction SilentlyContinue |
@@ -231,7 +289,10 @@ if ($NoTui) {
   $cmdLine = '"' + $nodePath + '" "' + $TuiLauncher + '"' + $syncArg + ' ' + $respArg
 
   try {
-    if ($haveWt) {
+    if ($isolatedWt) {
+      Start-Process -FilePath $PortableTerminal -ArgumentList @('-w', 'new', '-d', ('"' + $WorkDir + '"'), 'cmd', '/c', $cmdLine) | Out-Null
+      $launcher = 'superpi-terminal'
+    } elseif ($haveWt) {
       $wtExe = if (Test-Path -LiteralPath $wt) { $wt } else { (Get-Command wt.exe).Source }
       # wt 的引号规则会吃掉参数：用 cmd /c 包一层，并自己把整条命令括起来。
       Start-Process -FilePath $wtExe -ArgumentList @('-d', $WorkDir, 'cmd', '/c', ($cmdLine + '')) | Out-Null

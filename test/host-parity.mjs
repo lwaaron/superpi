@@ -194,7 +194,7 @@ function makeServer(deps) {
 function request(base, routePath, { method = 'GET', body, contentType = 'application/json' } = {}) {
   const target = new URL(base + routePath)
   return new Promise((resolve, reject) => {
-    const payload = body === undefined ? null : Buffer.from(JSON.stringify(body), 'utf8')
+    const payload = body === undefined ? null : Buffer.isBuffer(body) ? body : Buffer.from(JSON.stringify(body), 'utf8')
     const req = http.request({
       hostname: target.hostname,
       port: target.port,
@@ -222,6 +222,7 @@ try {
   const proc = fakeProc()
   const calls = { history: [], spawn: [] }
   const server = await makeServer({
+    clipboardDirectory: path.join(tmp, 'clipboard'),
     requireSession: id => {
       if (id !== 'sess-1') { const e = new Error('no such session: ' + id); e.statusCode = 404; throw e }
       return proc
@@ -242,6 +243,19 @@ try {
     // 25 种出站事件 + response = 26，见 src/rpc-contract.mjs:76 的注释。
     eq('contract events 25', contract.body.events.length, 25)
     eq('contract assistantEvents 12', contract.body.assistantEvents.length, 12)
+
+    const clipRoute = '/sessions/sess-1/clipboard-file?name=' + encodeURIComponent('../样本.webm')
+    const clipBytes = Buffer.from([0x1a, 0x45, 0xdf, 0xa3])
+    const clipOptions = { method: 'POST', body: clipBytes, contentType: 'application/octet-stream' }
+    const clip = await request(server.base, clipRoute, clipOptions)
+    eq('clipboard file upload succeeds', clip.status, 200)
+    eq('clipboard file stays under its own directory', path.dirname(clip.body.path), path.join(tmp, 'clipboard'))
+    check('clipboard file keeps a normalized extension', path.basename(clip.body.path).endsWith('.webm'))
+    eq('clipboard file preserves bytes', [...fs.readFileSync(clip.body.path)], [...clipBytes])
+    const duplicate = await request(server.base, clipRoute, clipOptions)
+    eq('clipboard duplicate returns the same path', duplicate.body.path, clip.body.path)
+    eq('clipboard rejects non-binary requests', (await request(server.base, clipRoute, { method: 'POST', body: {} })).status, 415)
+    eq('clipboard rejects an empty upload', (await request(server.base, clipRoute, { ...clipOptions, body: Buffer.alloc(0) })).status, 400)
     eq('contract tuiCommands 27', contract.body.tuiCommands.length, 27)
     eq('contract bashShortcuts 2', contract.body.bashShortcuts.length, 2)
     eq('contract 首条命令字段原样', Object.keys(contract.body.rpcCommands[0]).sort(), ['category', 'name', 'optional', 'required'])

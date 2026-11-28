@@ -259,6 +259,7 @@ window.__ModuleLoader__.load({
       copied: '已复制',
       copiedPath: '路径已复制',
       noImages: '没有可粘贴的图片',
+      clipboardSaveFailed: '无法保存剪贴板文件',
       attach: '图片',
       queued: '排队中',
       loginHint: '请在你的浏览器中完成登录，完成后回到这里',
@@ -544,6 +545,7 @@ window.__ModuleLoader__.load({
       copied: 'Copied',
       copiedPath: 'Path copied',
       noImages: 'No image in the clipboard',
+      clipboardSaveFailed: 'Could not save the clipboard file',
       attach: 'Image',
       queued: 'Queued',
       loginHint: 'Finish signing in with your browser, then come back here',
@@ -1123,8 +1125,11 @@ window.__ModuleLoader__.load({
       }
       if (controller !== null) fetchInit.signal = controller.signal
       if (body !== undefined && body !== null) {
-        headers['content-type'] = 'application/json'
-        fetchInit.body = JSON.stringify(body)
+        if (options.binary === true) fetchInit.body = body
+        else {
+          headers['content-type'] = 'application/json'
+          fetchInit.body = JSON.stringify(body)
+        }
       }
       return fetch(API_PREFIX + path, fetchInit).then(function (response) {
         if (timer !== null) clearTimeout(timer)
@@ -3400,9 +3405,9 @@ window.__ModuleLoader__.load({
       function insertText(chunk) {
         if (chunk === '') return
         var node = taRef.current
-        var caret = node === null || node === undefined || typeof node.selectionStart !== 'number' ? text.length : node.selectionStart
-        var before = text.slice(0, caret)
-        var after = text.slice(caret)
+        if (node === null || node === undefined) return
+        var before = node.value.slice(0, node.selectionStart)
+        var after = node.value.slice(node.selectionEnd)
         var lead = before === '' || /\s$/.test(before) ? '' : ' '
         var tail = after === '' || /^\s/.test(after) ? '' : ' '
         setText(before + lead + chunk + tail + after)
@@ -3455,7 +3460,9 @@ window.__ModuleLoader__.load({
         }
         if (fileItems.length === 0) return
         event.preventDefault()
-        takeFiles(fileItems)
+        props.onClipboardFiles(fileItems).then(function (paths) {
+          insertText(paths.map(function (file) { return /\s/.test(file) ? '"' + file + '"' : file }).join('\n'))
+        })
       }
 
       function pickFiles() {
@@ -7534,6 +7541,24 @@ window.__ModuleLoader__.load({
           onCycleModel: cycleModel,
           onCycleThinking: cycleThinking,
           onImages: addImages,
+          onClipboardFiles: function (files) {
+            var id = sessionRef.current
+            if (id === null) return Promise.resolve([])
+            return Promise.all(files.map(function (file) {
+              var local = pathOfFile(file)
+              if (local !== '') return Promise.resolve(local)
+              var target = '/sessions/' + encodeURIComponent(id) + '/clipboard-file?name=' + encodeURIComponent(file.name || '') + '&format=' + encodeURIComponent(file.type || '')
+              return requestJson(target, { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: file, binary: true, timeoutMs: 120000 }).then(function (body) {
+                if (typeof body.path !== 'string' || body.path === '') throw new Error(t('clipboardSaveFailed'))
+                return body.path
+              }).catch(function (failure) {
+                notice(t('clipboardSaveFailed') + ' · ' + String(failure.message || failure), 'warn')
+                return ''
+              })
+            })).then(function (paths) {
+              return sessionRef.current === id ? paths.filter(Boolean) : []
+            })
+          },
           onPathsUnavailable: function (count) {
             notice(t('pathUnavailable').replace('{n}', String(count)), 'warn')
           },

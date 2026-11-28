@@ -40,7 +40,7 @@ npm run pack:offline -- .\artifacts
 
 ```powershell
 node "$env:USERPROFILE\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\pnpm\bin\pnpm.cjs" `
-  add "file:C:\path\to\superpi-0.60.4-offline-win32-x64.tgz" --offline --ignore-scripts
+  add "file:C:\path\to\superpi-0.61.0-offline-win32-x64.tgz" --offline --ignore-scripts
 ```
 
 归档包含当前平台的 Pi 和生产依赖。使用远程模型时仍需连通模型服务。已经安装 Pi 时，也可在配置中用 `cliPath` 指定运行时。
@@ -61,7 +61,8 @@ node "$env:USERPROFILE\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\pnpm\b
 .\一键启动.bat -Stop                          # 两个都停
 ```
 
-- **TUI 必须开真实控制台窗口**：实测 pi 在非 TTY（stdout 被重定向）下会**直接静默退出**，所以在后台进程里跑它等于什么都没发生。脚本用 `wt -d <workdir> cmd /c <node> <cli> <--continue>` 开新窗口，这一点是这个入口存在的核心理由。
+- **TUI 使用真实控制台窗口。** Windows 上可执行 `一键启动.bat -SetupClipboardTerminal` 安装 SuperPi 专用的便携 Windows Terminal。随后用 `一键启动.bat -NoWeb` 打开命令行，`Ctrl+V` 会交给 SuperPi。普通 Windows Terminal 中可用 `Alt+V` 走同一粘贴路径。
+- **剪贴板文件存放在用户目录。** 文字直接插入，资源管理器复制的图片、音频、视频和其他文件保留原路径。剪贴板仅提供数据时，SuperPi 保存可取得的文件字节到 `~/.superpi/clipboard`，插入绝对路径。同一内容和扩展名复用同一个文件。
 - **两个互不阻塞**：任一失败不影响另一个，最后分别报 `OK / WARN / FAIL` 与失败原因；只有两个都失败才 `exit 2`。
 - 根目录 `一键启动.bat` **只是转发器**：逻辑全在 `tools\launch-both.ps1`，参数（`%*`）与退出码原样透传，不复制实现。
 - pi 与 node 一律走 `src/pi-runtime.mjs` 的解析链（`resolvePiRuntime` / `resolveNodeRuntime`），**没有任何硬编码路径**。
@@ -232,10 +233,10 @@ New-Item -ItemType Junction `
 ### 使用 pnpm 手工安装
 
 ```powershell
-npm pack                                        # 得到 superpi-0.60.4.tgz
+npm pack                                        # 得到 superpi-0.61.0.tgz
 cd "$env:USERPROFILE\.dsh\profiles\desktop"
 node "$env:USERPROFILE\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\pnpm\bin\pnpm.cjs" `
-  add "file:C:\path\to\superpi-0.60.4.tgz" --ignore-scripts
+  add "file:C:\path\to\superpi-0.61.0.tgz" --ignore-scripts
 ```
 
 不要在 profile 里用 `npm install`：npm 会另写一份 `package-lock.json`，而宿主插件管理器用的是 pnpm，两套锁文件互相看不见，下次插件安装就会把 node_modules 重建成 pnpm 理解的样子。

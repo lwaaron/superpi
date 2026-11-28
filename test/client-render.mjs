@@ -1114,6 +1114,7 @@ const composerProps = {
   onCycleModel() {},
   onCycleThinking() {},
   onImages() {},
+  onClipboardFiles() { return Promise.resolve([]) },
   onPathsUnavailable() {},
   onPickDir() {},
   onOpenModels() {},
@@ -1143,6 +1144,40 @@ const composerProps = {
   onPickThinking() {},
 }
 const composerHtml = renderToStaticMarkup(React.createElement(Composer, composerProps))
+{
+  const { Composer: ClipboardComposer } = definition.factory(() => ({
+    ...React,
+    useRef(initial) { return { current: initial } },
+    useState(initial) { return [initial, () => {}] },
+    useEffect() {},
+  })).__internals
+  const nodes = node => React.isValidElement(node) ? [node, ...nodes(node.props.children)] : Array.isArray(node) ? node.flatMap(nodes) : []
+  const files = ['image/png', 'video/mp4', 'audio/wav', 'application/pdf'].map(type => ({ type }))
+  const paths = ['C:/my cache/image.png', 'C:/clip/movie.mp4', 'C:/clip/sound.wav', 'C:/clip/file.pdf']
+  let usedFiles = []
+  let draft = ''
+  let prevented = false
+  const rendered = ClipboardComposer({
+    ...composerProps,
+    onDraftText(value) { draft = value },
+    async onClipboardFiles(items) { usedFiles = items; return paths },
+  })
+  const input = nodes(rendered).find(node => node.type === 'textarea')
+  input.props.ref.current = { value: '旧内容', selectionStart: 0, selectionEnd: 3, focus() {}, setSelectionRange() {} }
+  const priorTimer = window.setTimeout
+  try {
+    window.setTimeout = setTimeout
+    input.props.onPaste({ clipboardData: { items: files.map(file => ({ kind: 'file', getAsFile: () => file })) }, preventDefault() { prevented = true } })
+    await new Promise(resolve => setImmediate(resolve))
+    assert(prevented && usedFiles.every((file, index) => file === files[index]) && usedFiles.length === files.length, '粘贴手势把各种非文本文件交给路径解析')
+    assert(draft === '"' + paths[0] + '"\n' + paths.slice(1).join('\n'), '浏览器输入框把解析路径插入当前选区')
+    prevented = false
+    input.props.onPaste({ clipboardData: { items: [{ kind: 'string' }] }, preventDefault() { prevented = true } })
+    assert(!prevented, '文字粘贴使用浏览器的原生文本插入')
+  } finally {
+    window.setTimeout = priorTimer
+  }
+}
 assert(composerHtml.includes('superpi-box'), '输入区该有卡面 superpi-box')
 assert(composerHtml.includes('superpi-ta'), '输入区该有 textarea.superpi-ta')
 assert(composerHtml.includes('superpi-add'), '左端该有圆形 + 按钮（宿主同款）')

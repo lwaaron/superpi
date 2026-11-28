@@ -2117,22 +2117,33 @@ const guardLogModule = await import(pathToFileURL(path.join(root, 'extensions', 
   const b64 = value => Buffer.from(value, 'utf8').toString('base64')
   const joined = lines => b64(lines.join(String.fromCharCode(10)))
   const samplePath = ['C:', 'a.png'].join(String.fromCharCode(92))
-  const probe = parseProbe(joined([`files=${b64(samplePath)}`]), '/tmp/x.png')
+  const probe = parseProbe(joined([`files=${b64(samplePath)}`]))
   eq(probe.files.join(','), samplePath, 'parseProbe 解出文件列表')
-  const textProbe = parseProbe(joined([`text=${b64('一段文本')}`]), '/tmp/x.png')
+  const textProbe = parseProbe(joined([`text=${b64('一段文本')}`]))
   eq(textProbe.text, '一段文本', 'parseProbe 解出文本')
-  const imageProbe = parseProbe(joined(['image=ok']), '/tmp/x.png')
-  eq(imageProbe.imagePath, '/tmp/x.png', 'parseProbe 解出位图路径')
-  eq(parseProbe('', '/tmp/x.png').files.length, 0, 'parseProbe 空输出 → 空结果')
-  eq(parseProbe(joined(['files=']), '/tmp/x.png').files.length, 0, 'parseProbe 空文件列表 → 空数组')
+  const imageProbe = parseProbe(joined([`format=${b64('image/png')}`]))
+  eq(imageProbe.format, 'image/png', 'parseProbe 解出位图格式')
+  eq(parseProbe('').files.length, 0, 'parseProbe 空输出 → 空结果')
+  eq(parseProbe(joined(['files='])).files.length, 0, 'parseProbe 空文件列表 → 空数组')
 
   // 位图落盘
-  const bytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47])
-  const saved = saveClipboardImage(bytes)
-  ok(saved.endsWith('.png'), 'saveClipboardImage 落成 .png')
-  ok(fs.existsSync(saved), 'saveClipboardImage 文件真的写出来了')
-  eq(fs.readFileSync(saved).length, 4, '内容与传入字节一致')
-  fs.unlinkSync(saved)
+  const bytes = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jp1sAAAAASUVORK5CYII=', 'base64')
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'superpi clipboard '))
+  try {
+    const saved = await saveClipboardImage(bytes, directory)
+    ok(saved.endsWith('.png'), 'saveClipboardImage 落成 .png')
+    ok(fs.existsSync(saved), 'saveClipboardImage 文件真的写出来了')
+    eq(fs.readFileSync(saved).toString('base64'), bytes.toString('base64'), '内容与传入字节一致')
+    eq(await saveClipboardImage(bytes, directory), saved, '同一截图重复粘贴复用稳定路径')
+    const { editor } = makeEditor('旧输入', { hooks: { readClipboard: async () => ({ files: [saved], text: '' }) } })
+    editor.handleInput(KEY.ctrlA)
+    editor.handleInput('\x16')
+    await settle()
+    eq(editor.getText(), '"' + saved + '"', 'Ctrl+V 用包含空格的完整文件路径替换选区')
+    eq(paintedCells(editor.render(160)).join(''), saved, '浅灰底覆盖完整路径')
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true })
+  }
 
   // 判定顺序：文件优先于文本
   const order = []
@@ -2143,13 +2154,17 @@ const guardLogModule = await import(pathToFileURL(path.join(root, 'extensions', 
 
 // ⑧e 粘贴走扩展自己的通道（不再依赖 pi-tui 在 Windows 上缺失的 getFilePaths）
 {
-  const { editor } = makeEditor('')
-  let piFallback = 0
-  editor.onPasteImage = () => { piFallback += 1 }
-  // readWindowsClipboard 在非 Windows / 空剪贴板时返回空 → 应回落到 pi
-  const probe = await extensionModule.readWindowsClipboard()
-  ok(typeof probe.files.length === 'number' && typeof probe.text === 'string', 'readWindowsClipboard 返回三态结构')
-  void piFallback
+  const text = '粘贴文字\n下一行'
+  const { editor } = makeEditor('待替换', { hooks: { readClipboard: async () => ({ files: [], text }) } })
+  editor.handleInput(KEY.ctrlA)
+  editor.handleInput('\x16')
+  await settle()
+  eq(editor.getText(), text, 'Ctrl+V 插入原始多行文字并替换选区')
+  const paths = [path.resolve('样本.mp4'), path.resolve('录音.wav'), path.resolve('文档.pdf')]
+  const { editor: files } = makeEditor('', { hooks: { readClipboard: async () => ({ files: paths, text: '附带文字' }) } })
+  files.handleInput('\x16')
+  await settle()
+  eq(files.getText(), paths.join('\n'), '视频、音频和普通文件按顺序插入原始路径')
 }
 
 // ⑨ padToWidth 不会破坏框线对齐
