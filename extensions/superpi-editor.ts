@@ -507,6 +507,7 @@ export class SuperPiEditor extends CustomEditor {
     if (data === ESC) {
       if (this.menuOpen) {
         this.menuOpen = false
+        this.invalidate?.()
         this.tui?.requestRender?.()
         return true
       }
@@ -927,6 +928,7 @@ export class SuperPiEditor extends CustomEditor {
       }
       if (isPress && this.menuOpen) {
         this.menuOpen = false
+        this.invalidate?.()
         this.tui?.requestRender?.()
       }
       // 框外的空白不交给 pi（否则会按错误的行号定位光标）。
@@ -938,6 +940,7 @@ export class SuperPiEditor extends CustomEditor {
 
     if (isPress && this.menuOpen) {
       this.menuOpen = false
+      this.invalidate?.()
       this.tui?.requestRender?.()
     }
     // 鼠标点击（含拖选后的合成 click）会重置光标：先丢掉键盘选区，避免两套选区打架。
@@ -958,8 +961,7 @@ export class SuperPiEditor extends CustomEditor {
 
   private activateHit(hit: { id: string; kind: 'action' | 'command'; command?: string }): void {
     if (hit.kind === 'action' && hit.id === 'settings') {
-      this.menuOpen = !this.menuOpen
-      this.tui?.requestRender?.()
+      this.toggleMenu()
       return
     }
     if (hit.kind === 'action' && hit.id === 'home') {
